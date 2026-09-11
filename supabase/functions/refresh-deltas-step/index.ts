@@ -169,7 +169,8 @@ Deno.serve(async (req) => {
   // ── 3) one chunk, then self-chain ───────────────────────────────────────────────────
   if (chunks.length > 0) {
     const chunk = chunks[0];
-    const res = await callDeltas(url, key, { company_id, write: true, declared_ids: chunk.map((c) => c.declared_claim_id), pairing_kind: pairingKind });
+    // Gate 9a: run_id rides along so a look banked by this chunk carries the chain it happened in.
+    const res = await callDeltas(url, key, { company_id, write: true, declared_ids: chunk.map((c) => c.declared_claim_id), pairing_kind: pairingKind, run_id: childId });
     if (!res.ok && isDeterministicWorkerError(res.status)) {
       await finish("failed", Math.max(0, (targetCount ?? chunks.length) - chunks.length), `chunk failed: ${res.reason}`);
       return json({ ok: false, error: `chunk failed: ${res.reason}` }, 200);
@@ -211,7 +212,7 @@ Deno.serve(async (req) => {
 
   // ── 4) plan dry → the ONE unscoped finalize (silences + stale-sweep) ────────────────
   const { count: preCount } = await supabase.from("claim_deltas").select("id", { count: "exact", head: true }).eq("company_id", company_id).eq("pairing_kind", pairingKind);
-  const finRes = await callDeltas(url, key, { company_id, write: true, pairing_kind: pairingKind });
+  const finRes = await callDeltas(url, key, { company_id, write: true, pairing_kind: pairingKind, run_id: childId });
   if (finRes.ok) {
     await finish("completed", targetCount ?? 0);
     fireRelevanceBackstop(); // completed terminal (i)

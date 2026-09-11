@@ -370,6 +370,9 @@ export type FirstReadPreviewData = {
    * Governs the empty-beat line — never derived from array emptiness alone.
    */
   gapIntegrity: "not_yet" | "looked_none" | "couldnt_check";
+  /** Gate 9a — pairs the delta judge could not verify (claim_delta_looks), summed from the
+   *  'claim_delta_looks' integrity records. Operator-only; never renders on a client surface. */
+  looksPairsLooked: number;
   /** Gate 4b — groups the market pass SAW but could not state in the customers' terms: the
    *  rejected_solution / rejected_buyer outcomes of THIS company's current manifest. Never the folds
    *  (their people are already visible inside the group they folded into), never already_decided
@@ -451,6 +454,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   reverseRows: [],
   statusConflicts: [],
   gapIntegrity: "not_yet",
+  looksPairsLooked: 0,
   unstatedGroups: [],
   offeringProductLabels: [],
   unstatedIntegrity: "not_yet",

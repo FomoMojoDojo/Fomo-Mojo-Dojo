@@ -216,6 +216,19 @@ export function struckPairsByStatement(pairs: FRGapPair[]): Map<string, FRGapPai
 /** OWN-WORDS ADMISSION (2026-09-03): own words kept as RECORD but never shown to the client (instruction /
  *  policy / recruiting / other). Operator view only — null without the context. Rendered under "In your
  *  words" so the operator sees what the criterion declined, with the judged kind. */
+/** Gate 9a — "{n} pairs looked, unverifiable with the cited span": one mono line, operator-only. The count
+ *  is the integrity record's (claim_delta_looks via integrity_runs), never the rejection cache's. Null
+ *  outside the admin preview and when nothing was looked. */
+export function OperatorLooksLine({ pairsLooked }: { pairsLooked: number }) {
+  const ctx = useOperatorControls();
+  if (!ctx || pairsLooked <= 0) return null;
+  return (
+    <p className="fr-tag fr-mono mt-8" data-testid="operator-looks-line" {...{ [OPERATOR_MARK.attr]: OPERATOR_MARK.looks }}>
+      {OPERATOR_STRINGS.looksLine(pairsLooked)}
+    </p>
+  );
+}
+
 export function OwnWordsRecordBlock({ words }: { words: FROwnWord[] }) {
   const ctx = useOperatorControls();
   if (!ctx || words.length === 0) return null;

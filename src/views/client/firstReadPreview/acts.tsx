@@ -32,7 +32,7 @@ import {
   NEW_KIND_NOTE,
 } from "../../../../supabase/functions/_shared/relationshipKinds.ts";
 import { ListingRow } from "./primitives";
-import { OperatorUnstatedState, OperatorUnstatedReason, OperatorKindTag, OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
+import { OperatorUnstatedState, OperatorUnstatedReason, OperatorKindTag, OperatorPairMeta, OperatorLooksLine, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
 // Home reskin (2026-09-11): SeqChip / TwoWeightHeadline / NumberedList lifted to primitives.tsx (no behaviour
 // change) so a page outside the First Read can share the chip sequence and the lead/bold headline rhythm.
 import { Chip, SeqChip, TwoWeightHeadline, NumberedList } from "./primitives";
@@ -1777,6 +1777,8 @@ export function ActGap({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?
           );
         })}
       </main>
+      {/* Gate 9a — operator-only: pairs the judge could not verify (claim_delta_looks). Context-gated. */}
+      <OperatorLooksLine pairsLooked={read.looksPairsLooked} />
       {/* R4 — the reverse arrow, "Raised by the record" (2026-08-27): the say-vs-see MIRROR half. Renders
           the record statements that raise something the declared voice is silent on. RESOLVED-STATES LAW:
           only active-backed rows reach read.reverseRows (backstage/screened are excluded in the hook), so

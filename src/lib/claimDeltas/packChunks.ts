@@ -22,6 +22,9 @@ export type DeltaPlanClaim = {
   candidates_total: number;
   candidates_cached: number;
   candidates_tombstoned: number;
+  /** Gate 9a — looks at the current span-gate version. Already excluded from candidates_fresh by the
+   *  plan (fresh = total − cached − tombstoned − rejected − looked); carried so the count is visible. */
+  candidates_looked?: number;
   candidates_fresh: number;
 };
 

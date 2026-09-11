@@ -830,6 +830,17 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         const intRow = ((intRows ?? []) as Array<{ status: string }>)[0] ?? null;
         if (intRow) gapIntegrity = intRow.status === "failed" ? "couldnt_check" : "looked_none";
 
+        // ── Gate 9a — looks: pairs the delta judge answered with an unverifiable span. Read from the
+        // 'claim_delta_looks' integrity records (one per worker call that banked ≥1 look; `examined`
+        // is the count), NEVER from claim_delta_rejections or claim_deltas — a look is not a verdict.
+        // Operator-only downstream (OperatorLooksLine is context-gated).
+        const { data: lookIntRows } = await loose()
+          .from("integrity_runs")
+          .select("examined")
+          .eq("company_id", companyId)
+          .eq("component", "claim_delta_looks");
+        const looksPairsLooked = ((lookIntRows ?? []) as Array<{ examined: number | null }>).reduce((n, r) => n + (r.examined ?? 0), 0);
+
         // ── Gate 4b — the groups we saw but couldn't state in the customers' terms ──────────────
         // Scoped to the CURRENT manifest, not the company: a superseded run's rulings must never
         // surface beside this snapshot's groups. Only the two rejection outcomes render; a fold is
@@ -1261,6 +1272,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             reverseRows,
             statusConflicts,
             gapIntegrity,
+            looksPairsLooked,
             questions: [],
             offering,
             offeringIntegrity,

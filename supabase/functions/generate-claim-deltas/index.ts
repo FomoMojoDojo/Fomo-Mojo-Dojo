@@ -57,7 +57,7 @@ serve(async (req) => {
 
   let integrityCtx: { supabase: { from: (t: string) => any }; companyId: string; nowIso: string } | null = null;
   try {
-    const { company_id, write, declared_ids, plan, pairing_kind } = await req.json();
+    const { company_id, write, declared_ids, plan, pairing_kind, run_id } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
     const doWrite = write !== false;
     const doPlan = plan === true;
@@ -121,6 +121,8 @@ serve(async (req) => {
       declaredIds,
       pairingKind,
       routedCall,
+      // Gate 9a — the stepper's child ledger id, provenance on look rows + the looks integrity record.
+      runId: run_id != null ? String(run_id) : undefined,
     };
     const result = doPlan
       ? await computeDeltasForCompany({ ...baseArgs, plan: true })

@@ -5,6 +5,7 @@
 // recompute idempotency (dispositions preserved), and the silence taxonomy.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  SPAN_GATE_VERSION, LOOKS_INTEGRITY_COMPONENT,
   computeDeltasForCompany,
   pairIdentity,
   silenceIdentity,
@@ -26,6 +27,8 @@ type Row = Record<string, unknown>;
 // behaviour byte-identically (empty self-voice set → nothing excluded).
 function fakeDb(seed: {
   claims: Row[]; claim_deltas?: Row[]; claim_delta_rejections?: Row[];
+  // Gate 9a: looks — judged, unverifiable, subtracted at the current span-gate version.
+  claim_delta_looks?: Row[];
   signals?: Row[]; claim_signal_refs?: Row[];
   // SELF-ECHO GATE: the compute resolves the company host (companies.website) for the own-host
   // admission; default empty ⇒ host null ⇒ the admission is inert (legacy tests byte-identical).
@@ -36,13 +39,14 @@ function fakeDb(seed: {
   // 'internal_vs_public'. The fake applies the same default on seed AND insert, so
   // pre-B1 tests exercise the internal path byte-identically.
   const kindDefault = (t: string, r: Row): Row =>
-    (t === "claim_deltas" || t === "claim_delta_rejections") && r["pairing_kind"] === undefined
+    (t === "claim_deltas" || t === "claim_delta_rejections" || t === "claim_delta_looks") && r["pairing_kind"] === undefined
       ? { ...r, pairing_kind: "internal_vs_public" }
       : r;
   const tables: Record<string, Row[]> = {
     claims: [...seed.claims],
     claim_deltas: (seed.claim_deltas ?? []).map((r) => kindDefault("claim_deltas", r)),
     claim_delta_rejections: (seed.claim_delta_rejections ?? []).map((r) => kindDefault("claim_delta_rejections", r)),
+    claim_delta_looks: (seed.claim_delta_looks ?? []).map((r) => kindDefault("claim_delta_looks", { span_gate_version: 1, ...r })),
     signals: [...(seed.signals ?? [])],
     claim_signal_refs: [...(seed.claim_signal_refs ?? [])],
     companies: [...(seed.companies ?? [])],
@@ -282,9 +286,21 @@ describe("compute flow — unverifiable span is UNJUDGED, never banked as a reje
     if (!r.ok) throw new Error("expected ok");
     expect(r.totals.spans_unjudged).toBe(1);
     expect(r.totals.pairs_rejected).toBe(0);
-    expect(db.tables.claim_delta_rejections.length).toBe(0); // NOT frozen — revisitable
+    expect(db.tables.claim_delta_rejections.length).toBe(0); // NOT a rejection — never frozen as not-an-echo
     expect(r.deltas.some((d) => d.delta_type === "echoed")).toBe(false);
     expect(r.deltas.some((d) => d.delta_type === "publicly_silent" && d.declared_claim_id === "d1")).toBe(true);
+    // Gate 9a (a): the LOOK is recorded — one row, reason span_not_in_observed, the cited span, at the
+    // current criterion version; totals say so; silence rails unchanged (asserted above).
+    expect(r.totals.looks_banked).toBe(1);
+    expect(db.tables.claim_delta_looks).toHaveLength(1);
+    expect(db.tables.claim_delta_looks[0]).toMatchObject({
+      company_id: CO, declared_claim_id: "d1", public_claim_id: "p1", reason: "span_not_in_observed",
+      span_cited: "cited from the declared side", judge_model: "llama3:70b", span_gate_version: SPAN_GATE_VERSION, pairing_kind: "internal_vs_public",
+    });
+    expect(db.tables.claim_deltas.filter((d) => d.delta_type === "echoed" || d.delta_type === "divergent")).toHaveLength(0);
+    // and the integrity record says "we looked"
+    expect(db.tables.integrity_runs.filter((i) => i.component === "claim_delta_looks")).toHaveLength(1);
+    expect(db.tables.integrity_runs.find((i) => i.component === "claim_delta_looks")).toMatchObject({ status: "completed", examined: 1 });
   });
 
   it("distinguishable downstream: a real-but-below-minimum span STILL banks a rejection", async () => {
@@ -618,7 +634,7 @@ describe("computeDeltasForCompany", () => {
     expect(r.declared_total).toBe(2);
     expect(r.public_total).toBe(3);
     const m1 = r.claims.find((c) => c.declared_claim_id === "d1");
-    expect(m1).toEqual({ declared_claim_id: "d1", candidates_total: 3, candidates_cached: 1, candidates_tombstoned: 1, candidates_rejected: 0, candidates_fresh: 1 });
+    expect(m1).toEqual({ declared_claim_id: "d1", candidates_total: 3, candidates_cached: 1, candidates_tombstoned: 1, candidates_rejected: 0, candidates_looked: 0, candidates_fresh: 1 });
     const m2 = r.claims.find((c) => c.declared_claim_id === "d2");
     expect(m2?.candidates_total).toBe(0);
     expect(m2?.candidates_fresh).toBe(0);
@@ -1172,5 +1188,138 @@ describe("own-words admission at the declared seam", () => {
     if (!r.ok) throw new Error("expected ok");
     expect(r.totals.own_words_ineligible).toBe(0);
     expect(r.deltas.some((d) => d.delta_type === "publicly_silent" && d.declared_claim_id === "d-instr")).toBe(true);
+  });
+});
+
+// ── Gate 9a — LOOKS: a deterministic span failure is recorded once, subtracted, re-openable by version ──
+// The livelock (Edgewood 41322cd1, 2026-09-11; ~190 passes on 2026-08-21): the span gate's mechanical
+// branch recorded nothing, the plan could not subtract the pair, packDeltaChunks re-packed it as
+// chunks[0], and the deterministic judge failed it identically every pass. A LOOK is an integrity
+// record, never a rejection, never a gap. RED ON REVERT for (b)–(g).
+import { packDeltaChunks } from "./claimDeltas/packChunks";
+describe("Gate 9a — looks", () => {
+  const D = () => declared("d1", "evidence score visible always");
+  const P = () => publicClaim("p1", "score visible on the site");
+  const propose = { same_subject: true, relation: "echo", reason: "same subject" };
+
+  it("(b) judge echo with NO span ⇒ one look (span_missing), zero rejections, zero pair rows, rails unchanged", async () => {
+    stubOllama((model) => model === "llama3:70b"
+      ? { same_subject: true, relation: "echo", confident: true, span: "", reason: "no span" }
+      : propose);
+    const db = fakeDb({ claims: [D(), P()] });
+    const r = await computeDeltasForCompany(baseArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.looks_banked).toBe(1);
+    expect(db.tables.claim_delta_looks).toHaveLength(1);
+    expect(db.tables.claim_delta_looks[0].reason).toBe("span_missing");
+    expect(db.tables.claim_delta_looks[0].span_cited).toBeNull();
+    expect(db.tables.claim_delta_rejections).toHaveLength(0);
+    expect(db.tables.claim_deltas.filter((d) => d.delta_type === "echoed" || d.delta_type === "divergent")).toHaveLength(0);
+    expect(r.deltas.some((d) => d.delta_type === "publicly_silent" && d.declared_claim_id === "d1")).toBe(true);
+    expect(r.deltas.some((d) => d.delta_type === "internally_silent" && d.public_claim_id === "p1")).toBe(true);
+  });
+
+  it("(c) a chunk death (judge HTTP failure) is NOT a look: nothing banked, the pair stays fresh", async () => {
+    stubOllama((model) => (model === "llama3:70b" ? "HTTP_FAIL" : propose));
+    const db = fakeDb({ claims: [D(), P()] });
+    await expect(computeDeltasForCompany(baseArgs(db))).rejects.toThrow();   // the request dies as before
+    expect(db.tables.claim_delta_looks).toHaveLength(0);
+    expect(db.tables.claim_delta_rejections).toHaveLength(0);
+    expect(db.tables.integrity_runs.filter((i) => i.component === LOOKS_INTEGRITY_COMPONENT)).toHaveLength(0);
+    // re-plan: still fresh
+    const plan = await computeDeltasForCompany({ ...baseArgs(db), plan: true });
+    if (!plan.ok || !("plan" in plan)) throw new Error("expected plan");
+    expect(plan.claims[0]).toMatchObject({ candidates_fresh: 1, candidates_looked: 0 });
+  });
+
+  it("(d) the plan subtracts a look at the CURRENT version; a look at a lower version does not", async () => {
+    const id = await pairIdentity("evidence score visible always", "score visible on the site");
+    const look = (v: number) => ({ id: `look-${v}`, company_id: CO, content_identity: id, declared_claim_id: "d1", public_claim_id: "p1", reason: "span_not_in_observed", span_gate_version: v });
+    const cur = fakeDb({ claims: [D(), P()], claim_delta_looks: [look(SPAN_GATE_VERSION)] });
+    const p1 = await computeDeltasForCompany({ ...baseArgs(cur), plan: true });
+    if (!p1.ok || !("plan" in p1)) throw new Error("expected plan");
+    expect(p1.claims[0]).toMatchObject({ candidates_total: 1, candidates_looked: 1, candidates_fresh: 0 });
+    expect(p1.looked_total).toBe(1);
+    expect(p1.fresh_total).toBe(0);
+    const old = fakeDb({ claims: [D(), P()], claim_delta_looks: [look(SPAN_GATE_VERSION - 1)] });
+    const p2 = await computeDeltasForCompany({ ...baseArgs(old), plan: true });
+    if (!p2.ok || !("plan" in p2)) throw new Error("expected plan");
+    expect(p2.claims[0]).toMatchObject({ candidates_looked: 0, candidates_fresh: 1 });   // history under its version — re-opened
+    // and the WRITE loop skips a current-version look with no model call
+    const calls = stubOllama(() => { throw new Error("a looked pair must not be re-judged"); });
+    const r = await computeDeltasForCompany({ ...baseArgs(cur), declaredIds: ["d1"] });
+    if (!r.ok) throw new Error("expected ok");
+    expect(calls).toHaveLength(0);
+    expect(r.totals.looks_cached).toBe(1);
+    expect(r.totals.looks_banked).toBe(0);
+  });
+
+  it("(e) plan/write parity: classification order is tombstoned → cached → rejected → looked — a pair that is BOTH rejected and looked counts as rejected in the plan and is skipped by the rejection cache in the write loop", async () => {
+    const id = await pairIdentity("evidence score visible always", "score visible on the site");
+    const db = fakeDb({
+      claims: [D(), P()],
+      claim_delta_rejections: [{ id: "rej-1", company_id: CO, content_identity: id, declared_claim_id: "d1", public_claim_id: "p1", rejected_by: "proposer", gen_model: "x" }],
+      claim_delta_looks: [{ id: "look-1", company_id: CO, content_identity: id, declared_claim_id: "d1", public_claim_id: "p1", reason: "span_missing", span_gate_version: SPAN_GATE_VERSION }],
+    });
+    const plan = await computeDeltasForCompany({ ...baseArgs(db), plan: true });
+    if (!plan.ok || !("plan" in plan)) throw new Error("expected plan");
+    expect(plan.claims[0]).toMatchObject({ candidates_rejected: 1, candidates_looked: 0, candidates_fresh: 0 });
+    const calls = stubOllama(() => { throw new Error("must not be judged"); });
+    const r = await computeDeltasForCompany({ ...baseArgs(db), declaredIds: ["d1"] });
+    if (!r.ok) throw new Error("expected ok");
+    expect(calls).toHaveLength(0);
+    expect(r.totals.rejections_cached).toBe(1);
+    expect(r.totals.looks_cached).toBe(0);
+    // cached (an echoed row) also outranks a look
+    const db2 = fakeDb({
+      claims: [D(), P()],
+      claim_deltas: [{ id: "row-1", company_id: CO, content_identity: id, delta_type: "echoed", operator_disposition: null, declared_claim_id: "d1", public_claim_id: "p1" }],
+      claim_delta_looks: [{ id: "look-1", company_id: CO, content_identity: id, declared_claim_id: "d1", public_claim_id: "p1", reason: "span_missing", span_gate_version: SPAN_GATE_VERSION }],
+    });
+    const plan2 = await computeDeltasForCompany({ ...baseArgs(db2), plan: true });
+    if (!plan2.ok || !("plan" in plan2)) throw new Error("expected plan");
+    expect(plan2.claims[0]).toMatchObject({ candidates_cached: 1, candidates_looked: 0, candidates_fresh: 0 });
+  });
+
+  it("(f) the 41322cd1 shape, end to end — a6e52c6d's candidates all rejected or looked ⇒ the PLAN says fresh 0 ⇒ the packer advances past the claim to the next one", async () => {
+    // a6e52c6d ↔ 3 publics: one cached (echoed row), one rejected, one LOOKED. 1141f5a2 ↔ the same 3, all fresh.
+    const dA = declared("a6e52c6d", "our evidence score is visible on every page");
+    const dB = declared("1141f5a2", "clients get a weekly evidence score digest");
+    const pubs = [publicClaim("p1", "score visible on the site"), publicClaim("p2", "the site shows an evidence rating"), publicClaim("p3", "a score number is on the homepage")];
+    const idA1 = await pairIdentity(String(dA.statement), String(pubs[0].statement));
+    const idA2 = await pairIdentity(String(dA.statement), String(pubs[1].statement));
+    const idA3 = await pairIdentity(String(dA.statement), String(pubs[2].statement));
+    const db = fakeDb({
+      claims: [dA, dB, ...pubs],
+      claim_deltas: [{ id: "row-a1", company_id: CO, content_identity: idA1, delta_type: "echoed", operator_disposition: null, declared_claim_id: "a6e52c6d", public_claim_id: "p1" }],
+      claim_delta_rejections: [{ id: "rej-a2", company_id: CO, content_identity: idA2, declared_claim_id: "a6e52c6d", public_claim_id: "p2", rejected_by: "proposer", gen_model: "x" }],
+      claim_delta_looks: [{ id: "look-a3", company_id: CO, content_identity: idA3, declared_claim_id: "a6e52c6d", public_claim_id: "p3", reason: "span_not_in_observed", span_gate_version: SPAN_GATE_VERSION }],
+    });
+    const plan = await computeDeltasForCompany({ ...baseArgs(db), plan: true });
+    if (!plan.ok || !("plan" in plan)) throw new Error("expected plan");
+    const a = plan.claims.find((c) => c.declared_claim_id === "a6e52c6d")!;
+    expect(a).toMatchObject({ candidates_total: 3, candidates_cached: 1, candidates_rejected: 1, candidates_looked: 1, candidates_fresh: 0 });
+    expect(plan.claims.find((c) => c.declared_claim_id === "1141f5a2")).toMatchObject({ candidates_fresh: 3, candidates_looked: 0 });
+    const chunks = packDeltaChunks(plan.claims);
+    expect(chunks[0].map((c) => c.declared_claim_id)).toEqual(["1141f5a2"]);            // the livelocked claim is not chunks[0] any more
+    expect(chunks.flat().some((c) => c.declared_claim_id === "a6e52c6d")).toBe(false);   // …and is never packed at all
+    // …whereas with the look uncounted (the pre-9a manifest: fresh 1) the packer re-packs it as chunks[0] forever
+    const before = plan.claims.map((c) => c.declared_claim_id === "a6e52c6d" ? { ...c, candidates_looked: 0, candidates_fresh: 1 } : c);
+    expect(packDeltaChunks(before)[0].map((c) => c.declared_claim_id)).toEqual(["a6e52c6d"]);
+  });
+
+  it("(g) the finalize's orphan-prune deletes dead rejections and leaves every look intact", async () => {
+    const orphanLook = { id: "look-orphan", company_id: CO, content_identity: "no-longer-a-candidate", declared_claim_id: "dX", public_claim_id: "pX", reason: "span_missing", span_gate_version: SPAN_GATE_VERSION };
+    const orphanRej = { id: "rej-orphan", company_id: CO, content_identity: "dead-rejection", declared_claim_id: "dX", public_claim_id: "pX", rejected_by: "proposer", gen_model: "x" };
+    stubOllama((model) => model === "llama3:70b"
+      ? { same_subject: true, relation: "echo", confident: true, span: "cited from the declared side", reason: "wrong text" }
+      : propose);
+    const db = fakeDb({ claims: [D(), P()], claim_delta_looks: [orphanLook], claim_delta_rejections: [orphanRej] });
+    const r = await computeDeltasForCompany(baseArgs(db));   // unscoped = finalize
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.rejections_pruned).toBe(1);
+    expect(db.tables.claim_delta_rejections.some((x) => x.id === "rej-orphan")).toBe(false);
+    expect(db.tables.claim_delta_looks.some((x) => x.id === "look-orphan")).toBe(true);   // never pruned
+    expect(db.tables.claim_delta_looks).toHaveLength(2);                                   // orphan + the fresh look banked this run
   });
 });

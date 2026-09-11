@@ -14,6 +14,9 @@ export const OPERATOR_STRINGS = {
   cancel: "Cancel",
   /** Operator-only block under a statement, listing the pairs the machine struck. */
   struckBlockEyebrow: "Struck by the machine — operator view",
+  /** Gate 9a — the looks line: pairs the judge answered with a span not in the observed text (or none),
+   *  recorded as an integrity record (claim_delta_looks), never a rejection. Operator-only. */
+  looksLine: (n: number) => `${n} pair${n === 1 ? "" : "s"} looked, unverifiable with the cited span`,
   /** Who decided a machine strike, prefixed to the stored relevance_reason. */
   routerPrefix: "Router · ",
   judgePrefix: "Judge · ",
@@ -57,4 +60,5 @@ export const OPERATOR_MARK = {
   notMeetingReady: "not-meeting-ready",
   kindLabel: "kind-label",
   allCompanies: "all-companies",
+  looks: "looks",
 } as const;

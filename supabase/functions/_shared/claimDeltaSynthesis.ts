@@ -134,6 +134,9 @@ export type DeltaRunResult =
         // text (or absent) — a mechanical failure, NOT a verdict. NEVER written (no rejection,
         // no pair), so the pair stays revisitable and asserts neither echo nor no-echo.
         spans_unjudged: number;
+        // Gate 9a — looks: banked THIS call (one per deterministic span failure, duplicate-safe) and
+        // served from the look table (skipped, no model call) at the current SPAN_GATE_VERSION.
+        looks_banked: number; looks_cached: number;
         // LISTING PAIRS BY CONSTRUCTION (2026-09-04): refused listing candidates; deterministic listing pairs formed.
         listing_corroboration_refused?: number; pairs_listing?: number;
         // SELF-ECHO GATE (2026-09-03): observed candidates refused at admission — own-host backed, and
@@ -169,6 +172,8 @@ export type DeltaPlanClaim = {
   candidates_cached: number;
   candidates_tombstoned: number;
   candidates_rejected: number;
+  /** Gate 9a — pairs with a look at the current SPAN_GATE_VERSION: judged, unverifiable, subtracted. */
+  candidates_looked: number;
   candidates_fresh: number;
 };
 
@@ -181,6 +186,8 @@ export type DeltaPlanResult =
       claims: DeltaPlanClaim[];
       fresh_total: number;
       rejected_total: number;
+      /** Gate 9a — looks subtracted at the current SPAN_GATE_VERSION (visible, never silent). */
+      looked_total: number;
       // PROOF GUARD: guarded claims are absent from `claims` (the chunk packer
       // must never pack them); their exclusion is ledgered here.
       proof_guard_excluded: number;
@@ -215,6 +222,9 @@ export type DeltaComputeArgs = {
   plan?: boolean;
   // GATE B-1: which read this run computes. Default internal_vs_public.
   pairingKind?: PairingKind;
+  /** Gate 9a — the ledger row this scoped call runs under (the stepper's child id); provenance on a
+   *  look row and the run_ref of the integrity record. Absent on a manual call: looks still bank. */
+  runId?: string;
   // ROUTER (2026-08-22): injected model caller resolved by input provenance (this file forbids
   // external imports — the edge fn builds it). Structural type, no import from modelRouter. When
   // present, the pair's [declared, observed] provenances pick the model (all-public → external;
@@ -235,6 +245,8 @@ export type DeltaComputeArgs = {
 // distinguish looked / not-yet / couldn't-check from a persisted row, never from
 // an empty array. Reuses the existing integrity_runs pattern (useIntegrityRecord).
 export const GAP_PAIRS_INTEGRITY_COMPONENT = "first_read_gap_pairs";
+/** Gate 9a — the integrity component that says "we looked and could not verify" (claim_delta_looks). */
+export const LOOKS_INTEGRITY_COMPONENT = "claim_delta_looks" as const;
 
 export async function writeGapPairsIntegrity(
   supabase: { from: (t: string) => any },
@@ -427,6 +439,12 @@ const JUDGE_SYSTEM =
 // it (20 chars / 2 tokens) while single generic words cannot.
 export const MIN_SPAN_CHARS = 8;
 export const MIN_SPAN_TOKENS = 2;
+/** Gate 9a — THE span-gate criterion version. A look (claim_delta_looks) is keyed by it, so the plan
+ *  subtracts looks only at the CURRENT version. STANDING RULE: bump it when the span rule changes
+ *  (MIN_SPAN_CHARS / MIN_SPAN_TOKENS / the containment test) OR when the judge model changes — either
+ *  makes a re-look worthwhile; nothing else does (the judge is deterministic, so a plain retry under
+ *  the same criterion returns the identical wrong span). Old rows stand as history under their version. */
+export const SPAN_GATE_VERSION = 1;
 
 const normalizeSpan = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -715,6 +733,17 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   const loadedRejections = (rejRows ?? []) as RejRow[];
   const rejectionByIdentity = new Map<string, string>(loadedRejections.map((r) => [r.content_identity, r.id]));
 
+  // Gate 9a — LOOKS at the CURRENT span-gate version (kind-scoped). A look is the fourth class the
+  // plan subtracts and the write loop skips: judged under this criterion, unverifiable, not a verdict.
+  // Older versions are history and do not load — that is what re-opens a pair on a criterion bump.
+  const { data: lookRows } = await args.supabase
+    .from("claim_delta_looks")
+    .select("content_identity")
+    .eq("company_id", args.companyId)
+    .eq("pairing_kind", pairingKind)
+    .eq("span_gate_version", SPAN_GATE_VERSION);
+  const lookedIdentities = new Set<string>(((lookRows ?? []) as Array<{ content_identity: string }>).map((r) => r.content_identity));
+
   // OPERATOR RELEVANCE OVERRIDES (2026-09-03): live decisions by pair identity, so a pair row born this
   // run for an overridden identity carries the operator's relevance columns (see overrideColumnsFor).
   const { data: ovRows } = await args.supabase
@@ -768,8 +797,9 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   if (args.plan) {
     const planClaims: DeltaPlanClaim[] = [];
     let freshTotal = 0, rejectedTotal = 0;
+    let lookedTotal = 0;
     for (const d of declaredScope) {
-      let total = 0, cached = 0, tombstoned = 0, rejected = 0;
+      let total = 0, cached = 0, tombstoned = 0, rejected = 0, looked = 0;
       for (const p of publics) {
         // LISTING PAIRS BY CONSTRUCTION — plan/write PARITY: the SAME predicate call, in the SAME position as the
         // write loop. Refused listing candidates are not candidates at all (never fresh); admitted ones are a
@@ -787,21 +817,25 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         if (sharedTokenCount(d.statement, p.statement) < PREFILTER_MIN_SHARED_TOKENS) continue;
         total++;
         const identity = await pairIdentity(d.statement, p.statement);
-        // Classification order (signed): tombstoned → cached → rejected → fresh.
+        // Classification order (signed): tombstoned → cached → rejected → looked → fresh. The write
+        // loop skips in the SAME order (tombstone, kept row, rejection cache, look) — plan/write parity.
         if (tombstones.has(identity)) { tombstoned++; continue; }
         const kept = existing.get(identity);
         if (kept && (kept.delta_type === "echoed" || kept.delta_type === "divergent")) { cached++; continue; }
-        if (rejectionByIdentity.has(identity)) rejected++;
+        if (rejectionByIdentity.has(identity)) { rejected++; continue; }
+        if (lookedIdentities.has(identity)) looked++;
       }
-      const fresh = total - cached - tombstoned - rejected;
+      const fresh = total - cached - tombstoned - rejected - looked;
       freshTotal += fresh;
       rejectedTotal += rejected;
+      lookedTotal += looked;
       planClaims.push({
         declared_claim_id: d.id,
         candidates_total: total,
         candidates_cached: cached,
         candidates_tombstoned: tombstoned,
         candidates_rejected: rejected,
+        candidates_looked: looked,
         candidates_fresh: fresh,
       });
     }
@@ -813,6 +847,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       claims: planClaims,
       fresh_total: freshTotal,
       rejected_total: rejectedTotal,
+      looked_total: lookedTotal,
       proof_guard_excluded: proofGuardExcludedIds.length,
       proof_guard_excluded_ids: proofGuardExcludedIds,
     };
@@ -825,6 +860,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     rows_new: 0, rows_kept: 0, rows_deleted: 0, tombstones_respected: 0,
     rejections_cached: 0, rejections_pruned: 0,
     spans_unjudged: 0,
+    looks_banked: 0, looks_cached: 0,
     self_voice_excluded: selfVoiceExcluded,
     own_host_excluded: ownHostExcluded,
     unbacked_excluded: unbackedExcluded,
@@ -869,6 +905,34 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       throw new Error(`claim-delta rejection insert failed: ${rejErr.message}`);
     }
     rejectionByIdentity.set(identity, "");
+  };
+
+  // Gate 9a — the look. Written at ONE branch (the deterministic span failure below) and nowhere else.
+  // Not a rejection: no reader of claim_delta_rejections or claim_deltas ever sees it. Idempotent on
+  // the version-scoped unique key exactly as bankRejection is on its cache key.
+  const bankLook = async (
+    d: DeltaClaim, p: DeltaClaim, identity: string,
+    reason: "span_not_in_observed" | "span_missing", judgeModelUsed: string | null, spanCited: string | undefined,
+  ) => {
+    if (!args.write || lookedIdentities.has(identity)) return;
+    const { error: lookErr } = await args.supabase.from("claim_delta_looks").insert({
+      company_id: args.companyId,
+      pairing_kind: pairingKind,
+      content_identity: identity,
+      declared_claim_id: d.id,
+      public_claim_id: p.id,
+      reason,
+      judge_model: judgeModelUsed,
+      span_cited: spanCited ? spanCited.slice(0, 400) : null,
+      span_gate_version: SPAN_GATE_VERSION,
+      looked_at: args.nowIso,
+      run_id: args.runId ?? null,
+    });
+    if (lookErr && !/duplicate key|unique constraint/i.test(lookErr.message)) {
+      throw new Error(`claim-delta look insert failed: ${lookErr.message}`);
+    }
+    lookedIdentities.add(identity);
+    totals.looks_banked++;
   };
 
   const deltas: ComputedDelta[] = [];
@@ -954,6 +1018,15 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         continue;
       }
 
+      // Gate 9a — a LOOK at the current criterion: judged, unverifiable, and deterministic — a
+      // re-ask returns the identical wrong span, so the pair is skipped (no model call) until the
+      // criterion changes. Like the rejection skip it does NOT touch pairedDeclared/pairedPublic: the
+      // claims stay on their silence rails.
+      if (lookedIdentities.has(identity)) {
+        totals.looks_cached++;
+        continue;
+      }
+
       // Stage 2a: proposer — ROUTER picks qwen14b (local) or gpt-4.1-mini (external) by the pair's
       // provenances. internal_declared declared side → local (never leaves the machine).
       const pairProv = [d.provenance, p.provenance];
@@ -990,7 +1063,14 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         // QUESTION, which is honest (we have not confirmed an echo), and is recomputed fresh each
         // run rather than frozen. A deterministic re-ask (temp 0, seed 42) returns the identical
         // wrong span, so a plain retry is pointless — recording it unjudged is the only honest move.
+        //
+        // Gate 9a (operator ruling 2026-09-11): "recorded nowhere" was the livelock — the plan could
+        // not subtract the pair, re-packed it as chunks[0], and the deterministic judge failed it
+        // identically every pass (Edgewood 41322cd1; ~190 passes on 2026-08-21). So the LOOK is
+        // recorded here — an integrity record, not a verdict: the pair is subtracted at this
+        // criterion version and re-opened only by a version bump. Silence rails unchanged.
         totals.spans_unjudged++;
+        await bankLook(d, p, identity, spanVerdict === "no_span" ? "span_missing" : "span_not_in_observed", judgeRes.model, judged.span);
         continue;
       }
       if (spanVerdict === "below_minimum") {
@@ -1151,6 +1231,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     // construction and are untouched. Operator tombstones live in claim_deltas
     // and are not in scope here at all. Content change needs no prune to
     // invalidate (new identity ⇒ cache miss); this is purely hygiene.
+    // Gate 9a: claim_delta_looks is NOT pruned here (or anywhere) — a look is history under its version.
     const orphanRejections = loadedRejections.filter((r) => !candidateIdentities.has(r.content_identity));
     if (orphanRejections.length > 0) {
       // Batch the delete — a large id list in a single .in() overruns PostgREST's URI limit.
@@ -1183,6 +1264,26 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         },
       });
     }
+  }
+
+  // Gate 9a — "we looked": one integrity record per worker call that banked ≥1 look. The count rides
+  // `examined`; the per-call detail rides excluded_by_rule. Never written for zero looks, so an
+  // absence of the row means nothing was unverifiable, not that no run happened.
+  if (args.write && totals.looks_banked > 0) {
+    const { error: lookIntErr } = await args.supabase.from("integrity_runs").insert({
+      company_id: args.companyId,
+      component: LOOKS_INTEGRITY_COMPONENT,
+      surface_type: null,
+      surface_id: null,
+      ran_at: args.nowIso,
+      status: "completed",
+      examined: totals.looks_banked,
+      admitted: null,
+      excluded_by_rule: { looks_banked: totals.looks_banked, pairing_kind: pairingKind, span_gate_version: SPAN_GATE_VERSION },
+      error: null,
+      run_ref: args.runId ?? args.nowIso,
+    });
+    if (lookIntErr) throw new Error(`claim-delta looks integrity insert failed: ${lookIntErr.message}`);
   }
 
   return { ok: true, scoped, deltas, totals, proof_guard_excluded_ids: proofGuardExcludedIds };
