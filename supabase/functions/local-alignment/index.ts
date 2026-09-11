@@ -807,6 +807,7 @@ Deno.serve(async (req) => {
           .from("odi_market_definitions")
           .select("id,job_executor,chooser,jtbd,source_path,updated_at,created_at")
           .eq("company_id", companyId)
+          .eq("retracted", false)   // Gate 8b: a retracted def makes no public claim
           .order("updated_at", { ascending: false })
           .limit(1)
           .maybeSingle(),

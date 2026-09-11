@@ -164,7 +164,7 @@ describe("marketCandidateAccounted", () => {
   it("(7c-b) a written public def with NO outcome row is decided but NOT accounted", async () => {
     const f = await midFlight();
     f.odi_market_definitions = [{
-      company_id: COMPANY, job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "public_inferred",
+      company_id: COMPANY, job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "public_inferred", retracted: false,
     }];
     expect(await decided(f)).toBe(true);
     expect(await accounted(f)).toBe(false);
@@ -178,7 +178,7 @@ describe("marketCandidateAccounted", () => {
   it("(c'-neg) an INTERNAL-register def under the same executor is not a public write", async () => {
     const f = await midFlight();
     f.odi_market_definitions = [{
-      company_id: COMPANY, job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "internal_inferred",
+      company_id: COMPANY, job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "internal_inferred", retracted: false,
     }];
     expect(await accounted(f)).toBe(false);
   });
@@ -187,7 +187,7 @@ describe("marketCandidateAccounted", () => {
     const f = await midFlight();
     f.odi_market_definitions = [{
       company_id: "00000000-0000-0000-0000-000000000000",
-      job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "public_inferred",
+      job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "public_inferred", retracted: false,
     }];
     expect(await accounted(f)).toBe(false);
   });
@@ -250,7 +250,7 @@ describe("marketCandidateAccounted", () => {
   });
   it("(g5b) a written def (clause 1) is UNVERSIONED — a v1 def still DECIDES under v2 (and, since 7c, never accounts)", async () => {
     const f = await midFlight();
-    f.odi_market_definitions = [{ company_id: COMPANY, job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "public_inferred" }];
+    f.odi_market_definitions = [{ company_id: COMPANY, job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "public_inferred", retracted: false }];
     expect(await decided(f)).toBe(true);
     expect(await accounted(f)).toBe(false);
   });
@@ -276,9 +276,29 @@ describe("marketCandidateAccounted", () => {
     const second = { job_executor: EXECUTOR, jtbd: "A different job, same executor." };
     const f = await midFlight();
     f.odi_market_definitions = [{
-      company_id: COMPANY, job_executor: EXECUTOR, jtbd: ORIGINAL_JTBD, market_register: "public_inferred",
+      company_id: COMPANY, job_executor: EXECUTOR, jtbd: ORIGINAL_JTBD, market_register: "public_inferred", retracted: false,
     }];
     expect(await decided(f, second)).toBe(true);
     expect(await accounted(f, second)).toBe(false);
+  });
+
+  // ── Gate 8a/8b — blind rows and retracted defs do not decide ──────────────────────────────────
+  // RED ON REVERT. Gotham 33c915e6 #1 was ruled blind (no offering read at judge time), filed
+  // accepted_active, and clause (3) held it decided forever; its def held clause (1) the same way.
+  it("(8a) a BLIND outcome row (inputs_complete=false) does NOT decide; the same row complete does", async () => {
+    const identity = await marketIdentity(EXECUTOR, ORIGINAL_JTBD);
+    const f = await midFlight();
+    f.market_candidate_outcomes = [{ company_id: COMPANY, original_identity: identity, outcome: "accepted_active", criterion_version: CRITERION_VERSION, inputs_complete: false }];
+    expect(await decided(f)).toBe(false);
+    expect(await accounted(f)).toBe(true);      // still the candidate's own filed terminal — the poll may advance
+    f.market_candidate_outcomes[0].inputs_complete = true;
+    expect(await decided(f)).toBe(true);
+  });
+  it("(8b) a RETRACTED public def under the executor does NOT decide; unretracted it does", async () => {
+    const f = await midFlight();
+    f.odi_market_definitions = [{ company_id: COMPANY, job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "public_inferred", retracted: true }];
+    expect(await decided(f)).toBe(false);
+    f.odi_market_definitions[0].retracted = false;
+    expect(await decided(f)).toBe(true);
   });
 });

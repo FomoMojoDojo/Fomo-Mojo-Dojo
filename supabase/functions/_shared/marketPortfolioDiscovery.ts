@@ -350,7 +350,11 @@ async function loadDedupUniverse(supabase: DiscoveryComputeArgs["supabase"], com
   const { data, error } = await supabase
     .from("odi_market_definitions")
     .select("id, journey_key, job_executor, jtbd, user_id, market_register")
-    .eq("company_id", companyId);
+    .eq("company_id", companyId)
+    // Gate 8b — a RETRACTED def (ruled blind, then retracted by the operator) is history, not a
+    // market: it must not fold its own complete re-judge at gate (c), and it must not count against
+    // MAX_ACTIVE. The dedup universe is the one place both facts are decided.
+    .eq("retracted", false);
   if (error) throw new Error(`market defs load failed: ${error.message}`);
   const out: ExistingDef[] = [];
   for (const row of (data ?? []) as Array<{ id: string; journey_key: string; job_executor: string; jtbd: string; user_id: string; market_register: string }>) {
@@ -702,8 +706,11 @@ export async function computeMarketDiscovery(
       .eq("company_id", args.companyId)
       .like("journey_key", `${PUBLIC_KEY_PREFIX}%`);
     if (lensLoadErr) return { ok: false, error: `market_lens load failed: ${lensLoadErr.message}` };
-    let activeDiscovered = ((lensRows ?? []) as Array<{ portfolio_state: string }>)
-      .filter((l) => l.portfolio_state === "active").length;
+    // Gate 8b: a retracted def's lens row is left untouched (still 'active'), so the capacity count
+    // is taken over lens rows whose def is in the (unretracted) universe, never over the lens alone.
+    const liveKeys = new Set(universe.map((d) => d.journey_key));
+    let activeDiscovered = ((lensRows ?? []) as Array<{ journey_key: string; portfolio_state: string }>)
+      .filter((l) => l.portfolio_state === "active" && liveKeys.has(l.journey_key)).length;
 
     // The DECIDED probe, in the same equality shape the confirm-poll uses (one authority, one rule).
     const decidedProbe: ExistsProbe = async (table, match) => {
@@ -768,6 +775,9 @@ export async function computeMarketDiscovery(
         // rewritten first-hand.
         reconstructed: false,
         criterion_version: CRITERION_VERSION,
+        // Gate 8a — same meaning as the verdict store (Gate 6e): did the judge see a solution line?
+        // A row stamped false is filed (the poll may advance) but is neither decided nor THE ruling.
+        inputs_complete: solutionLine.length > 0,
       };
       if (!args.write) { wouldFile.push(row); return null; }   // dry run: the ruling is returned, never written
       if (row.outcome === "already_decided") {
@@ -797,6 +807,11 @@ export async function computeMarketDiscovery(
     // in a manifest. A chunk of two, or a call with no run_id, ignores it, so the stepper's ordinary
     // path (which never sets it) and every other candidate's decided-skip are untouched.
     const rejudge = args.rejudge === true && args.candidates!.length === 1 && !!args.runId;
+    // Gate 8a — a re-judge exists to replace a BLIND ruling with a complete one. Minting another
+    // blind ruling on purpose is the one thing it must never do, so it refuses before any judge call.
+    if (rejudge && solutionLine.length === 0) {
+      return { ok: false, error: "offering read absent — refusing a blind re-judge" };
+    }
 
     for (const original of args.candidates!) {
       totals.requested++;
@@ -899,6 +914,19 @@ export async function computeMarketDiscovery(
         const ownerUserId = resolveDefOwner(liveUniverse, companyCreator);
         if (!ownerUserId) return { ok: false, error: "no owning user_id resolvable (no def, no company creator) — refusing to write" };
         if (args.write) {
+          // Gate 8b (operator ruling, option ii) — LENS KEY REUSE. A retracted def keeps its lens row
+          // (lens untouched by retraction), so the complete re-judge that takes the clean journey_key
+          // meets a lens row already holding that key. Reuse it — upsert state/role to the new ruling
+          // — ONLY when the def holding the key is retracted. A LIVE def holding the key is refused
+          // before any write: liveUniverse's collision check yields `-2` for live keys, so this branch
+          // is unreachable by construction, and the guard is what proves it stays so.
+          const { data: priorLens } = await args.supabase.from("market_lens")
+            .select("id").eq("company_id", args.companyId).eq("journey_key", journeyKey).limit(1).maybeSingle();
+          if (priorLens) {
+            const { data: liveHolder } = await args.supabase.from("odi_market_definitions")
+              .select("id").eq("company_id", args.companyId).eq("journey_key", journeyKey).eq("retracted", false).limit(1).maybeSingle();
+            if (liveHolder) return { ok: false, error: "lens key held by a live definition" };
+          }
           const { error: defErr } = await args.supabase.from("odi_market_definitions").insert({
             company_id: args.companyId,
             user_id: ownerUserId,
@@ -918,14 +946,17 @@ export async function computeMarketDiscovery(
             updated_at: args.nowIso,
           });
           if (defErr) return { ok: false, error: `market def insert failed: ${defErr.message}` };
-          const { error: lensErr } = await args.supabase.from("market_lens").insert({
+          const lensRow = {
             company_id: args.companyId,
             journey_key: journeyKey,
             title: cand.job_executor,
             portfolio_state: lensState,
             portfolio_role: "support", // choosing is promotion — never chosen here
-          });
-          if (lensErr) return { ok: false, error: `market lens insert failed: ${lensErr.message}` };
+          };
+          const { error: lensErr } = priorLens
+            ? await args.supabase.from("market_lens").upsert([lensRow], { onConflict: "company_id,journey_key" })
+            : await args.supabase.from("market_lens").insert(lensRow);
+          if (lensErr) return { ok: false, error: `market lens ${priorLens ? "upsert" : "insert"} failed: ${lensErr.message}` };
           totals.defs_written++;
         }
         liveUniverse.push({

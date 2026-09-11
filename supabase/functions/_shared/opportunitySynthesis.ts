@@ -15,6 +15,7 @@
 // A2-1 scope: dry-run ONLY (write:false). The reconcile/insert writer to odi_needs
 // under internal_declared is A2-2. No route to OpenAI / mojo_opps_v1 (local only).
 
+import { journeyIsRetracted, RETRACTED_MARKET_SKIP } from "./retractedMarket.ts";
 import { buildExecutorBrief, buildOrgNameGuard, FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { judgeOpportunityLikelihood, type LikelihoodBand } from "./opportunityLikelihoodJudge.ts";
 import { planReconcile } from "./reconcilePublicSynthesis.ts";
@@ -464,7 +465,7 @@ export async function writeDeclaredOpportunities(args: {
 
 export type SetOpportunitiesResult =
   | { ok: true; result: OppSynthesisResult; write?: DeclaredWriteResult }
-  | { ok: false; skipped: "frozen_company" | "no_steps" | "non_writable_provenance"; provenances?: string[] }
+  | { ok: false; skipped: "frozen_company" | "no_steps" | "non_writable_provenance" | "retracted_market"; provenances?: string[] }
   | { ok: false; error: string };
 
 export async function generateOpportunitiesForSet(args: {
@@ -502,13 +503,16 @@ export async function generateOpportunitiesForSet(args: {
     return { ok: false, skipped: "non_writable_provenance", provenances };
   }
 
+  // Gate 8b: a retracted market resolves, but nothing is synthesised from it.
+  if (await journeyIsRetracted(args.supabase, args.companyId, args.journeyKey)) return { ok: false, skipped: RETRACTED_MARKET_SKIP };
   let { data: md } = await args.supabase
     .from("odi_market_definitions").select("job_executor, jtbd")
     .eq("company_id", args.companyId).eq("journey_key", args.journeyKey).maybeSingle();
   if (!md) {
     const { data: anyMd } = await args.supabase
       .from("odi_market_definitions").select("job_executor, jtbd")
-      .eq("company_id", args.companyId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      .eq("company_id", args.companyId).eq("retracted", false)   // Gate 8b: never fall back onto a retracted def
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
     md = anyMd ?? null;
   }
 

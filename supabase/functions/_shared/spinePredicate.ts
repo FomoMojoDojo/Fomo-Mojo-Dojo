@@ -16,7 +16,7 @@ async function tableHasRow(
   supabase: SupabaseLike,
   table: string,
   companyId: string,
-  extraEq?: [string, string],
+  extraEq?: [string, string | boolean],
 ): Promise<boolean> {
   let q = supabase.from(table).select("id").eq("company_id", companyId);
   if (extraEq) q = q.eq(extraEq[0], extraEq[1]);
@@ -31,6 +31,7 @@ export async function companyHasSpine(supabase: SupabaseLike, companyId: string)
   if (await tableHasRow(supabase, "job_steps", companyId)) return true;
   if (await tableHasRow(supabase, "positioning_canvases", companyId)) return true;
   if (await tableHasRow(supabase, "strategy_cascades", companyId)) return true;
-  if (await tableHasRow(supabase, "odi_market_definitions", companyId)) return true;
+  // Gate 8b: a retracted def is not a birth output — it does not make a spine.
+  if (await tableHasRow(supabase, "odi_market_definitions", companyId, ["retracted", false])) return true;
   return false;
 }

@@ -447,8 +447,10 @@ export default function ClientRefinePreviewWorkshopView() {
     void (async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sb = supabase as any;
-      const hasRow = async (table: string) => {
-        const { count } = await sb.from(table).select("id", { count: "exact", head: true }).eq("company_id", cid);
+      const hasRow = async (table: string, also: Record<string, boolean> = {}) => {
+        let q = sb.from(table).select("id", { count: "exact", head: true }).eq("company_id", cid);
+        for (const [col, val] of Object.entries(also)) q = q.eq(col, val);
+        const { count } = await q;
         return (count ?? 0) > 0;
       };
       try {
@@ -461,7 +463,7 @@ export default function ClientRefinePreviewWorkshopView() {
           || await hasRow("job_steps")
           || await hasRow("positioning_canvases")
           || await hasRow("strategy_cascades")
-          || await hasRow("odi_market_definitions");
+          || await hasRow("odi_market_definitions", { retracted: false });   // Gate 8b: a retracted def is no spine
         if (!cancelled) setCompanyHasSpine(found);
       } catch {
         // Unknown stays unknown — never report "no spine" on a failed read, or the
@@ -1146,10 +1148,13 @@ export default function ClientRefinePreviewWorkshopView() {
     let cancelled = false;
     (async () => {
       const sb = supabase as unknown as { from: (t: string) => ReturnType<typeof supabase.from> };
-      const { data } = await sb.from("odi_market_definitions").select("journey_key, job_executor, jtbd, provenance_type").eq("company_id", companyId);
+      // Gate 8b: client-shaped list — retracted defs are history and stay out of it. (Filtered on the
+      // returned rows: one more `.eq` on this file's `sb` cast trips TS2589, as the two below already do.)
+      const { data } = await sb.from("odi_market_definitions").select("journey_key, job_executor, jtbd, provenance_type, retracted").eq("company_id", companyId);
       if (cancelled) return;
       const map: Record<string, { journey_key?: string | null; job_executor?: string | null; jtbd?: string | null; provenance_type?: string | null }> = {};
-      for (const r of ((data as Array<{ journey_key?: string | null }>) ?? [])) {
+      for (const r of ((data as Array<{ journey_key?: string | null; retracted?: boolean | null }>) ?? [])) {
+        if (r.retracted === true) continue;
         if (r.journey_key) map[String(r.journey_key)] = r as { journey_key?: string | null; job_executor?: string | null; jtbd?: string | null; provenance_type?: string | null };
       }
       setMarketDefsByKey(map);

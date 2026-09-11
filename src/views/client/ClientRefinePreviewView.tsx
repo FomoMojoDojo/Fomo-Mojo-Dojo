@@ -310,6 +310,7 @@ export default function ClientRefinePreviewView() {
       .from("odi_market_definitions")
       .select("*")
       .eq("company_id", activeCompany.id)
+      .eq("retracted", false)   // Gate 8b: client-shaped list — a retracted def is history, not a market
       .order("updated_at", { ascending: false })
       .then(({ data }) => { setAllMarketDefs((data as OdiMarketDefinitionRow[]) ?? []); });
   }, [activeCompany?.id, hasHierarchy]);

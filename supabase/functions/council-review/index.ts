@@ -1238,12 +1238,14 @@ async function fetchRowsOptional(
   table: string,
   companyId: string,
   limit = 300,
+  also: Record<string, string | number | boolean> = {},
 ) {
-  const { data, error } = await supabase
+  let q = supabase
     .from(table)
     .select("*")
-    .eq("company_id", companyId)
-    .limit(limit);
+    .eq("company_id", companyId);
+  for (const [col, val] of Object.entries(also)) q = q.eq(col, val);
+  const { data, error } = await q.limit(limit);
 
   if (error) {
     if (isMissingTableError(error)) return [];
@@ -1527,7 +1529,8 @@ Deno.serve(async (req) => {
       ),
       fetchRowsOptional(serviceClient, "strategy_problem_statements", companyId, 200),
       fetchRowsOptional(serviceClient, "strategy_assumptions", companyId, 200),
-      fetchRowsOptional(serviceClient, "odi_market_definitions", companyId, 50),
+      // Gate 8b: a retracted def is history — it must not reach the council as a live market.
+      fetchRowsOptional(serviceClient, "odi_market_definitions", companyId, 50, { retracted: false }),
       fetchRowsOptional(serviceClient, "odi_needs", companyId, 500),
       fetchRowsOptional(serviceClient, "deep_dive_analyses", companyId, 200),
     ]);

@@ -913,7 +913,10 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           .from("odi_market_definitions")
           .select("id, journey_key, job_executor, jtbd, relationship_kind, market_register, created_at, updated_at")
           .eq("company_id", companyId)
-          .in("market_register", ["public_inferred", "publicly_declared"]);
+          .in("market_register", ["public_inferred", "publicly_declared"])
+          // Gate 8b: a retracted def (ruled blind, retracted by the operator) is not a group we serve.
+          // It vanishes from this list; nothing renders in its place (operator ruling — no interim copy).
+          .eq("retracted", false);
         const mdAll = (mdRows ?? []) as Array<{
           id: string; journey_key: string | null; job_executor: string | null; jtbd: string | null;
           relationship_kind: string | null;

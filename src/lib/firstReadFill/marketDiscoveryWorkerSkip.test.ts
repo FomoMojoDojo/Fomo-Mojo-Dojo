@@ -20,6 +20,7 @@ import {
 // CANDIDATE_ERROR_COMPONENT lives beside the WRITER (the discovery loop's catch), not the reader.
 import {
   marketIdentity,
+  sameMarketKey,
   CANDIDATE_ERROR_COMPONENT,
 } from "../../../supabase/functions/_shared/marketPortfolioDiscovery.ts";
 import { CRITERION_VERSION, solutionAgnosticKey } from "../../../supabase/functions/_shared/solutionAgnosticJudge.ts";
@@ -111,7 +112,7 @@ describe("worker skips DECIDED candidates (Gate 3b)", () => {
         // The reframe-rescued def: SAME executor, DIFFERENT jtbd — the shape that a re-judge duplicates.
         { id: "d1", company_id: COMPANY, journey_key: "pmk-quantum-software-developers",
           job_executor: EXECUTOR, jtbd: "To develop reliable quantum applications.",
-          user_id: "u1", market_register: "public_inferred" },
+          user_id: "u1", market_register: "public_inferred", retracted: false },
       ],
       market_discovery_verdicts: [],
       market_lens: [],
@@ -180,7 +181,7 @@ describe("decided vs accounted (Gate 3b split)", () => {
   it("(b2) a DECIDED candidate (def only) is decided but NOT accounted until its row exists", async () => {
     const identity = await marketIdentity(EXECUTOR, JTBD);
     const tables: Record<string, Row[]> = {
-      odi_market_definitions: [{ company_id: COMPANY, job_executor: EXECUTOR, market_register: "public_inferred" }],
+      odi_market_definitions: [{ company_id: COMPANY, job_executor: EXECUTOR, market_register: "public_inferred", retracted: false }],
       market_discovery_verdicts: [], integrity_runs: [], market_candidate_outcomes: [],
     };
     const args = { exists: probeOver(tables), companyId: COMPANY, candidate: CANDIDATE };
@@ -207,7 +208,7 @@ describe("finalize keeps verdicts (Gate 3b)", () => {
   it("(c) a verdict whose identity is NOT a live def is left in place", async () => {
     const orphan = await marketIdentity(EXECUTOR, JTBD);
     const liveDef = { id: "d1", company_id: COMPANY, journey_key: "pmk-live", job_executor: "Someone else",
-      jtbd: "Some job.", user_id: "u1", market_register: "public_inferred" };
+      jtbd: "Some job.", user_id: "u1", market_register: "public_inferred", retracted: false };
     const liveIdentity = await marketIdentity(liveDef.job_executor, liveDef.jtbd);
     const fake = fakeSupabase({
       companies: [{ id: COMPANY, name: "Riverlane" }],
@@ -241,8 +242,8 @@ describe("per-candidate outcomes are persisted at each candidate's terminal (Gat
     const tables: Record<string, Row[]> = {
       companies: [{ id: COMPANY, name: "Riverlane" }],
       odi_market_definitions: [
-        { id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: CANDIDATE.job_executor, jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" },
-        { id: "d2", company_id: COMPANY, journey_key: "pmk-y", job_executor: SECOND.job_executor, jtbd: "Reframed too.", user_id: "u1", market_register: "public_inferred" },
+        { id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: CANDIDATE.job_executor, jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred", retracted: false },
+        { id: "d2", company_id: COMPANY, journey_key: "pmk-y", job_executor: SECOND.job_executor, jtbd: "Reframed too.", user_id: "u1", market_register: "public_inferred", retracted: false },
       ],
       market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
     };
@@ -283,7 +284,7 @@ describe("per-candidate outcomes are persisted at each candidate's terminal (Gat
     const fake = fakeSupabase({
       companies: [{ id: COMPANY, name: "Riverlane" }],
       odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
-        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred", retracted: false }],
       market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
     });
     const res = await computeMarketDiscovery({ ...writeArgs(fake.client), candidates: [CANDIDATE] });
@@ -305,7 +306,7 @@ describe("per-candidate outcomes are persisted at each candidate's terminal (Gat
     const fake = fakeSupabase({
       companies: [{ id: COMPANY, name: "Riverlane" }],
       odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
-        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred", retracted: false }],
       market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
     });
     await computeMarketDiscovery({ ...writeArgs(fake.client, { candidateOffset: 4 }), candidates: [CANDIDATE] });
@@ -320,7 +321,7 @@ describe("per-candidate outcomes are persisted at each candidate's terminal (Gat
     const fake = fakeSupabase({
       companies: [{ id: COMPANY, name: "Riverlane" }],
       odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
-        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred", retracted: false }],
       market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
     }, { failUpsert: true });
     const res = await computeMarketDiscovery({ ...writeArgs(fake.client), candidates: [CANDIDATE] });
@@ -333,7 +334,7 @@ describe("per-candidate outcomes are persisted at each candidate's terminal (Gat
     const tables: Record<string, Row[]> = {
       companies: [{ id: COMPANY, name: "Riverlane" }],
       odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
-        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred", retracted: false }],
       market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
     };
     const fake = fakeSupabase(tables);
@@ -346,7 +347,7 @@ describe("per-candidate outcomes are persisted at each candidate's terminal (Gat
     const fake = fakeSupabase({
       companies: [{ id: COMPANY, name: "Riverlane" }],
       odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
-        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred", retracted: false }],
       market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
     });
     const res = await computeMarketDiscovery({ ...baseArgs(fake.client), write: true, candidates: [CANDIDATE] });
@@ -364,7 +365,7 @@ describe("already_decided never overwrites a terminal outcome (Gate 4d)", () => 
   const decidedTables = (existingOutcome: string | null): Record<string, Row[]> => ({
     companies: [{ id: COMPANY, name: "Riverlane" }],
     odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
-      jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+      jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred", retracted: false }],
     market_discovery_verdicts: [], market_lens: [],
     market_candidate_outcomes: existingOutcome
       ? [{ run_id: RUN, candidate_index: 1, company_id: COMPANY, outcome: existingOutcome, reconstructed: true, criterion_version: CRITERION_VERSION }]
@@ -430,7 +431,7 @@ describe("a v2 write never touches a v1 row (Gate 5c)", () => {
   const tablesWith = (extra: Row[]): Record<string, Row[]> => ({
     companies: [{ id: COMPANY, name: "Riverlane" }],
     odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
-      jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+      jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred", retracted: false }],
     market_discovery_verdicts: [], market_lens: [],
     market_candidate_outcomes: [{ ...V1_ROW }, ...extra],
   });
@@ -525,6 +526,8 @@ describe("rejudge re-enters the gate chain for one positioned candidate (Gate 7f
       criterion_version: CRITERION_VERSION, inputs_complete: true,
     }))),
     market_lens: [], market_candidate_outcomes: [], integrity_runs: [],
+    // Gate 8a: a rejudge REFUSES to run blind, so the fixture carries the offering read the v2 judge needs.
+    public_reads: [{ company_id: COMPANY, kind: "offering", is_current: true, payload: { items: [{ kind_hint: "product", label: "CoreViva Score", statement: "A brain and body health score." }] } }],
   });
   // No live model in tests: the reframe call (the first fresh model call on this path) fails loudly,
   // which lands the candidate on the honest error terminal — enough to prove the chain was ENTERED
@@ -602,5 +605,192 @@ describe("rejudge re-enters the gate chain for one positioned candidate (Gate 7f
     expect(fake.inserts).toHaveLength(0);                                   // no verdict, no def, no error terminal
     expect(res.would_file).toHaveLength(1);                                 // the row it WOULD have filed
     expect(res.would_file![0]).toMatchObject({ run_id: RUN, candidate_index: 4, outcome: "error", reconstructed: false });
+  });
+});
+
+// ── Gate 8a/8b — inputs_complete on the row; retracted defs leave the universe ───────────────────
+describe("inputs_complete stamped from the solution line; retracted defs are not markets (Gate 8a/8b)", () => {
+  const RUN = "33c915e6-a7e3-410e-a16c-3376e683e3c5";
+  const OFFERING = { company_id: COMPANY, kind: "offering", is_current: true, payload: { items: [{ kind_hint: "product", label: "CoreViva Score", statement: "A brain and body health score." }] } };
+  const decidedTables = (withOffering: boolean): Record<string, Row[]> => ({
+    companies: [{ id: COMPANY, name: "Gotham" }],
+    odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR, jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred", retracted: false }],
+    market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
+    public_reads: withOffering ? [OFFERING] : [],
+  });
+
+  // (c) RED ON REVERT: the old row had no inputs_complete at all.
+  it("(8a-c) fileOutcome stamps inputs_complete=true with an offering read and false without", async () => {
+    for (const [withOffering, expected] of [[true, true], [false, false]] as const) {
+      const fake = fakeSupabase(decidedTables(withOffering));
+      const res = await computeMarketDiscovery({ ...baseArgs(fake.client), write: true, runId: RUN, candidateOffset: 0, candidates: [CANDIDATE] });
+      expect(res.ok).toBe(true);
+      const up = fake.upserts.find((u) => u.table === "market_candidate_outcomes")!;
+      expect(up.rows[0].inputs_complete).toBe(expected);
+    }
+    // and the dry run shows it the same way
+    const fake = fakeSupabase(decidedTables(false));
+    const res = await computeMarketDiscovery({ ...baseArgs(fake.client), write: false, runId: RUN, candidateOffset: 0, candidates: [CANDIDATE] });
+    if (!res.ok || res.scoped !== true) throw new Error("expected scoped");
+    expect(res.would_file![0].inputs_complete).toBe(false);
+  });
+
+  // (d) RED ON REVERT: without the refusal the rejudge ran blind and would have minted a second blind ruling.
+  it("(8a-d) rejudge with NO offering read refuses before any judge call: ok:false, zero model calls, zero writes", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("must not be called"));
+    const identity = await marketIdentity(EXECUTOR, JTBD);
+    const fake = fakeSupabase({
+      companies: [{ id: COMPANY, name: "Gotham" }], odi_market_definitions: [], market_lens: [], market_candidate_outcomes: [], integrity_runs: [],
+      step_perspective_verdicts: [{ company_id: COMPANY, content_hash: await sha256Hex(normalizeForHash(JTBD)), verdict: "buyer" }],
+      market_discovery_verdicts: [{ id: "v", company_id: COMPANY, pair_identity: await solutionAgnosticKey(EXECUTOR, JTBD), verdict_kind: "solution_agnostic", market_a_identity: identity, market_b_identity: null, verdict: "accepted", judge_reason: "blind", criterion_version: CRITERION_VERSION, inputs_complete: false }],
+      public_reads: [],   // no offering read
+    });
+    const res = await computeMarketDiscovery({ ...baseArgs(fake.client), write: true, runId: RUN, candidateOffset: 0, candidates: [CANDIDATE], rejudge: true });
+    expect(res.ok).toBe(false);
+    if (res.ok || !("error" in res)) throw new Error("expected error");
+    expect(res.error).toBe("offering read absent — refusing a blind re-judge");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fake.touched).not.toContain("step_perspective_verdicts");   // never reached gate (a)
+    expect(fake.upserts).toHaveLength(0);
+    expect(fake.inserts).toHaveLength(0);
+  });
+
+  // (f) RED ON REVERT: a retracted def with the candidate's exact identity used to fold it at gate (c);
+  // and its still-active lens used to count against MAX_ACTIVE.
+  const universeTables = async (retracted: boolean, lensCount: number): Promise<Record<string, Row[]>> => {
+    const identity = await marketIdentity(EXECUTOR, JTBD);
+    const defs: Row[] = [];
+    const lens: Row[] = [];
+    // gate (b) served from the bank (complete) so no model call is needed; gate (c) is the subject —
+    // every non-twin pairing is banked REJECTED so the chain runs with no model at all.
+    const verdicts: Row[] = [{ id: "v", company_id: COMPANY, pair_identity: await solutionAgnosticKey(EXECUTOR, JTBD), verdict_kind: "solution_agnostic", market_a_identity: identity, market_b_identity: null, verdict: "accepted", judge_reason: "ok", criterion_version: CRITERION_VERSION, inputs_complete: true }];
+    for (let i = 0; i < lensCount; i++) {
+      // i=0 is the exact-identity twin; the rest are unrelated public defs, all with active lenses
+      const twin = i === 0;
+      const ex = twin ? EXECUTOR : `Someone ${i}`, jt = twin ? JTBD : `Job ${i}.`;
+      defs.push({ id: `d${i}`, company_id: COMPANY, journey_key: `pmk-old-${i}`, job_executor: ex, jtbd: jt, user_id: "u1", market_register: "public_inferred", retracted });
+      lens.push({ company_id: COMPANY, journey_key: `pmk-old-${i}`, portfolio_state: "active", portfolio_role: "support" });
+      if (!twin) {
+        const other = await marketIdentity(ex, jt);
+        verdicts.push({ id: `sm${i}`, company_id: COMPANY, pair_identity: await sameMarketKey(identity, other), verdict_kind: "same_market", market_a_identity: identity, market_b_identity: other, verdict: "rejected", judge_reason: "different executors", criterion_version: 1, inputs_complete: true });
+      }
+    }
+    return {
+      // created_by: with every def retracted the universe is empty and the def owner falls back to the company creator (Gate 6b)
+      companies: [{ id: COMPANY, name: "Gotham", created_by: "u1" }], odi_market_definitions: defs, market_lens: lens,
+      market_candidate_outcomes: [], integrity_runs: [], public_reads: [OFFERING],
+      step_perspective_verdicts: [{ company_id: COMPANY, content_hash: await sha256Hex(normalizeForHash(JTBD)), verdict: "buyer" }],
+      market_discovery_verdicts: verdicts,
+    };
+  };
+  it("(8b-f) the dedup universe EXCLUDES a retracted def: an exact-identity twin no longer folds the candidate", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("no model"));
+    // unretracted twin ⇒ exact-identity fast path ⇒ deduped (the pre-8b behaviour, kept)
+    const f1 = fakeSupabase(await universeTables(false, 1));
+    const r1 = await computeMarketDiscovery({ ...baseArgs(f1.client), write: true, runId: RUN, candidateOffset: 0, candidates: [CANDIDATE], rejudge: true });
+    if (!r1.ok || r1.scoped !== true) throw new Error("expected scoped");
+    expect(r1.results[0].outcome).toBe("deduped");
+    // retracted twin ⇒ not in the universe ⇒ the candidate is judged on its own and accepted
+    const f2 = fakeSupabase(await universeTables(true, 1));
+    const r2 = await computeMarketDiscovery({ ...baseArgs(f2.client), write: true, runId: RUN, candidateOffset: 0, candidates: [CANDIDATE], rejudge: true });
+    if (!r2.ok || r2.scoped !== true) throw new Error("expected scoped");
+    expect(r2.results[0].outcome).toBe("accepted");
+    expect(f2.inserts.some((i) => i.table === "odi_market_definitions")).toBe(true);
+  });
+  it("(8b-f) MAX_ACTIVE counts only lenses whose def is live: six active lenses on retracted defs ⇒ still accepted_active", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("no model"));
+    // six unretracted defs + six active lenses ⇒ capacity full ⇒ deferred (twin identity avoided: i=0 is the twin, so make it unrelated here)
+    const full = await universeTables(false, 6);
+    // i=0 is the exact twin; make it unrelated (and bank its pairing) so capacity, not the fold, decides
+    (full.odi_market_definitions[0] as Row).jtbd = "Some other job entirely."; (full.odi_market_definitions[0] as Row).job_executor = "Someone else";
+    const other0 = await marketIdentity("Someone else", "Some other job entirely.");
+    full.market_discovery_verdicts.push({ id: "sm0", company_id: COMPANY, pair_identity: await sameMarketKey(await marketIdentity(EXECUTOR, JTBD), other0), verdict_kind: "same_market", market_a_identity: other0, market_b_identity: await marketIdentity(EXECUTOR, JTBD), verdict: "rejected", judge_reason: "different executors", criterion_version: 1, inputs_complete: true });
+    const f1 = fakeSupabase(full);
+    const r1 = await computeMarketDiscovery({ ...baseArgs(f1.client), write: true, runId: RUN, candidateOffset: 0, candidates: [CANDIDATE], rejudge: true });
+    if (!r1.ok || r1.scoped !== true) throw new Error("expected scoped");
+    expect(r1.results[0].outcome).toBe("accepted_deferred");
+    // the same six defs retracted (lenses untouched, still 'active') ⇒ capacity 0 ⇒ accepted
+    const f2 = fakeSupabase(await universeTables(true, 6));
+    const r2 = await computeMarketDiscovery({ ...baseArgs(f2.client), write: true, runId: RUN, candidateOffset: 0, candidates: [CANDIDATE], rejudge: true });
+    if (!r2.ok || r2.scoped !== true) throw new Error("expected scoped");
+    expect(r2.results[0].outcome).toBe("accepted");
+  });
+});
+
+// ── Gate 8b (option ii) — lens key reuse on a re-judge, guarded ─────────────────────────────────
+describe("lens key reuse: a retracted def's lens is upserted; a live holder is refused (Gate 8b)", () => {
+  const RUN = "33c915e6-a7e3-410e-a16c-3376e683e3c5";
+  const OFFERING = { company_id: COMPANY, kind: "offering", is_current: true, payload: { items: [{ kind_hint: "product", label: "Gotham Sports App", statement: "Streams local games." }] } };
+  // The candidate's own slug — what journeyKey resolves to when nothing in liveUniverse collides.
+  // mirrors the worker's slugify: lowercase, non-alnum → "-", trim, 40 chars, trim trailing "-"
+  const KEY = "pmk-" + EXECUTOR.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/g, "");
+  const tables = async (holderRetracted: boolean): Promise<Record<string, Row[]>> => ({
+    companies: [{ id: COMPANY, name: "Gotham", created_by: "u1" }],
+    // the prior def holding the key: the SAME executor/jtbd (its identity would fold the candidate if it were live and in the universe)
+    odi_market_definitions: [{ id: "old", company_id: COMPANY, journey_key: KEY, job_executor: EXECUTOR, jtbd: JTBD, user_id: "u1", market_register: "public_inferred", retracted: holderRetracted }],
+    market_lens: [{ id: "L", company_id: COMPANY, journey_key: KEY, title: "old", portfolio_state: "active", portfolio_role: "support" }],
+    market_candidate_outcomes: [], integrity_runs: [], public_reads: [OFFERING],
+    step_perspective_verdicts: [{ company_id: COMPANY, content_hash: await sha256Hex(normalizeForHash(JTBD)), verdict: "buyer" }],
+    market_discovery_verdicts: [{ id: "v", company_id: COMPANY, pair_identity: await solutionAgnosticKey(EXECUTOR, JTBD), verdict_kind: "solution_agnostic", market_a_identity: await marketIdentity(EXECUTOR, JTBD), market_b_identity: null, verdict: "accepted", judge_reason: "ok", criterion_version: CRITERION_VERSION, inputs_complete: true }],
+  });
+  const run = (t: Record<string, Row[]>) => {
+    const fake = fakeSupabase(t);
+    return computeMarketDiscovery({ ...baseArgs(fake.client), write: true, runId: RUN, candidateOffset: 0, candidates: [CANDIDATE], rejudge: true }).then((res) => ({ res, fake }));
+  };
+
+  // RED ON REVERT: the plain insert collided with the retracted def's lens row (unique company_id+journey_key) ⇒ ok:false.
+  it("(8b-ii) the key's holder is RETRACTED ⇒ def written with the clean key, lens UPSERTED to the new ruling's state", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("no model"));
+    const t = await tables(true);
+    const { res, fake } = await run(t);
+    expect(res.ok).toBe(true);
+    if (!res.ok || res.scoped !== true) throw new Error("expected scoped");
+    expect(res.results[0].outcome).toBe("accepted");
+    expect(res.results[0].journey_key).toBe(KEY);                                   // clean key, no -2
+    expect(fake.inserts.filter((i) => i.table === "odi_market_definitions")).toHaveLength(1);
+    const lensUp = fake.upserts.filter((u) => u.table === "market_lens");
+    expect(lensUp).toHaveLength(1);
+    expect(lensUp[0].onConflict).toBe("company_id,journey_key");
+    expect(fake.inserts.filter((i) => i.table === "market_lens")).toHaveLength(0);   // reused, not inserted
+    expect(t.market_lens).toHaveLength(1);                                          // still one lens row for the key
+    expect(t.market_lens[0].portfolio_state).toBe("active");
+  });
+
+  // The guard. A LIVE holder is unreachable through the ordinary path — loadDedupUniverse sees every
+  // unretracted pmk-/mkt-/dmk-/customer def, so a live key-holder yields `-2` at the collision check.
+  // The one way to reach it is a RACE: a live def landing under the key AFTER the universe was loaded
+  // (two overlapping workers — the 150s-cut / 400s-wall shape the 09-11 diagnostic recorded). The
+  // fixture stages exactly that: the holder appears on the first market_lens read (the capacity count,
+  // which follows the universe load) and the guard must then refuse before any write.
+  it("(8b-ii) a LIVE holder: the ordinary path takes `-2`; a holder that lands after the universe load is REFUSED with zero writes", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("no model"));
+    // (1) ordinary path: live holder with a different job under the same key ⇒ `-2`, lens INSERTED under the new key
+    const t1 = await tables(false);
+    (t1.odi_market_definitions[0] as Row).jtbd = "A different job under the same key.";
+    const other = await marketIdentity(EXECUTOR, "A different job under the same key.");
+    t1.market_discovery_verdicts.push({ id: "sm", company_id: COMPANY, pair_identity: await sameMarketKey(await marketIdentity(EXECUTOR, JTBD), other), verdict_kind: "same_market", market_a_identity: other, market_b_identity: await marketIdentity(EXECUTOR, JTBD), verdict: "rejected", judge_reason: "different jobs", criterion_version: 1, inputs_complete: true });
+    const r1 = await run(t1);
+    if (!r1.res.ok || r1.res.scoped !== true) throw new Error("expected scoped");
+    expect(r1.res.results[0].journey_key).toBe(`${KEY}-2`);
+    expect(r1.fake.inserts.filter((i) => i.table === "market_lens")).toHaveLength(1);
+    expect(r1.fake.upserts.filter((u) => u.table === "market_lens")).toHaveLength(0);
+    // (2) the race: retracted holder at universe-load time; a LIVE def takes the key before the write
+    const t2 = await tables(true);
+    const fake = fakeSupabase(t2);
+    let landed = false;
+    const from = fake.client.from;
+    const racing = { from: (table: string) => {
+      if (table === "market_lens" && !landed) {
+        landed = true;   // the universe has been loaded by now (it is the first read); a live def lands under the key
+        t2.odi_market_definitions.push({ id: "racer", company_id: COMPANY, journey_key: KEY, job_executor: "Someone else", jtbd: "Elsewhere.", user_id: "u1", market_register: "public_inferred", retracted: false });
+      }
+      return from(table);
+    } };
+    const r2 = await computeMarketDiscovery({ ...baseArgs(racing as { from: (t: string) => never }), write: true, runId: RUN, candidateOffset: 0, candidates: [CANDIDATE], rejudge: true });
+    expect(r2.ok).toBe(false);
+    if (r2.ok || !("error" in r2)) throw new Error("expected error");
+    expect(r2.error).toBe("lens key held by a live definition");
+    expect(fake.inserts).toHaveLength(0);                                            // refused BEFORE the def insert
+    expect(fake.upserts.filter((u) => u.table === "market_lens")).toHaveLength(0);   // and no lens touched
   });
 });

@@ -118,7 +118,8 @@ export async function generateFrontier(args: {
   const { data: marketDefs } = await supabase
     .from("odi_market_definitions")
     .select("job_executor")
-    .eq("company_id", companyId);
+    .eq("company_id", companyId)
+    .eq("retracted", false);   // Gate 8b: a retracted def names no executor here
   const jobExecutor = (Array.isArray(marketDefs) ? marketDefs : [])
     .map((m: { job_executor?: unknown }) => (typeof m.job_executor === "string" ? m.job_executor.trim() : ""))
     .find((s: string) => s.length > 0) ?? "";

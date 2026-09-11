@@ -60,7 +60,8 @@ Deno.serve(async (req) => {
   const currentKinds = ((prRows ?? []) as Array<{ kind: string }>).map((r) => r.kind);
   const missingKinds = missingPublicReadKinds(currentKinds);
 
-  const { data: mdRows } = await supabase.from("odi_market_definitions").select("market_register, job_executor").eq("company_id", company_id);
+  // Gate 8b: a retracted def is history — a company whose only public def is retracted reads as undiscovered.
+  const { data: mdRows } = await supabase.from("odi_market_definitions").select("market_register, job_executor").eq("company_id", company_id).eq("retracted", false);
   const defsEmpty = marketReadIsEmpty((mdRows ?? []) as Array<{ market_register?: string | null; job_executor?: string | null }>);
   // The MANIFEST is the completeness authority: read the newest market_discovery ledger row and decide
   // (re)fire vs skip from its terminal state + cursor — NOT from def existence (which no-op'd forever
@@ -231,7 +232,7 @@ Deno.serve(async (req) => {
     {
       const { data: curNow } = await supabase.from("public_reads").select("kind").eq("company_id", company_id).eq("is_current", true);
       const offeringNow = ((curNow ?? []) as Array<{ kind: string }>).some((r) => r.kind === "offering");
-      const { data: mdRowsNow } = await supabase.from("odi_market_definitions").select("market_register, job_executor").eq("company_id", company_id);
+      const { data: mdRowsNow } = await supabase.from("odi_market_definitions").select("market_register, job_executor").eq("company_id", company_id).eq("retracted", false);
       const { data: mdManifestNow } = await supabase.from("long_runner_runs")
         .select("status, chain_state").eq("company_id", company_id).eq("run_kind", "market_discovery")
         .order("started_at", { ascending: false }).limit(1).maybeSingle();

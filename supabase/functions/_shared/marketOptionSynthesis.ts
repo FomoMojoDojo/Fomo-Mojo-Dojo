@@ -774,7 +774,8 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
     const { data: defRows } = await args.supabase
       .from("odi_market_definitions")
       .select("id, job_executor")
-      .eq("company_id", args.companyId);
+      .eq("company_id", args.companyId)
+      .eq("retracted", false);   // Gate 8b: never seed options from a retracted (blind-ruled) audience
     const allDefs = (defRows ?? []) as Array<{ id: string; job_executor: string }>;
     const knownWho = allDefs.map((d) => `- ${d.job_executor}`).join("\n") || "(none on file)";
 
@@ -1127,7 +1128,8 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
     const { data: kindDefRows } = await args.supabase
       .from("odi_market_definitions")
       .select("job_executor, relationship_kind")
-      .eq("company_id", args.companyId);
+      .eq("company_id", args.companyId)
+      .eq("retracted", false);   // Gate 8b
     const kindDefs = (kindDefRows ?? []) as MarketDefForKind[];
 
     // RG-2b: EARN market_register from the finding corpus, ONCE per chunk (a

@@ -185,7 +185,8 @@ async function loadReconcileUniverse(supabase: DeclaredIngestArgs["supabase"], c
   const { data, error } = await supabase
     .from("odi_market_definitions")
     .select("id, journey_key, job_executor, jtbd, declared_source_ref")
-    .eq("company_id", companyId);
+    .eq("company_id", companyId)
+    .eq("retracted", false);   // Gate 8b: a declared market never pairs against a retracted def
   if (error) throw new Error(`market defs load failed: ${error.message}`);
   const out: ExistingDef[] = [];
   for (const row of (data ?? []) as Array<{ id: string; journey_key: string; job_executor: string; jtbd: string; declared_source_ref: string | null }>) {

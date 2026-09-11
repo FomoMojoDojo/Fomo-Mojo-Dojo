@@ -3790,6 +3790,10 @@ export type Database = {
           market_register: string
           provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
           relationship_basis: string | null
+          retracted: boolean | null
+          retracted_at: string | null
+          retracted_from_outcome_id: string | null
+          retracted_reason: string | null
           relationship_kind: string | null
           source_path: string
           updated_at: string
@@ -3811,6 +3815,10 @@ export type Database = {
           market_register: string
           provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           relationship_basis?: string | null
+          retracted?: boolean | null
+          retracted_at?: string | null
+          retracted_from_outcome_id?: string | null
+          retracted_reason?: string | null
           relationship_kind?: string | null
           source_path?: string
           updated_at?: string
@@ -3832,6 +3840,10 @@ export type Database = {
           market_register?: string
           provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           relationship_basis?: string | null
+          retracted?: boolean | null
+          retracted_at?: string | null
+          retracted_from_outcome_id?: string | null
+          retracted_reason?: string | null
           relationship_kind?: string | null
           source_path?: string
           updated_at?: string

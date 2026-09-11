@@ -18,6 +18,7 @@
 // Signed scope: best_guess only (real_source deferred); declared/internal_derived
 // sets; conditions stay OUT of mojoScore. Production triggering is a later step.
 
+import { journeyIsRetracted, RETRACTED_MARKET_SKIP } from "./retractedMarket.ts";
 import { judgeConditionPerspectives } from "./stepPerspectiveJudge.ts";
 import { isCannedConditionString } from "./cannedConditionGuard.ts";
 import { jaccardSimilarity } from "./opportunityTreeSemantics.ts";
@@ -344,7 +345,7 @@ const WRITABLE_PROVENANCE = new Set(["internal_derived", "internal_declared", "o
 
 export type SetConditionsResult =
   | { ok: true; totals: SynthesisResult["totals"] }
-  | { ok: false; skipped: "frozen_company" | "no_steps" | "non_writable_provenance"; provenances?: string[] }
+  | { ok: false; skipped: "frozen_company" | "no_steps" | "non_writable_provenance" | "retracted_market"; provenances?: string[] }
   | { ok: false; error: string };
 
 // True if any step in the set already carries a condition — the bootstrap-gen
@@ -385,13 +386,16 @@ export async function generateConditionsForSet(args: {
     return { ok: false, skipped: "non_writable_provenance", provenances };
   }
 
+  // Gate 8b: a retracted market resolves, but nothing is synthesised from it.
+  if (await journeyIsRetracted(args.supabase, args.companyId, args.journeyKey)) return { ok: false, skipped: RETRACTED_MARKET_SKIP };
   let { data: md } = await args.supabase
     .from("odi_market_definitions").select("job_executor, jtbd")
     .eq("company_id", args.companyId).eq("journey_key", args.journeyKey).maybeSingle();
   if (!md) {
     const { data: anyMd } = await args.supabase
       .from("odi_market_definitions").select("job_executor, jtbd")
-      .eq("company_id", args.companyId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      .eq("company_id", args.companyId).eq("retracted", false)   // Gate 8b: never fall back onto a retracted def
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
     md = anyMd ?? null;
   }
 

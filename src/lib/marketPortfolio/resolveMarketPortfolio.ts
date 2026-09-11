@@ -49,6 +49,9 @@ export type MarketDefRow = {
   relationship_basis: string | null;
   declared_verbatim: string | null;
   declared_source_ref: string | null;
+  /** Gate 8b — stored generated (retracted_at IS NOT NULL). Optional so callers that never select it
+   *  (and every pre-8b fixture) read as unretracted. */
+  retracted?: boolean | null;
 };
 
 // OOD-3 register law: Act A (Outside) renders public-register only.
@@ -105,7 +108,10 @@ export type ResolvedMarket = {
   cross_register_pairs: CrossRegisterPair[];
 };
 
-export type ResolvedPortfolio = { active: ResolvedMarket[]; deferred: ResolvedMarket[] };
+/** Gate 8b — `retracted` is HISTORY: defs whose ruling was made blind and which the operator retracted.
+ *  They never collapse into, twin with, or count beside a live market; the admin portfolio shows them in
+ *  their own bucket and nowhere else. */
+export type ResolvedPortfolio = { active: ResolvedMarket[]; deferred: ResolvedMarket[]; retracted: ResolvedMarket[] };
 
 const DECLARED = new Set(["internal_declared", "manual"]);
 const isDeclared = (p: string) => DECLARED.has(p);
@@ -138,12 +144,30 @@ export async function resolveMarketPortfolio(input: {
   surface?: MarketSurface;
 }): Promise<ResolvedPortfolio> {
   const surface: MarketSurface = input.surface ?? "diagnose";
+  const lensByKey = new Map(input.lenses.map((l) => [l.journey_key, l]));
+  // Gate 8b: retracted defs are set aside BEFORE identity grouping — a retracted def and the complete
+  // re-judge that replaced it can share content identity, and must never merge.
+  const retracted: ResolvedMarket[] = [];
   const defs: Array<MarketDefRow & { identity: string }> = [];
   for (const d of input.defs) {
     if (NON_MARKET_KEYS.has(d.journey_key)) continue;
+    if (d.retracted === true) {
+      if (surface === "diagnose" || isPublicRegister(d.market_register)) {
+        retracted.push({
+          journey_key: d.journey_key,
+          display_statement: d.declared_verbatim?.trim() || `${d.job_executor}${d.jtbd ? ` — ${d.jtbd}` : ""}`,
+          job_executor: d.job_executor, jtbd: d.jtbd, provenance: d.provenance_type, register: d.market_register,
+          tier: DECLARED.has(d.provenance_type) ? "declared_not_visible" : "inferred_hypothesis",
+          relationship_kind: d.relationship_kind ?? null, relationship_basis: d.relationship_basis ?? null,
+          portfolio_state: lensByKey.get(d.journey_key)?.portfolio_state ?? "active",   // lens untouched by retraction
+          source_refs: d.declared_source_ref ? [d.declared_source_ref] : [],
+          is_collapsed_twin: false, collapsed_keys: [], cross_register_pairs: [],
+        });
+      }
+      continue;
+    }
     defs.push({ ...d, identity: await sha256Hex(normalizeForHash(`${d.job_executor}|${d.jtbd}`)) });
   }
-  const lensByKey = new Map(input.lenses.map((l) => [l.journey_key, l]));
 
   // Twin edges: accepted same_market verdicts whose BOTH identities map to
   // current defs, plus identical content identity (the exact fast path, which
@@ -335,5 +359,6 @@ export async function resolveMarketPortfolio(input: {
   };
   active.sort(order);
   deferred.sort(order);
-  return { active, deferred };
+  retracted.sort(order);
+  return { active, deferred, retracted };
 }

@@ -50,7 +50,9 @@ export function useMarketPortfolio(companyId?: string, surface: MarketSurface = 
       const [defsRes, lensRes, verdictRes] = await Promise.all([
         supabase
           .from("odi_market_definitions")
-          .select("id, journey_key, job_executor, jtbd, chooser, provenance_type, market_register, relationship_kind, relationship_basis, declared_verbatim, declared_source_ref")
+          // Gate 8b: UNFILTERED by design — the admin portfolio is the one surface that shows a retracted
+          // def, in its own bucket; `retracted` rides along so the resolver can place it there.
+          .select("id, journey_key, job_executor, jtbd, chooser, provenance_type, market_register, relationship_kind, relationship_basis, declared_verbatim, declared_source_ref, retracted")
           .eq("company_id", companyId),
         supabase
           .from("market_lens")

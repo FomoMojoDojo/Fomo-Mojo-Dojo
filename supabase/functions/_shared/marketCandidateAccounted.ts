@@ -107,11 +107,15 @@ export async function marketCandidateDecided(args: {
   const executor = String(args.candidate?.job_executor ?? "");
   const jtbd = String(args.candidate?.jtbd ?? "");
 
-  // (1) written def — reframe-safe (executor fixed, jtbd not).
+  // (1) written def — reframe-safe (executor fixed, jtbd not). Gate 8b: a RETRACTED def (ruled blind,
+  //     retracted by the operator) is history and does not decide. `retracted` is a stored generated
+  //     boolean (= retracted_at IS NOT NULL) that exists so this equality-only probe can ask the
+  //     question without learning IS NULL.
   if (await args.exists("odi_market_definitions", {
     company_id: args.companyId,
     job_executor: executor,
     market_register: "public_inferred",
+    retracted: false,
   })) return true;
 
   const identity = await marketIdentity(executor, jtbd);
@@ -137,7 +141,10 @@ export async function marketCandidateDecided(args: {
   // but not decided (the worker must retry). Rather than widen ExistsProbe with a negation, the clause
   // asks for each renderable/decided outcome by name: the probe stays equality-only, and the list is
   // explicit at the call site where a reader can check it against the CHECK constraint.
-  return await outcomeRowExists(args.exists, args.companyId, identity, DECIDED_OUTCOMES);
+  //
+  // Gate 8a: only a row judged WITH its inputs decides. A blind row (inputs_complete=false) is filed
+  // — the poll may advance past it — but the worker must re-judge it once the offering read exists.
+  return await outcomeRowExists(args.exists, args.companyId, identity, DECIDED_OUTCOMES, { inputs_complete: true });
 }
 
 /** Clause (3) as a probe: does a market_candidate_outcomes row exist on this ORIGINAL identity, at the
@@ -149,6 +156,9 @@ async function outcomeRowExists(
   companyId: string,
   identity: string,
   outcomes: ReadonlyArray<string>,
+  /** Extra equality terms — DECIDED adds `inputs_complete: true` (Gate 8a); ACCOUNTED adds nothing,
+   *  because a blind row is still the candidate's own filed terminal. */
+  also: Record<string, string | number | boolean> = {},
 ): Promise<boolean> {
   for (const outcome of outcomes) {
     if (await exists("market_candidate_outcomes", {
@@ -156,6 +166,7 @@ async function outcomeRowExists(
       original_identity: identity,
       outcome,
       criterion_version: CRITERION_VERSION,
+      ...also,
     })) return true;
   }
   return false;

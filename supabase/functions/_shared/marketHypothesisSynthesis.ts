@@ -9,6 +9,7 @@
 // A manual (operator-authored) market_def is NEVER overwritten; an existing
 // non-boilerplate hypothesis is left as-is.
 
+import { journeyIsRetracted, RETRACTED_MARKET_SKIP } from "./retractedMarket.ts";
 import { judgeConditionPerspectives } from "./stepPerspectiveJudge.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 
@@ -31,7 +32,7 @@ export type MarketHypothesis = { job_executor: string; jtbd: string; chooser: st
 
 export type MarketHypothesisResult =
   | { ok: true; written: MarketHypothesis }
-  | { ok: false; skipped: "frozen_company" | "protected_manual" | "already_hypothesis" | "no_steps" }
+  | { ok: false; skipped: "frozen_company" | "protected_manual" | "already_hypothesis" | "no_steps" | "retracted_market" }
   | { ok: false; rejected: "seller"; candidate: MarketHypothesis }
   | { ok: false; error: string };
 
@@ -91,6 +92,8 @@ export async function generateMarketHypothesisForSet(args: {
   const genModel = args.genModel ?? DEFAULT_GEN_MODEL;
 
   if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
+  // Gate 8b: a retracted market is history — it is never re-hypothesised in place.
+  if (await journeyIsRetracted(args.supabase, args.companyId, args.journeyKey)) return { ok: false, skipped: RETRACTED_MARKET_SKIP };
 
   // Existing market_def for this set + protection.
   const { data: existing } = await args.supabase
