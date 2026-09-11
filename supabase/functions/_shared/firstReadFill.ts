@@ -309,6 +309,26 @@ export function openQuestionsAlreadyPresent(a: { hasSilentDeltaRows: boolean; ha
   return a.hasSilentDeltaRows || a.hasRunningStepper;
 }
 
+/**
+ * H2 (2026-09-11) — AN OBSERVED TERMINAL IS RECORDED AS ONE. The open-questions and recurrence
+ * steppers answer their FIRST call synchronously with an outcome. When that outcome is itself a
+ * terminal — the chain planned empty, or finalized, or failed inside that one step — the fill has
+ * observed the terminal in the response it is holding, so the status is EARNED and is written as
+ * such. Only a chain that is still running (planned / chunk_done) is a hand-off.
+ *
+ * Why: the stepper's own writeback (closeDispatch) runs inside that first step, BEFORE the fill has
+ * inserted its marker row — so a planned-empty chain left a 'running' fr_open_questions marker that
+ * nothing could ever close (Geniant carried two from 2026-09-02 until H2). Recording the observed
+ * terminal here closes the race structurally; closeDispatch keeps covering the chained case.
+ */
+export function handoffTerminal(outcome: unknown): ChainKindTerminal {
+  const o = typeof outcome === "string" ? outcome : "";
+  if (o === "planned_empty" || o.startsWith("already_")) return "completed_empty";
+  if (o === "finalized") return "completed";
+  if (o === "terminate_max_steps" || o === "no_progress_failed") return "failed";
+  return "handed_off";
+}
+
 /** One chain kind: a first-fill-only gate + the producer call(s) it guards. */
 export type ChainKindStep = {
   kind: string; // ledger run_kind suffix → fr_<kind>

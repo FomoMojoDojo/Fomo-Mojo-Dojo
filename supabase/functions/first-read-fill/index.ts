@@ -18,7 +18,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   runFirstReadFill, runChainKinds, classifyGapPairsAfterTimeout,
-  chainKindLedgerStatus, chainKindIsTerminal, openQuestionsAlreadyPresent, missingPublicReadKinds, marketReadIsEmpty, marketDiscoveryNeedsFire,
+  chainKindLedgerStatus, chainKindIsTerminal, openQuestionsAlreadyPresent, handoffTerminal, missingPublicReadKinds, marketReadIsEmpty, marketDiscoveryNeedsFire,
   publicReadsDepsTerminal, depTerminalForScore,
   type PublicReadKind, type GenPerKind, type KindStatus,
   type ChainKindStep, type ChainKindTerminal, type DepRow,
@@ -523,7 +523,10 @@ Deno.serve(async (req) => {
       if (!res.ok) return { status: "failed" as const, note: `open-questions-step dispatch failed (${res.status})` };
       const ledger = (res.data as { ledger?: unknown } | null)?.ledger;
       const outcome = (res.data as { outcome?: unknown } | null)?.outcome;
-      return { status: "handed_off" as const, note: `handed off to open-questions-step · run=${ledger ?? "?"} · outcome=${outcome ?? "?"}` };
+      // H2: a terminal reported in THIS response is observed, and recorded as the terminal it is.
+      const status = handoffTerminal(outcome);
+      const verb = status === "handed_off" ? "handed off to" : `observed terminal (${status}) from`;
+      return { status, note: `${verb} open-questions-step · run=${ledger ?? "?"} · outcome=${outcome ?? "?"}` };
     },
   };
 
@@ -564,7 +567,10 @@ Deno.serve(async (req) => {
       if (!res.ok) return { status: "failed" as const, note: `recurrence-step dispatch failed (${res.status})` };
       const ledger = (res.data as { ledger?: unknown } | null)?.ledger;
       const outcome = (res.data as { outcome?: unknown } | null)?.outcome;
-      return { status: "handed_off" as const, note: `handed off to recurrence-step · run=${ledger ?? "?"} · outcome=${outcome ?? "?"}` };
+      // H2: same rule as open questions — an observed terminal is recorded as one.
+      const status = handoffTerminal(outcome);
+      const verb = status === "handed_off" ? "handed off to" : `observed terminal (${status}) from`;
+      return { status, note: `${verb} recurrence-step · run=${ledger ?? "?"} · outcome=${outcome ?? "?"}` };
     },
   };
 

@@ -13,6 +13,7 @@ import {
   runChainKinds,
   classifyGapPairsAfterTimeout,
   chainKindLedgerStatus,
+  handoffTerminal,
   chainKindIsTerminal,
   openQuestionsAlreadyPresent,
   PUBLIC_READ_KINDS,
@@ -362,5 +363,37 @@ describe("open_questions first-fill-only predicate (skip on rows OR in-flight ru
   });
   it("fires only when NEITHER holds (cascade_gap alone never blocks — different source_kind)", () => {
     expect(openQuestionsAlreadyPresent({ hasSilentDeltaRows: false, hasRunningStepper: false })).toBe(false);
+  });
+});
+
+// ── H2 (2026-09-11) — an observed terminal is recorded as one ─────────────────────────────────────
+// RED ON REVERT. The open-questions / recurrence handoffs recorded 'handed_off' (→ a 'running'
+// fr_* marker with no finished_at) for EVERY first-step outcome, including planned_empty — whose
+// chain had already closed inside that same response, before the marker existed. Geniant carried
+// two such markers from 2026-09-02 until H2; nothing could close them.
+describe("H2 — handoffTerminal: the stepper's synchronous outcome decides the fill's record", () => {
+  it("planned_empty ⇒ completed_empty: the ledger row is COMPLETED with finished_at (red on revert)", () => {
+    const status = handoffTerminal("planned_empty");
+    expect(status).toBe("completed_empty");
+    expect(chainKindLedgerStatus(status)).toBe("completed");   // what the row's status column gets
+    expect(chainKindIsTerminal(status)).toBe(true);            // finished_at is set
+  });
+  it("a chained outcome (planned / chunk_done) stays handed_off: running, no finished_at", () => {
+    for (const o of ["planned", "chunk_done"]) {
+      const status = handoffTerminal(o);
+      expect(status).toBe("handed_off");
+      expect(chainKindLedgerStatus(status)).toBe("running");
+      expect(chainKindIsTerminal(status)).toBe(false);
+    }
+  });
+  it("finalized ⇒ completed; a first-step failure ⇒ failed — never a marker for a chain that is not running", () => {
+    expect(handoffTerminal("finalized")).toBe("completed");
+    expect(handoffTerminal("terminate_max_steps")).toBe("failed");
+    expect(handoffTerminal("no_progress_failed")).toBe("failed");
+    expect(handoffTerminal("already_discovered")).toBe("completed_empty");
+  });
+  it("an absent / unknown outcome is a hand-off (the stepper's row stays the truth)", () => {
+    expect(handoffTerminal(undefined)).toBe("handed_off");
+    expect(handoffTerminal("something_new")).toBe("handed_off");
   });
 });
