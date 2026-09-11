@@ -128,6 +128,16 @@ serve(async (req) => {
 
     if (result.ok) {
       if ("plan" in result) return json(result);
+      // GATE 3 — PERSIST THE COST. Computed here since the delta judge landed, returned in a body no
+      // caller parsed. recordModelCall never throws: accounting must not take down the work it measures.
+      // (Gate 6c: this block sat INSIDE the response literal below from b9fbb81, 2026-09-09 — a syntax
+      // error the worker could not boot past; every deltas call answered 503 for two days.)
+      await recordModelCall(supabase, {
+        companyId: company_id,
+        runId: null,
+        callSite: "generate-claim-deltas",
+        usage: openaiRecord(billedModel, usage),
+      });
       // PROOF GUARD: the exclusion ledger (count in totals + ids here) rides every
       // run result — a silent guard would be an invisible decision.
       return json({
@@ -138,14 +148,6 @@ serve(async (req) => {
         proof_guard_excluded_ids: result.proof_guard_excluded_ids,
         deltas: result.deltas,
         cost: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) },
-    // GATE 3 — PERSIST THE COST. Computed here since the delta judge landed, returned in a body no caller parsed.
-    // recordModelCall never throws: accounting must not take down the work it measures.
-    await recordModelCall(supabase, {
-      companyId: company_id,
-      runId: null,
-      callSite: "generate-claim-deltas",
-      usage: openaiRecord(billedModel, usage),
-    });
       });
     }
     if ("skipped" in result) {

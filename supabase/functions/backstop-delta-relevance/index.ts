@@ -73,20 +73,22 @@ serve(async (req) => {
     });
 
     if (result.ok) {
+      // GATE 3 — PERSIST THE COST. Computed here since the backstop landed, returned in a body no
+      // caller parsed. recordModelCall never throws: accounting must not take down the work it measures.
+      // (Gate 6c: same defect as generate-claim-deltas from b9fbb81 — the block sat inside the response
+      // literal; the worker could not boot and every backstop call answered 503.)
+      await recordModelCall(supabase, {
+        companyId: company_id,
+        runId: null,
+        callSite: "backstop-delta-relevance",
+        usage: openaiRecord(billedModel, usage),
+      });
       return json({
         ok: true,
         dry_run: result.dry_run,
         totals: result.totals,
         proposals: result.proposals,
         cost: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) },
-    // GATE 3 — PERSIST THE COST. Computed here since the backstop landed, returned in a body no caller parsed.
-    // recordModelCall never throws: accounting must not take down the work it measures.
-    await recordModelCall(supabase, {
-      companyId: company_id,
-      runId: null,
-      callSite: "backstop-delta-relevance",
-      usage: openaiRecord(billedModel, usage),
-    });
       });
     }
     if ("skipped" in result) {
