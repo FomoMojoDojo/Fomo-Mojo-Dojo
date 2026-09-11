@@ -65,7 +65,20 @@ export function marketDiscoveryNeedsFire(
   const total = Array.isArray(cs?.candidates) ? (cs!.candidates as unknown[]).length : 0;
   const cursor = Number(cs?.cursor ?? 0);
   if (manifest.status === "completed" && (total === 0 || cursor >= total)) return false; // complete
-  return true; // no/partial/failed/unconfirmed manifest → resume
+  // Gate 6e (D2): a RUNNING manifest is in flight — a second fire steps the same manifest from a
+  // second isolate (Gotham 2026-09-11: two chains, closed 'completed' at cursor 2/6, one ruling
+  // lost). Holds are the sweep's RE-ARM (2) job, keyed on the stepper's own 'unconfirmed:' note.
+  if (manifest.status === "running") return false;
+  return true; // partial/failed manifest → resume
+}
+
+/** Gate 6e (D1): discovery is judged against the offering read (the v2 solution line). With no
+ *  is_current offering read the judge would run blind — and its verdicts cache by content identity —
+ *  so the fire is DEFERRED to the public-reads stage, which fires it once the read lands. */
+export const DISCOVERY_DEFERRED_OFFERING = "discovery deferred: offering read pending" as const;
+export function marketDiscoveryFireDecision(a: { needsFire: boolean; offeringReadPresent: boolean }): "fire" | "deferred_offering_pending" | "none" {
+  if (!a.needsFire) return "none";
+  return a.offeringReadPresent ? "fire" : "deferred_offering_pending";
 }
 
 // ── outside_score dependency gate + first-fill (pure) ────────────────────────────────────────────
@@ -151,6 +164,8 @@ export type GenPerKind = Record<string, "written" | "rejected" | "error">;
 export type FirstReadFillConfig = {
   missingKinds: PublicReadKind[]; // from missingPublicReadKinds(current)
   marketNeedsFire: boolean;       // from marketDiscoveryNeedsFire(manifest, marketReadIsEmpty(defs))
+  /** Gate 6e: an is_current offering read exists. false ⇒ discovery is deferred, never fired blind. */
+  offeringReadPresent?: boolean;
   /** Generate ONLY the missing kinds through the normal judged path; returns per-kind written/rejected. */
   generatePublicRead: (kinds: PublicReadKind[]) => Promise<{ perKind: GenPerKind; detail?: Record<string, string> }>;
   /** Record one per-kind child ledger row (completed / failed / completed_empty when nothing missing). */
@@ -173,6 +188,8 @@ export type FirstReadFillResult = {
   skipped: PublicReadKind[]; // already had a current row — never regenerated
   failed: PublicReadKind[];  // generation error or judge/citation reject
   marketFired: boolean;
+  /** Gate 6e: set when discovery was needed but NOT fired because the offering read is absent. */
+  marketDeferred?: typeof DISCOVERY_DEFERRED_OFFERING;
   stageEmpty: boolean;       // true ⇒ nothing was missing (the completed_empty no-op)
 };
 
@@ -224,20 +241,24 @@ export async function runFirstReadFill(cfg: FirstReadFillConfig): Promise<FirstR
   // Market discovery — (re)fired when the manifest is incomplete (never merely on def-emptiness); the
   // stepper resumes from its persisted cursor. A fire error is isolated (parent still completes).
   let marketFired = false;
-  if (cfg.marketNeedsFire) {
+  let marketDeferred: typeof DISCOVERY_DEFERRED_OFFERING | undefined;
+  const decision = marketDiscoveryFireDecision({ needsFire: cfg.marketNeedsFire, offeringReadPresent: cfg.offeringReadPresent ?? true });
+  if (decision === "fire") {
     try {
       await cfg.fireMarketDiscovery();
       marketFired = true;
     } catch {
       /* isolated — never fails the parent */
     }
+  } else if (decision === "deferred_offering_pending") {
+    marketDeferred = DISCOVERY_DEFERRED_OFFERING;
   }
 
   // The parent full_refresh completes regardless of any kind failure.
   if (cfg.closeParent) await cfg.closeParent();
 
   const stageEmpty = (!generateReads || cfg.missingKinds.length === 0) && !cfg.marketNeedsFire;
-  return { generated, skipped, failed, marketFired, stageEmpty };
+  return { generated, skipped, failed, marketFired, ...(marketDeferred ? { marketDeferred } : {}), stageEmpty };
 }
 
 // ── Chain kinds (own-words → public gap-pairs) ──────────────────────────────────────────────────

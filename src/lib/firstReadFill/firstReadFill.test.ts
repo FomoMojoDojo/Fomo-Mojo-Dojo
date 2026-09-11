@@ -6,6 +6,8 @@ import {
   missingPublicReadKinds,
   marketReadIsEmpty,
   marketDiscoveryNeedsFire,
+  marketDiscoveryFireDecision,
+  DISCOVERY_DEFERRED_OFFERING,
   depTerminalForScore,
   outsideScoreDepsTerminal,
   outsideScoreFirstFill,
@@ -118,11 +120,52 @@ describe("marketDiscoveryNeedsFire — MANIFEST is the completeness authority (n
   it("FALSIFICATION (the Lumio 1-of-6 stuck bug): a failed/partial manifest with cursor < total ⇒ RE-FIRES, even with a def present", () => {
     // The old gate keyed on def existence → false (no re-fire) → stuck forever. The manifest gate re-fires.
     expect(marketDiscoveryNeedsFire({ status: "failed", chain_state: { cursor: 0, candidates: new Array(6) } }, false)).toBe(true);
-    expect(marketDiscoveryNeedsFire({ status: "running", chain_state: { cursor: 2, candidates: new Array(6) } }, false)).toBe(true);
-    // an unconfirmed HOLD is a 'running' row with cursor < total → resumes
-    expect(marketDiscoveryNeedsFire({ status: "running", chain_state: { cursor: 4, candidates: new Array(6) } }, false)).toBe(true);
     // completed but cursor short of total (defensive) → still resumes
     expect(marketDiscoveryNeedsFire({ status: "completed", chain_state: { cursor: 3, candidates: new Array(6) } }, false)).toBe(true);
+  });
+  // Gate 6e (D2) — RED ON REVERT. A RUNNING manifest is in flight; the fill's own-words re-entry
+  // re-ran this predicate 19 s after the first fire and got `true`, so two stepper chains judged
+  // Gotham's manifest 33c915e6 concurrently, closed it 'completed' at cursor 2/6 and lost #2's ruling.
+  // Holds (a 'running' row with the stepper's 'unconfirmed:' note) are the sweep's RE-ARM (2) job.
+  it("(g6e) a RUNNING manifest ⇒ NEVER fires — in flight is in flight, whatever the cursor", () => {
+    expect(marketDiscoveryNeedsFire({ status: "running", chain_state: { cursor: 0, candidates: new Array(6) } }, false)).toBe(false);
+    expect(marketDiscoveryNeedsFire({ status: "running", chain_state: { cursor: 2, candidates: new Array(6) } }, false)).toBe(false);
+    expect(marketDiscoveryNeedsFire({ status: "running", chain_state: { cursor: 4, candidates: new Array(6) } }, true)).toBe(false);
+  });
+});
+
+// ── Gate 6e (D1) — discovery never judges without the offering read ──────────────────────────────
+// RED ON REVERT. The v2 judge's input is the offering read (the solution line). The fill fired
+// discovery on def-emptiness alone while the public-reads stage was still gated behind recurrence, so
+// Gotham's four v2 verdicts were banked with no solution line and cached by content identity.
+describe("Gate 6e — discovery is deferred until an offering read is current", () => {
+  it("(g6e) needsFire + NO offering read ⇒ deferred, with the signed reason; nothing fired", async () => {
+    expect(marketDiscoveryFireDecision({ needsFire: true, offeringReadPresent: false })).toBe("deferred_offering_pending");
+    const fire = vi.fn(async () => {});
+    const res = await runFirstReadFill({
+      missingKinds: [], marketNeedsFire: true, offeringReadPresent: false,
+      generatePublicRead: async () => ({ perKind: {} as GenPerKind, detail: {} }), recordKindLedger: async () => {},
+      fireMarketDiscovery: fire, generateReads: false,
+    });
+    expect(fire).not.toHaveBeenCalled();
+    expect(res.marketFired).toBe(false);
+    expect(res.marketDeferred).toBe(DISCOVERY_DEFERRED_OFFERING);
+    expect(DISCOVERY_DEFERRED_OFFERING).toBe("discovery deferred: offering read pending");
+  });
+  it("(g6e) needsFire + offering read present ⇒ fired", async () => {
+    expect(marketDiscoveryFireDecision({ needsFire: true, offeringReadPresent: true })).toBe("fire");
+    const fire = vi.fn(async () => {});
+    const res = await runFirstReadFill({
+      missingKinds: [], marketNeedsFire: true, offeringReadPresent: true,
+      generatePublicRead: async () => ({ perKind: {} as GenPerKind, detail: {} }), recordKindLedger: async () => {},
+      fireMarketDiscovery: fire, generateReads: false,
+    });
+    expect(fire).toHaveBeenCalledTimes(1);
+    expect(res.marketFired).toBe(true);
+    expect(res.marketDeferred).toBeUndefined();
+  });
+  it("(g6e) no need ⇒ none, whatever the read", () => {
+    expect(marketDiscoveryFireDecision({ needsFire: false, offeringReadPresent: false })).toBe("none");
   });
 });
 

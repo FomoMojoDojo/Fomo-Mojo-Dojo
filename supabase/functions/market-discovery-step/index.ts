@@ -130,7 +130,7 @@ Deno.serve(async (req) => {
   // Is this candidate TERMINAL — did the worker demonstrably FINISH it, not merely get TOUCHED?
   // The rule and its reasoning live in _shared/marketCandidateAccounted.ts (Gate 1b); this is the
   // dumb equality probe it reads through. Read-only, index-keyed, one row max per check.
-  const exists = async (table: string, match: Record<string, string | number>): Promise<boolean> => {
+  const exists = async (table: string, match: Record<string, string | number | boolean>): Promise<boolean> => {
     let q = supabase.from(table).select("id");
     for (const [col, val] of Object.entries(match)) q = q.eq(col, val);
     const { data } = await q.limit(1).maybeSingle();

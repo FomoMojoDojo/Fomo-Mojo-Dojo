@@ -132,7 +132,7 @@ describe("worker skips DECIDED candidates (Gate 3b)", () => {
       companies: [{ id: COMPANY, name: "Riverlane" }],
       odi_market_definitions: [],
       // Gate 5b: only a ruling under the CURRENT criterion decides. A version-less fixture is a v1 row.
-      market_discovery_verdicts: [{ id: "v1", company_id: COMPANY, market_a_identity: identity, criterion_version: CRITERION_VERSION }],
+      market_discovery_verdicts: [{ id: "v1", company_id: COMPANY, market_a_identity: identity, criterion_version: CRITERION_VERSION, inputs_complete: true }],
       market_lens: [],
     });
     const res = await computeMarketDiscovery({ ...baseArgs(fake.client), candidates: [CANDIDATE] });
@@ -418,5 +418,25 @@ describe("a v2 write never touches a v1 row (Gate 5c)", () => {
     const { fake } = await run(tables);
     expect(fake.upserts.find((u) => u.table === "market_candidate_outcomes")).toBeUndefined();  // v2 terminal kept
     expect(tables.market_candidate_outcomes.map((r) => r.outcome).sort()).toEqual(["deduped", "rejected_solution"]);
+  });
+});
+
+// ── Gate 6e — a verdict judged without its inputs is neither decided nor served from cache ───────
+// RED ON REVERT. Gotham 2026-09-11: discovery fired before the offering read existed; four v2 verdicts
+// were banked with no solution line and would have been cached by content identity forever.
+describe("inputs_complete=false verdicts are history, not rulings (Gate 6e)", () => {
+  it("(g6e) an inputs_complete=false gate-(b) verdict does NOT make the candidate already_decided", async () => {
+    const identity = await marketIdentity(EXECUTOR, JTBD);
+    const fake = fakeSupabase({
+      companies: [{ id: COMPANY, name: "Riverlane" }],
+      odi_market_definitions: [],
+      market_discovery_verdicts: [{ id: "blind", company_id: COMPANY, market_a_identity: identity, pair_identity: "k", verdict_kind: "solution_agnostic",
+        verdict: "rejected", criterion_version: CRITERION_VERSION, inputs_complete: false }],
+      market_lens: [], step_perspective_verdicts: [],
+    });
+    const res = await computeMarketDiscovery({ ...baseArgs(fake.client), candidates: [CANDIDATE] });
+    if (!res.ok || res.scoped !== true) throw new Error("expected a scoped run");
+    expect(res.results[0].outcome).not.toBe("already_decided");   // the chain is entered (and errors on the discard-port judge)
+    expect(res.totals.verdicts_cached).toBe(0);                     // and nothing was served from the blind row
   });
 });

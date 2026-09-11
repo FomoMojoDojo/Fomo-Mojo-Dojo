@@ -63,7 +63,7 @@ export type MarketCandidateRef = { job_executor?: unknown; jtbd?: unknown };
 /** The injected reader: does at least one row exist in `table` matching every column in `match`?
  *  Table names and match columns live HERE (they are the substance of the rule and are covered by
  *  the proofs); the caller supplies only a dumb equality probe. */
-export type ExistsProbe = (table: string, match: Record<string, string | number>) => Promise<boolean>;
+export type ExistsProbe = (table: string, match: Record<string, string | number | boolean>) => Promise<boolean>;
 
 /**
  * DECIDED — clauses (1) and (2) only: this candidate reached a JUDGED outcome that is on the record.
@@ -100,11 +100,13 @@ export async function marketCandidateDecided(args: {
 
   const identity = await marketIdentity(executor, jtbd);
 
-  // (2) a persisted gate-(b)/(c) decision on the original identity, UNDER THE CURRENT CRITERION.
+  // (2) a persisted gate-(b)/(c) decision on the original identity, UNDER THE CURRENT CRITERION, judged
+  //     WITH ITS INPUTS (Gate 6e: a verdict banked with no solution line is history, not a ruling).
   if (await args.exists("market_discovery_verdicts", {
     company_id: args.companyId,
     market_a_identity: identity,
     criterion_version: CRITERION_VERSION,
+    inputs_complete: true,
   })) return true;
 
   // (3) a persisted per-candidate OUTCOME on the original identity (Gate 4b).

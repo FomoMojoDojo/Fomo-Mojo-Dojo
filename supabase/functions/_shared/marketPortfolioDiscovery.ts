@@ -517,25 +517,39 @@ export async function computeMarketDiscovery(
   // Banked verdicts for this company.
   const { data: vRows, error: vErr } = await args.supabase
     .from("market_discovery_verdicts")
-    .select("id, pair_identity, verdict_kind, market_a_identity, market_b_identity, verdict, judge_reason, criterion_version")
+    .select("id, pair_identity, verdict_kind, market_a_identity, market_b_identity, verdict, judge_reason, criterion_version, inputs_complete")
     .eq("company_id", args.companyId);
   if (vErr) return { ok: false, error: `verdicts load failed: ${vErr.message}` };
-  type Verdict = { id: string; pair_identity: string; verdict_kind: string; market_a_identity: string; market_b_identity: string | null; verdict: string; judge_reason: string; criterion_version?: number };
+  type Verdict = { id: string; pair_identity: string; verdict_kind: string; market_a_identity: string; market_b_identity: string | null; verdict: string; judge_reason: string; criterion_version?: number; inputs_complete?: boolean };
   const verdicts = (vRows ?? []) as Verdict[];
-  const verdictByKey = new Map(verdicts.map((v) => [v.pair_identity, v]));
+  // Gate 6e: the CACHE holds only verdicts judged with their inputs. An inputs_complete=false row
+  // (judged with no solution line) is history — it is never served, and the next complete judge of
+  // the same identity REPLACES it in place (it was never a ruling, so nothing is overwritten).
+  const verdictByKey = new Map(verdicts.filter((v) => v.inputs_complete !== false).map((v) => [v.pair_identity, v]));
+  const incompleteIdByKey = new Map(verdicts.filter((v) => v.inputs_complete === false).map((v) => [v.pair_identity, v.id]));
 
   const bankVerdict = async (row: Omit<Verdict, "id">) => {
     if (verdictByKey.has(row.pair_identity)) return;
+    const inputs_complete = row.inputs_complete ?? true;
     if (args.write) {
       // Gate 5b: same_market rows are unversioned (gate (c) compares markets, not criteria) and are
       // written at 1; solution_agnostic rows carry the criterion that produced them.
       const criterion_version = row.criterion_version ?? 1;
-      const { error } = await args.supabase.from("market_discovery_verdicts").insert({ company_id: args.companyId, judge_model: judgeModel, ...row, criterion_version });
-      if (error && !String(error.message ?? "").includes("duplicate")) {
-        throw new Error(`verdict insert failed: ${error.message}`);
+      const priorIncomplete = incompleteIdByKey.get(row.pair_identity);
+      if (priorIncomplete) {
+        const { error } = await args.supabase.from("market_discovery_verdicts")
+          .update({ verdict: row.verdict, judge_reason: row.judge_reason, judge_model: judgeModel, inputs_complete })
+          .eq("id", priorIncomplete);
+        if (error) throw new Error(`verdict replace failed: ${error.message}`);
+      } else {
+        const { error } = await args.supabase.from("market_discovery_verdicts").insert({ company_id: args.companyId, judge_model: judgeModel, ...row, criterion_version, inputs_complete });
+        if (error && !String(error.message ?? "").includes("duplicate")) {
+          throw new Error(`verdict insert failed: ${error.message}`);
+        }
       }
     }
-    verdictByKey.set(row.pair_identity, { id: "", ...row });
+    // A verdict banked WITHOUT its inputs must not be served later in this run either.
+    if (inputs_complete) verdictByKey.set(row.pair_identity, { id: "", ...row });
   };
 
   const scoped = Array.isArray(args.candidates) && args.candidates.length > 0;
@@ -603,6 +617,8 @@ export async function computeMarketDiscovery(
           verdict: solutionFree ? "accepted" : "rejected",
           judge_reason: `${majority.tally}: ${majority.reason}`,
           criterion_version: CRITERION_VERSION,
+          // Gate 6e: v2's input is the solution line. Judged without one ⇒ recorded, never served.
+          inputs_complete: solutionLine.length > 0,
         });
       }
       if (!solutionFree) return "rejected_solution";

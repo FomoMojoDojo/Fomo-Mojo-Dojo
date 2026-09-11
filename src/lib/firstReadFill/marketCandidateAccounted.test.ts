@@ -37,7 +37,7 @@ const REFRAMED_JTBD =
 
 const CANDIDATE = { job_executor: EXECUTOR, jtbd: ORIGINAL_JTBD };
 
-type Row = Record<string, string | number>;
+type Row = Record<string, string | number | boolean>;
 type Fixture = Record<string, Row[]>;
 
 /** A fixture-backed equality probe: a row matches when every column in `match` is equal. */
@@ -84,6 +84,7 @@ describe("marketCandidateAccounted", () => {
         verdict_kind: "solution_agnostic",
         verdict,
         criterion_version: CRITERION_VERSION,
+        inputs_complete: true,
       }];
       expect(await accounted(f)).toBe(true);
     });
@@ -193,6 +194,16 @@ describe("marketCandidateAccounted", () => {
     f.market_discovery_verdicts = [{
       company_id: COMPANY, market_a_identity: await marketIdentity(EXECUTOR, ORIGINAL_JTBD),
       verdict_kind: "solution_agnostic", verdict: "rejected", criterion_version: 1,
+    }];
+    expect(await accounted(f)).toBe(false);
+  });
+  // Gate 6e — RED ON REVERT. Gotham's four v2 verdicts were banked with no solution line (the offering
+  // read did not exist at judge time). A verdict judged without its inputs is history, not a ruling.
+  it("(g6e) a current-version verdict with inputs_complete=false is NOT accounted — not a ruling", async () => {
+    const f = await midFlight();
+    f.market_discovery_verdicts = [{
+      company_id: COMPANY, market_a_identity: await marketIdentity(EXECUTOR, ORIGINAL_JTBD),
+      verdict_kind: "solution_agnostic", verdict: "rejected", criterion_version: CRITERION_VERSION, inputs_complete: false,
     }];
     expect(await accounted(f)).toBe(false);
   });

@@ -19,6 +19,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   runFirstReadFill, runChainKinds, classifyGapPairsAfterTimeout,
   chainKindLedgerStatus, chainKindIsTerminal, openQuestionsAlreadyPresent, handoffTerminal, missingPublicReadKinds, marketReadIsEmpty, marketDiscoveryNeedsFire,
+  marketDiscoveryFireDecision, DISCOVERY_DEFERRED_OFFERING,
   publicReadsDepsTerminal, depTerminalForScore,
   type PublicReadKind, type GenPerKind, type KindStatus,
   type ChainKindStep, type ChainKindTerminal, type DepRow,
@@ -71,6 +72,10 @@ Deno.serve(async (req) => {
     (mdManifest ?? null) as { status?: string | null; chain_state?: { cursor?: unknown; candidates?: unknown } | null } | null,
     defsEmpty,
   );
+  // Gate 6e (D1): the v2 judge reads the offering read; with none current, discovery is deferred to
+  // the public-reads stage (below), which fires it once the read lands.
+  const offeringReadPresent = currentKinds.includes("offering");
+  if (marketNeedsFire && !offeringReadPresent) console.log(`[first-read-fill] ${DISCOVERY_DEFERRED_OFFERING} (company=${company_id})`);
 
   // per-kind child ledger row (run_kind fr_<kind>): completed / failed / completed_empty (skipped).
   const recordKindLedger = async (kind: string, status: KindStatus, detail?: string | null) => {
@@ -220,28 +225,46 @@ Deno.serve(async (req) => {
       admitted: missing.filter((k) => gen.perKind[k] === "written").length,
       excluded_by_rule: { inputs_present: inputsPresent, per_kind: gen.perKind, guards: gen.detail },
     }).then(() => {}, () => {}); // observability only — never fails the stage
+    // Gate 6e (D1): the DEFERRED discovery fire lands here — once an offering read is current, and only
+    // if the manifest still needs it (a running manifest ⇒ false, so this can never double-step).
+    let discoveryNote = "";
+    {
+      const { data: curNow } = await supabase.from("public_reads").select("kind").eq("company_id", company_id).eq("is_current", true);
+      const offeringNow = ((curNow ?? []) as Array<{ kind: string }>).some((r) => r.kind === "offering");
+      const { data: mdRowsNow } = await supabase.from("odi_market_definitions").select("market_register, job_executor").eq("company_id", company_id);
+      const { data: mdManifestNow } = await supabase.from("long_runner_runs")
+        .select("status, chain_state").eq("company_id", company_id).eq("run_kind", "market_discovery")
+        .order("started_at", { ascending: false }).limit(1).maybeSingle();
+      const needsNow = marketDiscoveryNeedsFire(
+        (mdManifestNow ?? null) as { status?: string | null; chain_state?: { cursor?: unknown; candidates?: unknown } | null } | null,
+        marketReadIsEmpty((mdRowsNow ?? []) as Array<{ market_register?: string | null; job_executor?: string | null }>),
+      );
+      const decision = marketDiscoveryFireDecision({ needsFire: needsNow, offeringReadPresent: offeringNow });
+      if (decision === "fire") { await fireMarketDiscovery(); discoveryNote = " · market discovery fired"; }
+      else if (decision === "deferred_offering_pending") discoveryNote = ` · ${DISCOVERY_DEFERRED_OFFERING}`;
+    }
     if (stageId) {
       const wrote = missing.filter((k) => gen.perKind[k] === "written");
       await supabase.from("long_runner_runs").update({
         status: "completed", done_count: wrote.length,
-        error_text: `gate open — generated: ${wrote.join(",") || "none"}${wrote.length < missing.length ? ` · rejected: ${missing.filter((k) => gen.perKind[k] !== "written").join(",")}` : ""}`,
+        error_text: `gate open — generated: ${wrote.join(",") || "none"}${wrote.length < missing.length ? ` · rejected: ${missing.filter((k) => gen.perKind[k] !== "written").join(",")}` : ""}${discoveryNote}`,
         finished_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       }).eq("id", stageId);
     }
-    return json({ ok: true, stage: "public_reads", generated: missing.filter((k) => gen.perKind[k] === "written"), per_kind: gen.perKind, inputs_present: inputsPresent });
+    return json({ ok: true, stage: "public_reads", generated: missing.filter((k) => gen.perKind[k] === "written"), per_kind: gen.perKind, inputs_present: inputsPresent, discovery: discoveryNote.trim() || null });
   }
 
   // GATE B: the baseline-triggered fill no longer generates public reads. It still fires market
   // discovery and closes the parent; the reads run in the gated stage above once own-words and
   // recurrence terminate. `firePublicReadsStage` below is the first (usually no-op) fire.
-  const result = await runFirstReadFill({ missingKinds, marketNeedsFire, generatePublicRead, recordKindLedger, fireMarketDiscovery, closeParent, generateReads: false });
+  const result = await runFirstReadFill({ missingKinds, marketNeedsFire, offeringReadPresent, generatePublicRead, recordKindLedger, fireMarketDiscovery, closeParent, generateReads: false });
 
   // close the stage ledger: completed_empty (no-op) when nothing was missing, else completed (work done).
   if (stageId) {
     const empty = result.stageEmpty;
     await supabase.from("long_runner_runs").update({
       status: "completed", done_count: result.generated.length,
-      error_text: empty ? "first-fill no-op — all reads current" : `filled: ${result.generated.join(",") || "none"}${result.failed.length ? ` · failed: ${result.failed.join(",")}` : ""}${result.marketFired ? " · market discovery fired" : ""}`,
+      error_text: empty ? "first-fill no-op — all reads current" : `filled: ${result.generated.join(",") || "none"}${result.failed.length ? ` · failed: ${result.failed.join(",")}` : ""}${result.marketFired ? " · market discovery fired" : ""}${result.marketDeferred ? ` · ${result.marketDeferred}` : ""}`,
       finished_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq("id", stageId);
   }
