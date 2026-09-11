@@ -4,6 +4,23 @@ import { useSurfaceTeachingMode } from "@/hooks/useSurfaceTeachingMode";
 import { useCompany } from "@/hooks/useCompany";
 import { clientRefineFirstReadPath, CLIENT_REFINE_PREVIEW_ROUTE } from "@/lib/clientRefinePreview";
 import { CLIENT_VIEW_ROUTE } from "@/lib/clientStoryView";
+import { useOperatorControls } from "@/views/client/firstReadPreview/operatorControls";
+
+/** Home reskin (2026-09-11) — the ONE visual switch. `default` is the CRPV rail exactly as before;
+ *  `fr` swaps every class to its fr-nav-* twin (same items, same props, same behaviour) and gates the
+ *  two operator-only nodes — the collapse glyph and "Client View →" — behind the First Read operator
+ *  switch (OperatorControlsContext), so the default client render carries neither. */
+export type WorkshopSidebarVariant = "default" | "fr";
+const CLASS_BY_VARIANT: Record<WorkshopSidebarVariant, Record<string, string>> = {
+  default: {
+    nav: "crpv-ws-tabs crpv-hier-rail", collapsed: "crpv-sidebar-collapsed", toggle: "crpv-sidebar-toggle",
+    tab: "crpv-ws-tab", home: "crpv-ws-tab-home", divider: "crpv-ws-tab-divider", dividerPush: "crpv-ws-tab-divider-push", addClient: "crpv-ws-tab-add-client",
+  },
+  fr: {
+    nav: "fr-nav", collapsed: "fr-nav--collapsed", toggle: "fr-nav-toggle",
+    tab: "fr-nav-tab fr-mono", home: "fr-nav-tab--home", divider: "fr-nav-divider", dividerPush: "fr-nav-divider--push", addClient: "fr-nav-tab--add",
+  },
+};
 
 const SIDEBAR_TABS = [
   { key: "diagnose",    label: "Diagnose" },
@@ -31,6 +48,7 @@ export function WorkshopSidebar({
   inboxHasNew = false,
   isHome,
   showTeachingToggle = false,
+  variant = "default",
 }: {
   activeTab: string | null;
   onTabClick: (tab: SidebarTabKey) => void;
@@ -44,10 +62,16 @@ export function WorkshopSidebar({
   inboxHasNew?: boolean;
   isHome?: boolean;
   showTeachingToggle?: boolean;
+  variant?: WorkshopSidebarVariant;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const { enabled: teachingMode, toggle: toggleTeaching } = useSurfaceTeachingMode();
   const navigate = useNavigate();
+  const cx = CLASS_BY_VARIANT[variant];
+  // fr variant only: operator chrome renders when the First Read operator switch is on. The default
+  // variant ignores the context entirely (its chrome is unchanged).
+  const operator = useOperatorControls();
+  const showOperatorChrome = variant === "default" || operator !== null;
   // "First read" — the single 8-beat First Read entry point, moved here from the Inputs tab
   // (2026-08-21). Routes to the existing preview surface for the active company; a plain
   // navigation (the surface owns its own empty/dead-id states, never mints a session).
@@ -56,18 +80,21 @@ export function WorkshopSidebar({
 
   return (
     <nav
-      className={`crpv-ws-tabs crpv-hier-rail${collapsed ? " crpv-sidebar-collapsed" : ""}`}
+      className={`${cx.nav}${collapsed ? ` ${cx.collapsed}` : ""}`}
+      data-variant={variant === "fr" ? "fr" : undefined}
       aria-label="Workshop navigation"
     >
+      {showOperatorChrome ? (
       <button
         type="button"
-        className="crpv-sidebar-toggle"
+        className={cx.toggle}
         onClick={() => setCollapsed((v) => !v)}
         title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
       >
         {collapsed ? "›" : "‹"}
       </button>
+      ) : null}
 
       {!collapsed && (
         <>
@@ -77,23 +104,23 @@ export function WorkshopSidebar({
           <button
             type="button"
             data-all-companies
-            className="crpv-ws-tab crpv-ws-tab-home"
+            className={`${cx.tab} ${cx.home}`}
             onClick={() => navigate(CLIENT_REFINE_PREVIEW_ROUTE)}
           >
             All companies
           </button>
-          <div className="crpv-ws-tab-divider" />
+          <div className={cx.divider} />
 
           {!isHome && (
             <>
               <button
                 type="button"
-                className="crpv-ws-tab crpv-ws-tab-home"
+                className={`${cx.tab} ${cx.home}`}
                 onClick={onHome}
               >
                 ← Home
               </button>
-              <div className="crpv-ws-tab-divider" />
+              <div className={cx.divider} />
             </>
           )}
 
@@ -102,7 +129,7 @@ export function WorkshopSidebar({
               key={tab.key}
               type="button"
               data-tab={tab.key}
-              className={`crpv-ws-tab${activeTab === tab.key ? " active" : ""}`}
+              className={`${cx.tab}${activeTab === tab.key ? " active" : ""}`}
               onClick={() => onTabClick(tab.key)}
             >
               {tab.label}
@@ -114,7 +141,7 @@ export function WorkshopSidebar({
             <button
               type="button"
               data-first-read
-              className="crpv-ws-tab"
+              className={cx.tab}
               onClick={() => navigate(firstReadHref)}
               title="Open the First Read for this company"
             >
@@ -122,12 +149,12 @@ export function WorkshopSidebar({
             </button>
           )}
 
-          <div className="crpv-ws-tab-divider crpv-ws-tab-divider-push" />
+          <div className={`${cx.divider} ${cx.dividerPush}`} />
 
           {onInbox && (
             <button
               type="button"
-              className={`crpv-ws-tab${activeTab === "__inbox__" ? " active" : ""}`}
+              className={`${cx.tab}${activeTab === "__inbox__" ? " active" : ""}`}
               onClick={onInbox}
               style={{ position: "relative" }}
             >
@@ -172,7 +199,7 @@ export function WorkshopSidebar({
           {onCompany && (
             <button
               type="button"
-              className={`crpv-ws-tab${activeTab === "__company__" ? " active" : ""}`}
+              className={`${cx.tab}${activeTab === "__company__" ? " active" : ""}`}
               onClick={onCompany}
             >
               Company
@@ -182,7 +209,7 @@ export function WorkshopSidebar({
           {onMembers && (
             <button
               type="button"
-              className={`crpv-ws-tab${activeTab === "__members__" ? " active" : ""}`}
+              className={`${cx.tab}${activeTab === "__members__" ? " active" : ""}`}
               onClick={onMembers}
             >
               Member roles
@@ -192,7 +219,7 @@ export function WorkshopSidebar({
           {onExtracts && (
             <button
               type="button"
-              className={`crpv-ws-tab${activeTab === "__extracts__" ? " active" : ""}`}
+              className={`${cx.tab}${activeTab === "__extracts__" ? " active" : ""}`}
               onClick={onExtracts}
             >
               Extracts
@@ -202,7 +229,7 @@ export function WorkshopSidebar({
           {onAddClient && (
             <button
               type="button"
-              className="crpv-ws-tab crpv-ws-tab-add-client"
+              className={`${cx.tab} ${cx.addClient}`}
               onClick={onAddClient}
             >
               + Add Client
@@ -212,7 +239,7 @@ export function WorkshopSidebar({
           {showTeachingToggle && (
             <button
               type="button"
-              className="crpv-ws-tab"
+              className={cx.tab}
               onClick={toggleTeaching}
               data-teaching-toggle
               title={teachingMode ? "Collapse educational panels" : "Expand educational panels"}
@@ -228,16 +255,20 @@ export function WorkshopSidebar({
           {/* Client View — leaves the workshop for the full-bleed client story
               room (/client-view). Accent + arrow keep it from reading as a
               workshop tab. Admin-gated by the /preview/client-refine surface. */}
-          <div className="crpv-ws-tab-divider" />
-          <button
-            type="button"
-            className="crpv-ws-tab"
-            onClick={() => navigate(CLIENT_VIEW_ROUTE)}
-            title="Open the full-bleed client story surface"
-            style={{ color: "#9c6e15", fontWeight: 600 }}
-          >
-            Client View →
-          </button>
+          {showOperatorChrome ? (
+            <>
+              <div className={cx.divider} />
+              <button
+                type="button"
+                className={cx.tab}
+                onClick={() => navigate(CLIENT_VIEW_ROUTE)}
+                title="Open the full-bleed client story surface"
+                style={variant === "default" ? { color: "#9c6e15", fontWeight: 600 } : undefined}
+              >
+                Client View →
+              </button>
+            </>
+          ) : null}
         </>
       )}
     </nav>

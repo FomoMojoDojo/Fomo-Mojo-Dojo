@@ -81,7 +81,11 @@ import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { useDirectionEvidence } from "@/hooks/useDirectionEvidence";
 import { useInsightNextTurn } from "@/hooks/useInsightNextTurn";
 import { useFoundationStatus } from "@/hooks/useFoundationStatus";
-import { HomepageHierarchy } from "@/components/client/HomepageHierarchy";
+import { HomepageHierarchyFR } from "@/components/client/HomepageHierarchyFR";
+import { Header } from "@/views/client/firstReadPreview/shell";
+import { OperatorControlsContext, type OperatorControls } from "@/views/client/firstReadPreview/operatorControls";
+import { OPERATOR_STRINGS } from "@/views/client/firstReadPreview/operatorStrings";
+import "@/views/client/firstReadPreview/firstRead.css";
 import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
 import { type LayerState, type CommitState, type DrawerKey, type RouteCategory, type TweakTab, type AccessModes, type DrawerSection, MODE_STORAGE_KEY, DEFAULT_ACCESS_MODES, ROUTE_ORDER, ROUTE_DISPLAY_LABEL, ROUTE_FALLBACK_HEADLINE, MAP_ROUTE_CURVES, MAP_ROUTE_BADGES, clamp, toSentence, lowerFirst, stripTerminalPunctuation, formatHHmm, buildCenterHeroSupport, shorten, deriveAudienceShort, normalizeCompare, uniqueSentences, hypothesisSourceMixSummary, parseAccessModes, confidenceBase, statusLabel } from "./home/shared";
 import { SpecPanel } from "./home/SpecPanel";
@@ -828,6 +832,11 @@ export default function ClientRefinePreviewView() {
   const [tweaksOpen, setTweaksOpen] = useState(false);
   const [tweakTab, setTweakTab] = useState<TweakTab>("evidence");
   const [specOpen, setSpecOpen] = useState(false);
+  // Home reskin (2026-09-11): the First Read operator switch on /home — state only, off by default.
+  // Non-null context = every operator node on this surface renders (sidebar chrome, Scan, SPEC, legend,
+  // switcher, ⚙). `decide` is unused here (no relevance pairs on home) and is a no-op by construction.
+  const [homeOperatorOn, setHomeOperatorOn] = useState(false);
+  const homeOperatorControls = useMemo<OperatorControls | null>(() => (homeOperatorOn ? { decide: async () => {} } : null), [homeOperatorOn]);
   const [accessModes, setAccessModes] = useState<AccessModes>(DEFAULT_ACCESS_MODES);
   const [showAllPressure, setShowAllPressure] = useState(false);
   const [expandedClusterKey, setExpandedClusterKey] = useState<string | null>(null);
@@ -3386,6 +3395,7 @@ export default function ClientRefinePreviewView() {
                 <div className="crpv-analysis-bar-fill" />
               </div>
             )}
+            {!hasHierarchy && (
             <header className="crpv-header">
               <div className="left">
                 <b>Mojo</b>
@@ -3406,6 +3416,7 @@ export default function ClientRefinePreviewView() {
                 )}
               </div>
             </header>
+            )}
 
             {showStageStrip ? (
               <div className="crpv-stage-strip" aria-hidden>
@@ -3423,20 +3434,40 @@ export default function ClientRefinePreviewView() {
             <section className="crpv-command-layer">
               {!commitState || commitState !== "next-revealed" ? (
                 hasHierarchy ? (
-                  <div className="crpv-homepage-sidebar-layout">
-                    <WorkshopSidebar
-                      activeTab={null}
-                      onTabClick={(tab) => navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=${tab}`)}
-                      onHome={() => {}}
-                      onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
-                      onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
-                      onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
-                      onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
-                      inboxCount={inboxCount}
-                      inboxHasNew={inboxNewCount > 0}
-                      isHome
-                    />
-                    <div className="crpv-homepage-content">
+                  // Home reskin (2026-09-11): the First Read system. The whole hasHierarchy branch renders inside a
+                  // `.first-read` root — shell Header (MojoMap · identity) → nav rail (WorkshopSidebar variant="fr")
+                  // | HomepageHierarchyFR (Spread rail + compass + three hanging rows). Every operator affordance
+                  // this branch used to show by default (Scan all surfaces + status line, the company switcher,
+                  // and — outside this block — INTERACTION SPEC, the keyboard legend, the ⚙ workbench FAB) now
+                  // renders only while the operator switch is on, exactly as on the First Read: state only, never
+                  // persisted, glyph fixed bottom-left. Strings unchanged (see the copy-parity test).
+                  <OperatorControlsContext.Provider value={homeOperatorControls}>
+                  <div className="first-read fr-home-page" data-testid="home-fr-root" data-fr-operator={homeOperatorOn ? "on" : "off"}>
+                    <Header
+                      title="MojoMap"
+                      identity={(() => {
+                        // The identity string, byte-identical in both states. With the switch on and more
+                        // than one company, the switcher ATTACHES to it (the string becomes the trigger,
+                        // caret appended) — the old crpv-header's behaviour, on the FR shell.
+                        const identityNode = <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY ?? "—"} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>;
+                        return homeOperatorOn && companies.length > 1 ? (
+                          <HeaderCompanySwitcher
+                            identity={identityNode}
+                            showHeaderSwitcher={showHeaderSwitcher}
+                            setShowHeaderSwitcher={setShowHeaderSwitcher}
+                            headerSwitcherRef={headerSwitcherRef}
+                            activeCompany={activeCompany}
+                            companies={companies}
+                            setActiveCompanyId={setActiveCompanyId}
+                            ENGAGEMENT_DAY={ENGAGEMENT_DAY}
+                            dominantClaimState={dominantClaimState}
+                            phase={phase}
+                          />
+                        ) : identityNode;
+                      })()}
+                      right={homeOperatorOn ? (
+                        // Scan all surfaces + status line — the Header's right slot while the switch is on.
+                        <div className="fr-home-scan">
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", padding: "6px 20px 0", gap: 4 }}>
                         <button
                           type="button"
@@ -3464,13 +3495,33 @@ export default function ClientRefinePreviewView() {
                           </p>
                         )}
                       </div>
-                      <div className="crpv-command-main">
+                        </div>
+                      ) : null}
+                    />
+                    <div className="fr-shell-with-nav">
+                      <WorkshopSidebar
+                        variant="fr"
+                        activeTab={null}
+                        onTabClick={(tab) => navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=${tab}`)}
+                        onHome={() => {}}
+                        onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
+                        onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
+                        onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
+                        onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
+                        inboxCount={inboxCount}
+                        inboxHasNew={inboxNewCount > 0}
+                        isHome
+                      />
+                      <div className="fr-page">
                         {/* Integrity sweep: renders regardless of the fallback company injection. */}
                         {companiesFetchError && (
                           <p className="crpv-muted" style={{ color: "#c45c00", margin: "0 0 12px" }}>Couldn't load companies — try reloading.</p>
                         )}
                         {displayMojoScore && foundationStatus ? (
-                          <HomepageHierarchy
+                          <HomepageHierarchyFR
+                            railTitle={activeCompany?.name ?? null}
+                            railDay={ENGAGEMENT_DAY ?? null}
+                            railState={dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}
                             score={displayMojoScore}
                             dominantClaimState={dominantClaimState}
                             engagementPhase={phase}
@@ -3493,7 +3544,24 @@ export default function ClientRefinePreviewView() {
                         ) : null}
                       </div>
                     </div>
+                    {/* Operator switch — the First Read's own affordance, verbatim: fixed bottom-left, glyph only,
+                        muted while off, full while on. No text node; the aria string is the only string. */}
+                    <button
+                      type="button"
+                      className="fixed bottom-6 left-6 flex h-8 w-8 items-center justify-center transition-opacity"
+                      style={{ color: "hsl(var(--fr-muted))", opacity: homeOperatorOn ? 1 : 0.35, zIndex: 300 }}
+                      data-fr-operator-switch={homeOperatorOn ? "on" : "off"}
+                      aria-label={OPERATOR_STRINGS.switchAriaLabel}
+                      aria-pressed={homeOperatorOn}
+                      onClick={() => setHomeOperatorOn((v) => !v)}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                        <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.25" />
+                        <circle cx="8" cy="8" r="2" fill="currentColor" />
+                      </svg>
+                    </button>
                   </div>
+                  </OperatorControlsContext.Provider>
                 ) : (
                 <div className="crpv-command-main">
                   {!hasHierarchy && <OperatingModeBar mode={operatingMode} onChange={setOperatingMode} descriptorOverride={enforcement.safeModeDescriptor} />}
@@ -4335,11 +4403,14 @@ export default function ClientRefinePreviewView() {
               </div>
             ) : null}
 
+            {(!hasHierarchy || homeOperatorOn) && (
             <button type="button" className="crpv-spec-toggle" onClick={() => setSpecOpen((value) => !value)}>
               {specOpen ? "▾ HIDE SPEC" : "▸ INTERACTION SPEC"}
             </button>
+            )}
             <SpecPanel specOpen={specOpen} />
 
+            {(!hasHierarchy || homeOperatorOn) && (
             <div className="crpv-legend">
               <button type="button" className="crpv-main-link" onClick={goToMainSite}>
                 ← MAIN SITE
@@ -4353,6 +4424,7 @@ export default function ClientRefinePreviewView() {
               <span className="sep">·</span>
               <span><span className="k">Esc</span> BACK</span>
             </div>
+            )}
 
             <aside className={`crpv-tweaks ${tweaksOpen ? "open" : ""}`}>
               <div className="hdr">
@@ -4666,9 +4738,11 @@ export default function ClientRefinePreviewView() {
               )}
             </aside>
 
+            {(!hasHierarchy || homeOperatorOn) && (
             <button type="button" className={`crpv-tweaks-fab ${tweaksOpen ? "hidden" : "visible"}`} onClick={() => setTweaksOpen(true)}>
               ⚙
             </button>
+            )}
 
             {!hasHierarchy && <div className="crpv-scrim" onClick={closeDrawer} />}
 

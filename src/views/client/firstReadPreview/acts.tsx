@@ -33,7 +33,9 @@ import {
 } from "../../../../supabase/functions/_shared/relationshipKinds.ts";
 import { ListingRow } from "./primitives";
 import { OperatorUnstatedState, OperatorUnstatedReason, OperatorKindTag, OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
-import { Chip } from "./primitives";
+// Home reskin (2026-09-11): SeqChip / TwoWeightHeadline / NumberedList lifted to primitives.tsx (no behaviour
+// change) so a page outside the First Read can share the chip sequence and the lead/bold headline rhythm.
+import { Chip, SeqChip, TwoWeightHeadline, NumberedList } from "./primitives";
 // Stage 2 (visual port): editorial layout primitives — beats 1–2. Stage 3: Spread on the nine
 // sidebar beats (3, 4, 5, 6, 11, 12, 14, 15, 16). Stage 3b: full match to the captures, beats 1–17.
 import { Divider, FlowLine, HangingItem, Labeled, Screen, Spread, VerticalScale, flowColumns, withStop } from "./primitives-editorial";
@@ -533,14 +535,6 @@ const NEXT_STATIONS: Station[] = [
 
 /** Two-weight headline via a CUSTOM split (not ActHeader's last-two-words rule):
  *  the caller passes the plain lead and the exact bold tail. */
-function TwoWeightHeadline({ lead, bold }: { lead: string; bold: string }) {
-  return (
-    <h1 className="text-5xl font-extralight tracking-tight md:text-6xl">
-      {lead} <span className="font-semibold">{bold}</span>
-    </h1>
-  );
-}
-
 /** Accent pill — the existing "You are here" idiom (fr-eyebrow + rounded-full + accent/0.12). */
 function StationPill({ children }: { children: ReactNode }) {
   return (
@@ -553,10 +547,6 @@ function StationPill({ children }: { children: ReactNode }) {
   );
 }
 
-/** Neutral sequencing chip — the Chip primitive, neutral tone unless the caller assigns one. */
-function SeqChip({ children, tone = "neutral" }: { children: ReactNode; tone?: ChipTone }) {
-  return <Chip tone={tone}>{children}</Chip>;
-}
 
 function PathDot({ state }: { state: StationState }) {
   const style: React.CSSProperties =
@@ -1252,24 +1242,6 @@ function sentenceCase(s: string | null | undefined): string {
  *  the margin (the defect the old "· " bullets had). Strings render verbatim — zero copy change.
  *  Empty list ⇒ nothing (no empty <ol>). Used identically by the three "Where this points" blocks:
  *  positioning differentiators, must-have capabilities, management systems. */
-function NumberedList({ items, className }: { items: string[]; className?: string }) {
-  if (items.length === 0) return null;
-  return (
-    <ol className={`flex flex-col gap-2${className ? ` ${className}` : ""}`}>
-      {items.map((text, i) => (
-        <li key={i} className="flex gap-4">
-          <span className="shrink-0 pt-0.5 text-[10px] tracking-widest fr-numeral" style={{ color: "hsl(var(--fr-faint))" }}>
-            {String(i + 1).padStart(2, "0")}
-          </span>
-          {/* Stage 3f: colour comes from .fr-numbered-text (ink/85 on paper; paper alphas on a dark Screen) —
-              an inline colour here used to win the cascade and kept beats 9/10 dark-on-dark. */}
-          <p className="fr-numbered-text text-sm font-light leading-relaxed">{text}</p>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
 // Stage B — the 5-rung public Playing-to-Win cascade ladder. Each rung renders ONLY when present in
 // the stored spine; a missing rung renders NOTHING here (its question lives on the Questions beat).
 // The framing line reads the cascade as THE STRATEGY THE PUBLIC RECORD IMPLIES — never a go-forward.

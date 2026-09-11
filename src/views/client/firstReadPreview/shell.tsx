@@ -15,9 +15,10 @@ export function Header({
   title,
   identity,
   beats,
-  index,
+  index = 0,
   onGo,
   showCounter = false,
+  right,
 }: {
   /** The way out (2026-09-09): "All companies", left of the title and the identity line. A plain
    *  navigation, never an operator affordance — it carries no data-fr-operator marker. */
@@ -26,11 +27,15 @@ export function Header({
   title: ReactNode;
   /** "{company} · {host}" from the caller (companies.name / website). */
   identity?: ReactNode;
-  beats: ReadonlyArray<ShellBeat>;
-  index: number;
-  onGo: (index: number) => void;
+  /** Progress ticks. Optional since the home reskin (2026-09-11): a page with no beats renders `right`
+   *  in the progress slot instead. The First Read passes all three exactly as before. */
+  beats?: ReadonlyArray<ShellBeat>;
+  index?: number;
+  onGo?: (index: number) => void;
   /** "NN / N" — flag-gated by the caller (new text; off by default). */
   showCounter?: boolean;
+  /** Home reskin: the right-hand slot when there are no beats (operator-gated chrome, usually null). */
+  right?: ReactNode;
 }) {
   return (
     <header className="fr-shell-header">
@@ -40,6 +45,7 @@ export function Header({
           <span className="fr-shell-title">{title}</span>
           {identity ? <span className="fr-shell-identity">{identity}</span> : null}
         </div>
+        {beats ? (
         <div className="fr-shell-progress">
           <div className="fr-shell-segments" role="list">
             {beats.map((b, i) => (
@@ -49,7 +55,7 @@ export function Header({
                 role="listitem"
                 aria-label={b.label}
                 aria-current={i === index ? "step" : undefined}
-                onClick={() => onGo(i)}
+                onClick={() => onGo?.(i)}
                 className="fr-progress-tick"
                 data-kind={b.act !== undefined ? "act" : "gate"}
                 data-state={i === index ? "current" : i < index ? "done" : "todo"}
@@ -62,6 +68,9 @@ export function Header({
             </span>
           ) : null}
         </div>
+        ) : (
+          <div className="fr-shell-progress">{right ?? null}</div>
+        )}
       </div>
     </header>
   );

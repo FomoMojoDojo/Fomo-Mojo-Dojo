@@ -353,3 +353,37 @@ export function ListingRow({ listing, sourceTag, extra }: { listing: FRListing; 
     </div>
   );
 }
+
+// ── Lifted from acts.tsx (home reskin, 2026-09-11) — page-agnostic; bodies byte-identical ──────────
+
+export function TwoWeightHeadline({ lead, bold }: { lead: string; bold: string }) {
+  return (
+    <h1 className="text-5xl font-extralight tracking-tight md:text-6xl">
+      {lead} <span className="font-semibold">{bold}</span>
+    </h1>
+  );
+}
+
+/** Neutral sequencing chip — the Chip primitive, neutral tone unless the caller assigns one. */
+export function SeqChip({ children, tone = "neutral" }: { children: ReactNode; tone?: ChipTone }) {
+  return <Chip tone={tone}>{children}</Chip>;
+}
+
+export function NumberedList({ items, className }: { items: string[]; className?: string }) {
+  if (items.length === 0) return null;
+  return (
+    <ol className={`flex flex-col gap-2${className ? ` ${className}` : ""}`}>
+      {items.map((text, i) => (
+        <li key={i} className="flex gap-4">
+          <span className="shrink-0 pt-0.5 text-[10px] tracking-widest fr-numeral" style={{ color: "hsl(var(--fr-faint))" }}>
+            {String(i + 1).padStart(2, "0")}
+          </span>
+          {/* Stage 3f: colour comes from .fr-numbered-text (ink/85 on paper; paper alphas on a dark Screen) —
+              an inline colour here used to win the cascade and kept beats 9/10 dark-on-dark. */}
+          <p className="fr-numbered-text text-sm font-light leading-relaxed">{text}</p>
+        </li>
+      ))}
+    </ol>
+  );
+}
+

@@ -23,9 +23,9 @@ const T = {
 
 // ── State config ──────────────────────────────────────────────────────────────
 
-type HomepageState = "outside_view" | "diagnose" | "focus" | "flow";
+export type HomepageState = "outside_view" | "diagnose" | "focus" | "flow";
 
-function claimStateToHomepageState(claimState: string | null | undefined): HomepageState {
+export function claimStateToHomepageState(claimState: string | null | undefined): HomepageState {
   if (claimState === "flow")         return "flow";
   if (claimState === "focus")        return "focus";
   if (claimState === "diagnose")     return "diagnose";
@@ -33,7 +33,7 @@ function claimStateToHomepageState(claimState: string | null | undefined): Homep
   return "diagnose";
 }
 
-function engagementPhaseToHomepageState(phase: string | null | undefined): HomepageState {
+export function engagementPhaseToHomepageState(phase: string | null | undefined): HomepageState {
   if (!phase) return "diagnose";
   if (phase === "flow" || phase === "validate_flow" || phase === "execution")          return "flow";
   if (phase === "focus" || phase === "validate_focus")                                  return "focus";
@@ -52,7 +52,7 @@ function deriveDayCount(createdAt: string | null | undefined): number {
 
 // ── DETOUR derivation ─────────────────────────────────────────────────────────
 
-function deriveDetourLabel(state: HomepageState): string {
+export function deriveDetourLabel(state: HomepageState): string {
   switch (state) {
     case "outside_view": return "CUSTOMER EVIDENCE";
     case "diagnose":     return "CUSTOMER EVIDENCE";
@@ -63,7 +63,7 @@ function deriveDetourLabel(state: HomepageState): string {
 
 // ── Team language adapter (Finding 2) ─────────────────────────────────────────
 
-function adaptTeamLanguage(text: string, isSolo: boolean): string {
+export function adaptTeamLanguage(text: string, isSolo: boolean): string {
   if (!isSolo) return text;
   return text
     .replace(/\byour team['']s\b/gi, "your")
@@ -269,7 +269,7 @@ function NextTurnBlock({
 // same authority the chips + value bands use (one taxonomy, no parallel). Honest about
 // who actually mapped: only manual/team content reads "WHAT YOU/YOUR TEAM MAPPED".
 // Returns null for unknown → the clause is dropped entirely.
-function topOpportunityAttribution(topNeed: OdiNeedRow | null, isSolo: boolean): string | null {
+export function topOpportunityAttribution(topNeed: OdiNeedRow | null, isSolo: boolean): string | null {
   switch (certaintyRung(topNeed)) {
     case "research_backed":
       return isSolo ? "WHAT YOU MAPPED" : "WHAT YOUR TEAM MAPPED";
@@ -410,21 +410,15 @@ function PathingSection({
   );
 }
 
-// ── § 01 CONTEXT ──────────────────────────────────────────────────────────────
-
-function ContextSection({
-  foundationStatus,
-  dayCount,
-  current,
-  unlockable,
-  audienceShort,
-}: {
-  foundationStatus: FoundationStatus;
-  dayCount: number | null;
-  current: number;
-  unlockable: number;
-  audienceShort?: string | null;
-}) {
+// Home reskin (2026-09-11): the §01 narrative as a PURE function so the First Read-system home
+// (HomepageHierarchyFR) renders the same strings from the same branches. Strings unchanged; the
+// parity test compares both renders on one fixture.
+export function foundationNarrative(foundationStatus: FoundationStatus, audienceShort?: string | null): {
+  groundedCount: number;
+  foundationLabel: "MAPPED" | "PARTIAL" | "MINIMAL";
+  narrativeParts: [string, string, string] | null;
+  narrativePlain: string | null;
+} {
   const groundedCount = [
     foundationStatus.positioningSet,
     foundationStatus.strategyMapped,
@@ -446,6 +440,25 @@ function ContextSection({
         ? "Solid groundwork is in place. A few elements still need filling in before the picture is complete."
         : "The foundation work is underway. More to build, but a real start has been made."
       : null;
+  return { groundedCount, foundationLabel, narrativeParts, narrativePlain };
+}
+
+// ── § 01 CONTEXT ──────────────────────────────────────────────────────────────
+
+function ContextSection({
+  foundationStatus,
+  dayCount,
+  current,
+  unlockable,
+  audienceShort,
+}: {
+  foundationStatus: FoundationStatus;
+  dayCount: number | null;
+  current: number;
+  unlockable: number;
+  audienceShort?: string | null;
+}) {
+  const { groundedCount, foundationLabel, narrativeParts, narrativePlain } = foundationNarrative(foundationStatus, audienceShort);
 
   return (
     <div style={{ borderTop: `1px solid ${T.hairline}`, paddingTop: 22 }}>

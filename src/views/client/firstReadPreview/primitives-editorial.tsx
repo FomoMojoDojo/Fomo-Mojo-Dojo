@@ -294,3 +294,45 @@ export function FlowLine({ stations, numerals = false }: { stations: FlowStation
 export function flowColumns(n: number): CSSProperties {
   return { ["--fr-flow-n" as string]: String(Math.max(n, 1)) };
 }
+
+export type ScaleMark = { label: ReactNode; value: number; /** 0–100 position along the bar */ pct: number; /** mono label colour: ink (default) or accent */ tone?: "ink" | "accent" };
+
+/** Home reskin (2026-09-11) — the Strategic Compass as a page-agnostic primitive: a hairline bar with
+ *  filled / reachable / unlockable spans, mono labels above (`LABEL · value`), and an optional floating
+ *  badge anchored at a percentage. Node-typed; fr tokens only; the caller supplies every string. */
+export function HorizontalScale({
+  marks,
+  filledPct,
+  reachablePct,
+  unlockablePct,
+  badge,
+  badgePct,
+}: {
+  marks: ReadonlyArray<ScaleMark>;
+  filledPct: number;
+  reachablePct: number;
+  unlockablePct: number;
+  badge?: ReactNode;
+  badgePct?: number;
+}) {
+  const clamp = (n: number) => Math.min(100, Math.max(0, n));
+  return (
+    <div className="fr-hscale" data-testid="fr-hscale">
+      <div className="fr-hscale-labels fr-mono">
+        {marks.map((m, i) => (
+          <span key={i} className="fr-hscale-label" data-tone={m.tone ?? "ink"}>
+            {m.label} · <strong>{m.value}</strong>
+          </span>
+        ))}
+      </div>
+      <div className="fr-hscale-track">
+        <span className="fr-hscale-fill" style={{ width: `${clamp(filledPct)}%` }} />
+        <span className="fr-hscale-reach" style={{ left: `${clamp(filledPct)}%`, width: `${clamp(reachablePct - filledPct)}%` }} />
+        <span className="fr-hscale-unlock" style={{ left: `${clamp(reachablePct)}%`, width: `${clamp(unlockablePct - reachablePct)}%` }} />
+        {badge ? (
+          <span className="fr-hscale-badge fr-mono" style={{ left: `${clamp(badgePct ?? filledPct)}%` }}>{badge}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}

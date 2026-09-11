@@ -1711,3 +1711,218 @@
   font-size: 13px;
   color: hsl(var(--fr-ink));
 }
+
+/* =====================================================================
+   HOME RESKIN (2026-09-11) — the First Read language on /preview/client-refine/home.
+   Three additions, every colour from the tokens above, no new token:
+   (1) .fr-nav-*   — WorkshopSidebar variant="fr": the nav rail in the shell's mono micro-label voice
+                     (10px, 0.18em tracking) on paper, hairline-right, sticky under the shell header.
+   (2) .fr-shell-with-nav — nav rail | page: the Spread pulls itself full-bleed under the header, so
+                     the rail sits as a fixed-width first column and the Spread fills the rest.
+   (3) .fr-hscale-* — HorizontalScale: the compass bar. Filled span lime, reachable span lime/35,
+                     unlockable span line; labels mono; badge electric-sol (the one accent the
+                     home's orange maps to — operator ruling, no new token).
+   ===================================================================== */
+
+.fr-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 12rem;
+  flex-shrink: 0;
+  align-self: flex-start;
+  position: sticky;
+  top: 57px;                          /* under the sticky shell header */
+  height: calc(100vh - 57px);
+  overflow-y: auto;
+  padding: 1.25rem 0 1.5rem;
+  background: hsl(var(--fr-paper));
+  border-right: 1px solid hsl(var(--fr-line));
+  box-sizing: border-box;
+}
+.fr-nav--collapsed { width: 2.5rem; overflow: hidden; }
+
+.fr-nav-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: 0 0.5rem 0.5rem;
+  background: none;
+  border: 1px solid hsl(var(--fr-line));
+  border-radius: 0;
+  cursor: pointer;
+  font-size: 14px;
+  color: hsl(var(--fr-faint));
+  flex-shrink: 0;
+}
+.fr-nav-toggle:hover { color: hsl(var(--fr-ink)); border-color: hsl(var(--fr-steel)); }
+
+.fr-nav-tab {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  padding: 0.55rem 1.25rem 0.55rem calc(1.25rem - 2px);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  line-height: 1.4;
+  color: hsl(var(--fr-steel));
+  position: relative;
+}
+.fr-nav-tab:hover { color: hsl(var(--fr-ink)); }
+.fr-nav-tab.active { color: hsl(var(--fr-ink)); border-left-color: hsl(var(--fr-lime)); }
+.fr-nav-tab--home { color: hsl(var(--fr-ink)); }
+.fr-nav-tab--add { color: hsl(var(--fr-faint)); }
+
+.fr-nav-divider { height: 1px; margin: 0.5rem 1.25rem; background: hsl(var(--fr-line)); flex-shrink: 0; }
+.fr-nav-divider--push { margin-top: auto; }
+
+/* (2) shell with nav: the rail is the first column; the Spread's own full-bleed negative margins are
+   neutralised because the page column is no longer centred in the viewport. */
+.fr-shell-with-nav {
+  display: flex;
+  align-items: stretch;
+  min-height: calc(100vh - 57px);
+}
+.fr-shell-with-nav > .fr-page { flex: 1 1 auto; min-width: 0; }
+.fr-shell-with-nav .fr-spread { margin: 0; min-height: calc(100vh - 57px); }
+@media (max-width: 1023px) {
+  .fr-shell-with-nav { flex-direction: column; }
+  .fr-nav { position: static; width: auto; height: auto; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid hsl(var(--fr-line)); padding: 0.5rem 0.75rem; }
+  .fr-nav-tab { width: auto; border-left: 0; padding: 0.5rem 0.75rem; }
+  .fr-nav-tab.active { text-decoration: underline; text-underline-offset: 0.35em; }
+  .fr-nav-divider, .fr-nav-toggle { display: none; }
+}
+
+/* (3) HorizontalScale */
+.fr-hscale { margin-bottom: 3rem; }
+.fr-hscale-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: hsl(var(--fr-faint));
+}
+.fr-hscale-label strong { font-weight: 400; color: hsl(var(--fr-ink)); }
+.fr-hscale-label[data-tone="accent"] { color: hsl(var(--fr-electric-sol)); }
+.fr-hscale-label[data-tone="accent"] strong { color: hsl(var(--fr-electric-sol)); }
+.fr-hscale-track {
+  position: relative;
+  height: 2px;
+  background: hsl(var(--fr-line));
+  margin-top: 1.75rem;               /* room for the floating badge above the bar */
+}
+.fr-hscale-fill, .fr-hscale-reach, .fr-hscale-unlock { position: absolute; top: 0; height: 2px; }
+.fr-hscale-fill   { left: 0; background: hsl(var(--fr-lime)); }
+.fr-hscale-reach  { background: hsl(var(--fr-lime) / 0.35); }
+.fr-hscale-unlock { background: hsl(var(--fr-line)); }
+.fr-hscale-badge {
+  position: absolute;
+  top: -1.6rem;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: hsl(var(--fr-electric-sol));
+}
+
+/* Home rows: the bento sections as hanging items — the chip strip and CTA line share the row meta voice. */
+.fr-home-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.9rem; }
+.fr-home-cta {
+  display: inline-block;
+  margin-top: 1rem;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: hsl(var(--fr-steel));
+  text-decoration: none;
+  border-bottom: 1px solid hsl(var(--fr-line));
+  padding-bottom: 2px;
+}
+.fr-home-cta:hover { color: hsl(var(--fr-ink)); border-bottom-color: hsl(var(--fr-ink)); }
+.fr-home-attr { display: block; margin-bottom: 0.75rem; }
+.fr-home-route { display: flex; align-items: baseline; gap: 0.75rem; margin-top: 0.6rem; }
+.fr-home-route-title { font-family: var(--fr-font-display); font-size: 1rem; color: hsl(var(--fr-ink)); }
+/* Home rail: the "→ open" line — the electric-sol arrow is the one accent, the text stays paper. */
+.fr-home-open { margin-top: 0; }
+.fr-home-open .fr-home-arrow { color: hsl(var(--fr-electric-sol)); }
+.fr-home-pts { display: block; margin-top: 1rem; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: hsl(var(--fr-electric-sol)); }
+/* The home lives inside the CRPV stage's absolutely-positioned command layer (a flex column), so the
+   First Read root becomes that layer's scroll container: the shell header and the nav rail stick inside
+   it. A button-shaped CTA (routes) carries the same voice as the link-shaped one (opportunities). */
+.first-read.fr-home-page {
+  /* The command layer is position:relative with a mode-dependent padding-top (31.5px in state-command),
+     which showed as a light band above the shell header. Covering the layer's padding box (absolute
+     inset:0 ignores padding) removes the band; min-height: 100vh is the First Read root's own rule, so
+     the slate rail runs to the bottom of the viewport and the page scrolls inside the root. */
+  position: absolute;
+  inset: 0;
+  min-height: 100vh;
+  overflow-y: auto;
+}
+button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(var(--fr-line)); cursor: pointer; padding: 0 0 2px; font-weight: 400; }
+.fr-home-page .fr-spread-main .fr-hanging-list .fr-hanging:first-child { padding-top: 2rem; }
+/* The CRPV command layer centres its text and sets Inter; the home root re-asserts the First Read's own
+   alignment and face so nothing inside inherits the older surface's rules. */
+.first-read.fr-home-page { text-align: left; font-family: var(--fr-font-display); }
+/* With a nav rail the page is not centred in the viewport, so the header spans the full width and its
+   content starts where the rail's text starts. */
+.fr-home-page .fr-shell-header-inner { max-width: none; padding: 18px 1.25rem; }
+.fr-home-accent { color: hsl(var(--fr-electric-sol)); }
+/* Layout correction (2026-09-11): the rail title is the company name again (First Read scale applies,
+   no override); the hero moved into the body at DISPLAY scale.
+   Rail: identity lede (mono, paper/70) and the 01 · CONTEXT block under the hairline — the sidebar's
+   Why-this voice for the sentence (fr-why-line), the tag voice for the meta line.
+   Body hero: EXACTLY the First Read statement headline (beat 3 "Winning aspiration") — the h1 carries
+   fr-display fr-h-statement fr-h-statement--wide (4.25rem at ≥1024, 700, 0.92, -0.035em, measure
+   min(100%, 76rem)); the only home rule is the colour (ink on paper) and the rhythm below it. 5–7 lines
+   at this scale is the intended stack. name_tension at the lede scale beneath; → open as before. */
+.fr-home-page .fr-spread-lede.fr-home-identity,
+.fr-home-page .fr-home-identity {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: hsl(var(--fr-paper) / 0.7);
+}
+.fr-home-context .fr-eyebrow { display: block; margin-bottom: 0.75rem; }
+.fr-home-context-text {
+  font-family: var(--fr-font-display);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: hsl(var(--fr-paper) / 0.7);
+  max-width: 22rem;
+}
+.fr-home-context-text strong { font-weight: 700; color: hsl(var(--fr-paper)); }
+.fr-home-context-meta { display: block; margin-top: 0.9rem; color: hsl(var(--fr-paper) / 0.45); }
+
+.fr-home-hero { margin-bottom: 3.5rem; }
+.fr-home-hero .fr-eyebrow { display: block; }
+.fr-home-hero-title { color: hsl(var(--fr-ink)); }
+/* Home main column: 3rem side padding (the First Read's 4rem) — the nav rail already takes 12rem of
+   the viewport. The statement's own 76rem measure cap still governs the stack. */
+.fr-home-page .fr-spread-main { padding-left: 3rem; padding-right: 3rem; max-width: none; }
+/* Beat-3 rhythm below the headline: a rule-free gap (the dark section's 3.5rem, without its hairline). */
+.fr-home-hero-statement { max-width: 40rem; margin: 3.5rem 0 1rem; }
+.fr-home-hero .fr-home-open { max-width: 40rem; color: hsl(var(--fr-ink)); font-weight: 600; }
+.fr-home-hero .fr-home-pts { margin-top: 0.75rem; }
+.fr-home-hero .fr-home-open .fr-home-arrow,
+.fr-home-page .fr-home-open .fr-home-arrow { color: hsl(var(--fr-electric-sol)); }
+
+/* The operator glyph sits in empty margin on the First Read; on the home the nav rail owns the
+   bottom-left, so the glyph steps right of it (rail width + the glyph's own inset). */
+.fr-home-page button[data-fr-operator-switch] { left: calc(12rem + 1.5rem); }
+/* Operator chrome in the shell Header's right slot (switch on): the Scan block, right-aligned. */
+.fr-home-scan { display: flex; justify-content: flex-end; }
+.fr-home-scan > div { padding: 0 !important; }
+.fr-home-page .crpv-co-switcher { display: inline-flex; align-items: baseline; gap: 0.35rem; position: relative; }
+.fr-home-page .crpv-co-trigger { background: none; border: 0; padding: 0; font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer; }

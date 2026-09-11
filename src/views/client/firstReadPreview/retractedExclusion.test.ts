@@ -16,10 +16,11 @@ describe("Gate 8b — retracted defs excluded on every enumerator (checklist gua
   it("Who-you-serve def query (useFirstReadPreviewData)", () => {
     expect(eqFilters(read("src/views/client/firstReadPreview/useFirstReadPreviewData.ts"))).toBe(1);
   });
-  it("discovery dedup universe (loadDedupUniverse) — the MAX_ACTIVE count derives from it", () => {
+  it("discovery dedup universe (loadDedupUniverse) — the MAX_ACTIVE count derives from it — and the lens-key live-holder guard", () => {
     const src = read("supabase/functions/_shared/marketPortfolioDiscovery.ts");
-    expect(eqFilters(src)).toBe(1);
+    expect(eqFilters(src)).toBe(2);   // (1) loadDedupUniverse; (2) the lens-key guard's live-holder probe (8b option ii)
     expect(src).toMatch(/liveKeys\.has\(l\.journey_key\)/);   // capacity counted over live defs only
+    expect(src).toMatch(/lens key held by a live definition/);
   });
   it("first-read-fill already-discovered predicate (both reads)", () => {
     expect(eqFilters(read("supabase/functions/first-read-fill/index.ts"))).toBe(2);

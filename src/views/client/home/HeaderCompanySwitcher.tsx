@@ -1,5 +1,5 @@
 // Home view header company-switcher — relocated verbatim from ClientRefinePreviewView (strand 3b batch 5).
-import type { Dispatch, SetStateAction, RefObject } from "react";
+import type { Dispatch, SetStateAction, RefObject, ReactNode } from "react";
 import { stageLabel } from "@/lib/phaseDisplay";
 import type { Company } from "@/hooks/useCompany";
 import type { ClaimState } from "@/lib/claimState";
@@ -7,7 +7,12 @@ import { toSentence } from "./shared";
 
 export function HeaderCompanySwitcher({
   showHeaderSwitcher, setShowHeaderSwitcher, headerSwitcherRef, activeCompany, companies, setActiveCompanyId, ENGAGEMENT_DAY, dominantClaimState, phase,
+  identity,
 }: {
+  /** Home reskin (2026-09-11): when given, the switcher ATTACHES to this identity node — the node is the
+   *  trigger's text (caret appended) and the separate "· DAY …" span is not drawn, so the shell Header
+   *  keeps its identity string byte-identical with the switch on. Absent (the older header) ⇒ verbatim. */
+  identity?: ReactNode;
   showHeaderSwitcher: boolean;
   setShowHeaderSwitcher: Dispatch<SetStateAction<boolean>>;
   headerSwitcherRef: RefObject<HTMLDivElement>;
@@ -27,10 +32,12 @@ export function HeaderCompanySwitcher({
                       aria-haspopup="listbox"
                       aria-expanded={showHeaderSwitcher}
                     >
-                      [{toSentence(activeCompany?.name) || "COMPANY"}]
+                      {identity ?? <>[{toSentence(activeCompany?.name) || "COMPANY"}]</>}
                       <span className="crpv-co-caret">{showHeaderSwitcher ? "▲" : "▼"}</span>
                     </button>
-                    <span className="cap" style={{ marginLeft: 4 }}>· DAY {ENGAGEMENT_DAY ?? "—"} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+                    {identity ? null : (
+                      <span className="cap" style={{ marginLeft: 4 }}>· DAY {ENGAGEMENT_DAY ?? "—"} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+                    )}
                     {showHeaderSwitcher && (
                       <div className="crpv-co-dropdown" role="listbox">
                         <ul className="crpv-co-list">
