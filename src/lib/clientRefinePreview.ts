@@ -23,6 +23,15 @@ export function clientRefineFirstReadPath(companyId: string) {
   return `${CLIENT_REFINE_PREVIEW_FIRSTREAD_BASE}/${companyId}`;
 }
 
+// WORKSPACE (2026-09-11). A nested route family under one shell (the First Read language):
+// /workspace is the index; the nine pages are children. Company comes from CompanyProvider
+// (the active company), never a URL param — same as every sibling except the First Read.
+export const CLIENT_REFINE_PREVIEW_WORKSPACE_ROUTE = "/preview/client-refine/workspace";
+
+export function clientRefineWorkspacePath(page?: string) {
+  return page ? `${CLIENT_REFINE_PREVIEW_WORKSPACE_ROUTE}/${page}` : CLIENT_REFINE_PREVIEW_WORKSPACE_ROUTE;
+}
+
 export function isClientRefinePreviewPath(pathname: string) {
   return (
     pathname === CLIENT_REFINE_PREVIEW_ROUTE ||
@@ -34,6 +43,8 @@ export function isClientRefinePreviewPath(pathname: string) {
     pathname === CLIENT_REFINE_PREVIEW_INBOX_ROUTE ||
     pathname === CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE ||
     pathname === CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE ||
+    pathname === CLIENT_REFINE_PREVIEW_WORKSPACE_ROUTE ||
+    pathname.startsWith(`${CLIENT_REFINE_PREVIEW_WORKSPACE_ROUTE}/`) ||
     pathname.startsWith(`${CLIENT_REFINE_PREVIEW_FIRSTREAD_BASE}/`)
   );
 }

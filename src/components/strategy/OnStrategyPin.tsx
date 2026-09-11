@@ -3,6 +3,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useEffect, useState } from "react";
 import { resolveChosenSet, currentActor, clearStalePin, PIN_CLEARED_STALE_NOTE } from "@/lib/chosenJobStepSet";
 
+/** The one home of the "On strategy" word (hoisted 2026-09-11; the workspace Job Map chip imports it). */
+export const ON_STRATEGY_LABEL = "On strategy";
+
 // On-strategy pin: a DISTINCT strategic assertion (which job-step set drives strategy),
 // NOT the journey view-toggle next to it (that just switches what you're looking at). You
 // can view one set while another is on-strategy. Persists to operator_primary_selection
@@ -94,7 +97,7 @@ export function OnStrategyPin({
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <span style={{ fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "#8a7560", whiteSpace: "nowrap" }}>
-        On strategy: <strong style={{ color: "#233c4b" }}>{chosenKey ? titleOf(chosenKey) : "not yet chosen"}</strong>
+        {ON_STRATEGY_LABEL}: <strong style={{ color: "#233c4b" }}>{chosenKey ? titleOf(chosenKey) : "not yet chosen"}</strong>
         {clearedStale ? <span data-testid="pin-cleared-note" style={{ marginLeft: 8, color: "#8a7560", textTransform: "none", letterSpacing: 0 }}>{PIN_CLEARED_STALE_NOTE}</span> : null}
       </span>
       {viewedSetKey && !focusIsOnStrategy && (
@@ -108,7 +111,7 @@ export function OnStrategyPin({
       )}
       {viewedSetKey && focusIsOnStrategy && (
         <span style={{ fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.07em", color: "#4a8f7f", whiteSpace: "nowrap" }}>
-          ✓ On strategy
+          ✓ {ON_STRATEGY_LABEL}
         </span>
       )}
     </div>

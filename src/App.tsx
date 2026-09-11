@@ -50,6 +50,16 @@ import ClientRefinePreviewExtractsView from "./views/client/ClientRefinePreviewE
 import FirstReadPreviewView from "./views/client/firstReadPreview/FirstReadPreviewView";
 import ClientRefinePreviewCompanyView from "./views/client/ClientRefinePreviewCompanyView";
 import DriftInboxView from "./views/client/DriftInboxView";
+import WorkspaceShell from "./views/client/workspace/WorkspaceShell";
+import WorkspaceIndexPage from "./views/client/workspace/WorkspaceIndexPage";
+import WorkspaceInputsPage from "./views/client/workspace/InputsPage";
+import WorkspaceJobMapPage from "./views/client/workspace/JobMapPage";
+import WorkspacePositioningPage from "./views/client/workspace/PositioningPage";
+import WorkspaceStrategyPage from "./views/client/workspace/StrategyPage";
+import WorkspaceMarketPage from "./views/client/workspace/MarketPage";
+import WorkspaceOpportunitiesPage from "./views/client/workspace/OpportunitiesPage";
+import WorkspaceRoutesPage from "./views/client/workspace/RoutesPage";
+import WorkspaceCouncilPage from "./views/client/workspace/CouncilPage";
 import type { ClientSystemPhase } from "./hooks/useClientMapInteractionState";
 import { dispatchClientPhaseChange, writeStoredClientPhase } from "./hooks/useClientMapInteractionState";
 import { isClientPhasePath } from "./lib/clientPhaseRoutes";
@@ -64,6 +74,7 @@ import {
   CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE,
   CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE,
   CLIENT_REFINE_PREVIEW_FIRSTREAD_ROUTE,
+  CLIENT_REFINE_PREVIEW_WORKSPACE_ROUTE,
 } from "./lib/clientRefinePreview";
 import { CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE } from "./lib/clientViewVisibilityAudit";
 import { CLIENT_VIEW_ROUTE } from "./lib/clientStoryView";
@@ -261,6 +272,18 @@ function ClientRefinePreviewInboxRoute() {
   );
 }
 
+// WORKSPACE (2026-09-11) — the one nested parent in this family: the shell renders <Outlet /> for
+// its ten children. Same double gate as every other client-refine surface.
+function ClientRefinePreviewWorkspaceRoute() {
+  return (
+    <AdminModeRoute>
+      <InternalViewOnlyRoute>
+        <WorkspaceShell />
+      </InternalViewOnlyRoute>
+    </AdminModeRoute>
+  );
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -291,6 +314,17 @@ const App = () => (
                 <Route path={CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE} element={<ClientRefinePreviewMembersRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE} element={<ClientRefinePreviewExtractsRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_FIRSTREAD_ROUTE} element={<ClientRefinePreviewFirstReadRoute />} />
+                <Route path={CLIENT_REFINE_PREVIEW_WORKSPACE_ROUTE} element={<ClientRefinePreviewWorkspaceRoute />}>
+                  <Route index element={<WorkspaceIndexPage />} />
+                  <Route path="inputs" element={<WorkspaceInputsPage />} />
+                  <Route path="job-map" element={<WorkspaceJobMapPage />} />
+                  <Route path="positioning" element={<WorkspacePositioningPage />} />
+                  <Route path="strategy" element={<WorkspaceStrategyPage />} />
+                  <Route path="market" element={<WorkspaceMarketPage />} />
+                  <Route path="opportunities" element={<WorkspaceOpportunitiesPage />} />
+                  <Route path="routes" element={<WorkspaceRoutesPage />} />
+                  <Route path="council" element={<WorkspaceCouncilPage />} />
+                </Route>
                 {/* Surface B — Legacy prototype (frozen, not maintained) */}
                 <Route path="/legacy/map" element={<InternalViewOnlyRoute><MapView /></InternalViewOnlyRoute>} />
                 <Route path="/legacy/strategy" element={<ModeAwareStrategyRoute />} />

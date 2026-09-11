@@ -34,7 +34,8 @@ import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClient
 import { buildRouteRationales } from "@/lib/routeRationale";
 import { buildRefinePreviewConfidenceLandscape } from "@/lib/refinePreviewConfidenceLandscape";
 import { buildReconciliationNarrative } from "@/lib/reconciliationNarrative";
-import { floorEngagementPhase, phaseConfidenceEmphasis, phaseNarrativePriority, phaseSectionVisibility, sortRoutesForPhase } from "@/lib/refinePreviewPhaseOrchestration";
+import { phaseConfidenceEmphasis, phaseNarrativePriority, phaseSectionVisibility, sortRoutesForPhase } from "@/lib/refinePreviewPhaseOrchestration";
+import { useFlooredEngagementPhase } from "@/views/client/workspace/useFlooredEngagementPhase";
 import { selectRecommendedRoute } from "@/lib/routeScoring";
 import { inferStrategicCenter } from "@/lib/strategicCenter";
 import { buildStrategicCenterSurface } from "@/lib/strategicCenterSurface";
@@ -111,7 +112,6 @@ export default function ClientRefinePreviewView() {
     rerunAnalysis: refetchClientViewData,
   } = useClientViewData({ actionLimit: 5 });
 
-  const rawPhase = activeCompany?.engagement_phase ?? "outside_signals";
   // INT-4 tri-state chip: operator-set → plain; NOT set + diagnose-ready →
   // DIAGNOSE labeled as auto-read; NOT set + not ready → outside_signals floor.
   // Read-only derivation (single authority: src/lib/phaseReadiness.ts).
@@ -166,12 +166,9 @@ export default function ClientRefinePreviewView() {
   const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
   const { history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
 
-  // Floor phase to what evidence actually supports — display-only, no DB write.
-  const phase = floorEngagementPhase({
-    phase: rawPhase,
-    hasNeedsWithScores: needs.some((n) => n.importance > 0),
-    hasSelectedRoute: !!activeCompany?.selected_route_id,
-  });
+  // Floor phase to what evidence actually supports — display-only, no DB write. The derivation
+  // now lives in ONE hook (useFlooredEngagementPhase) shared with the workspace shell's header.
+  const phase = useFlooredEngagementPhase(activeCompany, needs);
   const isEarlyPhase = phase === "outside_signals" || phase === "validate_outside" || phase === "diagnose" || phase === "validate_diagnose";
   const earlyHypothesisPhaseLabel = phase === "outside_signals" || phase === "validate_outside" ? "Pre-Diagnosis" : "Diagnose";
   const phaseSectionVis = phaseSectionVisibility(phase);
