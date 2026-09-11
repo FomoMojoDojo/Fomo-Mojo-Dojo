@@ -896,6 +896,10 @@ export async function computeMarketDiscovery(
       // So a skipped candidate never overwrites a terminal row. It still writes when the existing row
       // is 'error' (no ruling) or itself 'already_decided' (nothing to lose), and when no row exists
       // at all, so a first pass still records that the candidate was seen and skipped.
+      //
+      // Gate 5c: the probe is AT THE CURRENT CRITERION VERSION. Rulings are keyed by version now, so
+      // a v1 terminal row is not "the existing row" for a v2 pass — it is history, untouchable by
+      // construction — and an already_decided under v2 must only defer to a v2 ruling.
       const keep = new Set<number>();
       for (const row of rows) {
         if (row.outcome !== "already_decided") continue;
@@ -903,6 +907,7 @@ export async function computeMarketDiscovery(
           .from("market_candidate_outcomes")
           .select("outcome")
           .eq("run_id", row.run_id).eq("candidate_index", row.candidate_index)
+          .eq("criterion_version", CRITERION_VERSION)
           .limit(1).maybeSingle();
         const prior = String((existing as { outcome?: string } | null)?.outcome ?? "");
         if (prior && prior !== "error" && prior !== "already_decided") keep.add(row.candidate_index);
@@ -911,7 +916,10 @@ export async function computeMarketDiscovery(
       if (toWrite.length > 0) {
         const { error: outErr } = await args.supabase
           .from("market_candidate_outcomes")
-          .upsert(toWrite, { onConflict: "run_id,candidate_index" });
+          // Gate 5c: the version is IN the key. The first v2 re-fire upserted on (run_id, candidate_index)
+          // and replaced Riverlane's three v1 rulings with their v2 rulings — history destroyed by the
+          // first write that was meant to sit beside it.
+          .upsert(toWrite, { onConflict: "run_id,candidate_index,criterion_version" });
         if (outErr) return { ok: false, error: `candidate outcome write failed: ${outErr.message}` };
       }
     }

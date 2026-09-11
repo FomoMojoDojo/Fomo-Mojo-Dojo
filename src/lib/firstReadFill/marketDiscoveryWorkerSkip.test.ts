@@ -52,10 +52,13 @@ function fakeSupabase(tables: Record<string, Row[]>, opts: { failUpsert?: boolea
       upsert: (rows: Row[], o?: { onConflict?: string }) => {
         upserts.push({ table, rows, onConflict: o?.onConflict });
         if (opts.failUpsert) return Promise.resolve({ error: { message: "planted upsert failure" } });
-        // model the real UNIQUE (run_id, candidate_index): replace, never duplicate
+        // model the real UNIQUE key: the columns the caller names in onConflict decide what is
+        // "the same row" — replace on a full match, else add. (Gate 5c: the caller's key is what
+        // protects the v1 rows, so the fake honours exactly the key it is given, never a wider one.)
         const store = (tables[table] ??= []);
+        const key = (o?.onConflict ?? "id").split(",").map((c) => c.trim());
         for (const r of rows) {
-          const at = store.findIndex((x) => x.run_id === r.run_id && x.candidate_index === r.candidate_index);
+          const at = store.findIndex((x) => key.every((c) => x[c] === r[c]));
           if (at >= 0) store[at] = r; else store.push(r);
         }
         return Promise.resolve({ error: null });
@@ -230,7 +233,7 @@ describe("per-candidate outcomes are persisted before the cursor advances (Gate 
     expect(res.ok).toBe(true);
     const up = fake.upserts.find((u) => u.table === "market_candidate_outcomes");
     expect(up).toBeTruthy();
-    expect(up!.onConflict).toBe("run_id,candidate_index");
+    expect(up!.onConflict).toBe("run_id,candidate_index,criterion_version");
     expect(up!.rows[0]).toMatchObject({
       run_id: RUN, candidate_index: 1, job_executor: EXECUTOR, outcome: "already_decided",
     });
@@ -349,5 +352,71 @@ describe("already_decided never overwrites a terminal outcome (Gate 4d)", () => 
     const { fake } = await run(decidedTables(null));
     const up = fake.upserts.find((u) => u.table === "market_candidate_outcomes")!;
     expect(up.rows[0].reconstructed).toBe(false);
+  });
+});
+
+// ── Gate 5c — rulings are keyed by criterion version; nothing crosses versions ────────────────────
+// The first v2 re-fire (Riverlane) upserted on (run_id, candidate_index) and REPLACED the v1
+// rulings for #1, #3 and #4 with their v2 rulings. The column added to keep history was defeated by
+// the key. Now the version is in the key and the 4d guard looks only at the current version.
+describe("a v2 write never touches a v1 row (Gate 5c)", () => {
+  const RUN = "b60e2867-53b1-4b8d-86d9-1230240e5cab";
+  const V1_ROW: Row = Object.freeze({
+    id: "4eb744f4-25d0-42df-aee1-56dabffe57f0", run_id: RUN, candidate_index: 1, company_id: COMPANY,
+    job_executor: EXECUTOR, outcome: "rejected_solution", reconstructed: true, criterion_version: 1,
+    judge_reasons: { reconstructed_reason: "v1: names the company's product" },
+  });
+  const tablesWith = (extra: Row[]): Record<string, Row[]> => ({
+    companies: [{ id: COMPANY, name: "Riverlane" }],
+    odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
+      jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+    market_discovery_verdicts: [], market_lens: [],
+    market_candidate_outcomes: [{ ...V1_ROW }, ...extra],
+  });
+  const run = (tables: Record<string, Row[]>) => {
+    const fake = fakeSupabase(tables);
+    return computeMarketDiscovery({
+      ...baseArgs(fake.client), write: true, runId: RUN, candidateOffset: 0, candidates: [CANDIDATE],
+    }).then((res) => ({ res, fake }));
+  };
+
+  // RED ON REVERT (either half): with the two-column key the v1 row is replaced; with the
+  // version-blind guard the v1 terminal blocks the v2 write and no v2 row appears at all.
+  it("(g5c) a v2 write lands BESIDE the v1 row, and the v1 row is byte-identical afterwards", async () => {
+    const tables = tablesWith([]);
+    const before = JSON.stringify(V1_ROW);
+    const { fake } = await run(tables);
+    const up = fake.upserts.find((u) => u.table === "market_candidate_outcomes")!;
+    expect(up).toBeTruthy();
+    expect(up.onConflict).toBe("run_id,candidate_index,criterion_version");
+    const rows = tables.market_candidate_outcomes;
+    expect(rows).toHaveLength(2);
+    const v1 = rows.find((r) => r.criterion_version === 1)!;
+    const v2 = rows.find((r) => r.criterion_version === CRITERION_VERSION)!;
+    expect(JSON.stringify(v1)).toBe(before);                       // byte-identical
+    expect(v2.outcome).toBe("already_decided");
+    expect(v2.candidate_index).toBe(1);
+  });
+
+  it("(g5c) a duplicate v2 write replaces ONLY the v2 row — the v1 row beside it is untouched", async () => {
+    const tables = tablesWith([{ id: "e", run_id: RUN, candidate_index: 1, company_id: COMPANY,
+      outcome: "error", reconstructed: false, criterion_version: CRITERION_VERSION }]);
+    const before = JSON.stringify(V1_ROW);
+    await run(tables);
+    const rows = tables.market_candidate_outcomes;
+    expect(rows).toHaveLength(2);
+    expect(JSON.stringify(rows.find((r) => r.criterion_version === 1))).toBe(before);
+    expect(rows.find((r) => r.criterion_version === CRITERION_VERSION)!.outcome).toBe("already_decided");
+  });
+
+  // RED ON REVERT of the guard's version filter: a version-blind probe would see the v1 terminal
+  // and keep the candidate — so the 4d rule would silently suppress every v2 already_decided row
+  // for every candidate v1 had ruled on.
+  it("(g5c) the 4d guard defers to a v2 terminal, not to a v1 one", async () => {
+    const tables = tablesWith([{ id: "t2", run_id: RUN, candidate_index: 1, company_id: COMPANY,
+      outcome: "deduped", reconstructed: false, criterion_version: CRITERION_VERSION }]);
+    const { fake } = await run(tables);
+    expect(fake.upserts.find((u) => u.table === "market_candidate_outcomes")).toBeUndefined();  // v2 terminal kept
+    expect(tables.market_candidate_outcomes.map((r) => r.outcome).sort()).toEqual(["deduped", "rejected_solution"]);
   });
 });
