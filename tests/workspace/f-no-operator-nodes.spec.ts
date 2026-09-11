@@ -14,5 +14,7 @@ for (const seg of WS_PAGES) {
     await expect(page.locator("[data-fr-operator]")).toHaveCount(0);
     await expect(page.getByText("Admin", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Workspace controls")).toHaveCount(0);
+    // Port 2a's operator-only controls never appear on the default render either.
+    for (const t of ["Create route", "Regenerate conditions", "Draft tests"]) await expect(page.getByText(t)).toHaveCount(0);
   });
 }

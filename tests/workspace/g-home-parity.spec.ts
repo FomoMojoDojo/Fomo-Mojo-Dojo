@@ -12,5 +12,12 @@ test("home DOM text is byte-identical before and after", async ({ page }) => {
   await expect(page.getByTestId("home-fr-root")).toBeVisible({ timeout: 60_000 });
   await page.waitForTimeout(1500);
   const after = await page.locator("body").innerText();
+  // The home's score numerals (the live computation now shared with the workspace Routes page).
+  const numerals = (t: string) => ({
+    score: t.match(/SCORE\s+(\d+)\s*→\s*(\d+)/)?.slice(1, 3) ?? null,
+    compass: t.match(/CURRENT\s*·\s*(\d+)[\s\S]*?REACHABLE\s*·\s*(\d+)[\s\S]*?DESTINATION\s*·\s*(\d+)/)?.slice(1, 4) ?? null,
+  });
+  expect(numerals(before).score).not.toBeNull();
+  expect(numerals(after)).toEqual(numerals(before));
   expect(after).toBe(before);
 });

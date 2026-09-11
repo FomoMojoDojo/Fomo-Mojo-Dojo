@@ -88,6 +88,33 @@ export const WORKSPACE_STRINGS = {
   titleJobMap: "The customer job",
   titleOpportunities: "Customer opportunities",
   titleRoutes: "Routes under consideration",
+  // ── Job Map body (P:159-204) ──
+  /** Existing (ClientRefinePreviewWorkshopView). */
+  marketHypothesis: "Market hypothesis",
+  jobStages: "Job stages",
+  /** Existing (JobMapOrgPanel stepPosture). */
+  underPressure: "Under pressure",
+  mappedOpportunities: "Mapped opportunities",
+  // ── Opportunities body (P:362-389) ──
+  filterAll: "All",
+  filterHighValue: "High value",
+  searchOpportunities: "Search opportunities",
+  selectedOpportunity: "Selected opportunity",
+  potential: "Potential",
+  createRoute: "Create route",
+  // ── Routes body (P:409-419) ──
+  scoreNow: "Now",
+  /** Existing (home / routes compass). */
+  scoreReachable: "Reachable",
+  scoreCeiling: "Ceiling",
+  evidenceUnlock: "Evidence unlock",
+  /** Existing (the home's raiser lift: "+N PTS"). */
+  pts: "PTS",
+  routeWorkbench: "Route workbench",
+  /** Existing (ClientRefinePreviewRoutesView / ClientRefinePreviewWorkshopView). */
+  regenerateConditions: "Regenerate conditions",
+  draftTests: "Draft tests",
+  testForThisRoute: "Test for this route",
   // ── council badge words — existing (CouncilPanel recBadgeLabel), byte-exact ──
   councilUnresolved: "Unresolved",
   councilSetAside: "Set aside",

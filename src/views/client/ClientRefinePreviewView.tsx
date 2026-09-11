@@ -36,6 +36,7 @@ import { buildRefinePreviewConfidenceLandscape } from "@/lib/refinePreviewConfid
 import { buildReconciliationNarrative } from "@/lib/reconciliationNarrative";
 import { phaseConfidenceEmphasis, phaseNarrativePriority, phaseSectionVisibility, sortRoutesForPhase } from "@/lib/refinePreviewPhaseOrchestration";
 import { useFlooredEngagementPhase } from "@/views/client/workspace/useFlooredEngagementPhase";
+import { useLiveMojoScore } from "@/views/client/workspace/useLiveMojoScore";
 import { selectRecommendedRoute } from "@/lib/routeScoring";
 import { inferStrategicCenter } from "@/lib/strategicCenter";
 import { buildStrategicCenterSurface } from "@/lib/strategicCenterSurface";
@@ -72,7 +73,6 @@ import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
 import { useChosenSetKey } from "@/lib/chosenJobStepSet";
 import { admitForSurface } from "@/lib/registerGuard";
 import { useMojoScore } from "@/hooks/useMojoScore";
-import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
 import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
 import MojoScoreSurface from "@/components/score/MojoScoreStrip";
 import type { MojoScoreResult } from "@/lib/mojoScore/types";
@@ -201,37 +201,8 @@ export default function ClientRefinePreviewView() {
     for (const s of order) { if (states.includes(s)) return s; }
     return states[0] ?? null;
   }, [hasHierarchy, topLevelRoutes, claimsMap]);
-  const liveMojoScore = useMemo((): MojoScoreResult | null => {
-    // Score computes for every company now (computeMojoScore handles empty data);
-    // null only when there is no active company.
-    if (!activeCompany?.id) return null;
-    return computeMojoScore({
-      companyId: activeCompany.id,
-      claims: Array.from(claimsMap.values()).map((c) => ({
-        id: c.id, state: c.state, claim_type: c.claim_type, topic: c.topic,
-        outside_support_count: c.outside_support_count,
-        organization_support_count: c.organization_support_count,
-        customer_support_count: c.customer_support_count,
-        updated_at: c.updated_at,
-      })),
-      routes: routes.map((r) => ({
-        id: r.id, category: r.category, level: r.level ?? null, parent_id: r.parent_id ?? null,
-        steps_json: (Array.isArray(r.steps_json) ? r.steps_json : null) as Array<{ id: string; title: string; status: string }> | null,
-        evidence_json: (Array.isArray(r.evidence_json) ? r.evidence_json : null) as Array<{ id: string; title: string; status: string }> | null,
-        why_this_matters_json: Array.isArray(r.why_this_matters_json) ? r.why_this_matters_json as string[] : null,
-        rejected_alternatives: Array.isArray(r.rejected_alternatives) ? r.rejected_alternatives : null,
-        what_would_have_to_be_true: Array.isArray(r.what_would_have_to_be_true) ? r.what_would_have_to_be_true : null,
-        linked_need_ids: Array.isArray(r.linked_need_ids) ? r.linked_need_ids : null,
-        updated_at: r.updated_at ?? null,
-      })),
-      needs: (needs ?? []).map((n) => ({
-        id: n.id, desired_outcome: n.desired_outcome, importance: n.importance,
-        satisfaction: n.satisfaction, opportunity_score: n.opportunity_score,
-        service_state: n.service_state, updated_at: n.updated_at ?? null,
-      })),
-      computedAt: new Date().toISOString(),
-    });
-  }, [hasHierarchy, activeCompany?.id, claimsMap, routes, needs]);
+  // The live score now lives in ONE hook (useLiveMojoScore) shared with the workspace Routes page.
+  const liveMojoScore = useLiveMojoScore(activeCompany?.id, claimsMap, routes, needs);
   const displayMojoScore: MojoScoreResult | null = liveMojoScore;
   // Block 4: pick the need with the largest gap = highest opportunity_score
   // (opportunity_score = (importance − satisfaction) × importance)
