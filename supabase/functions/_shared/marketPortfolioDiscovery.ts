@@ -701,6 +701,83 @@ export async function computeMarketDiscovery(
       return !!data;
     };
 
+    // ── FILE THE OUTCOME — PER CANDIDATE, AT ITS TERMINAL (Gate 7a, operator ruling 2026-09-11) ──
+    // Until this gate the rows were built from results[] ONCE, after the chunk loop — behind every
+    // other candidate's model calls. The 2026-09-11 diagnostic proved what that costs: the stepper's
+    // fetch is cut at ~150s, the confirm-poll counted a candidate accounted on its gate-(b) verdict,
+    // advanced the cursor and self-fired, and the ORIGINAL isolate was killed at the 400s wall with
+    // the chunk write still ahead of it (Edgewood #1 at 03:39:58Z, Coreviva #3/#4 at 04:21:11Z —
+    // `wall clock duration reached … in_flight_req_exists = true`). Three rulings the worker had
+    // reached in memory were never filed, and the cursor was already past them.
+    //
+    // So the row is written the moment a candidate reaches ANY terminal — before its `continue`,
+    // before the next candidate's first model call. A death mid-candidate can now lose at most the
+    // candidate in flight, and that one has no row, so the poll (clause 3) does not advance past it.
+    //
+    // The write is NOT best-effort, unlike the Gate 1b error terminal: a failed write returns
+    // ok:false, the stepper reads a not-ok chunk, and the cursor does not advance. Conflict target
+    // is unchanged — (run_id, candidate_index, criterion_version) — so a re-judge of the same
+    // manifest position replaces its own row rather than duplicating it (Gate 5c keeps the version
+    // in the key so a v2 write can never touch a v1 row).
+    //
+    // A CANDIDATE THAT WAS RULED ON STAYS RULED ON (Gate 4d, operator ruling). `already_decided` is
+    // not a ruling — it is a statement that a ruling exists somewhere. The first live replay proved
+    // what happens when it may upsert over one: Geniant #2's `rejected_solution` and #4's `deduped`
+    // were both replaced by `already_decided`, and the record of WHY those groups are absent — the
+    // whole reason this table exists — was destroyed by the skip meant to protect them. So a skipped
+    // candidate never overwrites a terminal row; it still writes over 'error' (no ruling), over
+    // 'already_decided' (nothing to lose), and where no row exists. The probe is at the CURRENT
+    // criterion version (Gate 5c): a v1 terminal is history, not "the existing row".
+    type ResultRow = (typeof results)[number];
+    const outcomeOffset = args.candidateOffset ?? 0;
+    const fileOutcome = async (r: ResultRow, candidateIndex: number): Promise<string | null> => {
+      if (!args.write || !args.runId) return null;   // a manual/dry call judges exactly as before and files nothing
+      const originalJtbd = r.original_jtbd ?? r.jtbd;   // reframed rows carry the original alongside
+      const reframed = r.reframed === true;
+      const row = {
+        company_id: args.companyId,
+        run_id: args.runId,
+        candidate_index: candidateIndex,
+        job_executor: r.job_executor,
+        relationship_kind: r.relationship_kind || null,
+        original_jtbd: originalJtbd,
+        original_identity: await marketIdentity(r.job_executor, originalJtbd),
+        reframed_jtbd: reframed ? r.jtbd : null,
+        reframed_identity: reframed ? await marketIdentity(r.job_executor, r.jtbd) : null,
+        outcome: r.outcome === "accepted" ? "accepted_active" : r.outcome,
+        judge_reasons: r.judge_reasons,
+        dedup_target_identity: r.dedup_target_identity ?? null,
+        journey_key: r.journey_key ?? null,
+        // Written by the run that made the ruling. Stated explicitly so an upsert over a
+        // reconstructed row CLEARS the flag — a column left out of the payload is left out of the
+        // ON CONFLICT SET list, which is how Geniant's rows stayed reconstructed=true after being
+        // rewritten first-hand.
+        reconstructed: false,
+        criterion_version: CRITERION_VERSION,
+      };
+      if (row.outcome === "already_decided") {
+        const { data: existing } = await args.supabase
+          .from("market_candidate_outcomes")
+          .select("outcome")
+          .eq("run_id", row.run_id).eq("candidate_index", row.candidate_index)
+          .eq("criterion_version", CRITERION_VERSION)
+          .limit(1).maybeSingle();
+        const prior = String((existing as { outcome?: string } | null)?.outcome ?? "");
+        if (prior && prior !== "error" && prior !== "already_decided") return null;   // the ruling stands
+      }
+      const { error } = await args.supabase
+        .from("market_candidate_outcomes")
+        .upsert([row], { onConflict: "run_id,candidate_index,criterion_version" });
+      return error ? `candidate outcome write failed: ${error.message}` : null;
+    };
+    // The one way a candidate reaches results[]: push, then file, keyed to its GLOBAL manifest
+    // position (the worker only ever sees a chunk; the caller's cursor is the offset). Returns the
+    // write error so every terminal below can turn it into ok:false with one line.
+    const record = async (r: ResultRow): Promise<string | null> => {
+      results.push(r);
+      return await fileOutcome(r, outcomeOffset + results.length);
+    };
+
     for (const original of args.candidates!) {
       totals.requested++;
       const reasons: Record<string, string> = {};
@@ -719,11 +796,12 @@ export async function computeMarketDiscovery(
       // retried. marketCandidateAccounted (the confirm-poll's question) counts it; this does not.
       if (await marketCandidateDecided({ exists: decidedProbe, companyId: args.companyId, candidate: original })) {
         totals.decided++;
-        results.push({
+        const fileErr = await record({
           ...original,
           outcome: "already_decided",
           judge_reasons: { decided: "written def or banked gate-(b)/(c) verdict — not re-judged" },
         });
+        if (fileErr) return { ok: false, error: fileErr };
         continue;
       }
 
@@ -766,21 +844,24 @@ export async function computeMarketDiscovery(
 
         if (outcome === "rejected_buyer") {
           totals.rejected_buyer++;
-          results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
+          const fileErr = await record({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
+          if (fileErr) return { ok: false, error: fileErr };
           continue;
         }
         if (outcome === "rejected_solution") {
           totals.rejected_solution++;
-          results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
+          const fileErr = await record({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
+          if (fileErr) return { ok: false, error: fileErr };
           continue;
         }
         if (outcome === "deduped") {
           totals.deduped_same_market++;
-          results.push({
+          const fileErr = await record({
             ...cand, outcome, judge_reasons: reasons,
             ...(foldTarget ? { dedup_target_identity: foldTarget } : {}),
             ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}),
           });
+          if (fileErr) return { ok: false, error: fileErr };
           continue;
         }
 
@@ -839,13 +920,15 @@ export async function computeMarketDiscovery(
           activeDiscovered++;
           totals.accepted++;
         }
-        results.push({
+        // Filed AFTER def + lens: the ruling is real only once the def it names exists.
+        const fileErr = await record({
           ...cand,
           outcome: overCapacity ? "accepted_deferred" : "accepted",
           journey_key: journeyKey,
           judge_reasons: reasons,
           ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}),
         });
+        if (fileErr) return { ok: false, error: fileErr };
       } catch (err) {
         // ANTI-SILENT-LOSS (Gate 1b). Before this, ONE candidate's throw — a 180s judge timeout, an
         // isolate cut mid-call — killed the whole chunk request and every candidate behind it. The
@@ -875,89 +958,14 @@ export async function computeMarketDiscovery(
             });
           } catch { /* best-effort: an unrecorded failure simply stays unaccounted */ }
         }
-        results.push({ ...original, outcome: "error", judge_reasons: reasons });
+        // The outcome row for the error is NOT best-effort (Gate 7a): it is the row the poll reads.
+        const fileErr = await record({ ...original, outcome: "error", judge_reasons: reasons });
+        if (fileErr) return { ok: false, error: fileErr };
         continue;
       }
     }
-    // ── PERSIST THE PER-CANDIDATE OUTCOMES (Gate 4b) ────────────────────────────────────────────
-    // Before the caller advances its cursor. The worker has always known what happened to every
-    // candidate — outcome, judge_reasons, the reframed jtbd, the dedup target — and returned it in
-    // the HTTP response, where it was thrown away. That is why the surface cannot say why a group is
-    // absent, why the census could tie only 9 of 20 rulings to an executor, and why a rail-dropped
-    // candidate is re-judged forever. Filing it here makes the ruling durable and makes clause (3)
-    // of marketCandidateDecided possible.
-    //
-    // The write is NOT best-effort, unlike the Gate 1b error terminal. It returns ok:false on
-    // failure, which the stepper reads as a not-ok chunk, so the CURSOR DOES NOT ADVANCE and the
-    // chunk re-judges next fire. A cursor that moves past an unrecorded ruling is the exact defect
-    // Gate 1b closed; this is the same law applied to a different record.
-    if (args.write && args.runId) {
-      const offset = args.candidateOffset ?? 0;
-      const rows = [];
-      for (let i = 0; i < results.length; i++) {
-        const r = results[i];
-        const originalJtbd = r.original_jtbd ?? r.jtbd;   // reframed rows carry the original alongside
-        const reframed = r.reframed === true;
-        rows.push({
-          company_id: args.companyId,
-          run_id: args.runId,
-          candidate_index: offset + i + 1,
-          job_executor: r.job_executor,
-          relationship_kind: r.relationship_kind || null,
-          original_jtbd: originalJtbd,
-          original_identity: await marketIdentity(r.job_executor, originalJtbd),
-          reframed_jtbd: reframed ? r.jtbd : null,
-          reframed_identity: reframed ? await marketIdentity(r.job_executor, r.jtbd) : null,
-          outcome: r.outcome === "accepted" ? "accepted_active" : r.outcome,
-          judge_reasons: r.judge_reasons,
-          dedup_target_identity: r.dedup_target_identity ?? null,
-          journey_key: r.journey_key ?? null,
-          // Written by the run that made the ruling. Stated explicitly so an upsert over a
-          // reconstructed row CLEARS the flag — a column left out of the payload is left out of the
-          // ON CONFLICT SET list, which is how Geniant's rows stayed reconstructed=true after being
-          // rewritten first-hand.
-          reconstructed: false,
-          criterion_version: CRITERION_VERSION,
-        });
-      }
-      // A CANDIDATE THAT WAS RULED ON STAYS RULED ON (Gate 4d, operator ruling).
-      //
-      // `already_decided` is not a ruling — it is a statement that a ruling exists somewhere. The
-      // first live replay proved what happens when it is allowed to upsert over one: Geniant #2's
-      // `rejected_solution` and #4's `deduped` were both replaced by `already_decided`, the census
-      // dropped from 7 rows to 6, and the record of WHY those groups are absent — the whole reason
-      // this table exists — was destroyed by the very skip that was meant to protect them.
-      //
-      // So a skipped candidate never overwrites a terminal row. It still writes when the existing row
-      // is 'error' (no ruling) or itself 'already_decided' (nothing to lose), and when no row exists
-      // at all, so a first pass still records that the candidate was seen and skipped.
-      //
-      // Gate 5c: the probe is AT THE CURRENT CRITERION VERSION. Rulings are keyed by version now, so
-      // a v1 terminal row is not "the existing row" for a v2 pass — it is history, untouchable by
-      // construction — and an already_decided under v2 must only defer to a v2 ruling.
-      const keep = new Set<number>();
-      for (const row of rows) {
-        if (row.outcome !== "already_decided") continue;
-        const { data: existing } = await args.supabase
-          .from("market_candidate_outcomes")
-          .select("outcome")
-          .eq("run_id", row.run_id).eq("candidate_index", row.candidate_index)
-          .eq("criterion_version", CRITERION_VERSION)
-          .limit(1).maybeSingle();
-        const prior = String((existing as { outcome?: string } | null)?.outcome ?? "");
-        if (prior && prior !== "error" && prior !== "already_decided") keep.add(row.candidate_index);
-      }
-      const toWrite = rows.filter((r) => !keep.has(r.candidate_index));
-      if (toWrite.length > 0) {
-        const { error: outErr } = await args.supabase
-          .from("market_candidate_outcomes")
-          // Gate 5c: the version is IN the key. The first v2 re-fire upserted on (run_id, candidate_index)
-          // and replaced Riverlane's three v1 rulings with their v2 rulings — history destroyed by the
-          // first write that was meant to sit beside it.
-          .upsert(toWrite, { onConflict: "run_id,candidate_index,criterion_version" });
-        if (outErr) return { ok: false, error: `candidate outcome write failed: ${outErr.message}` };
-      }
-    }
+    // Every candidate filed its own row at its terminal (fileOutcome, above). There is no chunk-level
+    // write left to do, and nothing here may run behind another candidate's model calls.
 
     return { ok: true, scoped: true, totals, results };
   }

@@ -34,7 +34,7 @@ type Row = Record<string, unknown>;
 /** A fake supabase whose only job is to answer equality reads from planted tables and to RECORD every
  *  table it was asked for — `touched` is how a test asserts the gate chain never ran, since gate (a)
  *  reads step_perspective_verdicts before it does anything else. */
-function fakeSupabase(tables: Record<string, Row[]>, opts: { failUpsert?: boolean } = {}) {
+function fakeSupabase(tables: Record<string, Row[]>, opts: { failUpsert?: boolean; dieOnOutcomeUpsert?: number } = {}) {
   const touched: string[] = [];
   const deletes: Array<{ table: string; match: Row }> = [];
   const inserts: Array<{ table: string; row: Row }> = [];
@@ -52,6 +52,13 @@ function fakeSupabase(tables: Record<string, Row[]>, opts: { failUpsert?: boolea
       upsert: (rows: Row[], o?: { onConflict?: string }) => {
         upserts.push({ table, rows, onConflict: o?.onConflict });
         if (opts.failUpsert) return Promise.resolve({ error: { message: "planted upsert failure" } });
+        // Gate 7a: the isolate dies (not a throw the worker can catch — the request is cancelled by
+        // the supervisor) at the Nth outcome write. Everything filed BEFORE it must already be on
+        // the record; nothing after it ever is.
+        if (opts.dieOnOutcomeUpsert && table === "market_candidate_outcomes"
+          && upserts.filter((u) => u.table === "market_candidate_outcomes").length === opts.dieOnOutcomeUpsert) {
+          throw new Error("WorkerRequestCancelled: request has been cancelled by supervisor");
+        }
         // model the real UNIQUE key: the columns the caller names in onConflict decide what is
         // "the same row" — replace on a full match, else add. (Gate 5c: the caller's key is what
         // protects the v1 rows, so the fake honours exactly the key it is given, never a wider one.)
@@ -167,13 +174,18 @@ describe("decided vs accounted (Gate 3b split)", () => {
     expect(await marketCandidateAccounted(args)).toBe(true);
   });
 
-  it("(b2) a DECIDED candidate is both decided and accounted", async () => {
-    const tables = {
+  // Gate 7c — RED ON REVERT: a def DECIDES (the worker skips) but no longer ACCOUNTS (the poll waits
+  // for the candidate's own row). The row the skip files is what closes the gap.
+  it("(b2) a DECIDED candidate (def only) is decided but NOT accounted until its row exists", async () => {
+    const identity = await marketIdentity(EXECUTOR, JTBD);
+    const tables: Record<string, Row[]> = {
       odi_market_definitions: [{ company_id: COMPANY, job_executor: EXECUTOR, market_register: "public_inferred" }],
-      market_discovery_verdicts: [], integrity_runs: [],
+      market_discovery_verdicts: [], integrity_runs: [], market_candidate_outcomes: [],
     };
     const args = { exists: probeOver(tables), companyId: COMPANY, candidate: CANDIDATE };
     expect(await marketCandidateDecided(args)).toBe(true);
+    expect(await marketCandidateAccounted(args)).toBe(false);
+    tables.market_candidate_outcomes.push({ company_id: COMPANY, original_identity: identity, outcome: "already_decided", criterion_version: CRITERION_VERSION });
     expect(await marketCandidateAccounted(args)).toBe(true);
   });
 
@@ -215,11 +227,55 @@ describe("finalize keeps verdicts (Gate 3b)", () => {
   });
 });
 
-// ── Gate 4b — the outcome writer ─────────────────────────────────────────────────────────────────
-describe("per-candidate outcomes are persisted before the cursor advances (Gate 4b)", () => {
+// ── Gate 4b / 7a — the outcome writer, one row per candidate at its terminal ─────────────────────
+describe("per-candidate outcomes are persisted at each candidate's terminal (Gate 4b, 7a)", () => {
   const RUN = "b60e2867-53b1-4b8d-86d9-1230240e5cab";
   const writeArgs = (client: { from: (t: string) => unknown }, over: Record<string, unknown> = {}) => ({
     ...baseArgs(client), write: true, runId: RUN, candidateOffset: 0, ...over,
+  });
+  const SECOND = { ...CANDIDATE, job_executor: "Quantum hardware OEMs integrating QEC into their stacks", jtbd: "To ship hardware whose errors are corrected in real time." };
+  // Both decided by a def under their executor: zero model calls, so the only reads and writes are
+  // the decided probes and the outcome rows — the ORDER of table touches is the proof.
+  const twoDecided = (opts: { dieOnOutcomeUpsert?: number } = {}) => {
+    const tables: Record<string, Row[]> = {
+      companies: [{ id: COMPANY, name: "Riverlane" }],
+      odi_market_definitions: [
+        { id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: CANDIDATE.job_executor, jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" },
+        { id: "d2", company_id: COMPANY, journey_key: "pmk-y", job_executor: SECOND.job_executor, jtbd: "Reframed too.", user_id: "u1", market_register: "public_inferred" },
+      ],
+      market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
+    };
+    return { tables, fake: fakeSupabase(tables, opts) };
+  };
+
+  // ── Gate 7a — THE PROOF — red on revert (the chunk-level write after the loop) ────────────────
+  // Edgewood #1 / Coreviva #3–#4: the worker had the ruling in memory and the isolate was killed at
+  // the 400s wall before the post-loop write. With one write per candidate, a death during candidate
+  // 2 finds candidate 1's row already on the record; the old body filed both after the loop, so a
+  // death anywhere in the chunk lost every row in it.
+  it("(7a) a death during candidate 2's write leaves candidate 1's row ON THE RECORD", async () => {
+    const { tables, fake } = twoDecided({ dieOnOutcomeUpsert: 2 });
+    await expect(computeMarketDiscovery({ ...writeArgs(fake.client), candidates: [CANDIDATE, SECOND] }))
+      .rejects.toThrow(/cancelled by supervisor/);
+    expect(tables.market_candidate_outcomes).toHaveLength(1);         // RED on revert: 0 rows
+    expect(tables.market_candidate_outcomes[0]).toMatchObject({ candidate_index: 1, job_executor: CANDIDATE.job_executor });
+  });
+
+  it("(7a) each candidate's row is written BEFORE the next candidate's first read — one upsert per candidate", async () => {
+    const { fake } = twoDecided();
+    const res = await computeMarketDiscovery({ ...writeArgs(fake.client), candidates: [CANDIDATE, SECOND] });
+    expect(res.ok).toBe(true);
+    const ups = fake.upserts.filter((u) => u.table === "market_candidate_outcomes");
+    expect(ups).toHaveLength(2);                                        // RED on revert: 1 upsert of 2 rows
+    expect(ups.map((u) => u.rows.length)).toEqual([1, 1]);
+    expect(ups.map((u) => u.rows[0].candidate_index)).toEqual([1, 2]);
+    // ORDER: candidate 1's outcome write precedes candidate 2's decided probe (its first table read,
+    // odi_market_definitions). Under the old body every def read in the chunk preceded the first
+    // outcome write, so the LAST def read sat before it — RED on revert.
+    const firstOutcomeWrite = fake.touched.indexOf("market_candidate_outcomes");
+    const lastDefRead = fake.touched.lastIndexOf("odi_market_definitions");
+    expect(firstOutcomeWrite).toBeGreaterThan(-1);
+    expect(lastDefRead).toBeGreaterThan(firstOutcomeWrite);
   });
 
   it("(g4b) a decided candidate files an already_decided outcome keyed to its manifest position", async () => {
@@ -231,14 +287,17 @@ describe("per-candidate outcomes are persisted before the cursor advances (Gate 
     });
     const res = await computeMarketDiscovery({ ...writeArgs(fake.client), candidates: [CANDIDATE] });
     expect(res.ok).toBe(true);
-    const up = fake.upserts.find((u) => u.table === "market_candidate_outcomes");
-    expect(up).toBeTruthy();
-    expect(up!.onConflict).toBe("run_id,candidate_index,criterion_version");
-    expect(up!.rows[0]).toMatchObject({
+    // Gate 7a: one candidate ⇒ exactly one upsert of exactly one row (per candidate, not per chunk).
+    const ups = fake.upserts.filter((u) => u.table === "market_candidate_outcomes");
+    expect(ups).toHaveLength(1);
+    const up = ups[0];
+    expect(up.rows).toHaveLength(1);
+    expect(up.onConflict).toBe("run_id,candidate_index,criterion_version");
+    expect(up.rows[0]).toMatchObject({
       run_id: RUN, candidate_index: 1, job_executor: EXECUTOR, outcome: "already_decided",
     });
     // the ORIGINAL identity is what clause (3) looks up
-    expect(String(up!.rows[0].original_identity)).toHaveLength(64);
+    expect(String(up.rows[0].original_identity)).toHaveLength(64);
   });
 
   it("(g4b) candidate_index is the GLOBAL manifest position, not the chunk position", async () => {
@@ -249,8 +308,9 @@ describe("per-candidate outcomes are persisted before the cursor advances (Gate 
       market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
     });
     await computeMarketDiscovery({ ...writeArgs(fake.client, { candidateOffset: 4 }), candidates: [CANDIDATE] });
-    const up = fake.upserts.find((u) => u.table === "market_candidate_outcomes")!;
-    expect(up.rows[0].candidate_index).toBe(5);   // offset 4 + position 1
+    const ups = fake.upserts.filter((u) => u.table === "market_candidate_outcomes");
+    expect(ups).toHaveLength(1);
+    expect(ups[0].rows[0].candidate_index).toBe(5);   // offset 4 + position 1
   });
 
   // RED ON REVERT: without the upsert the chunk returns ok and the caller advances the cursor past a

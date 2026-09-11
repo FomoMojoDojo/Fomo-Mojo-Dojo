@@ -73,6 +73,12 @@ export type MDStepConfig = {
    *  (rejected_solution), or a banked buyer verdict (rejected_buyer). A judged rejection with a
    *  persisted reason counts as accounted, never "not yet". 0 ⇒ nothing landed within the window. */
   confirmChunk: (chunk: unknown[]) => Promise<{ accounted: number }>;
+  /** Gate 7d — the COMPLETED gate. One boolean per manifest index: does this candidate have its own
+   *  terminal record (an outcome row at the current criterion version, or an error terminal)? Same
+   *  rule as the confirm-poll (marketCandidateAccounted), asked of the WHOLE manifest, because the
+   *  cursor reaching the end says only that every chunk was dispatched — not that every row landed.
+   *  done_count is derived from this, never from the cursor. */
+  accountedIndices: (candidates: unknown[]) => Promise<boolean[]>;
   /** The unscoped finalize (generate-market-discovery with no candidates). */
   finalize: () => Promise<void>;
   /** Persist the plan manifest to the ledger chain row (DB is truth). */
@@ -80,7 +86,7 @@ export type MDStepConfig = {
   /** Persist cursor + stepCount advance after a completed chunk. `holdsAtCursor` is ALWAYS 0 here —
    *  progress of any kind clears the no-progress count, and passing it explicitly keeps that rule in
    *  the pure seam where a proof can see it, rather than hiding it in the writer. */
-  persistProgress: (cursor: number, stepCount: number, holdsAtCursor: number) => Promise<void>;
+  persistProgress: (cursor: number, stepCount: number, holdsAtCursor: number, doneCount: number) => Promise<void>;
   /** Close the ledger completed (empty = nothing was discovered / already discovered). */
   closeCompleted: (empty: boolean) => Promise<void>;
   /** Close the ledger failed with a machine-readable reason (terminal, no self-fire). */
@@ -101,6 +107,9 @@ export type MDStepOutcome =
   | "planned_empty"
   | "planned"
   | "finalized"
+  // Gate 7d: the cursor had reached the end but some manifest index has no row and no error terminal
+  // — the ledger stays open, the cursor is rewound to the first such index, and that chunk is judged
+  // on this same fire (its own chunk_* / hold outcome is what is returned, not this).
   | "chunk_done"
   // not-ok fetch, but the confirm-poll accounted the chunk's writes → cursor advanced, chain continues.
   | "chunk_recovered"          // the whole chunk was accounted
@@ -122,11 +131,30 @@ export async function runMarketDiscoveryStep(cfg: MDStepConfig): Promise<{ outco
   // work left; closing it is bookkeeping, not a step a runaway could take. It therefore closes
   // COMPLETED regardless of the step count. Geniant's v2 re-fire carried step_count 9, judged all six
   // in three steps (12) and then self-fired for this close — which the ceiling below caught first and
-  // wrote 'max_steps exceeded' over a finished chain: a status that misdescribed the work.
-  if (s.planned && s.cursor >= s.candidates.length) {
-    await cfg.finalize();
-    await cfg.closeCompleted(false);
-    return { outcome: "finalized" };
+  // wrote 'max_steps exceeded' over a finished chain: a status that misdescribed the work. (A chain
+  // whose rows are SHORT is not finished — the Gate 7d rewind below sends it back through the ceiling.)
+  //
+  // Gate 7d (operator ruling 2026-09-11) — COMPLETED IS GATED ON THE ROWS, NOT THE CURSOR. The
+  // 2026-09-11 diagnostic found every one of Coreviva, whispering.ai and Edgewood closing 'completed'
+  // while the last worker was still judging (−3 min, −1 min, −29 s before its rows landed): the cursor
+  // had reached the end because the confirm-poll advanced it, and the terminal was written on that
+  // alone. A status written before the work it describes is not a status. So the close asks the
+  // manifest, index by index, "is your row (or error terminal) on the record?" — and closes only when
+  // every index answers yes. done_count is that count. If any index is short, the cursor is REWOUND
+  // to the first such index and it is judged again on this fire: the worker's decided-skip files the
+  // missing row (banked verdicts make it cheap), and the ordinary chunk path — step ceiling, confirm-
+  // poll, hold count — bounds it exactly as it bounds any other chunk.
+  let cursor = s.cursor;
+  if (s.planned && cursor >= s.candidates.length) {
+    const accounted = await cfg.accountedIndices(s.candidates);
+    const firstMissing = accounted.findIndex((a) => !a);
+    if (firstMissing === -1) {
+      await cfg.persistProgress(cursor, s.stepCount, 0, accounted.length);
+      await cfg.finalize();
+      await cfg.closeCompleted(false);
+      return { outcome: "finalized" };
+    }
+    cursor = firstMissing;
   }
 
   // TERMINAL 1 — hard step ceiling. Checked before any WORK (plan or judge) so a runaway can never do
@@ -152,14 +180,20 @@ export async function runMarketDiscoveryStep(cfg: MDStepConfig): Promise<{ outco
     return { outcome: "planned" };
   }
 
-  // JUDGE ONE CHUNK — resume from the DB cursor (NOT from 0), advance, self-fire.
-  const chunk = s.candidates.slice(s.cursor, s.cursor + s.chunkSize);
+  // JUDGE ONE CHUNK — resume from the DB cursor (NOT from 0; or from the Gate 7d rewind), advance,
+  // self-fire. done_count is re-derived from the manifest's rows after every advance.
+  const chunk = s.candidates.slice(cursor, cursor + s.chunkSize);
   const res = await cfg.judgeChunk(chunk);
-  const nextCursor = s.cursor + chunk.length;
+  const nextCursor = cursor + chunk.length;
+  const doneCount = async () => (await cfg.accountedIndices(s.candidates)).filter(Boolean).length;
+  // A Gate 7d rewind chooses THIS fire's chunk; it never moves the persisted cursor backwards. The
+  // tail past the rewound chunk was already dispatched — re-walking it would spend a step per chunk
+  // on decided-skips. The next fire's finalize gate finds the next missing index, if any.
+  const advanceTo = (n: number) => Math.max(n, s.cursor);
 
   // HAPPY PATH — the fetch returned success and the chunk is non-empty → advance + self-fire.
-  if (res.ok && nextCursor > s.cursor) {
-    await cfg.persistProgress(nextCursor, s.stepCount + 1, 0);
+  if (res.ok && nextCursor > cursor) {
+    await cfg.persistProgress(advanceTo(nextCursor), s.stepCount + 1, 0, await doneCount());
     await cfg.selfFire();
     return { outcome: "chunk_done" };
   }
@@ -172,8 +206,8 @@ export async function runMarketDiscoveryStep(cfg: MDStepConfig): Promise<{ outco
     // Progress is REAL (a def / a banked verdict landed) → advance to the last accounted candidate
     // (full or partial) and continue. The unaccounted tail re-judges next fire — banked-verdict cheap,
     // dedup-safe by content identity. A real advance means no infinite loop.
-    const advanced = s.cursor + Math.min(accounted, chunk.length);
-    await cfg.persistProgress(advanced, s.stepCount + 1, 0);
+    const advanced = cursor + Math.min(accounted, chunk.length);
+    await cfg.persistProgress(advanceTo(advanced), s.stepCount + 1, 0, await doneCount());
     await cfg.selfFire();
     return { outcome: advanced >= nextCursor ? "chunk_recovered" : "chunk_recovered_partial" };
   }
@@ -187,11 +221,11 @@ export async function runMarketDiscoveryStep(cfg: MDStepConfig): Promise<{ outco
   // stuck one. Close it failed with the sibling steppers' wording, so the operator sees a terminal
   // instead of a row that is re-armed every five minutes forever. A hold at a DIFFERENT cursor is
   // progress and restarts the count.
-  const holds = s.holdCursor === s.cursor ? s.holdsAtCursor + 1 : 1;
+  const holds = s.holdCursor === cursor ? s.holdsAtCursor + 1 : 1;
   if (holds >= HOLD_LIMIT) {
-    await cfg.closeFailed(`no_progress at cursor ${s.cursor} — market discovery halted`);
+    await cfg.closeFailed(`no_progress at cursor ${cursor} — market discovery halted`);
     return { outcome: "no_progress_failed" };
   }
-  await cfg.markUnconfirmed(s.cursor, holds);
+  await cfg.markUnconfirmed(cursor, holds);
   return { outcome: "unconfirmed_hold" };
 }

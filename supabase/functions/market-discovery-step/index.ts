@@ -220,12 +220,18 @@ Deno.serve(async (req) => {
       return { ok: r.ok };
     },
     confirmChunk,
+    // Gate 7d — the COMPLETED gate asks the whole manifest the confirm-poll's question. Same rule,
+    // same probe; one answer per index so the stepper can find the first index with no row.
+    accountedIndices: async (candidates) =>
+      await Promise.all((candidates as Array<{ job_executor?: unknown; jtbd?: unknown }>).map((c) => candidateAccounted(c))),
     finalize: async () => { await callDiscovery(url, key, { company_id }); },
     persistPlanned: async (candidates) => { chain = { ...chain, planned: true, candidates, cursor: 0 }; await patchLedger({ chain_state: chain, target_count: candidates.length }); },
-    persistProgress: async (cursor, stepCount, holdsAtCursor) => {
+    persistProgress: async (cursor, stepCount, holdsAtCursor, doneCount) => {
       // Progress of any kind clears the no-progress count AND the note the sweep re-arms on.
+      // Gate 7d: done_count is the number of manifest indices with a row-or-error on the record —
+      // derived by the stepper from accountedIndices, never the cursor (which only says "dispatched").
       chain = { ...chain, cursor, step_count: stepCount, holds_at_cursor: holdsAtCursor, hold_cursor: null };
-      await patchLedger({ chain_state: chain, done_count: cursor, error_text: null });
+      await patchLedger({ chain_state: chain, done_count: doneCount, error_text: null });
     },
     closeCompleted: async (empty) => { await closeLedger("completed", empty ? "no public markets discovered" : null); },
     closeFailed: async (reason) => { await closeLedger("failed", reason); },

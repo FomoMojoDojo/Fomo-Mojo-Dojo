@@ -7,12 +7,21 @@
 // status='completed' done_count=target — 8 of them `buyer` groups, including Riverlane's "Quantum
 // software developers…", which is why that surface shows no buyer audience at all.
 //
-// WHICH OF THESE ARE PROOFS. (a) and (c) go RED if the fix is reverted — they are the guard. (b),
-// (c') and (e) pass under BOTH the old and the new body: they are regression guards and stated
-// behaviour, and must never be counted as evidence the fix is in force.
+// WHICH OF THESE ARE PROOFS. (a) and (c) go RED if the Gate 1b fix is reverted — they are that
+// guard. (7c-a), (7c-b) and (7c-e) go RED if the Gate 7c fix is reverted (clauses (1)/(2) restored to
+// ACCOUNTED). (c2) passes under every body: a regression guard, never evidence a fix is in force.
+//
+// Gate 7c (operator ruling 2026-09-11) — touched ≠ finished, one gate later. The 2026-09-11 diagnostic
+// caught clause (2) doing what the perspective row used to do: Edgewood #1's gate-(b) verdict was
+// banked at 03:35:57Z, the poll counted it accounted at 03:37:50Z while its same-market chain was
+// still running, and the isolate holding the ruling was killed at the 400s wall (03:39:58Z). Coreviva
+// #3/#4 the same at 04:21:11Z. So ACCOUNTED now reads only the candidate's OWN terminal record —
+// clause (3) the outcome row at the current criterion, clause (4) the error terminal. DECIDED still
+// reads (1)/(2)/(3): the worker's question is whether a judge has ruled, and it has.
 import { describe, it, expect } from "vitest";
 import {
   marketCandidateAccounted,
+  marketCandidateDecided,
   type ExistsProbe,
 } from "../../../supabase/functions/_shared/marketCandidateAccounted.ts";
 import {
@@ -46,6 +55,8 @@ const probe = (fixture: Fixture): ExistsProbe => async (table, match) =>
 
 const accounted = (fixture: Fixture, candidate = CANDIDATE) =>
   marketCandidateAccounted({ exists: probe(fixture), companyId: COMPANY, candidate });
+const decided = (fixture: Fixture, candidate = CANDIDATE) =>
+  marketCandidateDecided({ exists: probe(fixture), companyId: COMPANY, candidate });
 
 const perspectiveHash = (jtbd: string) => sha256Hex(normalizeForHash(jtbd));
 
@@ -74,9 +85,15 @@ describe("marketCandidateAccounted", () => {
     expect(await accounted(await midFlight("buyer"))).toBe(false);
   });
 
-  // ── (b) a gate-(b)/(c) decision is terminal, whichever way it went ──────────────────────────────
+  // ── (7c-a) THE PROOF — red on revert of Gate 7c ─────────────────────────────────────────────────
+  // The moment of death, as the DB saw it: the worker banked the gate-(b) verdict and was killed
+  // before its terminal — no outcome row, no error terminal (an isolate wall is not a throw; the
+  // catch never ran). Edgewood #1 at 03:39:58Z had exactly these rows (accepted); Coreviva #3 at
+  // 04:21:11Z had them with `rejected` and its reframe rail-dropped. The old body returned true for
+  // both, the cursor moved, and the ruling was never filed. A banked verdict is DECIDED (the worker
+  // may skip the judge) but NOT accounted (the poll must wait for the row).
   for (const verdict of ["accepted", "rejected"] as const) {
-    it(`(b) a solution_agnostic verdict (${verdict}) on the original identity IS accounted`, async () => {
+    it(`(7c-a) a banked solution_agnostic verdict (${verdict}) with NO outcome row is decided but NOT accounted`, async () => {
       const f = await midFlight();
       f.market_discovery_verdicts = [{
         company_id: COMPANY,
@@ -85,6 +102,13 @@ describe("marketCandidateAccounted", () => {
         verdict,
         criterion_version: CRITERION_VERSION,
         inputs_complete: true,
+      }];
+      expect(await decided(f)).toBe(true);      // the worker's skip still trusts the bank (unchanged)
+      expect(await accounted(f)).toBe(false);   // the poll does not — RED on revert
+      // …and the instant the worker files the row, the same fixture accounts.
+      f.market_candidate_outcomes = [{
+        company_id: COMPANY, original_identity: await marketIdentity(EXECUTOR, ORIGINAL_JTBD),
+        outcome: verdict === "accepted" ? "deduped" : "rejected_solution", criterion_version: CRITERION_VERSION,
       }];
       expect(await accounted(f)).toBe(true);
     });
@@ -132,12 +156,21 @@ describe("marketCandidateAccounted", () => {
     expect(await accounted(f)).toBe(false);
   });
 
-  // ── (c') reframe-safety: the widened def match ──────────────────────────────────────────────────
-  it("(c') a written public def under the SAME executor with a DIFFERENT jtbd IS accounted "
-    + "(the reframe holds the executor fixed; 8 of the fleet's 17 written defs are reframe rescues)", async () => {
+  // ── (7c-b) THE PROOF — red on revert of Gate 7c ─────────────────────────────────────────────────
+  // A written def lands one statement before its outcome row (fileOutcome runs after def + lens). A
+  // death between the two leaves a def the old body counted and a row that never comes. The def
+  // still DECIDES (executor-only match, reframe-safe — 8 of the fleet's 17 defs are reframe rescues
+  // and the worker must not re-judge them), but it does not ACCOUNT.
+  it("(7c-b) a written public def with NO outcome row is decided but NOT accounted", async () => {
     const f = await midFlight();
     f.odi_market_definitions = [{
       company_id: COMPANY, job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "public_inferred",
+    }];
+    expect(await decided(f)).toBe(true);
+    expect(await accounted(f)).toBe(false);
+    f.market_candidate_outcomes = [{
+      company_id: COMPANY, original_identity: await marketIdentity(EXECUTOR, ORIGINAL_JTBD),
+      outcome: "accepted_active", criterion_version: CRITERION_VERSION,
     }];
     expect(await accounted(f)).toBe(true);
   });
@@ -215,28 +248,37 @@ describe("marketCandidateAccounted", () => {
     f.market_candidate_outcomes.push({ company_id: COMPANY, original_identity: identity, outcome: "rejected_solution", criterion_version: CRITERION_VERSION });
     expect(await accounted(f)).toBe(true);
   });
-  it("(g5b) a written def (clause 1) is UNVERSIONED — a v1 def still decides under v2", async () => {
+  it("(g5b) a written def (clause 1) is UNVERSIONED — a v1 def still DECIDES under v2 (and, since 7c, never accounts)", async () => {
     const f = await midFlight();
     f.odi_market_definitions = [{ company_id: COMPANY, job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "public_inferred" }];
-    expect(await accounted(f)).toBe(true);
+    expect(await decided(f)).toBe(true);
+    expect(await accounted(f)).toBe(false);
+  });
+  it("(7c) an 'error' OUTCOME ROW at the current version IS accounted on its own — the row is the terminal", async () => {
+    const f = await midFlight();
+    f.market_candidate_outcomes = [{
+      company_id: COMPANY, original_identity: await marketIdentity(EXECUTOR, ORIGINAL_JTBD),
+      outcome: "error", criterion_version: CRITERION_VERSION,
+    }];
+    expect(await decided(f)).toBe(false);     // not a ruling — the worker retries
+    expect(await accounted(f)).toBe(true);    // but filed — the poll may advance
   });
 
-  // ── (e) STATED BEHAVIOUR, NOT A PROOF ───────────────────────────────────────────────────────────
-  it("(e) STATED BEHAVIOUR (not a proof): two candidates sharing an executor — a def written for the "
-    + "first accounts for the second too, because clause (1) keys on the executor alone", async () => {
+  // ── (7c-e) the executor-only def match reaches DECIDED, not ACCOUNTED ──────────────────────────
+  it("(7c-e) two candidates sharing an executor — a def written for the first DECIDES the second "
+    + "(clause 1 keys on the executor alone) but does NOT account for it", async () => {
     // The reframe replaces the jtbd but never the executor, so the executor is the ONLY key that
     // survives a rescue — and the generator's rule (4) ("Each market must have a DISTINCT executor")
     // is what keeps this collision off the real path. When the model breaks that rule anyway, the
-    // second candidate is treated as already decided and is not re-judged. That is the accepted
-    // trade: the alternative (exact executor+jtbd) strands every reframe rescue and re-writes it as a
-    // duplicate def under the `-2` journey-key suffix. Asserted so the trade is visible and any
-    // change to it is deliberate — this assertion passes under the OLD body too and proves nothing
-    // about the fix.
+    // second candidate is skipped by the worker as already decided (the accepted trade: exact
+    // executor+jtbd would strand every reframe rescue as a duplicate `-2` def). But the poll waits
+    // for the second candidate's OWN row — which the skip files as already_decided.
     const second = { job_executor: EXECUTOR, jtbd: "A different job, same executor." };
     const f = await midFlight();
     f.odi_market_definitions = [{
       company_id: COMPANY, job_executor: EXECUTOR, jtbd: ORIGINAL_JTBD, market_register: "public_inferred",
     }];
-    expect(await accounted(f, second)).toBe(true);
+    expect(await decided(f, second)).toBe(true);
+    expect(await accounted(f, second)).toBe(false);
   });
 });

@@ -25,9 +25,11 @@ const cfg = (state: MDChainState, over: Partial<MDStepConfig> = {}): MDStepConfi
   plan: vi.fn(async () => ({ candidates: CANDS })),
   judgeChunk: vi.fn(async () => ({ ok: true })),
   confirmChunk: vi.fn(async () => ({ accounted: 0 })),
+  // Gate 7d default: every manifest index has its row. Proofs that need a SHORT manifest override it.
+  accountedIndices: vi.fn(async (cands: unknown[]) => cands.map(() => true)),
   finalize: vi.fn(async () => {}),
   persistPlanned: vi.fn(async () => {}),
-  persistProgress: vi.fn(async (_c: number, _s: number, _h: number) => {}),
+  persistProgress: vi.fn(async (_c: number, _s: number, _h: number, _d: number) => {}),
   closeCompleted: vi.fn(async () => {}),
   closeFailed: vi.fn(async () => {}),
   markUnconfirmed: vi.fn(async (_c: number, _h: number) => {}),
@@ -74,7 +76,7 @@ describe("RESUME-AFTER-DEATH — resume from the DB cursor, not from 0", () => {
     expect(out.outcome).toBe("chunk_done");
     expect(judge).toHaveBeenCalledTimes(1);
     expect(judge.mock.calls[0][0]).toEqual(["c2", "c3"]); // resumed from index 2 — NOT ["c0","c1"]
-    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0); // cursor advanced 2→4, step 1→2, holds reset
+    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0, 6); // cursor advanced 2→4, step 1→2, holds reset, done = rows on record
     expect(c.selfFire).toHaveBeenCalledTimes(1);
   });
   it("the final chunk exhausts the manifest, then finalize + complete (no self-fire)", async () => {
@@ -96,7 +98,7 @@ describe("CONFIRM-POLL — a not-ok fetch is NEVER failure on its own (gap_pairs
     const out = await runMarketDiscoveryStep(c);
     expect(out.outcome).toBe("chunk_recovered");
     expect(confirm).toHaveBeenCalledTimes(1);
-    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0); // cursor 2→4 (recovered the whole chunk); holds reset
+    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0, 6); // cursor 2→4 (recovered the whole chunk); holds reset
     expect(c.selfFire).toHaveBeenCalledTimes(1);          // the chain CONTINUES
     expect(c.closeFailed).not.toHaveBeenCalled();         // FALSIFICATION: reverting to closeFailed breaks this
     expect(c.markUnconfirmed).not.toHaveBeenCalled();
@@ -107,7 +109,7 @@ describe("CONFIRM-POLL — a not-ok fetch is NEVER failure on its own (gap_pairs
     const c = cfg(base({ cursor: 2, stepCount: 1 }), { judgeChunk: judge, confirmChunk: confirm });
     const out = await runMarketDiscoveryStep(c);
     expect(out.outcome).toBe("chunk_recovered_partial");
-    expect(c.persistProgress).toHaveBeenCalledWith(3, 2, 0); // cursor 2→3 (last accounted), NOT 4; holds reset
+    expect(c.persistProgress).toHaveBeenCalledWith(3, 2, 0, 6); // cursor 2→3 (last accounted), NOT 4; holds reset
     expect(c.selfFire).toHaveBeenCalledTimes(1);          // resumes at 3 next fire
     expect(c.closeFailed).not.toHaveBeenCalled();
     expect(c.markUnconfirmed).not.toHaveBeenCalled();
@@ -172,7 +174,7 @@ describe("CONFIRM-POLL — a not-ok fetch is NEVER failure on its own (gap_pairs
     const out = await runMarketDiscoveryStep(c);
     expect(out.outcome).toBe("chunk_done");
     expect(confirm).not.toHaveBeenCalled();               // confirm-poll is the not-ok path ONLY
-    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0);
+    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0, 6);
     expect(c.selfFire).toHaveBeenCalledTimes(1);
   });
 });
@@ -269,7 +271,7 @@ describe("TERMINAL 2 — no-progress guard (Gate 1c)", () => {
     const c = cfg(base({ cursor: 2, stepCount: 1, holdCursor: 2, holdsAtCursor: HOLD_LIMIT - 1 }));
     const out = await runMarketDiscoveryStep(c);        // judgeChunk defaults ok:true
     expect(out.outcome).toBe("chunk_done");
-    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0);
+    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0, 6);
   });
 
   it("(1c) two holds then progress then a hold at the same cursor does NOT terminate", async () => {
@@ -305,5 +307,64 @@ describe("adopt: consuming the hold marker (Gate 1c)", () => {
   it("(1c) REGRESSION GUARD (passes under both bodies): a failed/unconfirmed row is still re-opened", () => {
     expect(shouldReopenAdoptedRun("failed", "max_steps (12) exceeded — market discovery halted")).toBe(true);
     expect(shouldReopenAdoptedRun(null, null)).toBe(true);
+  });
+});
+
+// ── Gate 7d — COMPLETED is gated on the rows, not the cursor ──────────────────────────────────────
+// The 2026-09-11 diagnostic: Coreviva closed 'completed' at 04:22:40Z, its last two rows landed at
+// 04:25:42Z; whispering.ai −1 min; Edgewood −29 s. The cursor had reached the end because the
+// confirm-poll advanced it; the terminal was written on that alone. Now the close asks every
+// manifest index for its row-or-error-terminal, done_count is that count, and a short manifest sends
+// the cursor back to the first missing index for one more judge step instead of closing.
+describe("COMPLETED is gated on every manifest index having a row (Gate 7d)", () => {
+  // RED ON REVERT: the old body finalized + closed completed on cursor >= length alone.
+  it("(7d) cursor at the end but index 3 has no row ⇒ NOT completed; that index is judged; done_count = 5", async () => {
+    const judge = vi.fn(async (_chunk: unknown[]) => ({ ok: true }));
+    const accountedIndices = vi.fn(async (_c: unknown[]) => [true, true, true, false, true, true]);
+    const c = cfg(base({ cursor: CANDS.length, stepCount: 3 }), { judgeChunk: judge, accountedIndices });
+    const out = await runMarketDiscoveryStep(c);
+    expect(c.closeCompleted).not.toHaveBeenCalled();     // RED on revert
+    expect(c.finalize).not.toHaveBeenCalled();
+    expect(out.outcome).toBe("chunk_done");
+    expect(judge).toHaveBeenCalledTimes(1);
+    expect(judge.mock.calls[0][0]).toEqual(["c3", "c4"]); // rewound to the FIRST missing index
+    // the persisted cursor never walks backwards (the tail was dispatched); done_count is the row count
+    expect(c.persistProgress).toHaveBeenCalledWith(6, 4, 0, 5);
+    expect(c.selfFire).toHaveBeenCalledTimes(1);          // the next fire re-asks the gate
+  });
+
+  it("(7d) every index has a row ⇒ finalize + completed, done_count = manifest length", async () => {
+    const c = cfg(base({ cursor: CANDS.length, stepCount: 3 }));
+    const out = await runMarketDiscoveryStep(c);
+    expect(out.outcome).toBe("finalized");
+    expect(c.persistProgress).toHaveBeenCalledWith(6, 3, 0, 6);
+    expect(c.closeCompleted).toHaveBeenCalledWith(false);
+  });
+
+  it("(7d) rows short AND at the step ceiling ⇒ closes FAILED (max_steps), never completed", async () => {
+    const closeFailed = vi.fn(async (_r: string) => {});
+    const accountedIndices = vi.fn(async (_c: unknown[]) => [true, true, true, true, true, false]);
+    const c = cfg(base({ cursor: CANDS.length, stepCount: 12, maxSteps: 12 }), { closeFailed, accountedIndices });
+    const out = await runMarketDiscoveryStep(c);
+    expect(out.outcome).toBe("terminate_max_steps");
+    expect(closeFailed.mock.calls[0][0]).toMatch(/max_steps/);
+    expect(c.closeCompleted).not.toHaveBeenCalled();
+  });
+
+  it("(7d) a rewound chunk that does not land HOLDS at the rewound index — bounded by the hold count", async () => {
+    const accountedIndices = vi.fn(async (_c: unknown[]) => [true, true, false, true, true, true]);
+    const c = cfg(base({ cursor: CANDS.length, stepCount: 3, holdCursor: 2, holdsAtCursor: HOLD_LIMIT - 1 }), {
+      judgeChunk: vi.fn(async () => ({ ok: false })), confirmChunk: vi.fn(async () => ({ accounted: 0 })), accountedIndices,
+    });
+    const out = await runMarketDiscoveryStep(c);
+    expect(out.outcome).toBe("no_progress_failed");     // third hold at index 2 ⇒ terminal, not a loop
+    expect(c.closeCompleted).not.toHaveBeenCalled();
+  });
+
+  it("(7d) done_count on an ordinary advance is the number of indices with a row, not the cursor", async () => {
+    const accountedIndices = vi.fn(async (_c: unknown[]) => [true, true, false, false, false, false]);
+    const c = cfg(base({ cursor: 2, stepCount: 1 }), { accountedIndices });
+    await runMarketDiscoveryStep(c);                      // judge ok:true ⇒ cursor 2→4
+    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0, 2);   // cursor 4, done 2
   });
 });
