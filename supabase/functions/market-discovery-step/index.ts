@@ -63,7 +63,11 @@ Deno.serve(async (req) => {
   const supabase = createClient(url, key) as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   let company_id = ""; let parent_run_id: string | null = null;
-  try { const b = await req.json(); company_id = String(b.company_id ?? ""); parent_run_id = b.parent_run_id != null ? String(b.parent_run_id) : null; } catch { /* */ }
+  // Gate 6e: `force` reaches the PLAN only (a company with pmk-* defs re-plans instead of answering
+  // already_discovered; its existing defs stay in liveUniverse, so re-plans fold, never delete). It is
+  // never carried on the self-fire — one forced plan, then the ordinary chain.
+  let force = false;
+  try { const b = await req.json(); company_id = String(b.company_id ?? ""); parent_run_id = b.parent_run_id != null ? String(b.parent_run_id) : null; force = b.force === true; } catch { /* */ }
   if (!company_id) return json({ ok: false, error: "company_id required" }, 400);
 
   // FROZEN GUARD (first door) — refuse CB1 before adopting/creating any ledger row or touching the
@@ -197,7 +201,7 @@ Deno.serve(async (req) => {
   const out = await runMarketDiscoveryStep({
     state,
     plan: async () => {
-      const r = await callDiscovery(url, key, { company_id, plan: true });
+      const r = await callDiscovery(url, key, { company_id, plan: true, ...(force ? { force: true } : {}) });
       if (!r.ok) {
         // a plan skip of already_discovered arrives as ok:false skipped — treat that as alreadyDiscovered.
         if (r.data && (r.data as { skipped?: unknown }).skipped === "already_discovered") return { candidates: [], alreadyDiscovered: true };
