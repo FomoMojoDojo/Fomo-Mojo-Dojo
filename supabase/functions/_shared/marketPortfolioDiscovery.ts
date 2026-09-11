@@ -268,6 +268,15 @@ export type DiscoveryComputeArgs = {
    *  manual/dry call: the judging is identical, only the outcome filing is skipped. */
   runId?: string;
   candidateOffset?: number;
+  /** Gate 7f (operator ruling 2026-09-11) — re-judge ONE candidate a judge has already ruled on. Read
+   *  at exactly one point (the decided check) and honoured only when the call is scoped to a single
+   *  candidate AND carries a run_id; ignored everywhere else. Distinct from `force`, which reaches the
+   *  plan only — the two flags never share a word. Never set by the stepper, judgeChunk or a self-fire.
+   *  Nothing is deleted or re-rolled: gate (b) serves the frozen verdict from the bank, the reframe
+   *  round is a fresh call, and the reframed identity gets a fresh majority. Coreviva 704357a2 #4 is
+   *  the case: a banked rejected verdict on the original identity with NO ruling, because the isolate
+   *  died mid-reframe — clause (2) would skip it as already_decided forever. */
+  rejudge?: boolean;
 };
 
 export type DiscoveryPlanResult =
@@ -323,6 +332,9 @@ export type DiscoveryRunResult =
       original_jtbd?: string;
       dedup_target_identity?: string;
     }>;
+    /** Dry run (write:false) with a run_id: the rows fileOutcome WOULD have written, one per candidate,
+     *  so an operator can review a ruling before the filing call. Absent when write:true or no run_id. */
+    would_file?: Array<Record<string, unknown>>;
   }
   | { ok: false; skipped: "frozen_company" }
   | { ok: false; error: string };
@@ -730,8 +742,10 @@ export async function computeMarketDiscovery(
     // criterion version (Gate 5c): a v1 terminal is history, not "the existing row".
     type ResultRow = (typeof results)[number];
     const outcomeOffset = args.candidateOffset ?? 0;
+    // Dry run with a run_id: build the row exactly as the filing call would, return it, insert nothing.
+    const wouldFile: Array<Record<string, unknown>> = [];
     const fileOutcome = async (r: ResultRow, candidateIndex: number): Promise<string | null> => {
-      if (!args.write || !args.runId) return null;   // a manual/dry call judges exactly as before and files nothing
+      if (!args.runId) return null;   // a manual call with no manifest position judges exactly as before and files nothing
       const originalJtbd = r.original_jtbd ?? r.jtbd;   // reframed rows carry the original alongside
       const reframed = r.reframed === true;
       const row = {
@@ -755,6 +769,7 @@ export async function computeMarketDiscovery(
         reconstructed: false,
         criterion_version: CRITERION_VERSION,
       };
+      if (!args.write) { wouldFile.push(row); return null; }   // dry run: the ruling is returned, never written
       if (row.outcome === "already_decided") {
         const { data: existing } = await args.supabase
           .from("market_candidate_outcomes")
@@ -778,6 +793,11 @@ export async function computeMarketDiscovery(
       return await fileOutcome(r, outcomeOffset + results.length);
     };
 
+    // Gate 7f — the ONE point that reads `rejudge`. Narrow by construction: one candidate, positioned
+    // in a manifest. A chunk of two, or a call with no run_id, ignores it, so the stepper's ordinary
+    // path (which never sets it) and every other candidate's decided-skip are untouched.
+    const rejudge = args.rejudge === true && args.candidates!.length === 1 && !!args.runId;
+
     for (const original of args.candidates!) {
       totals.requested++;
       const reasons: Record<string, string> = {};
@@ -794,7 +814,7 @@ export async function computeMarketDiscovery(
       //
       // An ERROR terminal is deliberately NOT a decision — that candidate has no ruling and must be
       // retried. marketCandidateAccounted (the confirm-poll's question) counts it; this does not.
-      if (await marketCandidateDecided({ exists: decidedProbe, companyId: args.companyId, candidate: original })) {
+      if (!rejudge && await marketCandidateDecided({ exists: decidedProbe, companyId: args.companyId, candidate: original })) {
         totals.decided++;
         const fileErr = await record({
           ...original,
@@ -967,7 +987,7 @@ export async function computeMarketDiscovery(
     // Every candidate filed its own row at its terminal (fileOutcome, above). There is no chunk-level
     // write left to do, and nothing here may run behind another candidate's model calls.
 
-    return { ok: true, scoped: true, totals, results };
+    return { ok: true, scoped: true, totals, results, ...(!args.write && args.runId ? { would_file: wouldFile } : {}) };
   }
 
   // ── FINALIZE: the portfolio census. NO VERDICT PRUNE (Gate 3b, 2026-09-10). ──────────────────────

@@ -45,7 +45,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { company_id, write, candidates, plan, force, run_id, candidate_offset } = await req.json();
+    const { company_id, write, candidates, plan, force, run_id, candidate_offset, rejudge } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
     const doWrite = write !== false;
     const doPlan = plan === true;
@@ -92,6 +92,8 @@ serve(async (req) => {
       // judges exactly as before and simply files nothing.
       runId: run_id != null ? String(run_id) : undefined,
       candidateOffset: Number.isFinite(Number(candidate_offset)) ? Number(candidate_offset) : 0,
+      // Gate 7f — forwarded verbatim; the worker decides whether the call shape lets it count.
+      rejudge: rejudge === true,
     };
     const result = doPlan
       ? await computeMarketDiscovery({ ...baseArgs, plan: true })
@@ -99,7 +101,7 @@ serve(async (req) => {
 
     if (result.ok) {
       if ("plan" in result) return json(result);
-      return json({ ok: true, dry_run: !doWrite, scoped: result.scoped, totals: result.totals, results: result.results });
+      return json({ ok: true, dry_run: !doWrite, scoped: result.scoped, totals: result.totals, results: result.results, ...(result.would_file ? { would_file: result.would_file } : {}) });
     }
     if ("skipped" in result) {
       if (result.skipped === "frozen_company") return json({ ok: false, error: "This is a frozen reference company — markets aren't discovered for it." }, 403);

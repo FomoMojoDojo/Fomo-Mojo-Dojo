@@ -22,7 +22,8 @@ import {
   marketIdentity,
   CANDIDATE_ERROR_COMPONENT,
 } from "../../../supabase/functions/_shared/marketPortfolioDiscovery.ts";
-import { CRITERION_VERSION } from "../../../supabase/functions/_shared/solutionAgnosticJudge.ts";
+import { CRITERION_VERSION, solutionAgnosticKey } from "../../../supabase/functions/_shared/solutionAgnosticJudge.ts";
+import { sha256Hex, normalizeForHash } from "../../../supabase/functions/_shared/contentIdentity.ts";
 
 const COMPANY = "49435388-954b-42ff-8366-62e207a3f625";
 const EXECUTOR = "Quantum software developers building applications on quantum computers";
@@ -498,5 +499,108 @@ describe("inputs_complete=false verdicts are history, not rulings (Gate 6e)", ()
     if (!res.ok || res.scoped !== true) throw new Error("expected a scoped run");
     expect(res.results[0].outcome).not.toBe("already_decided");   // the chain is entered (and errors on the discard-port judge)
     expect(res.totals.verdicts_cached).toBe(0);                     // and nothing was served from the blind row
+  });
+});
+
+// ── Gate 7f — `rejudge`: re-judge ONE positioned candidate a judge has already ruled on ──────────
+// Coreviva 704357a2 #4: a banked REJECTED gate-(b) verdict on the original identity and NO ruling —
+// the isolate died mid-reframe. Clause (2) skips it as already_decided on every replay, forever.
+// `rejudge` is read at exactly one point (the decided check) and counts only when the call is scoped
+// to ONE candidate AND carries a run_id. Nothing is deleted or re-rolled: gate (b) serves the frozen
+// verdict from the bank (verdicts_cached), the reframe round is a fresh call. Distinct from `force`
+// (plan only); the two flags never interact.
+describe("rejudge re-enters the gate chain for one positioned candidate (Gate 7f)", () => {
+  const RUN = "704357a2-e5f4-4107-91ea-d7d8e6b5eccf";
+  const SECOND = { ...CANDIDATE, job_executor: "Employers offering whole-body MRI as part of employee wellness programs", jtbd: "To enhance employee health and wellness." };
+  /** The moment-of-death fixture: perspective `buyer` stored, gate-(b) v2 verdict banked (rejected), no row. */
+  const banked = async (cands = [CANDIDATE]): Promise<Record<string, Row[]>> => ({
+    companies: [{ id: COMPANY, name: "Coreviva" }],
+    odi_market_definitions: [],
+    step_perspective_verdicts: await Promise.all(cands.map(async (c) => ({ company_id: COMPANY, content_hash: await sha256Hex(normalizeForHash(c.jtbd)), verdict: "buyer" }))),
+    market_discovery_verdicts: await Promise.all(cands.map(async (c) => ({
+      id: `v-${c.job_executor.slice(0, 8)}`, company_id: COMPANY,
+      pair_identity: await solutionAgnosticKey(c.job_executor, c.jtbd), verdict_kind: "solution_agnostic",
+      market_a_identity: await marketIdentity(c.job_executor, c.jtbd), market_b_identity: null,
+      verdict: "rejected", judge_reason: "3-0 rejected: names the company's product",
+      criterion_version: CRITERION_VERSION, inputs_complete: true,
+    }))),
+    market_lens: [], market_candidate_outcomes: [], integrity_runs: [],
+  });
+  // No live model in tests: the reframe call (the first fresh model call on this path) fails loudly,
+  // which lands the candidate on the honest error terminal — enough to prove the chain was ENTERED
+  // and the banked verdict SERVED, which is the whole claim. A real rejudge continues past here.
+  const noModel = () => vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("planted: no model in tests"));
+
+  // (a) RED ON REVERT: without the flag the candidate is already_decided and nothing below runs.
+  it("(7f-a) rejudge on a single positioned candidate with a banked verdict enters gates (a)/(b)/reframe, serves the verdict from cache, files one row", async () => {
+    const fetchSpy = noModel();
+    const fake = fakeSupabase(await banked());
+    const res = await computeMarketDiscovery({ ...baseArgs(fake.client), write: true, runId: RUN, candidateOffset: 3, candidates: [CANDIDATE], rejudge: true });
+    expect(res.ok).toBe(true);
+    if (!res.ok || res.scoped !== true) throw new Error("expected a scoped run");
+    expect(res.totals.decided).toBe(0);                          // NOT skipped
+    expect(fake.touched).toContain("step_perspective_verdicts");  // gate (a) entered (served from store)
+    expect(res.totals.verdicts_cached).toBe(1);                  // gate (b): the frozen verdict, not a re-roll
+    expect(res.totals.judged_solution).toBe(0);                  // …so no fresh SA judge on the original
+    expect(res.totals.reframe_attempts).toBe(1);                 // the reframe round was reached
+    expect(fetchSpy).toHaveBeenCalledTimes(1);                   // exactly one fresh model call (the reframe)
+    expect(res.results[0].outcome).toBe("error");                // planted model failure → honest terminal
+    expect(fake.inserts.filter((i) => i.table === "market_discovery_verdicts")).toHaveLength(0);  // nothing re-banked
+    const ups = fake.upserts.filter((u) => u.table === "market_candidate_outcomes");
+    expect(ups).toHaveLength(1);
+    expect(ups[0].rows[0]).toMatchObject({ run_id: RUN, candidate_index: 4, outcome: "error", reconstructed: false, criterion_version: CRITERION_VERSION });
+  });
+
+  it("(7f-b) rejudge on a TWO-candidate call is ignored — both skip as already_decided", async () => {
+    const fetchSpy = noModel();
+    const fake = fakeSupabase(await banked([CANDIDATE, SECOND]));
+    const res = await computeMarketDiscovery({ ...baseArgs(fake.client), write: true, runId: RUN, candidateOffset: 2, candidates: [CANDIDATE, SECOND], rejudge: true });
+    if (!res.ok || res.scoped !== true) throw new Error("expected a scoped run");
+    expect(res.totals.decided).toBe(2);
+    expect(res.results.map((r) => r.outcome)).toEqual(["already_decided", "already_decided"]);
+    expect(fake.touched).not.toContain("step_perspective_verdicts");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("(7f-c) rejudge WITHOUT a run_id is ignored — already_decided, nothing filed", async () => {
+    const fetchSpy = noModel();
+    const fake = fakeSupabase(await banked());
+    const res = await computeMarketDiscovery({ ...baseArgs(fake.client), write: true, candidates: [CANDIDATE], rejudge: true });
+    if (!res.ok || res.scoped !== true) throw new Error("expected a scoped run");
+    expect(res.totals.decided).toBe(1);
+    expect(res.results[0].outcome).toBe("already_decided");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fake.upserts).toHaveLength(0);
+  });
+
+  it("(7f-d) force and rejudge do not interact: force alone still skips; force + rejudge behaves exactly as rejudge", async () => {
+    noModel();
+    // force alone: the scoped path never reads it (it reaches the plan only) — the decided skip stands
+    const f1 = fakeSupabase(await banked());
+    const r1 = await computeMarketDiscovery({ ...baseArgs(f1.client), write: true, runId: RUN, candidateOffset: 3, candidates: [CANDIDATE], force: true });
+    if (!r1.ok || r1.scoped !== true) throw new Error("expected a scoped run");
+    expect(r1.results[0].outcome).toBe("already_decided");
+    expect(f1.touched).not.toContain("step_perspective_verdicts");
+    // force + rejudge: identical to (7f-a)
+    const f2 = fakeSupabase(await banked());
+    const r2 = await computeMarketDiscovery({ ...baseArgs(f2.client), write: true, runId: RUN, candidateOffset: 3, candidates: [CANDIDATE], force: true, rejudge: true });
+    if (!r2.ok || r2.scoped !== true) throw new Error("expected a scoped run");
+    expect(r2.totals.decided).toBe(0);
+    expect(r2.totals.verdicts_cached).toBe(1);
+    expect(r2.totals.reframe_attempts).toBe(1);
+  });
+
+  it("(7f-e) write:false on a rejudge call reaches the same ruling, writes NOTHING, and returns the would-be row", async () => {
+    noModel();
+    const fake = fakeSupabase(await banked());
+    const res = await computeMarketDiscovery({ ...baseArgs(fake.client), write: false, runId: RUN, candidateOffset: 3, candidates: [CANDIDATE], rejudge: true });
+    if (!res.ok || res.scoped !== true) throw new Error("expected a scoped run");
+    expect(res.totals.decided).toBe(0);
+    expect(res.totals.verdicts_cached).toBe(1);
+    expect(res.results[0].outcome).toBe("error");
+    expect(fake.upserts).toHaveLength(0);                                   // no outcome row
+    expect(fake.inserts).toHaveLength(0);                                   // no verdict, no def, no error terminal
+    expect(res.would_file).toHaveLength(1);                                 // the row it WOULD have filed
+    expect(res.would_file![0]).toMatchObject({ run_id: RUN, candidate_index: 4, outcome: "error", reconstructed: false });
   });
 });
