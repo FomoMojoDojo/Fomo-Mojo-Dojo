@@ -357,6 +357,24 @@ async function loadCompanyName(supabase: DiscoveryComputeArgs["supabase"], compa
   return String((data as { name?: string } | null)?.name ?? "this company");
 }
 
+// Gate 6b — the company's creator, the owner of last resort for a discovered def. Read once per run.
+async function loadCompanyCreator(supabase: DiscoveryComputeArgs["supabase"], companyId: string): Promise<string | null> {
+  const { data } = await supabase.from("companies").select("created_by").eq("id", companyId).maybeSingle();
+  const v = (data as { created_by?: unknown } | null)?.created_by;
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+/** Owner of a discovered def: the spine (customer) def's user, else any def's user, else the company's
+ *  creator. Pure so the fallback order is provable. Gate 6b: a company with NO defs yet (Heart Coffee,
+ *  whispering.ai, Gotham) used to refuse every write — its accepts fell through to a chunk not-ok, three
+ *  holds and a no_progress terminal with the refusal never persisted. Every company has a creator. */
+export function resolveDefOwner(universe: ReadonlyArray<{ journey_key: string; user_id?: string | null }>, companyCreator: string | null): string | null {
+  return universe.find((d) => d.journey_key === "customer")?.user_id
+    ?? universe.find((d) => d.user_id)?.user_id
+    ?? companyCreator
+    ?? null;
+}
+
 function slugify(executor: string): string {
   const slug = executor.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/g, "");
   // OOD-2: discovery writes public-register defs in their own namespace.
@@ -376,6 +394,7 @@ export async function computeMarketDiscovery(
 
   const universe = await loadDedupUniverse(args.supabase, args.companyId);
   const companyName = await loadCompanyName(args.supabase, args.companyId);
+  const companyCreator = await loadCompanyCreator(args.supabase, args.companyId);
   // Gate 5b — what the company sells, from the offering read, local only. companyName is used ONLY
   // to scrub itself out of the statements; it never reaches the judge.
   const offeringItems = await loadOfferingItems(async (cid) => {
@@ -758,10 +777,10 @@ export async function computeMarketDiscovery(
         let journeyKey = slugify(cand.job_executor);
         if (liveUniverse.some((d) => d.journey_key === journeyKey)) journeyKey = `${journeyKey}-2`;
         // Ownership inherits from the spine (customer) def — discovered rows
-        // belong to the same operator, never a synthetic zero UUID.
-        const ownerUserId = liveUniverse.find((d) => d.journey_key === "customer")?.user_id
-          ?? liveUniverse.find((d) => d.user_id)?.user_id;
-        if (!ownerUserId) return { ok: false, error: "no owning user_id resolvable (no customer def?) — refusing to write" };
+        // belong to the same operator, never a synthetic zero UUID. Gate 6b: with no def at all,
+        // the company's creator owns it (resolveDefOwner).
+        const ownerUserId = resolveDefOwner(liveUniverse, companyCreator);
+        if (!ownerUserId) return { ok: false, error: "no owning user_id resolvable (no def, no company creator) — refusing to write" };
         if (args.write) {
           const { error: defErr } = await args.supabase.from("odi_market_definitions").insert({
             company_id: args.companyId,
