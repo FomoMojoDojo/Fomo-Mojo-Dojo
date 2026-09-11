@@ -118,7 +118,19 @@ export type MDStepOutcome =
 export async function runMarketDiscoveryStep(cfg: MDStepConfig): Promise<{ outcome: MDStepOutcome }> {
   const s = cfg.state;
 
-  // TERMINAL 1 — hard step ceiling. Checked FIRST so a runaway can never do more work.
+  // FINALIZE FIRST (Gate 5d) — a chain whose cursor has reached the end of its manifest has no judge
+  // work left; closing it is bookkeeping, not a step a runaway could take. It therefore closes
+  // COMPLETED regardless of the step count. Geniant's v2 re-fire carried step_count 9, judged all six
+  // in three steps (12) and then self-fired for this close — which the ceiling below caught first and
+  // wrote 'max_steps exceeded' over a finished chain: a status that misdescribed the work.
+  if (s.planned && s.cursor >= s.candidates.length) {
+    await cfg.finalize();
+    await cfg.closeCompleted(false);
+    return { outcome: "finalized" };
+  }
+
+  // TERMINAL 1 — hard step ceiling. Checked before any WORK (plan or judge) so a runaway can never do
+  // more; it binds only while work remains.
   if (s.stepCount >= s.maxSteps) {
     await cfg.closeFailed(`max_steps (${s.maxSteps}) exceeded — market discovery halted`);
     return { outcome: "terminate_max_steps" };
@@ -138,13 +150,6 @@ export async function runMarketDiscoveryStep(cfg: MDStepConfig): Promise<{ outco
     }
     await cfg.selfFire();
     return { outcome: "planned" };
-  }
-
-  // FINALIZE — the manifest is exhausted (cursor past the end). One unscoped finalize, then done.
-  if (s.cursor >= s.candidates.length) {
-    await cfg.finalize();
-    await cfg.closeCompleted(false);
-    return { outcome: "finalized" };
   }
 
   // JUDGE ONE CHUNK — resume from the DB cursor (NOT from 0), advance, self-fire.

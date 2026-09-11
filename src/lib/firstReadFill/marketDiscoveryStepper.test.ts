@@ -178,6 +178,36 @@ describe("CONFIRM-POLL — a not-ok fetch is NEVER failure on its own (gap_pairs
 });
 
 describe("TERMINAL DISCIPLINE — no infinite loop", () => {
+  // Gate 5d — RED ON REVERT. Geniant carried step_count 9, judged all six candidates in three steps
+  // (12 = max_steps) and self-fired for the close; the ceiling, checked first, wrote
+  // 'max_steps exceeded' over a finished chain. A cursor at the end of the manifest has no work
+  // left — closing it is not a step a runaway could take, so it completes regardless of the count.
+  it("(g5d) at the ceiling with the cursor AT THE END, it finalizes and closes COMPLETED", async () => {
+    const judge = vi.fn(async (_chunk: unknown[]) => ({ ok: true }));
+    const closeFailed = vi.fn(async (_reason: string) => {});
+    const c = cfg(base({ cursor: CANDS.length, stepCount: 12, maxSteps: 12 }), { judgeChunk: judge, closeFailed });
+    const out = await runMarketDiscoveryStep(c);
+    expect(out.outcome).toBe("finalized");
+    expect(c.finalize).toHaveBeenCalledTimes(1);
+    expect(c.closeCompleted).toHaveBeenCalledWith(false);
+    expect(closeFailed).not.toHaveBeenCalled();
+    expect(judge).not.toHaveBeenCalled();
+    expect(c.selfFire).not.toHaveBeenCalled();
+  });
+
+  // Regression guard for the ceiling itself: with work REMAINING the count still binds.
+  it("(g5d) at the ceiling with the cursor SHORT of the end, it still closes failed with the max_steps text", async () => {
+    const judge = vi.fn(async (_chunk: unknown[]) => ({ ok: true }));
+    const closeFailed = vi.fn(async (_reason: string) => {});
+    const c = cfg(base({ cursor: CANDS.length - 1, stepCount: 12, maxSteps: 12 }), { judgeChunk: judge, closeFailed });
+    const out = await runMarketDiscoveryStep(c);
+    expect(out.outcome).toBe("terminate_max_steps");
+    expect(closeFailed.mock.calls[0][0]).toBe("max_steps (12) exceeded — market discovery halted");
+    expect(c.finalize).not.toHaveBeenCalled();
+    expect(c.closeCompleted).not.toHaveBeenCalled();
+    expect(judge).not.toHaveBeenCalled();
+  });
+
   it("MAX-STEPS: at the step ceiling it closes failed FIRST, doing no further work", async () => {
     const plan = vi.fn(async () => ({ candidates: CANDS }));
     const judge = vi.fn(async (_chunk: unknown[]) => ({ ok: true }));
