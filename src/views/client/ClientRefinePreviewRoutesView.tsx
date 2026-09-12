@@ -933,12 +933,31 @@ export function RoutesOrgPanel({
       const proposed = proposal.proposed_state as Record<string, unknown>;
       const patch: Record<string, unknown> = { source: `manual_${proposalId}` };
       for (const field of acceptedFields) { patch[field] = proposed[field]; }
+      // Check-outcome preservation law (2026-09-12): a proposed condition array replaces the route's
+      // conditions only through the sanctioned writer, which refuses to drop a checked (stamped) one.
+      // A refused write is SURFACED (display honesty) — it used to be swallowed as a silent no-op.
+      if ("what_would_have_to_be_true" in patch) {
+        const conditions = patch.what_would_have_to_be_true;
+        delete patch.what_would_have_to_be_true;
+        const { error: condError } = await supabase.rpc("replace_route_conditions", {
+          p_route_id: proposal.surface_id,
+          p_conditions: Array.isArray(conditions) ? conditions : [],
+          p_actor: `proposal_accept:${proposalId}`,
+        });
+        if (condError) {
+          toast.error(`Proposal not applied — ${condError.message}`, { duration: 8000 });
+          return;
+        }
+      }
       const { error: updateError } = await supabase
         .from("routes")
         .update(patch)
         .eq("id", proposal.surface_id)
         .eq("company_id", activeCompany.id);
-      if (updateError) { return; }
+      if (updateError) {
+        toast.error(`Proposal not applied — ${updateError.message}`, { duration: 8000 });
+        return;
+      }
       await captureBaseline(activeCompany.id, "route", proposal.surface_id);
       await supabase
         .from("surface_proposals")

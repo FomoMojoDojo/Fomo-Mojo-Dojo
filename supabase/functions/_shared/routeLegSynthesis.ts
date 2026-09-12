@@ -21,6 +21,8 @@
 // generated legs re-rolled), write:false dry-run.
 
 import { buildOrgNameGuard } from "./stepConditionsSynthesis.ts";
+import { applyCheckOutcomesQuietly } from "./checkOutcomes.ts";
+import { recomputeValidationStateQuietly } from "./validationState.ts";
 
 // Frozen reference fixtures — SELECT-only, never written. Mirror of the frontend
 // guard (src/lib/frozenCompanies.ts). Remove when CB1/CB2 are retired.
@@ -413,5 +415,11 @@ export async function generateLegsForCompany(args: {
     { routes: 0, conditions: 0, kept: 0, dropped: 0, written: 0, preservedOperator: 0 },
   );
 
+  // Resurrection (ruling 7): a re-inserted leg carrying an identical condition regains its stamp and its
+  // test outcome from check_outcomes; then validation_state is derived from the durable record.
+  if (args.write) {
+    await applyCheckOutcomesQuietly(args.supabase as never, args.companyId, "generateLegsForCompany");
+    await recomputeValidationStateQuietly(args.supabase as never, args.companyId, "generateLegsForCompany");
+  }
   return { ok: true, perRoute, totals };
 }

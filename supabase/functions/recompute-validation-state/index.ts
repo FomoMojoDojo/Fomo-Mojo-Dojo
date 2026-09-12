@@ -7,6 +7,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { recomputeValidationState } from "../_shared/validationState.ts";
+import { applyCheckOutcomes } from "../_shared/checkOutcomes.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -19,11 +20,14 @@ const json = (body: unknown, status = 200) =>
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
-    const { company_id, dry_run } = await req.json();
+    const { company_id, dry_run, apply_cache } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
     const supabase = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
+    // apply_cache: re-stamp the display cache (route conditions, tests.outcome) from the durable
+    // check_outcomes record before deriving — the resurrection, on demand (never in dry_run).
+    const applied = apply_cache === true && dry_run !== true ? await applyCheckOutcomes(supabase as never, company_id) : null;
     const result = await recomputeValidationState(supabase, company_id, { dryRun: dry_run === true });
-    return json({ ok: true, ...result });
+    return json({ ok: true, ...result, applied });
   } catch (err) {
     return json({ ok: false, error: String((err as { message?: unknown })?.message ?? err) }, 500);
   }

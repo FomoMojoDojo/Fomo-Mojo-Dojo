@@ -22,6 +22,7 @@
 
 import { buildOrgNameGuard, FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { recomputeValidationStateQuietly } from "./validationState.ts";
+import { applyCheckOutcomesQuietly } from "./checkOutcomes.ts";
 import { contentIdentity } from "./contentIdentity.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
@@ -235,6 +236,11 @@ export async function reviseRouteCondition(args: {
 }
 
 const isGeneratedCondition = (c: WrapCondition) => String(c?.source ?? "").startsWith(`${CONDITION_SOURCE_PREFIX}:`);
+// Check-outcome preservation law (2026-09-12): a STAMPED condition (checked_at set — a recorded check lives
+// in check_outcomes under its identity) is preserved-class whatever its source: carried verbatim through a
+// re-roll like an operator condition, never rebuilt, never superseded.
+const isStampedCondition = (c: WrapCondition) => nonEmpty((c as { checked_at?: unknown })?.checked_at);
+const nonEmpty = (v: unknown) => typeof v === "string" && v.trim() !== "";
 
 // ── Leg (routes row level='leg') as loaded for reconcile ──────────────────────────
 type ReconcileLeg = { id: string; source?: string | null; provenance_type?: string | null; what_would_have_to_be_true?: unknown };
@@ -264,7 +270,7 @@ export type RouteConditionReconcile = {
 // are declared WITH a reason stamped on the leg for an honest render. The merged-array WRITE
 // itself is unchanged — this only decides refusal and records what happened.
 export async function reconcileRouteConditionsOnReroll(args: {
-  supabase: { from: (t: string) => any };
+  supabase: { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any };
   companyId: string;
   route: RouteInput;
   merged: WrapCondition[];
@@ -319,12 +325,13 @@ export async function reconcileRouteConditionsOnReroll(args: {
   if (nonOperatorIds.length > 0) {
     const { data: testRows } = await args.supabase
       .from("tests")
-      .select("action_id, source, result, no_test_needed, no_test_needed_reason")
+      .select("action_id, source, result, outcome, no_test_needed, no_test_needed_reason")
       .in("action_id", nonOperatorIds);
     for (const t of (testRows ?? []) as Array<Record<string, unknown>>) {
       const preserved =
         String(t.source ?? "").startsWith("manual_") ||
         t.result != null ||
+        t.outcome != null ||
         (t.no_test_needed === true && String(t.no_test_needed_reason ?? "").trim() !== "");
       if (preserved) preservedByTest.add(String(t.action_id));
     }
@@ -376,7 +383,7 @@ export async function reconcileRouteConditionsOnReroll(args: {
 // Write one condition_removals audit row per superseded generated condition, tagging each
 // with the legs that orphaned from it. No CASCADE FK — the row outlives route/company teardown.
 async function writeRemovals(
-  args: { supabase: { from: (t: string) => any }; companyId: string; route: RouteInput; nowIso: string; actor: string },
+  args: { supabase: { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any }; companyId: string; route: RouteInput; nowIso: string; actor: string },
   superseded: Array<{ text: string; id: string }>,
   orphanedLegs: Array<{ legId: string; bindingId: string }>,
 ): Promise<void> {
@@ -397,7 +404,7 @@ async function writeRemovals(
 
 // ── Synthesize: per route → gen 2–3 → judge each → origin-merge → (write | dry) ──
 export async function synthesizeRouteConditions(args: {
-  supabase: { from: (t: string) => any };
+  supabase: { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any };
   companyId: string;
   companyName: string;
   routes: RouteInput[];
@@ -420,7 +427,8 @@ export async function synthesizeRouteConditions(args: {
   type Prepared = { route: RouteInput; operatorConditions: WrapCondition[]; operatorTexts: Set<string>; candidates: string[]; genError?: string };
   const prepared: Prepared[] = [];
   for (const route of args.routes) {
-    const operatorConditions = route.existing.filter((c) => !isGeneratedCondition(c) && String(c?.condition ?? "").trim());
+    // Preserved verbatim: operator conditions AND stamped (checked) generated ones.
+    const operatorConditions = route.existing.filter((c) => (!isGeneratedCondition(c) || isStampedCondition(c)) && String(c?.condition ?? "").trim());
     const operatorTexts = new Set(operatorConditions.map((c) => String(c.condition).trim().toLowerCase()));
     try {
       const candidates = await generateRouteConditions({ ollamaUrl: args.ollamaUrl, genModel, route });
@@ -488,7 +496,7 @@ export async function synthesizeRouteConditions(args: {
         companyId: args.companyId,
         route,
         merged,
-        oldGenerated: route.existing.filter(isGeneratedCondition),
+        oldGenerated: route.existing.filter((c) => isGeneratedCondition(c) && !isStampedCondition(c)),
         nowIso: args.nowIso,
         actor: CONDITION_SOURCE_PREFIX,
       });
@@ -509,9 +517,10 @@ export async function synthesizeRouteConditions(args: {
         });
         continue;
       }
-      // Per-route UPDATE so a gateway/worker timeout never loses processed routes.
+      // Per-route write so a gateway/worker timeout never loses processed routes — through the
+      // sanctioned array writer (replace_route_conditions), which refuses to drop a stamped condition.
       const { error: upErr } = await args.supabase
-        .from("routes").update({ what_would_have_to_be_true: merged }).eq("id", route.id);
+        .rpc("replace_route_conditions", { p_route_id: route.id, p_conditions: merged, p_actor: CONDITION_SOURCE_PREFIX });
       if (upErr) throw new Error(`route-condition update failed for route ${route.id}: ${upErr.message}`);
       written_count = merged.length;
       if (reconcile.apply) await reconcile.apply();
@@ -538,13 +547,13 @@ export async function synthesizeRouteConditions(args: {
 // zero writes). Per-route reconcile + condition_removals audit is unchanged —
 // each route is self-contained, so chunking never breaks the reconcile invariant.
 export async function generateRouteConditionsForCompany(
-  args: { supabase: { from: (t: string) => any }; companyId: string; ollamaUrl: string; nowIso: string; genModel?: string; judgeModel?: string; write: boolean; routeIds?: string[]; plan: true },
+  args: { supabase: { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any }; companyId: string; ollamaUrl: string; nowIso: string; genModel?: string; judgeModel?: string; write: boolean; routeIds?: string[]; plan: true },
 ): Promise<RouteConditionPlanResult>;
 export async function generateRouteConditionsForCompany(
-  args: { supabase: { from: (t: string) => any }; companyId: string; ollamaUrl: string; nowIso: string; genModel?: string; judgeModel?: string; write: boolean; routeIds?: string[]; plan?: false | undefined },
+  args: { supabase: { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any }; companyId: string; ollamaUrl: string; nowIso: string; genModel?: string; judgeModel?: string; write: boolean; routeIds?: string[]; plan?: false | undefined },
 ): Promise<RouteConditionResult>;
 export async function generateRouteConditionsForCompany(args: {
-  supabase: { from: (t: string) => any };
+  supabase: { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any };
   companyId: string;
   ollamaUrl: string;
   nowIso: string;
@@ -613,7 +622,12 @@ export async function generateRouteConditionsForCompany(args: {
 
   // validation_state is written AFTER the conditions it describes have landed (census law) — the
   // satisfied_flag outcome on each route is the input; nothing here reads the Mojo Score.
-  if (args.write) await recomputeValidationStateQuietly(args.supabase as never, args.companyId, "generateRouteConditionsForCompany");
+  if (args.write) {
+    // Resurrection first (ruling 7): rebuilt conditions with an identical identity regain their stamp
+    // from check_outcomes; then validation_state is derived from the durable record.
+    await applyCheckOutcomesQuietly(args.supabase as never, args.companyId, "generateRouteConditionsForCompany");
+    await recomputeValidationStateQuietly(args.supabase as never, args.companyId, "generateRouteConditionsForCompany");
+  }
 
   return { ok: true, perRoute, totals };
 }

@@ -21,6 +21,8 @@ import {
   type Update,
   type ValidationState,
 } from "../../../src/lib/validationState/index.ts";
+import { projectCompany, type CheckOutcomeRow } from "../../../src/lib/checkOutcomes/index.ts";
+import { contentIdentity } from "./contentIdentity.ts";
 
 // Structural client type (as snapshotMojoScore) — keeps this module checkable by both deno and tsc.
 // deno-lint-ignore no-explicit-any
@@ -40,18 +42,27 @@ export async function recomputeValidationState(
   opts: { dryRun?: boolean } = {},
 ): Promise<ValidationStateRecompute> {
   const dryRun = opts.dryRun === true;
-  const [routesRes, testsRes, needsRes, claimsRes, refsRes] = await Promise.all([
+  const [routesRes, testsRes, needsRes, claimsRes, refsRes, outcomesRes] = await Promise.all([
     supabase.from("routes").select("id, level, parent_id, what_would_have_to_be_true, validation_state").eq("company_id", companyId),
     supabase.from("tests").select("id, action_id, result, outcome, no_test_needed").eq("company_id", companyId),
     supabase.from("odi_needs").select("id, provenance_type, validation_state").eq("company_id", companyId),
     supabase.from("claims").select("id, triangulation_state").eq("company_id", companyId),
     supabase.from("claim_signal_refs").select("claim_id, relationship").eq("company_id", companyId),
+    supabase.from("check_outcomes").select("id, company_id, subject_identity, check_kind, check_version, verdict, recorded_at, superseded_by").eq("company_id", companyId),
   ]);
-  for (const [name, r] of [["routes", routesRes], ["tests", testsRes], ["odi_needs", needsRes], ["claims", claimsRes], ["claim_signal_refs", refsRes]] as const) {
+  for (const [name, r] of [["routes", routesRes], ["tests", testsRes], ["odi_needs", needsRes], ["claims", claimsRes], ["claim_signal_refs", refsRes], ["check_outcomes", outcomesRes]] as const) {
     if (r.error) throw new Error(`[validationState] ${name} read failed: ${r.error.message}`);
   }
-  const routes = (routesRes.data ?? []) as RouteLike[];
-  const tests = (testsRes.data ?? []) as TestRow[];
+  // Ruling 5 / 7 (2026-09-12): the readers source outcomes from the DURABLE record, resolved by content
+  // identity (TS authority) onto the current structure — the row columns are only a display cache.
+  const projected = await projectCompany(
+    (outcomesRes.data ?? []) as CheckOutcomeRow[],
+    (routesRes.data ?? []) as Array<RouteLike & { what_would_have_to_be_true?: Array<Record<string, unknown>> | null }>,
+    (testsRes.data ?? []) as TestRow[],
+    contentIdentity,
+  );
+  const routes = projected.routes as RouteLike[];
+  const tests = projected.tests as TestRow[];
   const needs = (needsRes.data ?? []) as NeedLike[];
   const claims = (claimsRes.data ?? []) as ClaimLike[];
   const refs = (refsRes.data ?? []) as ClaimRefLike[];

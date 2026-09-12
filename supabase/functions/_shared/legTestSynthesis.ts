@@ -22,6 +22,7 @@
 
 import { buildOrgNameGuard } from "./stepConditionsSynthesis.ts";
 import { recomputeValidationStateQuietly } from "./validationState.ts";
+import { applyCheckOutcomesQuietly } from "./checkOutcomes.ts";
 import { judgeRouteCondition, reviseRouteCondition, type RouteInput } from "./routeConditionSynthesis.ts";
 import { contentIdentity } from "./contentIdentity.ts";
 
@@ -354,6 +355,9 @@ async function attemptDeficiencyHeal(args: {
     if ((await contentIdentity(String(wwt[i]?.condition ?? ""))) === sourceId) { idx = i; break; }
   }
   if (idx < 0) return { outcome: "not_healed" }; // condition already gone — nothing to supersede
+  // Check-outcome preservation law (2026-09-12): a STAMPED condition (a recorded check lives under its
+  // identity) is never auto-rewritten — the rewrite would change its identity and orphan the check.
+  if (typeof wwt[idx]?.checked_at === "string" && String(wwt[idx].checked_at).trim() !== "") return { outcome: "not_healed" };
 
   // Audit the superseded deficiency condition with AUTO-HEAL provenance (distinct from an
   // operator/generator 'condition_rerolled'): reason + actor are the marker (no new column).
@@ -664,7 +668,10 @@ export async function generateLegTestsForCompany(args: {
   // validation_state is written AFTER the tests it describes have landed (census law). tests.result
   // has no writer yet, so today this settles legs/routes to their honest default; it becomes live the
   // day a result is recorded.
-  if (args.write) await recomputeValidationStateQuietly(args.supabase as never, args.companyId, "generateLegTestsForCompany");
+  if (args.write) {
+    await applyCheckOutcomesQuietly(args.supabase as never, args.companyId, "generateLegTestsForCompany");
+    await recomputeValidationStateQuietly(args.supabase as never, args.companyId, "generateLegTestsForCompany");
+  }
 
   return { ok: true, perLeg, totals };
 }

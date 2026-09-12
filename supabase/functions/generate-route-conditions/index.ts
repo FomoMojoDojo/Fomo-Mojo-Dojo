@@ -71,7 +71,7 @@ serve(async (req) => {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    ) as unknown as { from: (t: string) => any };
+    ) as unknown as { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any };
 
     // PLAN — the route worklist manifest for the client's chunk loop (zero model calls,
     // zero writes; resume truth).

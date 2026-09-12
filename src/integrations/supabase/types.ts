@@ -221,6 +221,129 @@ export type Database = {
         }
         Relationships: []
       }
+      check_outcome_removals: {
+        Row: {
+          check_kind: string
+          check_version: number
+          company_id: string
+          id: string
+          outcome_id: string
+          removal_reason: string
+          removed_at: string
+          subject_identity: string
+          subject_text: string
+          verdict: string
+        }
+        Insert: {
+          check_kind: string
+          check_version: number
+          company_id: string
+          id?: string
+          outcome_id: string
+          removal_reason: string
+          removed_at?: string
+          subject_identity: string
+          subject_text: string
+          verdict: string
+        }
+        Update: {
+          check_kind?: string
+          check_version?: number
+          company_id?: string
+          id?: string
+          outcome_id?: string
+          removal_reason?: string
+          removed_at?: string
+          subject_identity?: string
+          subject_text?: string
+          verdict?: string
+        }
+        Relationships: []
+      }
+      check_outcomes: {
+        Row: {
+          check_kind: string
+          check_version: number
+          company_id: string
+          evidence_refs: string[]
+          hypothesis_identity: string | null
+          hypothesis_text: string | null
+          id: string
+          leg_id: string | null
+          move_identity: string | null
+          move_text: string | null
+          note: string | null
+          recorded_at: string
+          recorded_by: string | null
+          route_id: string | null
+          route_title: string | null
+          subject_identity: string
+          subject_text: string
+          superseded_by: string | null
+          test_id: string | null
+          verdict: string
+        }
+        Insert: {
+          check_kind: string
+          check_version?: number
+          company_id: string
+          evidence_refs?: string[]
+          hypothesis_identity?: string | null
+          hypothesis_text?: string | null
+          id?: string
+          leg_id?: string | null
+          move_identity?: string | null
+          move_text?: string | null
+          note?: string | null
+          recorded_at?: string
+          recorded_by?: string | null
+          route_id?: string | null
+          route_title?: string | null
+          subject_identity: string
+          subject_text: string
+          superseded_by?: string | null
+          test_id?: string | null
+          verdict: string
+        }
+        Update: {
+          check_kind?: string
+          check_version?: number
+          company_id?: string
+          evidence_refs?: string[]
+          hypothesis_identity?: string | null
+          hypothesis_text?: string | null
+          id?: string
+          leg_id?: string | null
+          move_identity?: string | null
+          move_text?: string | null
+          note?: string | null
+          recorded_at?: string
+          recorded_by?: string | null
+          route_id?: string | null
+          route_title?: string | null
+          subject_identity?: string
+          subject_text?: string
+          superseded_by?: string | null
+          test_id?: string | null
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "check_outcomes_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "check_outcomes_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "check_outcomes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       claim_contest_removals: {
         Row: {
           claim_id: string | null
@@ -6672,6 +6795,21 @@ export type Database = {
         }
         Returns: Json
       }
+      record_check_outcome: {
+        Args: {
+          p_check_kind: string
+          p_check_version?: number
+          p_company_id: string
+          p_context?: Json
+          p_evidence_refs?: string[]
+          p_note?: string
+          p_recorded_by?: string
+          p_subject_identity: string
+          p_subject_text: string
+          p_verdict: string
+        }
+        Returns: Json
+      }
       remove_claim: {
         Args: {
           p_actor?: string
@@ -6708,6 +6846,15 @@ export type Database = {
         Args: { p_reason: string; p_session_id: string }
         Returns: undefined
       }
+      replace_route_conditions: {
+        Args: {
+          p_actor?: string
+          p_conditions: Json
+          p_declared_drop_reason?: string
+          p_route_id: string
+        }
+        Returns: Json
+      }
       resolve_contest: {
         Args: { p_contest_id: string; p_reason: string; p_resolution: string }
         Returns: undefined
@@ -6730,6 +6877,10 @@ export type Database = {
           p_verdict: string
         }
         Returns: Json
+      }
+      set_test_outcome_cache: {
+        Args: { p_outcome: string; p_test_id: string }
+        Returns: number
       }
       shares_company_with: { Args: { _other: string }; Returns: boolean }
       sweep_stale_chains: { Args: never; Returns: undefined }
