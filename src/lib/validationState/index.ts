@@ -3,20 +3,22 @@
 // Operator ruling 1 (2026-09-12), the bars applied per element:
 //   validated     — survey-validated provenance only (odi_needs, certaintyRung survey_validated).
 //   directional   — a test with a result set, or a route condition with satisfied_flag true.
-//   contradicted  — an outcome that went the other way: a test whose result records failure, a
-//                   condition CHECKED and not satisfied, or a claim with a contradicting signal ref.
+//   contradicted  — an outcome that went the other way: a test with outcome 'failed', a condition
+//                   CHECKED (checked_at set) and not satisfied, or a claim with a contradicting signal ref.
 //   unvalidated   — everything else (the default; the honest answer for most of the graph).
 //
 // Pure functions — no I/O. The edge-side recompute (supabase/functions/_shared/validationState.ts)
 // loads the rows and applies the diff; both surfaces and every test import the derivation from here.
 //
-// Two outcome readers are deliberately narrow (STOP items reported in the brief):
-//   readTestOutcome    — tests.result is free text with NO writer anywhere; success vs failure has no
-//                        encoding. A set result is an outcome ("unknown" polarity ⇒ directional);
-//                        "failure" is only ever produced by an injected reader until the encoding is ruled.
-//   readConditionOutcome — a condition carries satisfied_flag: boolean and nothing that says "checked".
-//                        satisfied_flag=false is indistinguishable from never-checked ⇒ "unchecked".
-//                        "unsatisfied" is only ever produced by an injected reader until a checked marker exists.
+// The two outcome readers (rulings 1–3, 2026-09-12 — the encodings that make contradicted producible):
+//   readTestOutcome    — tests.outcome is the STRUCTURED outcome: passed ⇒ success, failed ⇒ failure,
+//                        inconclusive ⇒ no outcome. tests.result stays the free-text write-up and is
+//                        NEVER parsed; with outcome null, a set result is still an outcome of unknown
+//                        polarity ⇒ directional (the Sep 12 reading, unchanged).
+//   readConditionOutcome — checked_at on the WrapCond element: null ⇒ never checked (satisfied_flag is
+//                        meaningless ⇒ "unchecked"); set + satisfied_flag=true ⇒ satisfied; set +
+//                        satisfied_flag=false ⇒ UNSATISFIED. satisfied_flag=true with no checked_at keeps
+//                        the Sep 12 reading (satisfied) — the synthesis paths set the flag without a stamp.
 //
 // Movement: strongest-wins with contradicted dominating — contradicted > validated > directional >
 // unvalidated. A check against a belief is not outweighed by a check for it. The derivation is total
@@ -30,24 +32,30 @@ export type ConditionOutcome = "satisfied" | "unsatisfied" | "unchecked";
 export const VALIDATION_STATES: readonly ValidationState[] = ["unvalidated", "directional", "validated", "contradicted"];
 const RANK: Record<ValidationState, number> = { unvalidated: 0, directional: 1, validated: 2, contradicted: 3 };
 
-export type TestRow = { id: string; action_id: string | null; result: string | null; no_test_needed?: boolean | null };
-export type ConditionLike = { condition?: string; satisfied_flag?: boolean | null; evidence_refs?: string[] | null };
+export type TestOutcomeCode = "passed" | "failed" | "inconclusive";
+export type TestRow = { id: string; action_id: string | null; result: string | null; no_test_needed?: boolean | null; outcome?: TestOutcomeCode | string | null };
+export type ConditionLike = { condition?: string; satisfied_flag?: boolean | null; evidence_refs?: string[] | null; checked_at?: string | null };
 export type RouteLike = { id: string; level?: string | null; parent_id?: string | null; what_would_have_to_be_true?: ConditionLike[] | null; validation_state?: string | null };
 export type NeedLike = { id: string; provenance_type?: string | null; validation_state?: string | null };
 export type ClaimLike = { id: string; triangulation_state?: string | null };
 export type ClaimRefLike = { claim_id: string; relationship: string };
 
-/** The production reader: a result is an outcome; its polarity is not encoded (see header). */
+/** The production reader: the structured outcome first; a set write-up with no outcome is still an outcome (unknown polarity). */
 export function readTestOutcome(test: TestRow): TestOutcome | null {
   if (test.no_test_needed) return null;
+  if (test.outcome === "passed") return "success";
+  if (test.outcome === "failed") return "failure";
+  if (test.outcome === "inconclusive") return null;
   if (test.result === null || test.result === undefined) return null;
   if (String(test.result).trim() === "") return null;
   return "unknown";
 }
 
-/** The production reader: only satisfied_flag=true is a recorded check today (see header). */
+/** The production reader: checked_at decides whether satisfied_flag=false means anything. */
 export function readConditionOutcome(cond: ConditionLike): ConditionOutcome {
-  return cond.satisfied_flag === true ? "satisfied" : "unchecked";
+  const checked = typeof cond.checked_at === "string" && cond.checked_at.trim() !== "";
+  if (cond.satisfied_flag === true) return "satisfied";
+  return checked ? "unsatisfied" : "unchecked";
 }
 
 export function strongest(states: Iterable<ValidationState>): ValidationState {

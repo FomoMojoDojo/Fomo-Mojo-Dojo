@@ -326,6 +326,80 @@ export type Database = {
           },
         ]
       }
+      claim_delta_looks: {
+        Row: {
+          company_id: string
+          content_identity: string
+          declared_claim_id: string
+          id: string
+          judge_model: string | null
+          looked_at: string
+          pairing_kind: string
+          public_claim_id: string
+          reason: string
+          run_id: string | null
+          span_cited: string | null
+          span_gate_version: number
+        }
+        Insert: {
+          company_id: string
+          content_identity: string
+          declared_claim_id: string
+          id?: string
+          judge_model?: string | null
+          looked_at?: string
+          pairing_kind?: string
+          public_claim_id: string
+          reason: string
+          run_id?: string | null
+          span_cited?: string | null
+          span_gate_version?: number
+        }
+        Update: {
+          company_id?: string
+          content_identity?: string
+          declared_claim_id?: string
+          id?: string
+          judge_model?: string | null
+          looked_at?: string
+          pairing_kind?: string
+          public_claim_id?: string
+          reason?: string
+          run_id?: string | null
+          span_cited?: string | null
+          span_gate_version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_delta_looks_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_delta_looks_declared_claim_id_fkey"
+            columns: ["declared_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_delta_looks_public_claim_id_fkey"
+            columns: ["public_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_delta_looks_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "long_runner_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       claim_delta_rejection_removals: {
         Row: {
           company_id: string
@@ -3030,11 +3104,91 @@ export type Database = {
           },
         ]
       }
+      market_candidate_outcomes: {
+        Row: {
+          candidate_index: number
+          company_id: string
+          created_at: string
+          criterion_version: number
+          dedup_target_identity: string | null
+          id: string
+          inputs_complete: boolean
+          job_executor: string
+          journey_key: string | null
+          judge_reasons: Json
+          original_identity: string
+          original_jtbd: string
+          outcome: string
+          reconstructed: boolean
+          reframed_identity: string | null
+          reframed_jtbd: string | null
+          relationship_kind: string | null
+          run_id: string
+        }
+        Insert: {
+          candidate_index: number
+          company_id: string
+          created_at?: string
+          criterion_version?: number
+          dedup_target_identity?: string | null
+          id?: string
+          inputs_complete?: boolean
+          job_executor: string
+          journey_key?: string | null
+          judge_reasons?: Json
+          original_identity: string
+          original_jtbd: string
+          outcome: string
+          reconstructed?: boolean
+          reframed_identity?: string | null
+          reframed_jtbd?: string | null
+          relationship_kind?: string | null
+          run_id: string
+        }
+        Update: {
+          candidate_index?: number
+          company_id?: string
+          created_at?: string
+          criterion_version?: number
+          dedup_target_identity?: string | null
+          id?: string
+          inputs_complete?: boolean
+          job_executor?: string
+          journey_key?: string | null
+          judge_reasons?: Json
+          original_identity?: string
+          original_jtbd?: string
+          outcome?: string
+          reconstructed?: boolean
+          reframed_identity?: string | null
+          reframed_jtbd?: string | null
+          relationship_kind?: string | null
+          run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_candidate_outcomes_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_candidate_outcomes_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "long_runner_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       market_discovery_verdicts: {
         Row: {
           company_id: string
           created_at: string
+          criterion_version: number
           id: string
+          inputs_complete: boolean
           judge_model: string
           judge_reason: string
           market_a_identity: string
@@ -3046,7 +3200,9 @@ export type Database = {
         Insert: {
           company_id: string
           created_at?: string
+          criterion_version?: number
           id?: string
+          inputs_complete?: boolean
           judge_model: string
           judge_reason: string
           market_a_identity: string
@@ -3058,7 +3214,9 @@ export type Database = {
         Update: {
           company_id?: string
           created_at?: string
+          criterion_version?: number
           id?: string
+          inputs_complete?: boolean
           judge_model?: string
           judge_reason?: string
           market_a_identity?: string
@@ -3395,6 +3553,53 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      model_calls: {
+        Row: {
+          call_site: string
+          company_id: string
+          completion_tokens: number | null
+          created_at: string
+          id: string
+          model: string
+          prompt_tokens: number | null
+          provider: string
+          run_id: string | null
+          usd: number | null
+        }
+        Insert: {
+          call_site: string
+          company_id: string
+          completion_tokens?: number | null
+          created_at?: string
+          id?: string
+          model: string
+          prompt_tokens?: number | null
+          provider: string
+          run_id?: string | null
+          usd?: number | null
+        }
+        Update: {
+          call_site?: string
+          company_id?: string
+          completion_tokens?: number | null
+          created_at?: string
+          id?: string
+          model?: string
+          prompt_tokens?: number | null
+          provider?: string
+          run_id?: string | null
+          usd?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "model_calls_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "long_runner_runs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       mojo_maps: {
         Row: {
@@ -3790,14 +3995,15 @@ export type Database = {
           market_register: string
           provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
           relationship_basis: string | null
+          relationship_kind: string | null
           retracted: boolean | null
           retracted_at: string | null
           retracted_from_outcome_id: string | null
           retracted_reason: string | null
-          relationship_kind: string | null
           source_path: string
           updated_at: string
           user_id: string
+          validation_state: string
         }
         Insert: {
           chooser?: string
@@ -3815,14 +4021,15 @@ export type Database = {
           market_register: string
           provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           relationship_basis?: string | null
+          relationship_kind?: string | null
           retracted?: boolean | null
           retracted_at?: string | null
           retracted_from_outcome_id?: string | null
           retracted_reason?: string | null
-          relationship_kind?: string | null
           source_path?: string
           updated_at?: string
           user_id: string
+          validation_state?: string
         }
         Update: {
           chooser?: string
@@ -3840,14 +4047,15 @@ export type Database = {
           market_register?: string
           provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           relationship_basis?: string | null
+          relationship_kind?: string | null
           retracted?: boolean | null
           retracted_at?: string | null
           retracted_from_outcome_id?: string | null
           retracted_reason?: string | null
-          relationship_kind?: string | null
           source_path?: string
           updated_at?: string
           user_id?: string
+          validation_state?: string
         }
         Relationships: [
           {
@@ -3855,6 +4063,13 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "odi_market_definitions_retracted_from_outcome_id_fkey"
+            columns: ["retracted_from_outcome_id"]
+            isOneToOne: false
+            referencedRelation: "market_candidate_outcomes"
             referencedColumns: ["id"]
           },
         ]
@@ -4031,6 +4246,47 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "operator_primary_selection_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      operator_primary_selection_audit: {
+        Row: {
+          action: string
+          actor: string | null
+          at: string
+          company_id: string
+          domain: string
+          id: string
+          item_key: string | null
+          reason: string | null
+        }
+        Insert: {
+          action: string
+          actor?: string | null
+          at?: string
+          company_id: string
+          domain: string
+          id?: string
+          item_key?: string | null
+          reason?: string | null
+        }
+        Update: {
+          action?: string
+          actor?: string | null
+          at?: string
+          company_id?: string
+          domain?: string
+          id?: string
+          item_key?: string | null
+          reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "operator_primary_selection_audit_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -4468,6 +4724,7 @@ export type Database = {
           unique_attributes_json: Json
           updated_at: string
           user_id: string
+          validation_state: string
           value_for_customer: string
         }
         Insert: {
@@ -4497,6 +4754,7 @@ export type Database = {
           unique_attributes_json?: Json
           updated_at?: string
           user_id: string
+          validation_state?: string
           value_for_customer?: string
         }
         Update: {
@@ -4526,6 +4784,7 @@ export type Database = {
           unique_attributes_json?: Json
           updated_at?: string
           user_id?: string
+          validation_state?: string
           value_for_customer?: string
         }
         Relationships: [
@@ -5871,6 +6130,7 @@ export type Database = {
           source_direction_key: string
           updated_at: string
           user_id: string
+          validation_state: string
           where_to_play: string
           winning_aspiration: string
         }
@@ -5894,6 +6154,7 @@ export type Database = {
           source_direction_key: string
           updated_at?: string
           user_id: string
+          validation_state?: string
           where_to_play?: string
           winning_aspiration?: string
         }
@@ -5917,6 +6178,7 @@ export type Database = {
           source_direction_key?: string
           updated_at?: string
           user_id?: string
+          validation_state?: string
           where_to_play?: string
           winning_aspiration?: string
         }
@@ -6229,6 +6491,7 @@ export type Database = {
           id: string
           no_test_needed: boolean
           no_test_needed_reason: string | null
+          outcome: string | null
           result: string | null
           source: string
           updated_at: string
@@ -6244,6 +6507,7 @@ export type Database = {
           id?: string
           no_test_needed?: boolean
           no_test_needed_reason?: string | null
+          outcome?: string | null
           result?: string | null
           source?: string
           updated_at?: string
@@ -6259,6 +6523,7 @@ export type Database = {
           id?: string
           no_test_needed?: boolean
           no_test_needed_reason?: string | null
+          outcome?: string | null
           result?: string | null
           source?: string
           updated_at?: string
@@ -6446,10 +6711,6 @@ export type Database = {
       resolve_contest: {
         Args: { p_contest_id: string; p_reason: string; p_resolution: string }
         Returns: undefined
-      }
-      resolve_primary_job_step_set: {
-        Args: { p_company_id: string }
-        Returns: string
       }
       set_claim_status: {
         Args: {

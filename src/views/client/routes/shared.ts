@@ -302,6 +302,10 @@ export type WrapCond = {
   condition: string;
   satisfied_flag: boolean;
   evidence_refs?: string[];
+  // Recorded check (2026-09-12, ruling 2): null/absent ⇒ never checked (satisfied_flag is meaningless);
+  // set + satisfied_flag=true ⇒ checked and satisfied; set + satisfied_flag=false ⇒ checked and NOT
+  // satisfied. No control writes it yet; validationState reads it.
+  checked_at?: string | null;
   leg_class?: "test" | "build";
   // Hole-close reconcile (piece #2): stamped on a leg's carried condition when its source
   // route condition is re-rolled away — the leg keeps rendering, honestly, with its reason.

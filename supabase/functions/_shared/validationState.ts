@@ -42,7 +42,7 @@ export async function recomputeValidationState(
   const dryRun = opts.dryRun === true;
   const [routesRes, testsRes, needsRes, claimsRes, refsRes] = await Promise.all([
     supabase.from("routes").select("id, level, parent_id, what_would_have_to_be_true, validation_state").eq("company_id", companyId),
-    supabase.from("tests").select("id, action_id, result, no_test_needed").eq("company_id", companyId),
+    supabase.from("tests").select("id, action_id, result, outcome, no_test_needed").eq("company_id", companyId),
     supabase.from("odi_needs").select("id, provenance_type, validation_state").eq("company_id", companyId),
     supabase.from("claims").select("id, triangulation_state").eq("company_id", companyId),
     supabase.from("claim_signal_refs").select("claim_id, relationship").eq("company_id", companyId),

@@ -1,9 +1,9 @@
-// validation_state writers (2026-09-12) — the derivation proven per outcome source, including the two
-// states this system has never produced (contradicted from a failing test, contradicted from a checked-
-// and-unsatisfied condition). Those are proven through the injected readers: the PRODUCTION readers
-// cannot yield "failure" / "unsatisfied" today (tests.result has no polarity encoding; conditions have no
-// checked marker) and that inertness is asserted here too. Plus idempotence per writer, and the ruling-2B
-// proof that the Mojo Score never reads validation_state.
+// validation_state writers (2026-09-12) — the derivation proven per outcome source. Since the outcome
+// encoding (tests.outcome, condition checked_at — rulings 1–3), contradicted is PRODUCIBLE through the
+// production readers on both paths; those tests are the primary proof. The injected-reader proofs from
+// the first cut stay. Plus the unchecked-vs-failed distinction the encoding exists for, idempotence per
+// writer, and the ruling-2B / ruling-5 proof that the Mojo Score never reads validation_state, outcome
+// or checked_at.
 import { describe, it, expect } from "vitest";
 import {
   deriveClaimContradictions, deriveNeedStates, deriveRouteStates, diffStates, readConditionOutcome, readTestOutcome, strongest,
@@ -19,20 +19,76 @@ const leg = (id: string, parent: string, over: Partial<RouteLike> = {}): RouteLi
 const test_ = (id: string, action_id: string, result: string | null, over: Partial<TestRow> = {}): TestRow => ({ id, action_id, result, no_test_needed: false, ...over });
 const current = (rows: RouteLike[]) => rows.map((r) => ({ id: r.id, state: r.validation_state ?? null }));
 
-describe("readers — what the production shapes can and cannot say", () => {
-  it("tests.result: null / blank / no_test_needed ⇒ no outcome; any set result ⇒ an outcome of unknown polarity", () => {
+describe("readers — the five ruling-3 cases", () => {
+  it("test outcome 'failed' ⇒ failure; 'passed' ⇒ success; 'inconclusive' ⇒ no outcome", () => {
+    expect(readTestOutcome(test_("t", "l", null, { outcome: "failed" }))).toBe("failure");
+    expect(readTestOutcome(test_("t", "l", null, { outcome: "passed" }))).toBe("success");
+    expect(readTestOutcome(test_("t", "l", "we ran it, could not tell", { outcome: "inconclusive" }))).toBeNull();
+  });
+  it("tests.result is NEVER parsed: with outcome null, null / blank / no_test_needed ⇒ no outcome; any set write-up ⇒ unknown polarity", () => {
     expect(readTestOutcome(test_("t", "l", null))).toBeNull();
     expect(readTestOutcome(test_("t", "l", "   "))).toBeNull();
     expect(readTestOutcome(test_("t", "l", "positive", { no_test_needed: true }))).toBeNull();
     expect(readTestOutcome(test_("t", "l", "Survey ran; 8 of 10 families confirmed"))).toBe("unknown");
-    // No text is ever read as failure by the production reader — the encoding is unruled.
-    expect(readTestOutcome(test_("t", "l", "FAILED — nobody confirmed"))).toBe("unknown");
+    expect(readTestOutcome(test_("t", "l", "FAILED — nobody confirmed"))).toBe("unknown"); // text says failed; outcome does not
+    expect(readTestOutcome(test_("t", "l", "passed with flying colours", { outcome: "failed" }))).toBe("failure"); // outcome wins over text
   });
-  it("conditions: satisfied_flag=true ⇒ satisfied; false ⇒ unchecked (no checked marker exists)", () => {
-    expect(readConditionOutcome({ satisfied_flag: true })).toBe("satisfied");
+  it("conditions: checked_at set + satisfied ⇒ satisfied; checked_at set + unsatisfied ⇒ UNSATISFIED; checked_at null ⇒ unchecked", () => {
+    expect(readConditionOutcome({ satisfied_flag: true, checked_at: "2026-09-12T10:00:00Z" })).toBe("satisfied");
+    expect(readConditionOutcome({ satisfied_flag: false, checked_at: "2026-09-12T10:00:00Z" })).toBe("unsatisfied");
+    expect(readConditionOutcome({ satisfied_flag: false, checked_at: null })).toBe("unchecked");
     expect(readConditionOutcome({ satisfied_flag: false })).toBe("unchecked");
+    expect(readConditionOutcome({ satisfied_flag: false, checked_at: "" })).toBe("unchecked");
     expect(readConditionOutcome({ satisfied_flag: false, evidence_refs: ["s1"] })).toBe("unchecked"); // evidence_refs is not a proxy
+    expect(readConditionOutcome({ satisfied_flag: true })).toBe("satisfied"); // the synthesis-set flag, no stamp: the Sep 12 reading
     expect(readConditionOutcome({})).toBe("unchecked");
+  });
+});
+
+describe("PRODUCTION-path contradicted (the primary proof)", () => {
+  it("a test with outcome 'failed' ⇒ contradicted on its leg and its parent route", () => {
+    const routes = [route("r1"), leg("l1", "r1"), leg("l2", "r1")];
+    const states = deriveRouteStates(routes, [test_("t1", "l1", "went the other way", { outcome: "failed" })]);
+    expect(states.get("l1")).toBe("contradicted");
+    expect(states.get("r1")).toBe("contradicted");
+    expect(states.get("l2")).toBe("unvalidated");
+  });
+  it("a test with outcome 'passed' ⇒ directional (as any set result)", () => {
+    const routes = [route("r1"), leg("l1", "r1")];
+    const states = deriveRouteStates(routes, [test_("t1", "l1", null, { outcome: "passed" })]);
+    expect(states.get("l1")).toBe("directional");
+    expect(states.get("r1")).toBe("directional");
+  });
+  it("'inconclusive' ⇒ no outcome, even with a write-up", () => {
+    const routes = [route("r1"), leg("l1", "r1")];
+    const states = deriveRouteStates(routes, [test_("t1", "l1", "ran, unclear", { outcome: "inconclusive" })]);
+    expect(states.get("l1")).toBe("unvalidated");
+    expect(states.get("r1")).toBe("unvalidated");
+  });
+  it("a condition checked_at set + satisfied_flag=false ⇒ contradicted on its route", () => {
+    const routes = [route("r1", [{ satisfied_flag: false, checked_at: "2026-09-12T10:00:00Z" } as never])];
+    expect(deriveRouteStates(routes, []).get("r1")).toBe("contradicted");
+  });
+  it("a condition checked_at set + satisfied_flag=true ⇒ directional", () => {
+    const routes = [route("r1", [{ satisfied_flag: true, checked_at: "2026-09-12T10:00:00Z" } as never])];
+    expect(deriveRouteStates(routes, []).get("r1")).toBe("directional");
+  });
+  it("UNCHECKED vs FAILED — satisfied_flag=false with checked_at NULL ⇒ unvalidated, not contradicted (the distinction this encoding exists for)", () => {
+    const unchecked = [route("r1", [{ satisfied_flag: false, checked_at: null } as never, { satisfied_flag: false } as never])];
+    expect(deriveRouteStates(unchecked, []).get("r1")).toBe("unvalidated");
+    const checked = [route("r1", [{ satisfied_flag: false, checked_at: "2026-09-12T10:00:00Z" } as never, { satisfied_flag: false } as never])];
+    expect(deriveRouteStates(checked, []).get("r1")).toBe("contradicted");
+  });
+  it("strongest-wins: one passed + one failed test on a route ⇒ contradicted", () => {
+    const routes = [route("r1"), leg("l1", "r1"), leg("l2", "r1")];
+    const states = deriveRouteStates(routes, [test_("t1", "l1", null, { outcome: "passed" }), test_("t2", "l2", null, { outcome: "failed" })]);
+    expect(states.get("l1")).toBe("directional");
+    expect(states.get("l2")).toBe("contradicted");
+    expect(states.get("r1")).toBe("contradicted");
+  });
+  it("strongest-wins: one satisfied + one checked-unsatisfied condition ⇒ contradicted", () => {
+    const routes = [route("r1", [{ satisfied_flag: true, checked_at: "2026-09-12T09:00:00Z" } as never, { satisfied_flag: false, checked_at: "2026-09-12T10:00:00Z" } as never])];
+    expect(deriveRouteStates(routes, []).get("r1")).toBe("contradicted");
   });
 });
 
@@ -57,7 +113,7 @@ describe("tests → leg + parent route", () => {
     expect(states.get("l2")).toBe("directional");
     expect(states.get("r1")).toBe("contradicted"); // strongest-wins, contradicted dominating
   });
-  it("the production reader never yields contradicted from a test — proven on the same rows", () => {
+  it("with outcome null the production reader still never reads failure out of the write-up text", () => {
     const routes = [route("r1"), leg("l1", "r1")];
     const states = deriveRouteStates(routes, [test_("t1", "l1", "went the other way")]);
     expect(states.get("l1")).toBe("directional");
@@ -129,6 +185,11 @@ describe("movement and idempotence", () => {
     // Total recomputation: the outcome gone ⇒ back to unvalidated (not sticky).
     expect(diffStates(current(applied), deriveRouteStates(applied, [])).map((u) => u.to)).toEqual(["unvalidated", "unvalidated"]);
   });
+  it("routes with the new fields: idempotent (failed test + checked-unsatisfied condition, re-run ⇒ no updates)", () => {
+    const routes = [route("r1", [{ satisfied_flag: false, checked_at: "2026-09-12T10:00:00Z" } as never], { validation_state: "contradicted" }), leg("l1", "r1", { validation_state: "contradicted" })];
+    const tests = [test_("t1", "l1", null, { outcome: "failed" })];
+    expect(diffStates(current(routes), deriveRouteStates(routes, tests))).toEqual([]);
+  });
   it("needs: idempotent", () => {
     const needs: NeedLike[] = [{ id: "n1", provenance_type: "odi_survey", validation_state: "validated" }, { id: "n2", provenance_type: "manual", validation_state: "unvalidated" }];
     expect(diffStates(needs.map((n) => ({ id: n.id, state: n.validation_state ?? null })), deriveNeedStates(needs))).toEqual([]);
@@ -139,10 +200,10 @@ describe("movement and idempotence", () => {
   });
 });
 
-describe("ruling 2B — the Mojo Score does not read validation_state", () => {
-  it("the computed score, reachable and unlockable are identical before and after a planted validation_state change on the same rows", () => {
+describe("ruling 2B / ruling 5 — the Mojo Score does not read validation_state, outcome or checked_at", () => {
+  it("the computed score, reachable and unlockable are identical before and after a planted validation_state / outcome / checked_at change on the same rows", () => {
     const routes = [
-      { id: "r1", category: "fix", level: "route", parent_id: null, rejected_alternatives: [{ alternative_title: "a", rejection_reason: "b" }], what_would_have_to_be_true: [{ condition: "c", satisfied_flag: true }], updated_at: "2026-09-01T00:00:00Z", validation_state: "unvalidated" },
+      { id: "r1", category: "fix", level: "route", parent_id: null, rejected_alternatives: [{ alternative_title: "a", rejection_reason: "b" }], what_would_have_to_be_true: [{ condition: "c", satisfied_flag: true }, { condition: "d", satisfied_flag: false }], updated_at: "2026-09-01T00:00:00Z", validation_state: "unvalidated" },
       { id: "l1", category: "fix", level: "leg", parent_id: "r1", steps_json: [{ id: "s", title: "s", status: "complete" }], evidence_json: [{ id: "e", title: "e", status: "complete" }], linked_need_ids: ["n1"], updated_at: "2026-09-01T00:00:00Z", validation_state: "unvalidated" },
     ];
     const needs = [{ id: "n1", desired_outcome: "x", importance: 8, satisfaction: 3, opportunity_score: 13, service_state: "underserved", updated_at: "2026-09-01T00:00:00Z", validation_state: "unvalidated" }];
@@ -150,11 +211,15 @@ describe("ruling 2B — the Mojo Score does not read validation_state", () => {
     const computedAt = "2026-09-12T00:00:00Z";
     const before = computeMojoScore({ companyId: "c", claims, routes, needs, computedAt });
     const planted = {
-      routes: routes.map((r) => ({ ...r, validation_state: "contradicted" })),
+      // checked_at stamped on every condition (flags unchanged), validation_state flipped, a failed test outcome beside it.
+      routes: routes.map((r) => ({ ...r, validation_state: "contradicted", what_would_have_to_be_true: r.what_would_have_to_be_true?.map((c) => ({ ...c, checked_at: "2026-09-12T10:00:00Z" })) })),
       needs: needs.map((n) => ({ ...n, validation_state: "validated" })),
       claims: claims.map((c) => ({ ...c, triangulation_state: "contradicted" })),
     };
     const after = computeMojoScore({ companyId: "c", claims: planted.claims, routes: planted.routes, needs: planted.needs, computedAt });
+    // tests (outcome) are not even an input to computeMojoScore — MojoScoreInput carries no tests; asserted by type and by the identical result.
+    const failedTest: TestRow = test_("t1", "l1", "went the other way", { outcome: "failed" });
+    expect(readTestOutcome(failedTest)).toBe("failure");
     expect(after.total_score).toBe(before.total_score);
     expect(after.contributors).toEqual(before.contributors);
     expect(after.projected_raisers).toEqual(before.projected_raisers);
