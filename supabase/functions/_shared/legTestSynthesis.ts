@@ -21,6 +21,7 @@
 // dry-run. One primary test per leg, keyed by tests.action_id = leg.id.
 
 import { buildOrgNameGuard } from "./stepConditionsSynthesis.ts";
+import { recomputeValidationStateQuietly } from "./validationState.ts";
 import { judgeRouteCondition, reviseRouteCondition, type RouteInput } from "./routeConditionSynthesis.ts";
 import { contentIdentity } from "./contentIdentity.ts";
 
@@ -659,6 +660,11 @@ export async function generateLegTestsForCompany(args: {
     }),
     { legs: 0, proposed: 0, kept: 0, dropped: 0, written: 0, preservedOperator: 0, failed: 0 },
   );
+
+  // validation_state is written AFTER the tests it describes have landed (census law). tests.result
+  // has no writer yet, so today this settles legs/routes to their honest default; it becomes live the
+  // day a result is recorded.
+  if (args.write) await recomputeValidationStateQuietly(args.supabase as never, args.companyId, "generateLegTestsForCompany");
 
   return { ok: true, perLeg, totals };
 }

@@ -5,8 +5,9 @@
 //   Ceiling        routes, needs; extracted from ClientRefinePreviewView) then computeReachableScore /
 //                  computeUnlockableScore exactly as the home compass (HomepageHierarchyFR.tsx:80-81);
 //                  Ceiling = the compass's third value (unlockable), so the strip has three cells
-//   Evidence unlock the live score's projected_raisers[0].action_description / estimated_points,
-//                  rendered as the home renders the raiser lift ("+N PTS", HomepageHierarchyFR.tsx:88-89, 106)
+//   Evidence unlock REMOVED (operator ruling 3, 2026-09-12): the "+N PTS" banner paired a contributor's
+//                  headroom-to-100 with a canned sentence from a different producer — a false claim
+//                  (display-honesty defect). Nothing replaces it yet. The score band above is unchanged.
 //   accordion      routes.title / short_description; expanded: what_would_have_to_be_true[] (the
 //                  "Test for this route"). assumptions_json is not a routes column (useRoutes selects *
 //                  and maps it to null), and no field backs "If it's working" / "If not" — omitted.
@@ -101,7 +102,6 @@ export default function RoutesPage() {
     try { await decision.clearRoute(); await refetchCompany(); } finally { setChoosing(false); }
   };
 
-  const raiser = score?.projected_raisers[0] ?? null;
   const strip = score
     ? [
         { key: "now", label: WORKSPACE_STRINGS.scoreNow, value: Math.round(score.total_score), tone: "lime" },
@@ -141,16 +141,6 @@ export default function RoutesPage() {
                   <span className="fr-ws-scorecell-label fr-mono">{c.label}</span>
                 </div>
               ))}
-            </div>
-          ) : null}
-
-          {raiser?.action_description ? (
-            <div className="fr-ws-accent fr-ws-unlock" data-fr-tone="electric" data-testid="routes-unlock" data-fr-region="evidence-unlock">
-              <div>
-                <p className="fr-ws-band-eyebrow fr-mono">{WORKSPACE_STRINGS.evidenceUnlock}</p>
-                <p className="fr-ws-unlock-text">{raiser.action_description}</p>
-              </div>
-              {raiser.estimated_points > 0 ? <p className="fr-ws-unlock-pts fr-mono">+{raiser.estimated_points} {WORKSPACE_STRINGS.pts}</p> : null}
             </div>
           ) : null}
 

@@ -21,6 +21,7 @@
 // per-route persistence (survives the Kong gateway timeout).
 
 import { buildOrgNameGuard, FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
+import { recomputeValidationStateQuietly } from "./validationState.ts";
 import { contentIdentity } from "./contentIdentity.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
@@ -609,6 +610,10 @@ export async function generateRouteConditionsForCompany(args: {
     }),
     { routes: 0, proposed: 0, kept: 0, dropped: 0, written: 0, preservedOperator: 0, superseded: 0, orphanedLegs: 0, refusedPreserved: 0 },
   );
+
+  // validation_state is written AFTER the conditions it describes have landed (census law) — the
+  // satisfied_flag outcome on each route is the input; nothing here reads the Mojo Score.
+  if (args.write) await recomputeValidationStateQuietly(args.supabase as never, args.companyId, "generateRouteConditionsForCompany");
 
   return { ok: true, perRoute, totals };
 }

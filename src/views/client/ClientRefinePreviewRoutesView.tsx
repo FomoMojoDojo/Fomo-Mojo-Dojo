@@ -69,7 +69,7 @@ import { useAuth } from "@/hooks/useAuth";
 import SurfaceEducationTrigger from "@/components/surface-education/SurfaceEducationTrigger";
 import FlowCommitSheet from "@/components/claims/FlowCommitSheet";
 import { R, RouteCategory, CATEGORY_META, CATEGORY_POSTURE_LABEL, isHypothesisPhase, toSentence, deriveCanonicalRouteSentence, EvidenceItem, ClientAssumption, CLIENT_LAYER_LABELS, CLIENT_STATUS_LABELS, CLIENT_STATUS_COLORS, CLIENT_STATUS_GLYPHS, deriveStrengthMoves, DetailItem, statusGlyph, statusTip, ROUTE_FIELD_LABELS, ROUTE_FIELDS, summarizeRouteValue, routeDiffedFields, routeTimeAgo, WrapAlt, WrapCond, HIERARCHY_STATE_ACCENT, HIERARCHY_STATE_LABEL, HIERARCHY_FRAMING, HIERARCHY_HERO, inferRelevantCategory } from "./routes/shared";
-import { ExpandRingBtn, ExpandRingIndicator, InkMetaChip, RouteStateTag, ScoreChip, HierarchyScoreStrip, KeystoneStripe } from "./routes/primitives";
+import { ExpandRingBtn, ExpandRingIndicator, InkMetaChip, RouteStateTag, ScoreChip, HierarchyScoreStrip } from "./routes/primitives";
 import { engagementDayFrom } from "@/lib/engagementDay";
 import { ClientRouteInspectPanel, ClientDecisionBanner, RouteWhyRisingPanel, RouteProposalSection, RouteCard, RoutesColumn, HierarchyWrapPanel, HierarchyPageHeader, LegRow, HierarchyRouteSection, HierarchyGroupCard } from "./routes/components";
 
@@ -1276,11 +1276,9 @@ export function RoutesOrgPanel({
         const reachable  = computeReachableScore(displayMojoScore);
         const unlockable = computeUnlockableScore(reachable, displayMojoScore);
         const current    = Math.round(displayMojoScore.total_score);
-        const scoreLift  = Math.round(reachable) - current;
-        const leadRoute = recommendedRouteId ? topLevelRoutes.find((r) => r.id === recommendedRouteId) ?? topLevelRoutes[0] : topLevelRoutes[0];
-        const keystoneAction =
-          nextBestMove?.title ??
-          (leadRoute?.title ? `Validate "${leadRoute.title}" with direct customer evidence` : "Validate the leading direction with direct customer evidence.");
+        // KEY MOVE stripe REMOVED (operator ruling 3, 2026-09-12): it paired reachable − now (foundation
+        // headroom) with the next-best-move sentence (customer research) — two producers, one false
+        // claim. The NOW / REACHABLE / UNLOCKABLE strip below is unchanged; nothing replaces the stripe yet.
         return (
           <>
             <HierarchyPageHeader
@@ -1298,9 +1296,6 @@ export function RoutesOrgPanel({
                 slotData={{ route_count: topLevelRoutes.length }}
               />
             </div>
-            {scoreLift > 0 && (
-              <KeystoneStripe action={keystoneAction} scoreLift={scoreLift} />
-            )}
             {routesSignalLandscape && (
               <SignalBasisChip
                 publicCount={routesSignalLandscape.byBand.outside.count}

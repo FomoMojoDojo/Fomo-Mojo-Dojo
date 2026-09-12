@@ -14,6 +14,7 @@
 // ever reaches the external model.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { recomputeValidationStateQuietly } from "../_shared/validationState.ts";
 import { fetchAndExtract } from "../_shared/fetchAndExtract.ts";
 import { sha256Hex, contentIdentity } from "../_shared/contentIdentity.ts";
 import {
@@ -134,6 +135,10 @@ async function writeFromFrozen(supabase: any, company_id: string, nowStr: string
       refs++;
     }
   }
+
+  // Own-words refs are 'supports' today; the recompute is the census-law terminal for any future
+  // contradicting ref written on this path (validation_state writers, 2026-09-12).
+  if (refs > 0) await recomputeValidationStateQuietly(supabase as never, company_id, "extract-own-words");
 
   const { error: intErr } = await supabase.from("integrity_runs").insert({
     company_id, component: "first_read_own_words", status: "completed",

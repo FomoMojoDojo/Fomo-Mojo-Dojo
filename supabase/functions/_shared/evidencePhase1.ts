@@ -1,4 +1,5 @@
 import { isListingDraft } from "./listingClass.ts";
+import { recomputeValidationStateQuietly } from "./validationState.ts";
 export { isListingDraft };
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } from "../../../src/lib/evidenceDomain.ts";
@@ -631,6 +632,9 @@ export async function rebuildCompanyReconcile(supabase: SupabaseClient, companyI
   const dependencyStats = await rebuildFoundationDependenciesForCompany(supabase, companyId);
   const hypothesisStats = await rebuildStrategicHypothesesForCompany({ supabase, companyId, sourceRunId: null });
   const routeHypothesisStats = await rebuildRouteHypothesisDependencies({ supabase, companyId });
+  // Claim refs are re-inserted above; a contradicting ref now stamps triangulation_state 'contradicted'
+  // (validation_state writers, 2026-09-12) — written after the refs it depends on.
+  await recomputeValidationStateQuietly(supabase, companyId, "rebuildCompanyReconcile");
   return { ...claimStats, ...dependencyStats, ...hypothesisStats, ...routeHypothesisStats };
 }
 
