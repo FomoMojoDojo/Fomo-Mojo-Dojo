@@ -33,7 +33,7 @@ import { captureBaseline } from "@/lib/baselineCapture";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
 import { CLIENT_REFINE_PREVIEW_HOME_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
 import { useRoutes } from "@/hooks/useRoutes";
-import { useDriftScan } from "@/hooks/useDriftScan";
+import { useDriftScan, type ScanAllStatus } from "@/hooks/useDriftScan";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
 import { formatDistanceToNow } from "date-fns";
 import ScoreContextBar from "@/components/score/ScoreContextBar";
@@ -576,45 +576,17 @@ export default function ClientRefinePreviewWorkshopView() {
   // ── Drift detail panel ────────────────────────────────────────────────────────
   const [driftPanel, setDriftPanel] = useState<{ surfaceType: string; surfaceId: string } | null>(null);
   const [driftBadgeRefreshKey, setDriftBadgeRefreshKey] = useState(0);
-  const { scanningAll, checkingSurfaceId: driftCheckingSurfaceId, scanAllSurfaces, checkSurface: checkSurfaceDrift } = useDriftScan(companyId);
-  const [scanAllStatus, setScanAllStatus] = useState<{ assessed: number; aligned: number; slight_drift: number; material_drift: number; scannedAt: Date } | null>(null);
+  const onDriftAssessed = useCallback(() => setDriftBadgeRefreshKey((k) => k + 1), []);
+  // The gated scan / check wrappers live in useDriftScan (MOVED there, Opportunities Tier 1 lift
+  // 2026-09-12); this view binds its own scan-all status/error state to them.
+  const { scanningAll, checkingSurfaceId: driftCheckingSurfaceId, scanAllGated, checkSurfaceGated: handleCheckSurfaceDrift } =
+    useDriftScan(companyId, { canScan, onAssessed: onDriftAssessed });
+  const [scanAllStatus, setScanAllStatus] = useState<ScanAllStatus | null>(null);
   const [scanAllError, setScanAllError] = useState<string | null>(null);
-
-  const handleScanAllSurfaces = useCallback(() => {
-    if (!canScan) return; // governance.drift.scan
-    setScanAllError(null);
-    scanAllSurfaces(
-      (result) => {
-        setDriftBadgeRefreshKey((k) => k + 1);
-        setScanAllStatus({ ...result, scannedAt: new Date() });
-        const driftCount = (result.slight_drift ?? 0) + (result.material_drift ?? 0);
-        const summary = driftCount === 0
-          ? `${result.assessed} surface${result.assessed === 1 ? "" : "s"} · all aligned`
-          : `${result.assessed} surface${result.assessed === 1 ? "" : "s"} · ${driftCount} with drift`;
-        toast.success(`Scanned · ${summary}`, { duration: 4000 });
-      },
-      (err) => {
-        setScanAllError(err);
-        toast.error(`Scan failed — ${err}`, { duration: 5000 });
-      },
-    );
-  }, [canScan, scanAllSurfaces]);
-
-  const handleCheckSurfaceDrift = useCallback((surfaceType: string, surfaceId: string) => {
-    if (!canScan) return; // governance.drift.scan
-    checkSurfaceDrift(
-      surfaceType,
-      surfaceId,
-      (result) => {
-        setDriftBadgeRefreshKey((k) => k + 1);
-        const driftLabel = result.material_drift > 0 ? "material drift" : result.slight_drift > 0 ? "slight drift" : "aligned";
-        toast.success(`Checked ${surfaceType} · ${driftLabel}`, { duration: 4000 });
-      },
-      (err) => {
-        toast.error(`Check failed — ${err}`, { duration: 5000 });
-      },
-    );
-  }, [canScan, checkSurfaceDrift]);
+  const handleScanAllSurfaces = useCallback(
+    () => scanAllGated({ onStatus: setScanAllStatus, onError: setScanAllError }),
+    [scanAllGated],
+  );
 
   const { totalUnresolved: inboxCount, newCount: inboxNewCount } = useDriftInboxCount(companyId);
 

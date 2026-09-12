@@ -123,6 +123,12 @@ export const WORKSPACE_STRINGS = {
   selectedOpportunity: "Selected opportunity",
   potential: "Potential",
   createRoute: "Create route",
+  // ── Opportunities Tier 1 controls (signed 2026-09-12, inventory §6) — existing NeedsOrgPanel /
+  //    WorkshopView strings rendered by the page itself. The moved components (opportunitiesShared,
+  //    ProposeChangesButton, DriftBadge, DriftDetailPanel) carry their own, unchanged. ──
+  human: "Human",
+  canonical: "Canonical",
+  checkForDrift: "Check for drift",
   // ── Routes body (P:409-419) ──
   scoreNow: "Now",
   /** Existing (home / routes compass). */

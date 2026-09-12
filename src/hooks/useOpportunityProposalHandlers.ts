@@ -112,11 +112,14 @@ export function useOpportunityProposalHandlers(
     const cur = row as { desired_outcome?: string | null; odi_canonical_statement?: string | null };
 
     // Supersede any existing pending proposal for THIS opportunity (mirror agent path).
-    await supabase.from("surface_proposals").update({
+    // Ruling 2 (2026-09-12): both writes are checked — a refused supersede or insert THROWS, so the
+    // caller renders the failure (toast.error with the message) and never the success toast.
+    const { error: supersedeError } = await supabase.from("surface_proposals").update({
       status: "superseded", reviewed_at: new Date().toISOString(),
     }).eq("surface_type", "opportunity").eq("surface_id", needId).eq("status", "pending");
+    if (supersedeError) throw new Error(supersedeError.message);
 
-    await supabase.from("surface_proposals").insert({
+    const { error: insertError } = await supabase.from("surface_proposals").insert({
       company_id: companyId,
       surface_type: "opportunity",
       surface_id: needId,
@@ -132,6 +135,7 @@ export function useOpportunityProposalHandlers(
       reason: "Manual edit",
       created_by: user?.id ?? null,
     });
+    if (insertError) throw new Error(insertError.message);
     setOpportunityProposalRefreshKey((k) => k + 1);
   }, [companyId, canSuggest, user]);
 

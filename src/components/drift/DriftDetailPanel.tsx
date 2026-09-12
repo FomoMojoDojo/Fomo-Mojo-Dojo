@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useDriftAssessment, type DriftAssessment, type DriftAssessmentSignal } from "@/hooks/useDriftAssessment";
+import { useCapability } from "@/hooks/useCapability";
 
 const MONO: React.CSSProperties = {
   fontFamily: "monospace",
@@ -85,6 +86,11 @@ function PanelBody({
     refreshKey,
   );
 
+  // Ruling 1 (Opportunities Tier 1, 2026-09-12): "Accept as aligned" is gated on governance.drift.review
+  // on every surface that opens this panel. The assessment row carries the company, so the gate needs
+  // no caller change; before the row arrives the action is disabled.
+  const canReview = useCapability("governance.drift.review", assessment?.company_id ?? null);
+
   useEffect(() => {
     if (assessment && !assessment.operator_seen_at) {
       markSeen();
@@ -117,6 +123,7 @@ function PanelBody({
   const stateLabel = isMaterial ? "Material drift" : "Slight drift";
 
   async function handleAccept() {
+    if (!canReview) return; // governance.drift.review
     try {
       await acceptAsAligned();
       onRefresh?.();
@@ -225,17 +232,19 @@ function PanelBody({
           <button
             type="button"
             onClick={handleAccept}
+            disabled={!canReview}
+            data-testid="drift-accept-aligned"
             style={{
               width: "100%",
               padding: "9px 16px",
-              background: "#1e3340",
-              color: "#fff",
-              border: "none",
+              background: canReview ? "#1e3340" : "none",
+              color: canReview ? "#fff" : "#9aaba5",
+              border: canReview ? "none" : "1px solid #d0d5da",
               borderRadius: 5,
               fontSize: 12,
               fontFamily: "monospace",
               letterSpacing: "0.05em",
-              cursor: "pointer",
+              cursor: canReview ? "pointer" : "default",
               textAlign: "left",
             }}
           >

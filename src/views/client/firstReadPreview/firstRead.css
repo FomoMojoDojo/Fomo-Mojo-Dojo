@@ -2729,3 +2729,25 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .first-read .fr-ws-evidence span[style*="rgb(209, 213, 219)"] { background: hsl(var(--fr-line)) !important; }
 .fr-ws-opp-review { display: inline-flex; align-items: center; gap: 10px; margin-left: 12px; vertical-align: middle; }
 .fr-ws-opp-review .fr-ws-control { padding: 4px 10px; }
+
+/* =====================================================================
+   WORKSPACE — OPPORTUNITIES TIER 1 CONTROLS (2026-09-12): the Human | Canonical toggle in the filter row,
+   and the aside's action block — Check for drift (fr-ws-control) beside the drift badge, then the moved
+   ProposeChangesButton / SuggestEditLane / OpportunityProposalSection (opportunitiesShared.tsx —
+   parity-locked inline styles, restyled by SELECTOR ONLY like the evidence drawer). fr tokens only.
+   ===================================================================== */
+.fr-ws-titlemode { margin-left: 8px; }
+.fr-ws-oppactions { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid hsl(var(--fr-periwinkle) / 0.25); display: flex; flex-direction: column; gap: 12px; }
+.fr-ws-oppactions-row { display: flex; align-items: center; gap: 10px; }
+.fr-ws-oppaside .fr-ws-oppactions .fr-ws-control { width: auto; margin-top: 0; padding: 4px 10px; }
+.first-read .fr-ws-oppactions > div > div[style*="margin: 6px 0px 4px 24px"] { margin: 0 !important; }
+.first-read .fr-ws-oppactions textarea { font-family: var(--fr-font-display) !important; font-size: 0.875rem !important; background: hsl(var(--fr-paper)); }
+.first-read .fr-ws-oppactions button[style*="text-decoration: underline"] { font-family: var(--fr-font-mono) !important; font-size: 10px !important; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--fr-steel)) !important; }
+/* The moved proposal section / propose link / drift badge carry the workshop's inline orange (#ff5b29,
+   rgba(255,91,41,…)) for parity on the old tab. On the workspace that orange maps to --fr-warn
+   (= --fr-electric-sol, signed) by selector only. */
+.first-read .fr-ws-oppactions div[style*="rgba(255, 91, 41"] { border-color: hsl(var(--fr-warn) / 0.45) !important; background: hsl(var(--fr-warn) / 0.06) !important; }
+.first-read .fr-ws-oppactions span[style*="rgb(255, 91, 41)"] { color: hsl(var(--fr-warn)) !important; border-color: hsl(var(--fr-warn) / 0.6) !important; }
+.first-read .fr-ws-oppactions button[style*="color: rgb(255, 91, 41)"] { color: hsl(var(--fr-warn)) !important; }
+.first-read .fr-ws-oppactions button[style*="background: rgb(255, 91, 41)"] { background: hsl(var(--fr-warn)) !important; }
+.first-read .fr-ws-oppactions input[style*="accent-color"] { accent-color: hsl(var(--fr-warn)) !important; }
