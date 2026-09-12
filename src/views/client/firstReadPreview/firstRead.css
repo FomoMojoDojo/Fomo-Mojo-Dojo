@@ -2634,3 +2634,38 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-card-arrow { margin-top: 1.5rem; color: hsl(var(--fr-electric-sol)); transition: transform 160ms ease; }
 .fr-ws-card:hover .fr-ws-card-arrow { transform: translateX(4px); }
 @media (prefers-reduced-motion: reduce) { .fr-ws-card, .fr-ws-card-arrow { transition: none; } }
+
+/* =====================================================================
+   WORKSPACE — HOME AS THE ELEMENT CHART (2026-09-11). The launcher's tile rows and tools strip on the
+   paper ground ([data-variant="paper"]), square tiles sized to the home column and capped so the hero,
+   the chart spanning the full hero column: tile = column / 3 (the viewport-height fit rule is the
+   launcher's alone). Under 760px tall only the hero tightens.
+   ===================================================================== */
+.fr-ws-hero[data-compact] .fr-ws-hero-head { min-height: 0; padding-bottom: 2rem; }
+.fr-ws-hero[data-compact] .fr-ws-hero-title { margin-top: 1.25rem; }
+.fr-ws-hero[data-compact] .fr-ws-hero-main { padding-top: 2rem; }
+/* The tile is a third of the hero column (accepted: the chart spans the full column; the viewport-
+   height fit rule applies to the launcher only), so the chart is exactly three tiles wide = the column. */
+.fr-ws-hero[data-compact] .fr-ws-hero-main { --fr-tile: calc((100% - 2px) / 3); }
+.fr-ws-chart { width: calc(3 * var(--fr-tile) + 2px); max-width: 100%; }
+.fr-ws-chart .fr-launcher-group { border-color: hsl(var(--fr-line)); }
+.fr-ws-chart .fr-launcher-group-head { border-color: hsl(var(--fr-line)); color: hsl(var(--fr-steel)); }
+.fr-ws-chart .fr-launcher-group[data-fr-group="base"] .fr-launcher-group-head { color: hsl(var(--fr-lime)); }
+.fr-ws-chart .fr-launcher-grid { grid-template-columns: repeat(3, var(--fr-tile)); }
+.fr-launcher-tile[data-variant="paper"] { background: hsl(var(--fr-paper)); color: hsl(var(--fr-ink)); border-color: hsl(var(--fr-line)); }
+.fr-launcher-tile[data-variant="paper"]:hover { background: hsl(var(--fr-lime) / 0.1); }
+.fr-launcher-tools[data-variant="paper"] { border-color: hsl(var(--fr-line)); }
+.fr-launcher-tools[data-variant="paper"] .fr-launcher-tool { background: hsl(var(--fr-paper)); color: hsl(var(--fr-ink)); border-color: hsl(var(--fr-line)); }
+.fr-launcher-tools[data-variant="paper"] .fr-launcher-tool:hover { background: hsl(var(--fr-lime) / 0.1); }
+.fr-launcher-tools[data-variant="paper"] .fr-launcher-tool-eyebrow { color: hsl(var(--fr-steel)); opacity: 1; }
+.fr-launcher-tools[data-variant="paper"] .fr-launcher-admin-pop { background: hsl(var(--fr-paper)); border-color: hsl(var(--fr-line)); }
+.fr-launcher-tools[data-variant="paper"] .fr-launcher-admin-link { color: hsl(var(--fr-ink)); border-color: hsl(var(--fr-line)); }
+.fr-launcher-tools[data-variant="paper"] .fr-launcher-admin-link:hover { background: hsl(var(--fr-lime) / 0.1); }
+/* The chart's entrance stagger is the launcher's; on the home it plays once with the page (fr-act-enter). */
+.fr-ws-chart .fr-launcher-stagger > * { animation: none; }
+@media (max-height: 760px) {
+  /* Short viewport (1280×720): a tighter hero. */
+  .fr-ws-hero[data-compact] .fr-ws-hero-head { padding-bottom: 1rem; }
+  .fr-ws-hero[data-compact] .fr-ws-hero-title { margin-top: 0.75rem; font-size: 2.4rem; }
+  .fr-ws-hero[data-compact] .fr-ws-hero-main { padding-top: 1rem; }
+}

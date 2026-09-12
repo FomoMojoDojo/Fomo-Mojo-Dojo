@@ -5,7 +5,7 @@ import { WS_PAGES, openWorkspace } from "./helpers";
 
 /** Regions the Edgewood fixture is expected to render on each page (conditional ones are not listed). */
 const EXPECTED: Record<string, string[]> = {
-  "": ["cards"],
+  "": ["chart"],
   inputs: ["signal-basis", "counters", "files"],
   "job-map": ["hypothesis", "stages"],
   positioning: ["what-holds-it-up", "who-this-is-for", "instead-of"],

@@ -4,15 +4,17 @@
 import type { ReactNode } from "react";
 import { Eyebrow } from "@/views/client/firstReadPreview/primitives";
 
-export function WorkspaceHeroPage({ eyebrow, title, accent, actions, children }: {
+export function WorkspaceHeroPage({ eyebrow, title, accent, actions, compact = false, children }: {
   eyebrow: string;
   title: string;
   accent?: string;
   actions?: ReactNode;
+  /** The home's chart needs the viewport: a shorter hero head (no minimum height). */
+  compact?: boolean;
   children: ReactNode;
 }) {
   return (
-    <main className="fr-ws-hero" data-testid="ws-hero">
+    <main className="fr-ws-hero" data-testid="ws-hero" data-compact={compact ? "true" : undefined}>
       <div className="fr-ws-hero-head">
         <div>
           <Eyebrow>{eyebrow}</Eyebrow>

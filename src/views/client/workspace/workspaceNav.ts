@@ -39,10 +39,6 @@ export type WorkspacePage = {
   readonly tone?: WorkspaceTone;
   /** Kept class-b line: the launcher tile summary (S:7-15). */
   readonly summary?: string;
-  /** Kept class-b line: the home card description (P:422). */
-  readonly cardDescription?: string;
-  /** The Opportunities card's line carries a live count (odi_needs) between two signed fragments. */
-  readonly cardDescriptionParts?: readonly [string, string];
 };
 
 export const WORKSPACE_STRINGS = {
@@ -170,14 +166,14 @@ export const WORKSPACE_STRINGS = {
 
 export const WORKSPACE_PAGES: ReadonlyArray<WorkspacePage> = [
   { key: "index",         segment: "",              label: WORKSPACE_STRINGS.indexSection, group: "tools" },
-  { key: "strategy",      segment: "strategy",      label: "Strategy",      group: "base",    index: "01", tone: "electric-sol", summary: "Where to play and how to win",   cardDescription: "Follow the strategy cascade." },
-  { key: "positioning",   segment: "positioning",   label: "Positioning",   group: "base",    index: "02", tone: "periwinkle",   summary: "The place you intend to own",     cardDescription: "Review the declared market position." },
+  { key: "strategy",      segment: "strategy",      label: "Strategy",      group: "base",    index: "01", tone: "electric-sol", summary: "Where to play and how to win" },
+  { key: "positioning",   segment: "positioning",   label: "Positioning",   group: "base",    index: "02", tone: "periwinkle",   summary: "The place you intend to own" },
   { key: "market",        segment: "market",        label: "Market",        group: "base",    index: "03", tone: "lime",         summary: "The people, needs and context" },
-  { key: "job-map",       segment: "job-map",       label: "Job Map",       group: "outputs", index: "04", tone: "lime",         summary: "Structure the work customers do", cardDescription: "See the customer job and desired outcomes." },
-  { key: "opportunities", segment: "opportunities", label: "Opportunities", group: "outputs", index: "05", tone: "electric",     summary: "Prioritize unmet outcomes",       cardDescriptionParts: ["Compare all", "customer opportunities."] },
-  { key: "routes",        segment: "routes",        label: "Routes",        group: "outputs", index: "06", tone: "electric-sol", summary: "Turn choices into action",        cardDescription: "Evaluate routes under consideration." },
-  { key: "inputs",        segment: "inputs",        label: "Inputs",        group: "tools",   cardDescription: "Trace the evidence shaping the strategy." },
-  { key: "council",       segment: "council",       label: "Council",       group: "tools",   cardDescription: "Read the advisory recommendations." },
+  { key: "job-map",       segment: "job-map",       label: "Job Map",       group: "outputs", index: "04", tone: "lime",         summary: "Structure the work customers do" },
+  { key: "opportunities", segment: "opportunities", label: "Opportunities", group: "outputs", index: "05", tone: "electric",     summary: "Prioritize unmet outcomes" },
+  { key: "routes",        segment: "routes",        label: "Routes",        group: "outputs", index: "06", tone: "electric-sol", summary: "Turn choices into action" },
+  { key: "inputs",        segment: "inputs",        label: "Inputs",        group: "tools" },
+  { key: "council",       segment: "council",       label: "Council",       group: "tools" },
 ] as const;
 
 /** The Admin disclosure: existing routes, existing labels (WorkshopSidebar). Operator-gated. */

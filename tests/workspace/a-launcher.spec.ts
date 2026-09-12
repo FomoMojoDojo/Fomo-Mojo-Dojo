@@ -48,8 +48,9 @@ for (const size of [{ width: 1440, height: 900 }, { width: 1280, height: 720 }])
     expect(m.scroll).toBe(m.client);
     // Every tile, the tools strip and the footer are inside the panel box.
     const pb = (await panel.boundingBox())!;
+    // Scoped to the panel: the home chart behind the overlay shares these classes.
     for (const sel of [".fr-launcher-tile", ".fr-launcher-tool", ".fr-launcher-foot"]) {
-      const boxes = await page.locator(sel).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().bottom));
+      const boxes = await panel.locator(sel).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().bottom));
       for (const b of boxes) expect(b).toBeLessThanOrEqual(pb.y + pb.height + 0.5);
     }
   });
