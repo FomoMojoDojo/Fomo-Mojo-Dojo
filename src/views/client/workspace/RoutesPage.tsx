@@ -52,7 +52,7 @@ export default function RoutesPage() {
       {loading ? null : (
         <>
           {strip.length > 0 ? (
-            <div className="fr-ws-scorestrip" data-testid="routes-scorestrip">
+            <div className="fr-ws-scorestrip" data-testid="routes-scorestrip" data-fr-region="score-strip">
               {strip.map((c) => (
                 <div key={c.key} className="fr-ws-scorecell" data-fr-tone={c.tone}>
                   <b className="fr-ws-scorecell-value">{c.value}</b>
@@ -63,7 +63,7 @@ export default function RoutesPage() {
           ) : null}
 
           {raiser?.action_description ? (
-            <div className="fr-ws-band fr-ws-unlock" data-fr-tone="electric" data-testid="routes-unlock">
+            <div className="fr-ws-accent fr-ws-unlock" data-fr-tone="electric" data-testid="routes-unlock" data-fr-region="evidence-unlock">
               <div>
                 <p className="fr-ws-band-eyebrow fr-mono">{WORKSPACE_STRINGS.evidenceUnlock}</p>
                 <p className="fr-ws-unlock-text">{raiser.action_description}</p>
@@ -72,7 +72,7 @@ export default function RoutesPage() {
             </div>
           ) : null}
 
-          <div className="fr-ws-workbench">
+          <div className="fr-ws-workbench" data-fr-region="workbench">
             <p className="fr-ws-sectionlabel fr-mono">
               <span className="fr-ws-sectionlabel-num">{pad(1)}</span>
               <span className="fr-ws-sectionlabel-slash">/</span>
@@ -89,7 +89,7 @@ export default function RoutesPage() {
           {routes.length === 0 ? (
             <WorkspaceAbsent what="routes" />
           ) : (
-            <section className="fr-ws-accordion" data-testid="routes-accordion">
+            <section className="fr-ws-accordion" data-testid="routes-accordion" data-fr-region="accordion">
               {routes.map((r, i) => {
                 const expanded = open === i;
                 const conditions = Array.isArray(r.what_would_have_to_be_true) ? r.what_would_have_to_be_true.filter((c) => c && typeof c.condition === "string" && c.condition.trim()) : [];

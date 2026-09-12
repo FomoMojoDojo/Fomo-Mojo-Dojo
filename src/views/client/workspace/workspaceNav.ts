@@ -17,6 +17,14 @@ import {
 } from "@/lib/clientRefinePreview";
 
 export type WorkspaceGroup = "outputs" | "base" | "tools";
+
+/** Statement scale (accepted fix, port 2b): text up to this many characters renders at the .fr-display
+ *  statement scale; longer text at the lede scale. One constant, one helper (statementScaleClass). */
+export const STATEMENT_DISPLAY_MAX_CHARS = 140;
+export type StatementScale = "display" | "lede";
+export function statementScale(text: string): StatementScale {
+  return text.trim().length <= STATEMENT_DISPLAY_MAX_CHARS ? "display" : "lede";
+}
 /** Colour tick on a launcher tile (S:7-15) — an fr token name, mapped in CSS. */
 export type WorkspaceTone = "lime" | "electric" | "electric-sol" | "periwinkle";
 
@@ -33,6 +41,8 @@ export type WorkspacePage = {
   readonly summary?: string;
   /** Kept class-b line: the home card description (P:422). */
   readonly cardDescription?: string;
+  /** The Opportunities card's line carries a live count (odi_needs) between two signed fragments. */
+  readonly cardDescriptionParts?: readonly [string, string];
 };
 
 export const WORKSPACE_STRINGS = {
@@ -115,6 +125,42 @@ export const WORKSPACE_STRINGS = {
   regenerateConditions: "Regenerate conditions",
   draftTests: "Draft tests",
   testForThisRoute: "Test for this route",
+  // ── Read-page bands (P:219-359) ──
+  /** Existing (firstReadPreview/acts). */
+  mustHaveCapabilities: "Must-have capabilities",
+  managementSystems: "Management systems",
+  whatHoldsItUp: "What holds it up",
+  whoThisIsFor: "Who this is for",
+  insteadOf: "Instead of",
+  taglineShift: "Tagline shift",
+  whatTheyAreHiringFor: "What they are hiring for",
+  customerTensionsMapped: "Customer tensions mapped",
+  // ── Inputs (P:71-106) ──
+  signalBasis: "Signal basis",
+  /** Existing (HomepageHierarchyFR signal chips: "PUBLIC n" / "TEAM n" / "CUSTOMERS n"). */
+  signalPublic: "PUBLIC",
+  signalTeam: "TEAM",
+  signalCustomers: "CUSTOMERS",
+  partiallyIntegrated: "Partially integrated",
+  evidenceFiles: "Evidence files",
+  directionalRoutes: "Directional routes",
+  add: "ADD",
+  input: "Input",
+  /** Existing (InputsTab). */
+  uploadFile: "Upload file",
+  colTypeSnippet: "Type / snippet",
+  colAreas: "Areas",
+  colAnalysis: "Analysis",
+  viewFile: "View file ↗",
+  /** Existing (InputsTab status vocabulary). */
+  analysisReady: "Analysis ready",
+  reviewProposal: "Review proposal",
+  runAnalysis: "Run analysis",
+  // ── Council (P:391-397) ──
+  /** Existing (CouncilPanel). */
+  strategicPressure: "Strategic pressure",
+  /** Existing (CouncilPanel: "{category} · {confidence}% confidence"). */
+  confidence: "confidence",
   // ── council badge words — existing (CouncilPanel recBadgeLabel), byte-exact ──
   councilUnresolved: "Unresolved",
   councilSetAside: "Set aside",
@@ -128,7 +174,7 @@ export const WORKSPACE_PAGES: ReadonlyArray<WorkspacePage> = [
   { key: "positioning",   segment: "positioning",   label: "Positioning",   group: "base",    index: "02", tone: "periwinkle",   summary: "The place you intend to own",     cardDescription: "Review the declared market position." },
   { key: "market",        segment: "market",        label: "Market",        group: "base",    index: "03", tone: "lime",         summary: "The people, needs and context" },
   { key: "job-map",       segment: "job-map",       label: "Job Map",       group: "outputs", index: "04", tone: "lime",         summary: "Structure the work customers do", cardDescription: "See the customer job and desired outcomes." },
-  { key: "opportunities", segment: "opportunities", label: "Opportunities", group: "outputs", index: "05", tone: "electric",     summary: "Prioritize unmet outcomes",       cardDescription: "Compare all 28 customer opportunities." },
+  { key: "opportunities", segment: "opportunities", label: "Opportunities", group: "outputs", index: "05", tone: "electric",     summary: "Prioritize unmet outcomes",       cardDescriptionParts: ["Compare all", "customer opportunities."] },
   { key: "routes",        segment: "routes",        label: "Routes",        group: "outputs", index: "06", tone: "electric-sol", summary: "Turn choices into action",        cardDescription: "Evaluate routes under consideration." },
   { key: "inputs",        segment: "inputs",        label: "Inputs",        group: "tools",   cardDescription: "Trace the evidence shaping the strategy." },
   { key: "council",       segment: "council",       label: "Council",       group: "tools",   cardDescription: "Read the advisory recommendations." },
@@ -141,6 +187,12 @@ export const WORKSPACE_ADMIN_LINKS: ReadonlyArray<{ readonly label: string; read
   { label: "Member roles", to: CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE },
   { label: "Extracts",     to: CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE },
 ];
+
+/** InputsTab's read-back map (__area:* key → foundation area label), byte-exact — existing labels. */
+export const WORKSPACE_AREA_LABELS: Readonly<Record<string, string>> = {
+  positioning: "Positioning", strategy: "Model", market: "Opportunities", odi: "Opportunities",
+  jobmap: "Job Map", job_map: "Job Map", routes: "Routes", competitive: "Positioning", brand: "Positioning",
+};
 
 /** Tools-strip sub-eyebrow per tools page (S:169-178). */
 export const WORKSPACE_TOOL_EYEBROWS: Readonly<Record<string, string>> = {

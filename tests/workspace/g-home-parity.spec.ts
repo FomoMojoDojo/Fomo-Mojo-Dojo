@@ -19,5 +19,8 @@ test("home DOM text is byte-identical before and after", async ({ page }) => {
   });
   expect(numerals(before).score).not.toBeNull();
   expect(numerals(after)).toEqual(numerals(before));
-  expect(after).toBe(before);
+  // The DAY counter is the calendar (engagementDayFrom: days since engagement_started_at), not copy —
+  // it moves at midnight UTC between the baseline capture and a run. Everything else is byte-exact.
+  const maskDay = (t: string) => t.replace(/DAY \d+/g, "DAY N");
+  expect(maskDay(after)).toBe(maskDay(before));
 });

@@ -49,7 +49,7 @@ export default function OpportunitiesPage() {
             <WorkspaceAbsent what="opportunities" />
           ) : (
             <>
-              <div className="fr-ws-filterrow" data-testid="opps-filters">
+              <div className="fr-ws-filterrow" data-testid="opps-filters" data-fr-region="filters">
                 <div className="fr-ws-filters">
                   <button type="button" className="fr-ws-filter fr-mono" data-active={filter === "all" ? "true" : undefined} aria-pressed={filter === "all"} onClick={() => setFilter("all")}>{WORKSPACE_STRINGS.filterAll}</button>
                   <button type="button" className="fr-ws-filter fr-mono" data-active={filter === "high" ? "true" : undefined} aria-pressed={filter === "high"} onClick={() => setFilter("high")}>{WORKSPACE_STRINGS.filterHighValue}</button>
@@ -60,7 +60,7 @@ export default function OpportunitiesPage() {
                 </label>
               </div>
               <div className="fr-ws-oppgrid">
-                <section className="fr-ws-opplist" data-testid="opps-list">
+                <section className="fr-ws-opplist" data-testid="opps-list" data-fr-region="list">
                   {visible.length === 0 ? <WorkspaceAbsent what="opportunities-filtered" /> : visible.map((x) => {
                     const active = selected?.id === x.id;
                     const rank = ranked.indexOf(x);
@@ -74,7 +74,7 @@ export default function OpportunitiesPage() {
                   })}
                 </section>
                 {selected ? (
-                  <aside className="fr-ws-oppaside" data-testid="opps-aside">
+                  <aside className="fr-ws-oppaside" data-testid="opps-aside" data-fr-region="aside">
                     <p className="fr-ws-band-eyebrow fr-mono">{WORKSPACE_STRINGS.selectedOpportunity}</p>
                     <p className="fr-ws-oppaside-title" data-testid="opps-aside-title">{selected.desired_outcome}</p>
                     <dl className="fr-ws-oppaside-facts">

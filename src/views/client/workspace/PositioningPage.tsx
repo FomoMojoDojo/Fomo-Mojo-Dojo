@@ -1,38 +1,55 @@
-// Positioning (Read frame): positioning_canvases via usePositioningCanvas. Statement = the market
-// category (P:223); body (brief 2 rewrites it) = the canvas rows and lists.
+// Positioning (comp port 2b — P:219-262, fr tokens). Reads: positioning_canvases via usePositioningCanvas —
+// market_category (statement), unique_attributes[] name/description (What holds it up), best_fit_customers
+// (Who this is for), competitive_alternatives[] name (Instead of), current_tagline → proposed_tagline
+// (Tagline shift; omitted unless both exist). The comp's "reviewed against N alternatives" footer has no
+// signed label — omitted. A band whose read is empty is omitted.
 import { useCompany } from "@/hooks/useCompany";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
-import { LedgerRow } from "@/views/client/firstReadPreview/primitives";
-import { HangingItem } from "@/views/client/firstReadPreview/primitives-editorial";
 import { WorkspaceAbsent } from "./absent";
-import { WorkspaceReadPage } from "./WorkspaceReadPage";
+import { NumberedCells } from "./readBands";
+import { ReadBand, WorkspaceReadPage } from "./WorkspaceReadPage";
 import { WORKSPACE_STRINGS } from "./workspaceNav";
 
 export default function PositioningPage() {
   const { activeCompany } = useCompany();
   const { item, loading } = usePositioningCanvas(activeCompany?.id);
-  const rows = item ? [item.value_for_customer, item.best_fit_customers, item.category_rationale].filter((t) => t && t.trim()) : [];
-  const lists = item ? [item.unique_attributes, item.competitive_alternatives].filter((l) => l.length > 0) : [];
-  const empty = !item || (rows.length === 0 && lists.length === 0);
+  const points = item?.unique_attributes.filter((p) => p.name?.trim()).map((p) => ({ title: p.name, body: p.description?.trim() || null })) ?? [];
+  const audience = item?.best_fit_customers?.trim() || null;
+  const alternatives = item?.competitive_alternatives.map((a) => a.name).filter((n) => n?.trim()) ?? [];
+  const oldTag = item?.current_tagline?.trim() || null;
+  const newTag = item?.proposed_tagline?.trim() || null;
+  const empty = !item || (points.length === 0 && !audience && alternatives.length === 0 && !(oldTag && newTag));
   return (
-    <WorkspaceReadPage eyebrow={WORKSPACE_STRINGS.yourPositioning} statement={item?.market_category || null}>
+    <WorkspaceReadPage eyebrow={WORKSPACE_STRINGS.yourPositioning} statement={item?.market_category?.trim() || null}>
       {loading ? null : empty ? (
         <div className="mt-14"><WorkspaceAbsent what="positioning" /></div>
       ) : (
-        <div className="fr-stagger mt-14">
-          {rows.map((text, i) => (
-            <LedgerRow key={i} leftBody={text} meta={null} quoted={false} />
-          ))}
-          {lists.map((list, li) => (
-            <ol key={li} className="fr-hanging-list">
-              {list.map((p) => (
-                <HangingItem key={p.id} title={p.name}>
-                  {p.description ? <p className="fr-numbered-text text-sm font-light leading-relaxed">{p.description}</p> : null}
-                </HangingItem>
-              ))}
-            </ol>
-          ))}
-        </div>
+        <>
+          {points.length > 0 ? (
+            <ReadBand label={WORKSPACE_STRINGS.whatHoldsItUp} region="what-holds-it-up">
+              <NumberedCells items={points} columns={3} />
+            </ReadBand>
+          ) : null}
+          {audience ? (
+            <ReadBand label={WORKSPACE_STRINGS.whoThisIsFor} region="who-this-is-for">
+              <p className="fr-ws-band-statement">{audience}</p>
+            </ReadBand>
+          ) : null}
+          {alternatives.length > 0 ? (
+            <ReadBand label={WORKSPACE_STRINGS.insteadOf} region="instead-of">
+              <NumberedCells items={alternatives} columns={2} compact />
+            </ReadBand>
+          ) : null}
+          {oldTag && newTag ? (
+            <ReadBand label={WORKSPACE_STRINGS.taglineShift} region="tagline-shift">
+              <div className="fr-ws-shift">
+                <p className="fr-ws-shift-old">{oldTag}</p>
+                <span className="fr-ws-shift-arrow fr-mono" aria-hidden="true">→</span>
+                <p className="fr-ws-shift-new">{newTag}</p>
+              </div>
+            </ReadBand>
+          ) : null}
+        </>
       )}
     </WorkspaceReadPage>
   );

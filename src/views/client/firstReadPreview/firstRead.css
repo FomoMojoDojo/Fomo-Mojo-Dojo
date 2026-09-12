@@ -2286,6 +2286,19 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 }
 @media (min-width: 640px) { .fr-ws-statement { font-size: 3rem; } }
 @media (min-width: 1024px) { .fr-ws-statement { font-size: 4.25rem; } }
+/* Lede scale (accepted fix): a statement longer than STATEMENT_DISPLAY_MAX_CHARS is a paragraph — it
+   renders at the lede size, white on slate, still with the lime full stop. */
+.fr-ws-statement--lede {
+  max-width: 54ch;
+  margin: 2rem 0 0;
+  font-family: var(--fr-font-display);
+  font-size: 1.25rem;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: hsl(var(--fr-paper));
+}
+@media (min-width: 768px) { .fr-ws-statement--lede { font-size: 1.5rem; } }
 .fr-ws-read .fr-ws-band {
   grid-template-columns: minmax(0, 1fr);
   row-gap: 1.5rem;
@@ -2366,12 +2379,13 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
    ===================================================================== */
 .fr-ws-setlead { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
 
-/* Accent bands: a 4px left rule + a 10% wash of the same colour. */
-.fr-ws-band { margin-bottom: 2rem; padding: 16px 20px; border-left: 4px solid hsl(var(--fr-lime)); background: hsl(var(--fr-lime) / 0.1); }
-.fr-ws-band[data-fr-tone="periwinkle"] { border-left-color: hsl(var(--fr-periwinkle)); background: hsl(var(--fr-periwinkle) / 0.1); }
-.fr-ws-band[data-fr-tone="periwinkle"] .fr-ws-band-eyebrow { color: hsl(var(--fr-periwinkle)); }
-.fr-ws-band[data-fr-tone="electric"] { border-left-color: hsl(var(--fr-electric)); background: hsl(var(--fr-electric) / 0.1); }
-.fr-ws-band[data-fr-tone="electric"] .fr-ws-band-eyebrow { color: hsl(var(--fr-electric)); }
+/* Accent bands (fr-ws-accent; the Read pages' hairline bands are .fr-ws-band): a 4px left rule + a
+   10% wash of the same colour. */
+.fr-ws-accent { margin-bottom: 2rem; padding: 16px 20px; border-left: 4px solid hsl(var(--fr-lime)); background: hsl(var(--fr-lime) / 0.1); }
+.fr-ws-accent[data-fr-tone="periwinkle"] { border-left-color: hsl(var(--fr-periwinkle)); background: hsl(var(--fr-periwinkle) / 0.1); }
+.fr-ws-accent[data-fr-tone="periwinkle"] .fr-ws-band-eyebrow { color: hsl(var(--fr-periwinkle)); }
+.fr-ws-accent[data-fr-tone="electric"] { border-left-color: hsl(var(--fr-electric)); background: hsl(var(--fr-electric) / 0.1); }
+.fr-ws-accent[data-fr-tone="electric"] .fr-ws-band-eyebrow { color: hsl(var(--fr-electric)); }
 .fr-ws-band-eyebrow { margin: 0; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: hsl(var(--fr-lime)); }
 .fr-ws-band-text { margin: 0.5rem 0 0; max-width: 72ch; font-size: 0.875rem; font-weight: 500; line-height: 1.6; }
 
@@ -2498,3 +2512,125 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 @media (prefers-reduced-motion: reduce) {
   .fr-ws-stagebtn, .fr-ws-opp, .fr-ws-opprow, .fr-ws-filter, .fr-ws-control, .fr-ws-route { transition: none; }
 }
+
+/* =====================================================================
+   WORKSPACE — GATE TYPOGRAPHY (comp port 2b, 2026-09-11). The b-i conditions gate (internalConditions.tsx)
+   renders with its own inline crpv styles and its markup is parity-locked, so it is restyled here by
+   SELECTOR ONLY, inside the workspace band: the two headings (mono, uppercase), the hypothesis marker
+   (span, uppercase), the italic subline, and the bullet rows. `!important` outranks the inline styles.
+   ===================================================================== */
+.first-read .fr-ws-conditions p[style*="uppercase"] {
+  font-family: var(--fr-font-mono) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.18em !important;
+  color: hsl(var(--fr-electric)) !important;
+}
+.first-read .fr-ws-conditions span[style*="uppercase"] {
+  font-family: var(--fr-font-mono) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.18em !important;
+  color: hsl(var(--fr-ink)) !important;
+  background: hsl(var(--fr-electric-sol) / 0.25) !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  padding: 3px 8px !important;
+}
+.first-read .fr-ws-conditions p[style*="italic"] {
+  font-family: var(--fr-font-display) !important;
+  font-size: 0.75rem !important;
+  color: hsl(var(--fr-steel)) !important;
+}
+.first-read .fr-ws-conditions p[style*="flex"] {
+  font-family: var(--fr-font-display) !important;
+  font-size: 0.875rem !important;
+  line-height: 1.5 !important;
+  color: hsl(var(--fr-ink)) !important;
+}
+.first-read .fr-ws-conditions p[style*="flex"] > span:first-child { color: hsl(var(--fr-lime)) !important; }
+
+/* =====================================================================
+   WORKSPACE — READ BANDS, INPUTS, COUNCIL, HOME (comp port 2b, 2026-09-11). fr tokens only.
+   ===================================================================== */
+/* Read pages: the 3-col choice row (P:327-346), numbered cells (P:227-236, 243-252, 279-288, 347-356),
+   band statements (P:239-241, 291-293), tagline shift (P:253-259), footer line (S:261-265). */
+.fr-ws-choices { display: grid; gap: 2.5rem; margin-top: 3.5rem; padding-top: 2rem; border-top: 1px solid hsl(var(--fr-paper) / 0.15); }
+@media (min-width: 768px) { .fr-ws-choices { grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 2.5rem; } }
+.fr-ws-choice-label { display: block; font-size: 10px; letter-spacing: 0.24em; text-transform: uppercase; color: hsl(var(--fr-lime)); }
+.fr-ws-choice-body { max-width: 36ch; margin: 1rem 0 0; font-size: 0.875rem; line-height: 1.6; color: hsl(var(--fr-paper) / 0.75); }
+.fr-ws-cells { counter-reset: fr-ws-cell; list-style: none; margin: 0; padding: 0; display: grid; gap: 2rem 2.5rem; }
+.fr-ws-cells[data-fr-cols="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fr-ws-cells[data-fr-cols="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 767px) { .fr-ws-cells[data-fr-cols="2"], .fr-ws-cells[data-fr-cols="3"] { grid-template-columns: minmax(0, 1fr); } }
+.fr-ws-cell { counter-increment: fr-ws-cell; }
+.fr-ws-cell-num::before { content: counter(fr-ws-cell, decimal-leading-zero); }
+.fr-ws-cell-num { display: block; font-size: 10px; letter-spacing: 0.18em; color: hsl(var(--fr-lime)); }
+.fr-ws-cell-title { max-width: 30ch; margin: 0.75rem 0 0; font-size: 1rem; font-weight: 700; line-height: 1.3; color: hsl(var(--fr-paper)); }
+.fr-ws-cell-text { max-width: 34ch; margin: 0.5rem 0 0; font-size: 0.875rem; line-height: 1.6; color: hsl(var(--fr-paper) / 0.55); }
+/* Compact: numeral column + one line, hairline under (P:243-252). */
+.fr-ws-cells--compact { gap: 0.75rem 2.5rem; }
+.fr-ws-choices .fr-ws-cells--compact { margin-top: 1rem; }
+.fr-ws-cells--compact .fr-ws-cell { display: grid; grid-template-columns: 2rem minmax(0, 1fr); column-gap: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid hsl(var(--fr-paper) / 0.1); }
+.fr-ws-cells--compact .fr-ws-cell-num { padding-top: 0.2rem; color: hsl(var(--fr-paper) / 0.35); }
+.fr-ws-cells--compact .fr-ws-cell-title { max-width: 34ch; margin: 0; font-size: 0.875rem; font-weight: 400; line-height: 1.4; color: hsl(var(--fr-paper) / 0.85); }
+.fr-ws-band-statement { max-width: 42ch; margin: 0; font-size: 1.25rem; font-weight: 700; line-height: 1.1; letter-spacing: -0.02em; color: hsl(var(--fr-paper)); }
+@media (min-width: 768px) { .fr-ws-band-statement { font-size: 1.6rem; } }
+.fr-ws-band-statement--large { max-width: 30ch; font-size: 1.5rem; line-height: 1.05; letter-spacing: -0.025em; }
+@media (min-width: 768px) { .fr-ws-band-statement--large { font-size: 2.35rem; } }
+.fr-ws-shift { display: grid; gap: 1rem; }
+@media (min-width: 768px) { .fr-ws-shift { grid-template-columns: minmax(0, 1fr) 2rem minmax(0, 1fr); align-items: center; } }
+/* No existing strike treatment in this sheet: a hairline strike in the paper alpha. */
+.fr-ws-shift-old { margin: 0; font-size: 0.875rem; color: hsl(var(--fr-paper) / 0.4); text-decoration: line-through; text-decoration-color: hsl(var(--fr-paper) / 0.4); text-decoration-thickness: 1px; }
+.fr-ws-shift-arrow { color: hsl(var(--fr-lime)); }
+.fr-ws-shift-new { margin: 0; font-size: 1.25rem; font-weight: 700; line-height: 1.2; letter-spacing: -0.02em; color: hsl(var(--fr-paper)); }
+.fr-ws-readfoot { margin: 5rem 0 0; padding-top: 1.5rem; border-top: 1px solid hsl(var(--fr-paper) / 0.15); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: hsl(var(--fr-paper) / 0.35); }
+
+/* Inputs (P:71-106). */
+.fr-ws-signals { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.fr-ws-signals-label { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-steel)); }
+.fr-ws-integration { margin: 0 calc(50% - 50vw) 2.5rem; padding: 40px var(--fr-bleed); border-left: 8px solid hsl(var(--fr-lime)); background: hsl(var(--fr-slate)); color: hsl(var(--fr-paper)); }
+.fr-ws-integration .fr-ws-band-eyebrow { color: hsl(var(--fr-lime)); }
+.fr-ws-integration-count { margin: 1rem 0 0; font-size: 1.5rem; font-weight: 700; }
+.fr-ws-counters { display: grid; gap: 1rem; margin-bottom: 2.5rem; padding: 16px 20px; background: hsl(var(--fr-lime) / 0.1); box-shadow: inset 0 0 0 1px hsl(var(--fr-lime) / 0.3); font-size: 0.75rem; }
+@media (min-width: 640px) { .fr-ws-counters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.fr-ws-counters > span { display: flex; justify-content: space-between; gap: 1rem; }
+.fr-ws-counters b { font-weight: 700; }
+.fr-ws-addinput { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 3rem; }
+.fr-ws-addinput .fr-ws-sectionlabel { margin: 0; }
+.fr-ws-tablewrap { padding-top: 2rem; border-top: 1px solid hsl(var(--fr-line)); overflow-x: auto; }
+.fr-ws-table { width: 100%; min-width: 640px; border-collapse: collapse; text-align: left; }
+.fr-ws-table thead th { padding: 12px 0; font-size: 10px; font-weight: 400; letter-spacing: 0.18em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+.fr-ws-table tbody tr { border-top: 1px solid hsl(var(--fr-line)); font-size: 0.75rem; }
+.fr-ws-table td { padding: 16px 16px 16px 0; vertical-align: top; }
+.fr-ws-table-name { display: block; font-weight: 500; }
+.fr-ws-table-link { display: block; margin-top: 4px; padding: 0; border: 0; background: none; color: hsl(var(--fr-faint)); font-size: 10px; letter-spacing: 0.1em; cursor: pointer; }
+.fr-ws-table-link:hover { color: hsl(var(--fr-ink)); }
+.fr-ws-table-areas { color: hsl(var(--fr-steel)); }
+
+/* Council (P:391-397). */
+.fr-ws-section { margin-bottom: 3.5rem; }
+.fr-ws-section + .fr-ws-section { padding-top: 2.5rem; border-top: 1px solid hsl(var(--fr-line)); }
+.fr-ws-pressure { margin: 0 calc(50% - 50vw); padding: 48px var(--fr-bleed); background: hsl(var(--fr-slate)); color: hsl(var(--fr-paper)); }
+.fr-ws-pressure-text { max-width: 32ch; margin: 0; font-size: 1.875rem; line-height: 1.1; }
+@media (min-width: 768px) { .fr-ws-pressure-text { font-size: 3rem; } }
+.fr-ws-pressure .fr-ws-statement--lede { margin: 0; max-width: 68ch; }
+.fr-ws-councils { display: grid; gap: 1px; background: hsl(var(--fr-line)); }
+@media (min-width: 640px) { .fr-ws-councils { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.fr-ws-councilcell { padding: 24px; background: hsl(var(--fr-paper)); font-size: 1.25rem; }
+.fr-ws-recs { margin-top: 1rem; border-top: 1px solid hsl(var(--fr-line)); }
+.fr-ws-rec-body { max-width: 75ch; margin: 1rem 0 0; font-size: 1rem; line-height: 1.6; }
+
+/* Home (P:421-424). */
+/* Hairlines come from each card's own 1px ring (accepted fix): the grid carries no background, so an
+   empty trailing cell is the page ground. */
+.fr-ws-cards { counter-reset: fr-ws-card; display: grid; gap: 1px; background: none; }
+@media (min-width: 640px) { .fr-ws-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .fr-ws-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.fr-ws-card { counter-increment: fr-ws-card; display: block; min-height: 13rem; padding: 24px; background: hsl(var(--fr-paper)); box-shadow: 0 0 0 1px hsl(var(--fr-line)); color: hsl(var(--fr-ink)); text-decoration: none; transition: background-color 160ms ease; }
+.fr-ws-card:hover { background: hsl(var(--fr-lime) / 0.1); }
+.fr-ws-card-num::before { content: counter(fr-ws-card, decimal-leading-zero); }
+.fr-ws-card-num { font-size: 10px; letter-spacing: 0.14em; color: hsl(var(--fr-faint)); }
+.fr-ws-card-title { margin: 2.5rem 0 0; font-size: 1.25rem; font-weight: 700; }
+.fr-ws-card-text { margin: 0.75rem 0 0; font-size: 0.875rem; line-height: 1.6; color: hsl(var(--fr-steel)); }
+.fr-ws-card-arrow { margin-top: 1.5rem; color: hsl(var(--fr-electric-sol)); transition: transform 160ms ease; }
+.fr-ws-card:hover .fr-ws-card-arrow { transform: translateX(4px); }
+@media (prefers-reduced-motion: reduce) { .fr-ws-card, .fr-ws-card-arrow { transition: none; } }

@@ -67,7 +67,7 @@ export default function JobMapPage() {
           </div>
 
           {hypothesis ? (
-            <div className="fr-ws-band" data-fr-tone="periwinkle" data-testid="jobmap-hypothesis">
+            <div className="fr-ws-accent" data-fr-tone="periwinkle" data-testid="jobmap-hypothesis" data-fr-region="hypothesis">
               <p className="fr-ws-band-eyebrow fr-mono">{WORKSPACE_STRINGS.marketHypothesis}</p>
               <p className="fr-ws-band-text">{hypothesis}</p>
             </div>
@@ -76,7 +76,7 @@ export default function JobMapPage() {
           {n === 0 ? (
             <WorkspaceAbsent what="job-steps" />
           ) : (
-            <div className="fr-ws-jobmap">
+            <div className="fr-ws-jobmap" data-fr-region="stages">
               <nav aria-label={WORKSPACE_STRINGS.jobStages} className="fr-ws-stagenav" data-testid="jobmap-stage-nav">
                 {steps.map((s, i) => (
                   <button
@@ -130,7 +130,7 @@ export default function JobMapPage() {
                   </div>
 
                   {conditions.length > 0 ? (
-                    <div className="fr-ws-band fr-ws-conditions" data-fr-tone="electric" data-fr-block="conditions" data-fr-count={conditions.length}>
+                    <div className="fr-ws-accent fr-ws-conditions" data-fr-tone="electric" data-fr-block="conditions" data-fr-count={conditions.length}>
                       <InternalConditions entries={step.conditions_json ?? []} />
                     </div>
                   ) : null}
