@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { isFrozenCompany } from "@/lib/frozenCompanies";
+import { useConditionsGeneration } from "@/hooks/useConditionsGeneration";
 import { runCreateOnramp } from "@/lib/createOnramp";
 import { engagementDayFrom } from "@/lib/engagementDay";
 import { resolveChosenSet, heuristicDefaultViewSeed, DEFAULT_SEED_NOTE } from "@/lib/chosenJobStepSet";
@@ -402,7 +403,6 @@ export default function ClientRefinePreviewWorkshopView() {
   const [activeRouteId,     setActiveRouteId]     = useState<string | null>(null);
   const [needsRefreshKey,   setNeedsRefreshKey]   = useState(0);
   const [regeneratingJobMap, setRegeneratingJobMap] = useState(false);
-  const [regeneratingConditions, setRegeneratingConditions] = useState(false);
   const [regeneratingMarket, setRegeneratingMarket] = useState(false);
   const [regeneratingOpportunities, setRegeneratingOpportunities] = useState(false);
   // Operator's CHOSEN on-strategy job-step set (operator_primary_selection,
@@ -1491,58 +1491,11 @@ export default function ClientRefinePreviewWorkshopView() {
     }
   }, [companyId, viewedSetKey, queryClient, refetchCompany, refetchJobSteps]);
 
-  // b-ii: deliberate per-set conditions generation. Invokes the edge function
-  // (LOCAL 14b + 70b judge via the committed module; field-merge keeps operator
-  // edits). Generation can exceed the Kong 150s gateway — on timeout the writes
-  // still land server-side, so we confirm completion by polling conditions_json
-  // for a change against a pre-run snapshot.
-  const runConditionsGeneration = useCallback(async () => {
-    if (!companyId || !viewedSetKey) return;
-    if (isFrozenCompany(companyId)) {
-      toast.error("This is a frozen reference company — conditions are not generated for it.");
-      return;
-    }
-    const setHadConditions = filteredJobSteps.some(
-      (s) => Array.isArray(s.conditions_json) && s.conditions_json.length > 0,
-    );
-    const successMsg = setHadConditions ? "Conditions refreshed — your edits kept" : "Conditions generated";
-    const beforeSig = JSON.stringify(filteredJobSteps.map((s) => [s.id, s.conditions_json ?? null]));
-
-    setRegeneratingConditions(true);
-    toast.loading(setHadConditions ? "Regenerating conditions… (~1–2 min)" : "Generating conditions… (~1–2 min)", { id: "gen-conditions" });
-    try {
-      const { data, error } = await supabase.functions.invoke("generate-step-conditions", {
-        body: { company_id: companyId, journey_key: viewedSetKey },
-      });
-      if (!error && (data as { ok?: boolean } | null)?.ok === true) {
-        await refetchJobSteps();
-        toast.success(successMsg, { id: "gen-conditions" });
-        return;
-      }
-      // Invoke errored (often a Kong 150s timeout while generation continues
-      // server-side). Poll the set's conditions_json until it changes.
-      for (let attempt = 0; attempt < 50; attempt++) {
-        await new Promise<void>((r) => setTimeout(r, 6000));
-        const { data: rows } = await supabase
-          .from("job_steps")
-          .select("id, conditions_json")
-          .eq("company_id", companyId)
-          .eq("journey_key", viewedSetKey)
-          .order("step_number", { ascending: true });
-        const sig = JSON.stringify(((rows as Array<{ id: string; conditions_json: unknown }> | null) ?? []).map((r) => [r.id, r.conditions_json ?? null]));
-        if (sig !== beforeSig) {
-          await refetchJobSteps();
-          toast.success(successMsg, { id: "gen-conditions" });
-          return;
-        }
-      }
-      throw new Error("Conditions are taking longer than expected — refresh the page in a moment.");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to generate conditions.", { id: "gen-conditions" });
-    } finally {
-      setRegeneratingConditions(false);
-    }
-  }, [companyId, viewedSetKey, filteredJobSteps, refetchJobSteps]);
+  // b-ii: deliberate per-set conditions generation — the run and its in-flight state live in
+  // useConditionsGeneration (Job Map Tier 1 lift, 2026-09-11); the workspace Job Map runs the same hook.
+  const { run: runConditionsGeneration, running: regeneratingConditions } = useConditionsGeneration({
+    companyId, setKey: viewedSetKey, steps: filteredJobSteps, refetch: refetchJobSteps,
+  });
 
   // MH-5b: deliberate Regenerate-market (force) for the viewed declared set. Re-rolls
   // the labeled hypothesis; manual market_defs stay protected in the generator.

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEffect, useState } from "react";
 import { resolveChosenSet, currentActor, clearStalePin, PIN_CLEARED_STALE_NOTE } from "@/lib/chosenJobStepSet";
+import { chooseJobStepSet } from "@/hooks/useChooseJobStepSet";
 
 /** The one home of the "On strategy" word (hoisted 2026-09-11; the workspace Job Map chip imports it). */
 export const ON_STRATEGY_LABEL = "On strategy";
@@ -73,23 +74,9 @@ export function OnStrategyPin({
 
   async function pinFocused() {
     if (!companyId || !viewedSetKey) return;
-    // Gate E1 — a choice is a decision moment, and it is RECORDED: who made it, and an audit row.
-    // chosen_by was NULL on every pin in the fleet before this; nothing could say who chose what.
-    const actor = await currentActor();
-    await db.from("operator_primary_selection").upsert(
-      {
-        company_id: companyId,
-        domain: "job_step_set",
-        item_key: viewedSetKey,
-        item_id: null,
-        chosen_by: actor,
-        chosen_at: new Date().toISOString(),
-      },
-      { onConflict: "company_id,domain" },
-    );
-    await db.from("operator_primary_selection_audit").insert({
-      company_id: companyId, domain: "job_step_set", item_key: viewedSetKey, action: "set", actor, reason: null,
-    });
+    // The write (upsert + audit row, with the actor) moved to chooseJobStepSet — the workspace Job Map
+    // chooses through the same function (Job Map Tier 1 lift, 2026-09-11).
+    await chooseJobStepSet(companyId, viewedSetKey);
     setClearedStale(false);
     await queryClient.invalidateQueries({ queryKey });
   }

@@ -2683,3 +2683,49 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-archived { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid hsl(var(--fr-line)); }
 .fr-ws-archived-list { list-style: none; margin: 1rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .fr-ws-archived-list li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 8px 0; border-bottom: 1px solid hsl(var(--fr-line)); font-size: 0.75rem; color: hsl(var(--fr-steel)); }
+
+/* =====================================================================
+   WORKSPACE — JOB MAP TIER 1 CONTROLS (2026-09-11): the set switcher (a listbox under the set lead), the
+   choose / regenerate controls (fr-ws-control), the evidence toggle beside the posture chip, the moved
+   EvidenceDrawer (jobMapShared.tsx — parity-locked inline styles, restyled by SELECTOR ONLY like the
+   conditions gate), and the need row's review line. fr tokens only.
+   ===================================================================== */
+.fr-ws-switcher { position: relative; }
+.fr-ws-switcher-list {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 340px; max-width: 560px; padding: 6px;
+  background: hsl(var(--fr-paper)); border: 1px solid hsl(var(--fr-line)); box-shadow: 0 8px 28px hsl(var(--fr-ink) / 0.12);
+}
+.fr-ws-switcher-note { margin: 4px 10px 6px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+.fr-ws-switcher-option {
+  display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 0; background: none; text-align: left; cursor: pointer;
+  font-family: var(--fr-font-display); font-size: 0.875rem; line-height: 1.4; color: hsl(var(--fr-ink));
+}
+.fr-ws-switcher-option:hover { background: hsl(var(--fr-line) / 0.5); }
+.fr-ws-switcher-option[aria-selected="true"] { background: hsl(var(--fr-lime) / 0.15); }
+.fr-ws-stage-aside { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; flex-shrink: 0; }
+.fr-ws-evidence { margin-top: 1.25rem; }
+.first-read .fr-ws-evidence > div { border-top: 0 !important; padding-top: 0 !important; margin-top: 0 !important; gap: 8px !important; }
+.first-read .fr-ws-evidence span[style*="font-size: 10px"], .first-read .fr-ws-evidence p[style*="font-size: 10px"] {
+  font-family: var(--fr-font-mono) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase;
+  color: hsl(var(--fr-steel)) !important;
+}
+.first-read .fr-ws-evidence p[style*="font-size: 10px"] {
+  font-family: var(--fr-font-display) !important;
+  font-size: 0.875rem !important;
+  letter-spacing: 0 !important;
+  text-transform: none;
+  line-height: 1.5 !important;
+  color: hsl(var(--fr-ink)) !important;
+}
+.first-read .fr-ws-evidence p[style*="rgb(180, 83, 9)"] { color: hsl(var(--fr-electric)) !important; }
+.first-read .fr-ws-evidence span[style*="border-radius: 50%"] { width: 8px !important; height: 8px !important; }
+.first-read .fr-ws-evidence span[style*="rgb(22, 163, 74)"] { background: hsl(var(--fr-lime)) !important; }
+.first-read .fr-ws-evidence span[style*="rgb(232, 163, 23)"] { background: hsl(var(--fr-electric-sol)) !important; }
+.first-read .fr-ws-evidence span[style*="rgb(239, 68, 68)"] { background: hsl(var(--fr-electric)) !important; }
+.first-read .fr-ws-evidence span[style*="rgb(180, 83, 9)"] { background: hsl(var(--fr-periwinkle)) !important; }
+.first-read .fr-ws-evidence span[style*="rgb(209, 213, 219)"] { background: hsl(var(--fr-line)) !important; }
+.fr-ws-opp-review { display: inline-flex; align-items: center; gap: 10px; margin-left: 12px; vertical-align: middle; }
+.fr-ws-opp-review .fr-ws-control { padding: 4px 10px; }

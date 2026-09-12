@@ -101,6 +101,21 @@ export const WORKSPACE_STRINGS = {
   /** Existing (JobMapOrgPanel stepPosture). */
   underPressure: "Under pressure",
   mappedOpportunities: "Mapped opportunities",
+  // ── Job Map Tier 1 controls — existing strings (signed by use); vocabulary is choose / chosen, never pin ──
+  /** Existing (JobMapOrgPanel MarketSwitcher). */
+  showAllMarkets: "Show all markets",
+  switchMarketViewingOnly: "Switch market — viewing only",
+  /** Existing (OnStrategyPin — its one action string). */
+  chooseSet: "Choose this as the on-strategy set",
+  /** Existing (ClientRefinePreviewWorkshopView header buttons). */
+  generateConditions: "Generate conditions",
+  working: "Working…",
+  /** Existing (JobMapOrgPanel EvidenceToggle titles). */
+  showEvidence: "Show evidence",
+  hideEvidence: "Hide evidence",
+  /** Existing (JobMapOrgPanel need row). */
+  reviewPending: "review pending",
+  markReviewed: "Mark reviewed",
   // ── Opportunities body (P:362-389) ──
   filterAll: "All",
   filterHighValue: "High value",

@@ -6,7 +6,7 @@
 // heuristic: every ASSERTION of the on-strategy set (chip, headline score basis,
 // homepage audience) reads this. Heuristics seed the ephemeral default VIEW only
 // (heuristicDefaultViewSeed below) and never stand in as a claim.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export type ChosenSet = { chosenKey: string | null; source: "operator" | null };
@@ -59,20 +59,35 @@ const db = supabase as unknown as { from: (t: string) => any }; // eslint-disabl
 // Returns the validated chosen key (or null). loading is true until resolved.
 export function useChosenSetKey(companyId?: string): {
   chosenKey: string | null; source: "operator" | null; loading: boolean; clearedStale: boolean;
+  /** Re-run the same read (a background re-read): the last answer stands until the read returns. */
+  refetch: () => void;
+  /** After a SUCCESSFUL choose: the old answer is cleared first, then the same read runs — nothing is
+   *  asserted as chosen until the read confirms the new key (a chip on the old set never outlives the write). */
+  invalidate: () => void;
 } {
   const [state, setState] = useState<{
     chosenKey: string | null; source: "operator" | null; loading: boolean; clearedStale: boolean;
   }>({ chosenKey: null, source: null, loading: Boolean(companyId), clearedStale: false });
+  const [readKey, setReadKey] = useState(0);
+  const refetch = useCallback(() => setReadKey((k) => k + 1), []);
+  const invalidate = useCallback(() => {
+    setState((s) => ({ ...s, chosenKey: null, source: null }));
+    setReadKey((k) => k + 1);
+  }, []);
+  // A re-read for the same company is a background read: the surface keeps its last answer meanwhile
+  // (loading is the FIRST read's only), so a chip can flip without the page blanking.
+  const loadedFor = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!companyId) { setState({ chosenKey: null, source: null, loading: false, clearedStale: false }); return; }
     let cancelled = false;
-    setState((s) => ({ ...s, loading: true }));
+    setState((s) => ({ ...s, loading: loadedFor.current !== companyId }));
     (async () => {
       const [pinRes, stepRes] = await Promise.all([
         db.from("operator_primary_selection").select("item_key").eq("company_id", companyId).eq("domain", "job_step_set").maybeSingle(),
         db.from("job_steps").select("journey_key").eq("company_id", companyId),
       ]);
       if (cancelled) return;
+      loadedFor.current = companyId;
       const pin = (pinRes as { data?: { item_key?: unknown } | null }).data?.item_key;
       const keys = (((stepRes as { data?: Array<{ journey_key?: unknown }> | null }).data) ?? []).map((r) => String(r.journey_key ?? ""));
       const resolved = resolveChosenSet(typeof pin === "string" ? pin : null, keys);
@@ -86,8 +101,8 @@ export function useChosenSetKey(companyId?: string): {
       setState({ ...resolved, loading: false, clearedStale: false });
     })();
     return () => { cancelled = true; };
-  }, [companyId]);
-  return state;
+  }, [companyId, readKey]);
+  return { ...state, refetch, invalidate };
 }
 
 const isInternalKey = (k: string) => {

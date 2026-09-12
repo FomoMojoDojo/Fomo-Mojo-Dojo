@@ -53,6 +53,21 @@ export type OdiNeedRow = {
   strategy_alignment_evaluated_at?: string | null;
 };
 
+/** JobMapOrgPanel.handleMarkNeedReviewed's write, MOVED verbatim (Job Map Tier 1 lift, 2026-09-11): the
+ *  row leaves its review state — dependency_state fresh, stale markers cleared, last_reviewed_at now.
+ *  The panel and the workspace Job Map both call this; no other column is touched. */
+export async function markNeedReviewed(needId: string): Promise<void> {
+  await supabase
+    .from("odi_needs")
+    .update({
+      dependency_state: "fresh",
+      stale_reason: null,
+      stale_since_event_id: null,
+      last_reviewed_at: new Date().toISOString(),
+    })
+    .eq("id", needId);
+}
+
 export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: string) {
   const [loading, setLoading] = useState(false);
   const [marketDefinition, setMarketDefinition] = useState<OdiMarketDefinitionRow | null>(null);

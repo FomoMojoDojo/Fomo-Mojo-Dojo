@@ -1,7 +1,6 @@
 import { useMemo, useState, useRef, useEffect, Fragment, type ReactNode } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import type { JobStepRow } from "@/hooks/useJobSteps";
-import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
+import { markNeedReviewed, type OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { RouteRow } from "@/hooks/useRoutes";
 import { useFoundationProvenance } from "@/hooks/useFoundationProvenance";
 import { FoundationClaimSupport } from "@/components/evidence/FoundationClaimSupport";
@@ -15,10 +14,11 @@ import { isSurveyValidated, needBestGuessBand, needBestGuessBandLabel, serviceVe
 import { D } from "@/components/design-system/tokens";
 import { SignalBasisChip, type SignalBasis } from "@/components/design-system/SignalBasisChip";
 import { InternalConditions } from "./internalConditions";
+// EVIDENCE_DOT + EvidenceDrawer moved to ../jobMapShared (Job Map Tier 1 lift, 2026-09-11): the workspace Job Map renders the same drawer.
+import { EVIDENCE_DOT, EvidenceDrawer, NEEDS_REVIEW_STATES } from "../jobMapShared";
 
 const ODI_LABELS = ["DEFINE", "LOCATE", "PREPARE", "EXECUTE", "MONITOR", "MODIFY", "CONCLUDE", "EVALUATE"] as const;
 const MONO = "'JetBrains Mono', ui-monospace, monospace";
-const NEEDS_REVIEW_STATES = new Set(["needs_review", "stale", "contradicted", "revalidate"]);
 
 // Synthetic terminal step — a job step that exists in the ODI progression but was not
 // generated during synthesis. Rendered with "Emerging" posture and a "not yet captured" note.
@@ -268,13 +268,6 @@ function MarketSwitcher({ options, activeKey, activeName, activeIsValidated, sho
   );
 }
 
-const EVIDENCE_DOT: Record<string, { label: string; color: string }> = {
-  evidenced: { label: "Evidenced", color: "#16a34a" },
-  implied:   { label: "Implied",   color: "#E8A317" },
-  unclear:   { label: "Unclear",   color: "#ef4444" },
-  declared:  { label: "Declared",  color: "#b45309" },
-};
-
 function EvidenceStatus({ step }: { step: JobStepRow }) {
   const ev = step.evidence_status ? EVIDENCE_DOT[step.evidence_status] : null;
   const dotColor = ev?.color ?? "#d1d5db";
@@ -290,36 +283,6 @@ function EvidenceStatus({ step }: { step: JobStepRow }) {
   );
 }
 
-
-function EvidenceDrawer({ step }: { step: JobStepRow }) {
-  const ev = step.evidence_status ? EVIDENCE_DOT[step.evidence_status] : null;
-  const dotColor = ev?.color ?? "#d1d5db";
-  const basisClean = (() => {
-    const raw = step.evidence_basis;
-    if (!raw) return null;
-    if (isInternalMetadataString(raw)) return null; // run-tags / input-keys / bare keys → hide
-    return raw;
-  })();
-  return (
-    <div style={{ borderTop: "1px solid #f0f2f5", paddingTop: 7, marginTop: 4, display: "flex", flexDirection: "column", gap: 5 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0, display: "inline-block" }} />
-        <span style={{ fontSize: 10, color: "#6b7280" }}>{ev?.label ?? "Not assessed"}</span>
-        {typeof step.evidence_confidence === "number" && (
-          <span style={{ fontSize: 10, color: "#9ca3af" }}>· {step.evidence_confidence}%</span>
-        )}
-      </div>
-      {basisClean && (
-        <p style={{ fontSize: 10, color: "#9ca3af", lineHeight: 1.4, margin: 0 }}>{basisClean}</p>
-      )}
-      {step.has_gap && step.gap_note && (
-        <p style={{ fontSize: 10, color: "#b45309", lineHeight: 1.4, margin: 0 }}>
-          Gap: {step.gap_note.length > 90 ? step.gap_note.slice(0, 90) + "…" : step.gap_note}
-        </p>
-      )}
-    </div>
-  );
-}
 
 function EvidenceToggle({ open, onToggle, step }: { open: boolean; onToggle: (e: React.MouseEvent) => void; step: JobStepRow }) {
   const ev = step.evidence_status ? EVIDENCE_DOT[step.evidence_status] : null;
@@ -1015,15 +978,8 @@ export default function JobMapOrgPanel({
   const [reviewedIds, setReviewedIds] = useState<Set<string>>(new Set());
 
   async function handleMarkNeedReviewed(needId: string) {
-    await supabase
-      .from("odi_needs")
-      .update({
-        dependency_state: "fresh",
-        stale_reason: null,
-        stale_since_event_id: null,
-        last_reviewed_at: new Date().toISOString(),
-      })
-      .eq("id", needId);
+    // The odi_needs update moved to markNeedReviewed (Job Map Tier 1 lift, 2026-09-11).
+    await markNeedReviewed(needId);
     setReviewedIds((prev) => new Set([...prev, needId]));
   }
 
