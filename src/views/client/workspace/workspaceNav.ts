@@ -152,6 +152,19 @@ export const WORKSPACE_STRINGS = {
   analysisReady: "Analysis ready",
   reviewProposal: "Review proposal",
   runAnalysis: "Run analysis",
+  // ── Inputs Tier 1 controls — existing InputsTab strings (signed by use) ──
+  analyzing: "Analyzing…",
+  filterAllTypes: "All types",
+  filterFile: "File",
+  filterIntake: "Intake",
+  filterFoundationAll: "Foundation: all",
+  filterFoundationYes: "Applied in foundation",
+  filterFoundationNo: "Not yet applied",
+  archiveTitle: "Archive file (recoverable)",
+  restore: "Restore",
+  /** "N archived files" — the count is live, the noun is the tab's. */
+  archivedFilesSingular: "archived file",
+  archivedFilesPlural: "archived files",
   // ── Council (P:391-397) ──
   /** Existing (CouncilPanel). */
   strategicPressure: "Strategic pressure",

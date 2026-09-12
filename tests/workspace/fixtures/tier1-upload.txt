@@ -1,0 +1,1 @@
+Tier 1 upload proof fixture — never analyzed for real; every write is intercepted by the spec.

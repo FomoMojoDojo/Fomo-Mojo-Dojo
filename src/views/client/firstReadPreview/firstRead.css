@@ -2669,3 +2669,17 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
   .fr-ws-hero[data-compact] .fr-ws-hero-title { margin-top: 0.75rem; font-size: 2.4rem; }
   .fr-ws-hero[data-compact] .fr-ws-hero-main { padding-top: 1rem; }
 }
+
+/* =====================================================================
+   WORKSPACE — INPUTS TIER 1 CONTROLS (2026-09-11): the filter selects, the row archive ×, the archived
+   list. The moved tab panels (review, delete-confirm) and the upload dialog keep their own styling.
+   ===================================================================== */
+.fr-ws-filterrow--inputs { justify-content: flex-start; gap: 12px; margin-bottom: 1.5rem; }
+.fr-ws-select { height: 32px; padding: 0 10px; border: 1px solid hsl(var(--fr-line)); border-radius: 0; background: hsl(var(--fr-paper)); color: hsl(var(--fr-steel)); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
+.fr-ws-table-actions { width: 2rem; text-align: right; }
+.fr-ws-table-x { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 1px solid hsl(var(--fr-line)); background: hsl(var(--fr-paper)); color: hsl(var(--fr-steel)); cursor: pointer; }
+.fr-ws-table-x:hover { color: hsl(var(--fr-electric)); border-color: hsl(var(--fr-electric)); }
+.fr-ws-table-x[disabled] { color: hsl(var(--fr-faint)); cursor: default; }
+.fr-ws-archived { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid hsl(var(--fr-line)); }
+.fr-ws-archived-list { list-style: none; margin: 1rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.fr-ws-archived-list li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 8px 0; border-bottom: 1px solid hsl(var(--fr-line)); font-size: 0.75rem; color: hsl(var(--fr-steel)); }
