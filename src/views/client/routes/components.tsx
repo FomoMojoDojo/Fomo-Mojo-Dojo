@@ -1390,7 +1390,8 @@ function LegTestField({ label, helper, children }: { label: string; helper?: str
   );
 }
 
-function LegTestPanel({
+// Exported for the workspace Routes page (Routes Tier 1 lift, 2026-09-12) — rendered as-is there.
+export function LegTestPanel({
   legId,
   companyId,
   refreshKey,
@@ -1445,8 +1446,10 @@ function LegTestPanel({
     setGenerating(true);
     toast.loading("Drafting tests for test-class legs… (~1-2 min)", { id: "gen-leg-tests" });
     try {
+      // Ruling 4 (2026-09-12): this control drafts THIS leg's test only (leg_ids) — it used to re-roll
+      // every test-class leg company-wide. The header "Draft tests (all routes)" keeps the wide body.
       const { data, error } = await supabase.functions.invoke("generate-leg-tests", {
-        body: { company_id: companyId, write: true },
+        body: { company_id: companyId, write: true, leg_ids: [legId] },
       });
       if (data && data.ok === false) {
         toast.error(data.error || "Couldn't draft tests.", { id: "gen-leg-tests" });
@@ -1469,7 +1472,7 @@ function LegTestPanel({
     } finally {
       setGenerating(false);
     }
-  }, [generating, frozen, companyId, onGenerated]);
+  }, [generating, frozen, companyId, legId, onGenerated]);
 
   return (
     <div style={{ margin: "10px 0 8px", padding: "12px 14px", border: `1px solid ${R.hairline}`, borderRadius: 4, background: "rgba(17,17,17,0.015)" }}>

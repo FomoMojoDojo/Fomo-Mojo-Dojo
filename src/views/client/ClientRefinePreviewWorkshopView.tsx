@@ -360,7 +360,10 @@ export default function ClientRefinePreviewWorkshopView() {
   // properties. Lens scoping applies downstream in filteredRoutes (via
   // route_lens_refs), so a focused-but-unreferenced lens can render its honest
   // empty state without flipping company-level layout decisions.
-  const { items: routes, loading: routesLoading } = useRoutes(activeCompany?.id);
+  // Ruling 5 (Routes Tier 1, 2026-09-12): the tab re-reads routes after a route write (the standalone
+  // /routes view always did; this tab passed no onCommitSuccess).
+  const [routesRefreshKey, setRoutesRefreshKey] = useState(0);
+  const { items: routes, loading: routesLoading } = useRoutes(activeCompany?.id, routesRefreshKey);
   const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
 
   // Focused lens's referenced route ids: null = no lens layer for the focused key
@@ -2662,6 +2665,7 @@ export default function ClientRefinePreviewWorkshopView() {
             nextBestMove={nextBestMove}
             needs={filteredNeeds}
             onRouteActivate={(id) => setActiveRouteId(id)}
+            onCommitSuccess={() => setRoutesRefreshKey((k) => k + 1)}
             lensUnassessed={lensRoutesUnassessed}
           />
         </div>

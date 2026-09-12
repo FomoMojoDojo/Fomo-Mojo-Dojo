@@ -142,6 +142,16 @@ export const WORKSPACE_STRINGS = {
   regenerateConditions: "Regenerate conditions",
   draftTests: "Draft tests",
   testForThisRoute: "Test for this route",
+  // ── Routes Tier 1 controls (signed 2026-09-12, inventory §6) — existing HierarchyRouteSection /
+  //    LegRow strings rendered by the page itself; LegTestPanel, DriftBadge and DriftDetailPanel carry
+  //    their own, unchanged. ──
+  chooseThisPath: "Choose this path →",
+  deselect: "Deselect",
+  chosenPath: "CHOSEN PATH",
+  workingHypothesis: "Working hypothesis",
+  legs: "legs",
+  leg: "leg",
+  proposeRouteChanges: "Propose route changes from current evidence",
   // ── Read-page bands (P:219-359) ──
   /** Existing (firstReadPreview/acts). */
   mustHaveCapabilities: "Must-have capabilities",

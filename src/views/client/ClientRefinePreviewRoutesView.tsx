@@ -31,13 +31,7 @@ import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { SignalBar } from "./workshop/tabs/OutsidePanels";
 import type { SignalStage } from "./workshop/types";
 import { baselineOf } from "./workshop/helpers";
-import {
-  routeRelativeTime,
-  buildDecisionBullets,
-  persistSelectedRouteDecision,
-  clearSelectedRouteDecision,
-  insertRouteDecisionEvent,
-} from "@/lib/routeDecision";
+import { routeRelativeTime } from "@/lib/routeDecision";
 import { computeLatestExclusionAt, isArtifactStale } from "@/lib/evidenceImpact";
 import { clientGateInsight } from "@/lib/routeInsights";
 import TierAlignmentGrid from "@/components/inspect/TierAlignmentGrid";
@@ -61,6 +55,8 @@ import DriftBadge from "@/components/drift/DriftBadge";
 import DriftDetailPanel from "@/components/drift/DriftDetailPanel";
 import ProposeChangesButton from "@/components/drift/ProposeChangesButton";
 import { useDriftScan } from "@/hooks/useDriftScan";
+import { useRouteDecision } from "@/hooks/useRouteDecision";
+import { useRouteProposalHandlers } from "@/hooks/useRouteProposalHandlers";
 import type { EngagementPhase } from "@/lib/engagementPhase";
 import { useDesiredOutcomes } from "@/lib/desiredOutcomes";
 import type { DesiredOutcomeRow } from "@/lib/desiredOutcomes";
@@ -68,11 +64,11 @@ import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
 import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { SignalBasisChip } from "@/components/design-system/SignalBasisChip";
-import { useRouteProposals, type RouteProposalRow } from "@/hooks/useRouteProposals";
+import type { RouteProposalRow } from "@/hooks/useRouteProposals";
 import { useAuth } from "@/hooks/useAuth";
 import SurfaceEducationTrigger from "@/components/surface-education/SurfaceEducationTrigger";
 import FlowCommitSheet from "@/components/claims/FlowCommitSheet";
-import { R, RouteCategory, CATEGORY_META, CATEGORY_POSTURE_LABEL, isHypothesisPhase, toSentence, deriveClientWhyReasons, deriveCanonicalRouteSentence, EvidenceItem, ClientAssumption, CLIENT_LAYER_LABELS, CLIENT_STATUS_LABELS, CLIENT_STATUS_COLORS, CLIENT_STATUS_GLYPHS, deriveStrengthMoves, DetailItem, statusGlyph, statusTip, ROUTE_FIELD_LABELS, ROUTE_FIELDS, summarizeRouteValue, routeDiffedFields, routeTimeAgo, WrapAlt, WrapCond, HIERARCHY_STATE_ACCENT, HIERARCHY_STATE_LABEL, HIERARCHY_FRAMING, HIERARCHY_HERO, inferRelevantCategory } from "./routes/shared";
+import { R, RouteCategory, CATEGORY_META, CATEGORY_POSTURE_LABEL, isHypothesisPhase, toSentence, deriveCanonicalRouteSentence, EvidenceItem, ClientAssumption, CLIENT_LAYER_LABELS, CLIENT_STATUS_LABELS, CLIENT_STATUS_COLORS, CLIENT_STATUS_GLYPHS, deriveStrengthMoves, DetailItem, statusGlyph, statusTip, ROUTE_FIELD_LABELS, ROUTE_FIELDS, summarizeRouteValue, routeDiffedFields, routeTimeAgo, WrapAlt, WrapCond, HIERARCHY_STATE_ACCENT, HIERARCHY_STATE_LABEL, HIERARCHY_FRAMING, HIERARCHY_HERO, inferRelevantCategory } from "./routes/shared";
 import { ExpandRingBtn, ExpandRingIndicator, InkMetaChip, RouteStateTag, ScoreChip, HierarchyScoreStrip, KeystoneStripe } from "./routes/primitives";
 import { engagementDayFrom } from "@/lib/engagementDay";
 import { ClientRouteInspectPanel, ClientDecisionBanner, RouteWhyRisingPanel, RouteProposalSection, RouteCard, RoutesColumn, HierarchyWrapPanel, HierarchyPageHeader, LegRow, HierarchyRouteSection, HierarchyGroupCard } from "./routes/components";
@@ -399,8 +395,9 @@ export function RoutesOrgPanel({
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
   const [inspectRoute, setInspectRoute]     = useState<RouteRow | null>(null);
-  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
-  const [decisionSavedAt, setDecisionSavedAt] = useState<string | null>(null);
+  // Choose / clear MOVED to useRouteDecision (Routes Tier 1 lift, 2026-09-12) — same writes, same
+  // summary, same event types; the panel keeps the onRouteActivate call in its wrappers below.
+  const { selectedRouteId, savedAt: decisionSavedAt, chooseRoute, clearRoute } = useRouteDecision(activeCompany);
   const [hoveredRouteId, setHoveredRouteId]   = useState<string | null>(null);
   const [confirmRoute, setConfirmRoute]       = useState<RouteRow | null>(null);
   const [regeneratingLegs, setRegeneratingLegs] = useState(false);
@@ -409,7 +406,8 @@ export function RoutesOrgPanel({
   // that consume these live in THIS component, so the hooks must resolve here.
   const canApply = useCapability("governance.proposal.apply", activeCompany?.id);
   const canReject = useCapability("governance.proposal.reject", activeCompany?.id);
-  const canGenRoute = useCapability("structure.route.generate", activeCompany?.id);
+  // Ruling 1 (2026-09-12): Check for drift on routes is gated on governance.drift.scan here too.
+  const canScan = useCapability("governance.drift.scan", activeCompany?.id);
   const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
   const { data: routeHypothesisDependencies = [] } = useRouteHypothesisDependencies(activeCompany?.id);
   const [claimsRefreshKey, setClaimsRefreshKey] = useState(0);
@@ -422,9 +420,10 @@ export function RoutesOrgPanel({
   // `liveMojoScore` (computed below), which never came from this hook.
   const { landscape: routesSignalLandscape } = useSignalLandscape(activeCompany?.id);
   const [reEvalLoading, setReEvalLoading] = useState<string | null>(null);
-  const [routeProposalRefreshKey, setRouteProposalRefreshKey] = useState(0);
-  const { proposals: routeProposalsMap } = useRouteProposals(activeCompany?.id, routeProposalRefreshKey);
-  const [generateLoadingRouteId, setGenerateLoadingRouteId] = useState<string | null>(null);
+  // Generate (propose-route-changes) + the proposals read MOVED to useRouteProposalHandlers (ruling 3:
+  // generate only; accept / reject stay below for brief 2).
+  const { canGenRoute, routeProposalsMap, generateLoadingRouteId, handleGenerateRouteProposal, bumpProposals: bumpRouteProposals } =
+    useRouteProposalHandlers(activeCompany?.id);
   const [acceptLoadingProposalId, setAcceptLoadingProposalId] = useState<string | null>(null);
   const [rejectLoadingProposalId, setRejectLoadingProposalId] = useState<string | null>(null);
   const [driftPanel, setDriftPanel] = useState<{ surfaceType: string; surfaceId: string } | null>(null);
@@ -436,12 +435,8 @@ export function RoutesOrgPanel({
     setLegTestRefreshKey((k) => k + 1);
     onCommitSuccess?.();
   }, [onCommitSuccess]);
-  const { checkingSurfaceId, checkSurface: checkRouteDrift } = useDriftScan(activeCompany?.id);
-
-  useEffect(() => {
-    setSelectedRouteId(activeCompany?.selected_route_id ?? null);
-    setDecisionSavedAt(activeCompany?.selected_route_updated_at ?? null);
-  }, [activeCompany?.id]);
+  const onDriftAssessed = useCallback(() => setDriftBadgeRefreshKey((k) => k + 1), []);
+  const { checkingSurfaceId, checkSurfaceGated } = useDriftScan(activeCompany?.id, { canScan, onAssessed: onDriftAssessed });
 
   useEffect(() => {
     if (!routeIdParam || routes.length === 0) return;
@@ -916,38 +911,13 @@ export function RoutesOrgPanel({
     }
   }, [activeCompany?.id, regeneratingConditions, conditionGenProgress, readConditionLedger, waitForConditionChunk, onCommitSuccess]);
 
-  const handleGenerateRouteProposal = useCallback(async (routeId: string) => {
-    if (!activeCompany?.id) return;
-    if (!canGenRoute) return; // structure.route.generate
-    setGenerateLoadingRouteId(routeId);
-    try {
-      await supabase.functions.invoke("propose-route-changes", {
-        body: { route_id: routeId, company_id: activeCompany.id },
-      });
-      setRouteProposalRefreshKey((k) => k + 1);
-    } finally {
-      setGenerateLoadingRouteId(null);
-    }
-  }, [activeCompany?.id, canGenRoute]);
-
   const handleDriftClick = useCallback((surfaceType: string, surfaceId: string) => {
     setDriftPanel({ surfaceType, surfaceId });
   }, []);
 
-  const handleCheckRouteDrift = useCallback((routeId: string) => {
-    checkRouteDrift(
-      "route",
-      routeId,
-      (result) => {
-        setDriftBadgeRefreshKey((k) => k + 1);
-        const driftLabel = result.material_drift > 0 ? "material drift" : result.slight_drift > 0 ? "slight drift" : "aligned";
-        toast.success(`Checked route · ${driftLabel}`, { duration: 4000 });
-      },
-      (err) => {
-        toast.error(`Check failed — ${err}`, { duration: 5000 });
-      },
-    );
-  }, [checkRouteDrift]);
+  // Ruling 1: the gated wrapper (useDriftScan.checkSurfaceGated — governance.drift.scan, badge bump,
+  // the same "Checked route · …" / "Check failed — …" toasts) replaces this view's ungated copy.
+  const handleCheckRouteDrift = useCallback((routeId: string) => checkSurfaceGated("route", routeId), [checkSurfaceGated]);
 
   const handleAcceptRouteProposal = useCallback(async (
     proposalId: string,
@@ -978,14 +948,14 @@ export function RoutesOrgPanel({
           raw_payload: { accepted_fields: acceptedFields, skipped_fields: skippedFields },
         })
         .eq("id", proposalId);
-      setRouteProposalRefreshKey((k) => k + 1);
+      bumpRouteProposals();
       await supabase.functions.invoke("evaluate-route-alignment", {
         body: { route_id: proposal.surface_id, company_id: activeCompany.id },
       });
     } finally {
       setAcceptLoadingProposalId(null);
     }
-  }, [activeCompany?.id, canApply, routeProposalsMap]);
+  }, [activeCompany?.id, canApply, routeProposalsMap, bumpRouteProposals]);
 
   const handleRejectRouteProposal = useCallback(async (proposalId: string) => {
     if (!activeCompany?.id) return;
@@ -996,11 +966,11 @@ export function RoutesOrgPanel({
         status: "rejected",
         reviewed_at: new Date().toISOString(),
       }).eq("id", proposalId);
-      setRouteProposalRefreshKey((k) => k + 1);
+      bumpRouteProposals();
     } finally {
       setRejectLoadingProposalId(null);
     }
-  }, [activeCompany?.id, canReject]);
+  }, [activeCompany?.id, canReject, bumpRouteProposals]);
 
   const phase = floorEngagementPhase({
     phase: activeCompany?.engagement_phase ?? "outside_signals",
@@ -1148,28 +1118,11 @@ export function RoutesOrgPanel({
 
   async function handleSelectRoute(route: RouteRow) {
     onRouteActivate?.(route.id);
-    if (selectedRouteId === route.id) { handleClearDecision(); return; }
-    const eventType = selectedRouteId ? "changed" : "selected";
-    const now = new Date().toISOString();
-    setSelectedRouteId(route.id);
-    setDecisionSavedAt(now);
-    if (!activeCompany?.id) return;
-    const why      = deriveClientWhyReasons(route);
-    const evidence = deriveClientEvidence(route);
-    const steps    = (Array.isArray(route.steps_json) ? route.steps_json : []) as Array<{ status: string }>;
-    const summary  = { bullets: buildDecisionBullets({ whyThisMatters: why, evidence, steps }, null), route_title: route.title, route_category: route.category };
-    await persistSelectedRouteDecision(activeCompany.id, route.id, summary, now);
-    await insertRouteDecisionEvent(activeCompany.id, route.id, eventType, summary);
+    await chooseRoute(route);
   }
 
   async function handleClearDecision() {
-    const priorRouteId = selectedRouteId;
-    const priorSummary = activeCompany?.selected_route_summary_json ?? {};
-    setSelectedRouteId(null);
-    setDecisionSavedAt(null);
-    if (!activeCompany?.id) return;
-    await clearSelectedRouteDecision(activeCompany.id);
-    await insertRouteDecisionEvent(activeCompany.id, priorRouteId, "cleared", priorSummary);
+    await clearRoute();
   }
 
   function handleConfirmStart(route: RouteRow) {
