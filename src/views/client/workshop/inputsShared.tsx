@@ -333,6 +333,13 @@ export function ProposalReviewPanel({
   const isProcessing = proposal.processing_state === "queued" || proposal.processing_state === "running";
   const isFailed = proposal.processing_state === "failed";
   const isReady = proposal.processing_state === "ready";
+  // Status-aware (2026-09-13): a proposal that is no longer pending was decided by a person. The panel then
+  // READS — every content section renders as in review, but there are no selection controls and the footer
+  // is the decision record (reviewed_at + applied_areas) with Close. Accept / Reject exist only for pending.
+  const decided = proposal.status !== "pending";
+  const selectable = !decided;
+  const appliedAreaLabels = [...new Set((proposal.applied_areas ?? []).map((k) => AREA_KEY_TO_FOUNDATION[String(k)]).filter(Boolean).map((a) => areaDisplayLabel(a)))];
+  const decidedAt = proposal.reviewed_at ? new Date(proposal.reviewed_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : null;
   const showSummary = Boolean(proposal.summary) && !(isProcessing && isQueuedPlaceholderSummary(proposal.summary));
   const initialAreas = inferSuggestedAreasFromProposal(proposal);
 
@@ -516,7 +523,8 @@ export function ProposalReviewPanel({
           {FOUNDATION_AREAS.map((area) => {
             const isSuggested = initialAreas.includes(area);
             return (
-              <label key={area} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none", opacity: isSuggested ? 1 : 0.4 }}>
+              <label key={area} style={{ display: "flex", alignItems: "center", gap: 6, cursor: selectable ? "pointer" : "default", userSelect: "none", opacity: isSuggested ? 1 : 0.4 }}>
+                {selectable && (
                 <input
                   type="checkbox"
                   checked={selectedAreas.has(area)}
@@ -524,6 +532,7 @@ export function ProposalReviewPanel({
                   disabled={!isReady}
                   style={CHECKBOX_STYLE}
                 />
+                )}
                 <span style={{ ...MONO, fontSize: 11, color: selectedAreas.has(area) ? "#333" : "#aaa" }}>
                   {areaDisplayLabel(area)}
                 </span>
@@ -539,6 +548,7 @@ export function ProposalReviewPanel({
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {positioningUpdates.map((update, i) => (
               <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                {selectable && (
                 <input
                   type="checkbox"
                   checked={positioningChecked.has(i)}
@@ -546,6 +556,7 @@ export function ProposalReviewPanel({
                   disabled={!isReady}
                   style={CHECKBOX_STYLE}
                 />
+                )}
                 <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
                   <span style={{ color: "#333" }}>{update.field}</span>: {update.suggested_update}
                   {update.current_issue && <span style={{ color: "#888" }}> — {update.current_issue}</span>}
@@ -562,6 +573,7 @@ export function ProposalReviewPanel({
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {jobSteps.map((step, i) => (
               <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                {selectable && (
                 <input
                   type="checkbox"
                   checked={jobStepChecked.has(i)}
@@ -569,6 +581,7 @@ export function ProposalReviewPanel({
                   disabled={!isReady}
                   style={CHECKBOX_STYLE}
                 />
+                )}
                 <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
                   <span style={{ color: "#333" }}>{step.step_label}</span>
                   {step.step_description && <span style={{ color: "#888" }}> — {step.step_description}</span>}
@@ -585,6 +598,7 @@ export function ProposalReviewPanel({
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {needs.map((n, i) => (
               <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                {selectable && (
                 <input
                   type="checkbox"
                   checked={needChecked.has(i)}
@@ -592,6 +606,7 @@ export function ProposalReviewPanel({
                   disabled={!isReady}
                   style={CHECKBOX_STYLE}
                 />
+                )}
                 <span style={{ ...MONO, fontSize: 10, color: "#444", lineHeight: 1.5 }}>
                   {n.desired_outcome}
                   {typeof n.importance === "number" && <span style={{ color: "#bbb", marginLeft: 6 }}>imp {n.importance}/10</span>}
@@ -608,6 +623,7 @@ export function ProposalReviewPanel({
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {outcomes.map((outcome, i) => (
               <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                {selectable && (
                 <input
                   type="checkbox"
                   checked={outcomeChecked.has(i)}
@@ -615,6 +631,7 @@ export function ProposalReviewPanel({
                   disabled={!isReady}
                   style={CHECKBOX_STYLE}
                 />
+                )}
                 <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
                   <span style={{ color: "#333" }}>{outcome.outcome}</span>
                   {outcome.related_opportunities.length > 0 && (
@@ -633,6 +650,7 @@ export function ProposalReviewPanel({
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {routes.map((route, i) => (
               <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                {selectable && (
                 <input
                   type="checkbox"
                   checked={routeChecked.has(i)}
@@ -640,6 +658,7 @@ export function ProposalReviewPanel({
                   disabled={!isReady}
                   style={CHECKBOX_STYLE}
                 />
+                )}
                 <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
                   <span style={{ color: "#333" }}>{route.title}</span>
                   {route.why_this_could_matter && <span style={{ color: "#888" }}> — {route.why_this_could_matter}</span>}
@@ -656,6 +675,7 @@ export function ProposalReviewPanel({
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {experiments.map((experiment, i) => (
               <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                {selectable && (
                 <input
                   type="checkbox"
                   checked={experimentChecked.has(i)}
@@ -663,6 +683,7 @@ export function ProposalReviewPanel({
                   disabled={!isReady}
                   style={CHECKBOX_STYLE}
                 />
+                )}
                 <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
                   <span style={{ color: "#333" }}>{experiment.experiment}</span>
                   {experiment.what_it_tests && <span style={{ color: "#888" }}> — tests {experiment.what_it_tests}</span>}
@@ -679,6 +700,7 @@ export function ProposalReviewPanel({
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {gaps.map((gap, i) => (
               <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                {selectable && (
                 <input
                   type="checkbox"
                   checked={gapChecked.has(i)}
@@ -686,6 +708,7 @@ export function ProposalReviewPanel({
                   disabled={!isReady}
                   style={CHECKBOX_STYLE}
                 />
+                )}
                 <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>{gap}</span>
               </label>
             ))}
@@ -718,6 +741,27 @@ export function ProposalReviewPanel({
         </div>
       )}
 
+      {decided ? (
+        <div data-testid="proposal-decision-record" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
+          <span style={{ ...MONO, fontSize: 10, letterSpacing: "0.05em", textTransform: "uppercase", fontWeight: 600, color: proposal.status === "accepted" ? "#2d8a60" : "#c0392b" }}>
+            {proposal.status}{decidedAt ? ` ${decidedAt}` : ""}
+          </span>
+          {appliedAreaLabels.length > 0 && (
+            <span style={{ ...MONO, fontSize: 10, color: "#555" }}>{appliedAreaLabels.join(" · ")}</span>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            data-testid="proposal-close"
+            style={{
+              ...MONO, fontSize: 10, letterSpacing: "0.04em", textTransform: "uppercase",
+              color: "#aaa", background: "none", border: "none", cursor: "pointer",
+            }}
+          >
+            Close
+          </button>
+        </div>
+      ) : (
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
         {canAccept && (
         <button
@@ -774,6 +818,8 @@ export function ProposalReviewPanel({
           Cancel
         </button>
       </div>
+      )}
+      {!decided && (
       <p style={{ ...MONO, fontSize: 9, color: "#c8c2ba", margin: "12px 0 0", lineHeight: 1.5 }}>
         {isReady
           ? "Checked items are accepted for review. Only area tags are applied for now; structured items are not auto-created."
@@ -781,6 +827,7 @@ export function ProposalReviewPanel({
             ? "This analysis did not complete cleanly. Retry from the file row if needed."
             : "This analysis is still processing. You can dismiss it if it is stuck, or wait for it to finish."}
       </p>
+      )}
     </div>
   );
 }

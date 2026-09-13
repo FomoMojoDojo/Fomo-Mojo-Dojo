@@ -1412,7 +1412,9 @@ export default function InputsTab({
                                     >
                                       {proposalPanelOpen
                                         ? `↑ Close review${fileProposalReviewCountsText(proposal)}`
-                                        : `Review proposal →${fileProposalReviewCountsText(proposal)}`}
+                                        : proposal.status !== "pending"
+                                          ? `View analysis →${fileProposalReviewCountsText(proposal)}` // decided: the panel reads (status-aware, 2026-09-13)
+                                          : `Review proposal →${fileProposalReviewCountsText(proposal)}`}
                                     </button>
                                     {isActiveProposal ? (
                                       <span style={{ ...MONO, fontSize: 9, color: "#9aa79f" }}>

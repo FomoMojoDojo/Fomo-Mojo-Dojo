@@ -187,6 +187,8 @@ export const WORKSPACE_STRINGS = {
   analyzing: "Analyzing…",
   /** Existing (InputsTab failed-run control), signed 2026-09-12. The size refusal sentence lives in src/lib/fileTooLarge.ts. */
   analysisFailedRetry: "Analysis failed — retry →",
+  /** Signed 2026-09-13: opens the status-aware panel (read mode) on an accepted row. */
+  viewAnalysis: "View analysis →",
   filterAllTypes: "All types",
   filterFile: "File",
   filterIntake: "Intake",

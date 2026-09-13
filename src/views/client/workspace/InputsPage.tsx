@@ -17,6 +17,8 @@
 //                    tab's difyFailedIds, 2026-09-12); a size refusal renders the signed reason instead
 //   Review proposal  ProposalReviewPanel (moved from InputsTab) with acceptFileProposal / rejectFileProposal /
 //                    dismissFileProposal (lifted) — file_proposals + input_files tag writes
+//   View analysis    the same panel on an ACCEPTED row, in its status-aware read mode (2026-09-13): the decision
+//                    record + Close, no Accept/Reject — opening it issues no write
 //   filters          type (the tab's row.type derivation: Intake tag → intake, else file) and foundation
 //   Archive ×        DeleteConfirmPanel (moved) → useArchiveInputFile (+ unlinkNeedsFromFilePath, lifted)
 //   Archived · Restore  useArchivedInputFiles / useRestoreInputFile
@@ -62,7 +64,7 @@ function toSourceRow(file: CompanyFileRow, areas: string[]): SourceRow {
 function readyStatus(p: FileProposalRow | undefined): { label: string; tone: ChipTone } | null {
   if (!p) return null;
   if (p.processing_state !== "ready") return { label: fileProposalProcessingBadgeText(p), tone: "neutral" };
-  if (p.status === "accepted") return { label: WORKSPACE_STRINGS.analysisReady, tone: "good" };
+  if (p.status === "accepted") return { label: WORKSPACE_STRINGS.analysisReady, tone: "good" }; // ungated badge; gated → View analysis →
   return null; // ready + pending → the Review proposal control
 }
 
@@ -241,6 +243,11 @@ export default function InputsPage() {
                                   {WORKSPACE_STRINGS.reviewProposal}
                                 </button>
                               ) : <Chip tone="warn">{WORKSPACE_STRINGS.reviewProposal}</Chip>
+                            ) : proposal.processing_state === "ready" && proposal.status === "accepted" && gated ? (
+                              // Accepted (2026-09-13): the completed analysis is readable — the panel mounts in its decided mode (no Accept/Reject).
+                              <button type="button" className="fr-ws-control fr-mono" onClick={() => setPanelId(panelId === f.id ? null : f.id)} aria-expanded={panelId === f.id} {...{ [OPERATOR_MARK.attr]: "view-analysis" }} data-testid="inputs-view-analysis">
+                                {WORKSPACE_STRINGS.viewAnalysis}
+                              </button>
                             ) : badge ? <Chip tone={badge.tone}>{badge.label}</Chip> : null}
                           </td>
                           {gated ? (
