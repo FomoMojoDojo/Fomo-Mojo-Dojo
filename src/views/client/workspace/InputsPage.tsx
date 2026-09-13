@@ -19,6 +19,8 @@
 //                    dismissFileProposal (lifted) — file_proposals + input_files tag writes
 //   View analysis    the same panel on an ACCEPTED row, in its status-aware read mode (2026-09-13): the decision
 //                    record + Close, no Accept/Reject — opening it issues no write
+//   sync poll        useProposalSync (moved from the tab): dify-analyze-file {mode:"sync"} per active row while
+//                    gated; the server-side sweep (pg_cron) is the authority when no page is open
 //   filters          type (the tab's row.type derivation: Intake tag → intake, else file) and foundation
 //   Archive ×        DeleteConfirmPanel (moved) → useArchiveInputFile (+ unlinkNeedsFromFilePath, lifted)
 //   Archived · Restore  useArchivedInputFiles / useRestoreInputFile
@@ -30,6 +32,7 @@ import { useFileProposals, type FileProposalRow } from "@/hooks/useFileProposals
 import { getFileSignedUrl, useArchiveInputFile, useArchivedInputFiles, useRestoreInputFile } from "@/hooks/useInputs";
 import { acceptFileProposal, dismissFileProposal, rejectFileProposal, runDifyAnalyzeFile, unlinkNeedsFromFilePath } from "@/hooks/useInputActions";
 import { FileTooLargeError, fileTooLargeMessage, type FileTooLargeRefusal } from "@/lib/fileTooLarge";
+import { useProposalSync } from "@/hooks/useProposalSync";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useRoutes } from "@/hooks/useRoutes";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
@@ -80,6 +83,10 @@ export default function InputsPage() {
   const canEvidence = useCapability("evidence.manage", companyId);
   const canApply = useCapability("governance.proposal.apply", companyId);
   const gated = Boolean(operator) && canEvidence;
+  // Sync poll (2026-09-13, moved from the tab into useProposalSync): while a proposal is queued/running
+  // and the cell is gated, the page reconciles it against Dify every 5 s — so a run completes promptly
+  // while watched. The pg_cron sweep remains the authority when nothing is watching.
+  useProposalSync(proposals.data, gated, proposals.refetch);
   const archive = useArchiveInputFile();
   const restore = useRestoreInputFile();
   const archivedQuery = useArchivedInputFiles(gated ? companyId : null);

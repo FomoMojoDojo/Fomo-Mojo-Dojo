@@ -189,6 +189,12 @@ export const WORKSPACE_STRINGS = {
   analysisFailedRetry: "Analysis failed — retry →",
   /** Signed 2026-09-13: opens the status-aware panel (read mode) on an accepted row. */
   viewAnalysis: "View analysis →",
+  /**
+   * Signed 2026-09-13 (ruling 4): the processing-state badge for a running proposal — rendered on both surfaces
+   * by fileProposalProcessingBadgeText (inputsShared), which is the single render site; this entry registers the
+   * word in the vocabulary tests police. Queued / failed badge texts exist there too and are NOT signed here.
+   */
+  analyzingState: "Analyzing",
   filterAllTypes: "All types",
   filterFile: "File",
   filterIntake: "Intake",

@@ -15,7 +15,7 @@ export const STORAGE_STATE = path.resolve(process.env.FR_STORAGE_STATE || "backu
 /** The Edgewood fixture — the company the specs read. Overridable. */
 export const COMPANY_ID = process.env.FR_COMPANY_ID || "3dd2cfbb-0792-4bf1-9cd4-15db9646874b";
 /** Pre-change DOM-text capture of /preview/client-refine/home (spec g). */
-export const HOME_DOM_BASELINE = path.resolve(process.env.FR_HOME_DOM_BASELINE || "backups/home-dom-before_20260911.txt");
+export const HOME_DOM_BASELINE = path.resolve(process.env.FR_HOME_DOM_BASELINE || "backups/home-dom-before_20260913.txt");
 
 export default defineConfig({
   testDir: "tests/workspace",

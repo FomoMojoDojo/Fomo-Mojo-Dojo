@@ -397,12 +397,13 @@ async function markProposalFailed(params: {
   error: string;
 }) {
   const { supabase, proposalId, summary, error } = params;
+  // Only an in-flight row can be failed: a row another writer already finished keeps its result.
   await supabase.from("file_proposals").update({
     summary,
     processing_state: "failed",
     processing_error: error,
     processing_completed_at: new Date().toISOString(),
-  }).eq("id", proposalId).neq("status", "rejected");
+  }).eq("id", proposalId).neq("status", "rejected").in("processing_state", ["queued", "running"]);
 }
 
 async function persistDifyResult(params: {
@@ -518,7 +519,7 @@ async function persistDifyResult(params: {
     return need;
   });
 
-  const { error: updateError } = await supabase
+  const { data: claimed, error: updateError } = await supabase
     .from("file_proposals")
     .update({
       summary,
@@ -542,11 +543,20 @@ async function persistDifyResult(params: {
       processing_completed_at: new Date().toISOString(),
     })
     .eq("id", proposalId)
-    .neq("status", "rejected");
+    .neq("status", "rejected")
+    // CLAIM (completion sweep, 2026-09-13): the ready write is atomic on the row still being in flight.
+    // The worker's monitor, a page's sync poll and the pg_cron sweep can all reach a finished run; only
+    // the writer whose update matched runs the side effects below (signal ingest, score snapshot).
+    .in("processing_state", ["queued", "running"])
+    .select("id");
 
   if (updateError) {
     console.log("[dify-analyze-file] update error:", updateError.message);
     throw new Error(`Failed to save proposal: ${updateError.message}`);
+  }
+  if (!Array.isArray(claimed) || claimed.length === 0) {
+    console.log("[dify-analyze-file] proposal already persisted by another writer, id:", proposalId);
+    return;
   }
 
   const { data: proposalRow } = await supabase

@@ -1,4 +1,4 @@
-import { useState, Fragment, useMemo, useEffect, useRef, useCallback, type Dispatch, type SetStateAction } from "react";
+import { useState, Fragment, useMemo, useEffect, useCallback, type Dispatch, type SetStateAction } from "react";
 import mammoth from "mammoth";
 import { useQuery } from "@tanstack/react-query";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
@@ -31,6 +31,7 @@ import FileUploadDialog from "@/components/FileUploadDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { runDifyAnalyzeFile, acceptFileProposal, rejectFileProposal, dismissFileProposal, unlinkNeedsFromFilePath } from "@/hooks/useInputActions";
 import { FileTooLargeError, fileTooLargeMessage, type FileTooLargeRefusal } from "@/lib/fileTooLarge";
+import { useProposalSync } from "@/hooks/useProposalSync";
 import { useFullRefresh, FR_BUTTON_IDLE, FR_EMPTY_HEADER, FR_EMPTY_BODY_1, FR_EMPTY_BODY_2 } from "@/hooks/useFullRefresh";
 
 import { Eyebrow } from "@/components/design-system/Eyebrow";
@@ -548,7 +549,6 @@ export default function InputsTab({
   const [difyRefusedById,     setDifyRefusedById]     = useState<ReadonlyMap<string, FileTooLargeRefusal>>(new Map());
   const [openingFileId,       setOpeningFileId]       = useState<string | null>(null);
   const [syncingProposalId,   setSyncingProposalId]   = useState<string | null>(null);
-  const lastProposalSyncAtRef = useRef<Record<string, number>>({});
 
   async function handleDifyAnalyze(row: SourceRow) {
     if (!canEvidence) return; // evidence.manage
@@ -665,32 +665,8 @@ export default function InputsTab({
     }
   }
 
-  useEffect(() => {
-    const active = fileProposals.filter(
-      (proposal) =>
-        proposal.status !== "rejected" &&
-        (proposal.processing_state === "queued" || proposal.processing_state === "running"),
-    );
-    if (active.length === 0) return;
-
-    const now = Date.now();
-    for (const proposal of active) {
-      const lastSyncAt = lastProposalSyncAtRef.current[proposal.id] ?? 0;
-      if (now - lastSyncAt < 5000) continue;
-      lastProposalSyncAtRef.current[proposal.id] = now;
-      void supabase.functions.invoke("dify-analyze-file", {
-        body: {
-          mode: "sync",
-          proposalId: proposal.id,
-        },
-      }).then(() => {
-        void refetchProposals();
-      }).catch(() => {
-        // Keep the row in running/failed state from the server; the normal
-        // proposal poll loop will continue retrying.
-      });
-    }
-  }, [fileProposals, refetchProposals]);
+  // The sync poll MOVED to useProposalSync (2026-09-13) — same body, same 5 s throttle, ungated as before.
+  useProposalSync(fileProposals, true, refetchProposals);
 
   async function handleAcceptProposal(row: SourceRow, proposal: FileProposalRow, payload: ProposalAcceptPayload) {
     if (!canEvidence) return; // evidence.manage

@@ -1,5 +1,5 @@
 // (k) Inputs: the table has exactly one row per active input_files row the page read (useCompanyFiles),
-// and every status chip is one of the three signed InputsTab words.
+// and every status chip is one of the signed InputsTab words (three + "Analyzing", signed 2026-09-13).
 import { expect, test } from "playwright/test";
 import { openWorkspace, wsPath } from "./helpers";
 
@@ -19,6 +19,7 @@ test("inputs table rows equal the files read; status chips are the signed vocabu
   const counter = await page.getByTestId("inputs-counters").innerText();
   expect(counter).toContain(String(n)); // Evidence files counter = the same read
   const chips = await rows.locator(".fr-chip").allInnerTexts();
-  for (const c of chips) expect(["ANALYSIS READY", "REVIEW PROPOSAL", "RUN ANALYSIS"]).toContain(c.trim().toUpperCase());
+  // "Analyzing" signed 2026-09-13 (ruling 4): a queued/running proposal renders the tab's processing badge.
+  for (const c of chips) expect(["ANALYSIS READY", "REVIEW PROPOSAL", "RUN ANALYSIS", "ANALYZING"]).toContain(c.trim().toUpperCase());
   expect(page.url()).toContain(wsPath("inputs"));
 });
