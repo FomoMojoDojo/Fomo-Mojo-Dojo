@@ -185,6 +185,8 @@ export const WORKSPACE_STRINGS = {
   runAnalysis: "Run analysis",
   // ── Inputs Tier 1 controls — existing InputsTab strings (signed by use) ──
   analyzing: "Analyzing…",
+  /** Existing (InputsTab failed-run control), signed 2026-09-12. The size refusal sentence lives in src/lib/fileTooLarge.ts. */
+  analysisFailedRetry: "Analysis failed — retry →",
   filterAllTypes: "All types",
   filterFile: "File",
   filterIntake: "Intake",

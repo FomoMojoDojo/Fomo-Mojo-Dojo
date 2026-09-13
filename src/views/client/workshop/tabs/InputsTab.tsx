@@ -30,6 +30,7 @@ import { mapInputToAreaKey, inferAreaHintsFromFileName } from "@/lib/areaMapping
 import FileUploadDialog from "@/components/FileUploadDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { runDifyAnalyzeFile, acceptFileProposal, rejectFileProposal, dismissFileProposal, unlinkNeedsFromFilePath } from "@/hooks/useInputActions";
+import { FileTooLargeError, fileTooLargeMessage, type FileTooLargeRefusal } from "@/lib/fileTooLarge";
 import { useFullRefresh, FR_BUTTON_IDLE, FR_EMPTY_HEADER, FR_EMPTY_BODY_1, FR_EMPTY_BODY_2 } from "@/hooks/useFullRefresh";
 
 import { Eyebrow } from "@/components/design-system/Eyebrow";
@@ -543,6 +544,8 @@ export default function InputsTab({
   const [proposalPanelId,     setProposalPanelId]     = useState<string | null>(null);
   const [difyAnalyzingFileId, setDifyAnalyzingFileId] = useState<string | null>(null);
   const [difyFailedIds,       setDifyFailedIds]       = useState<ReadonlySet<string>>(new Set());
+  // Size refusal (413 file_too_large, 2026-09-12): the signed reason renders where the failed run would.
+  const [difyRefusedById,     setDifyRefusedById]     = useState<ReadonlyMap<string, FileTooLargeRefusal>>(new Map());
   const [openingFileId,       setOpeningFileId]       = useState<string | null>(null);
   const [syncingProposalId,   setSyncingProposalId]   = useState<string | null>(null);
   const lastProposalSyncAtRef = useRef<Record<string, number>>({});
@@ -552,6 +555,7 @@ export default function InputsTab({
     if (!row.filePath || !companyId) return;
     setDifyAnalyzingFileId(row.id);
     setDifyFailedIds((prev) => { const next = new Set(prev); next.delete(row.id); return next; });
+    setDifyRefusedById((prev) => { if (!prev.has(row.id)) return prev; const next = new Map(prev); next.delete(row.id); return next; });
     try {
       await runDifyAnalyzeFile({
         fileId:     row.id,
@@ -563,8 +567,9 @@ export default function InputsTab({
       });
       await refetchProposals();
       setProposalPanelId(row.id);
-    } catch {
-      setDifyFailedIds((prev) => new Set([...prev, row.id]));
+    } catch (err) {
+      if (err instanceof FileTooLargeError) setDifyRefusedById((prev) => new Map(prev).set(row.id, err.refusal));
+      else setDifyFailedIds((prev) => new Set([...prev, row.id]));
     } finally {
       setDifyAnalyzingFileId(null);
     }
@@ -1448,6 +1453,9 @@ export default function InputsTab({
                               }
                               if (difyAnalyzingFileId === row.id) {
                                 return <span style={{ ...MONO, fontSize: 9, color: "#c97700" }}>Analyzing…</span>;
+                              }
+                              if (difyRefusedById.has(row.id)) {
+                                return <span style={{ ...MONO, fontSize: 9, color: "#c0392b" }}>{fileTooLargeMessage(difyRefusedById.get(row.id)!)}</span>;
                               }
                               if (difyFailedIds.has(row.id)) {
                                 return (

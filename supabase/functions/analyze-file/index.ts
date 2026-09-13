@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { encode as encodeBase64 } from "https://deno.land/std@0.168.0/encoding/base64.ts";
+import { encodeBlobBase64, parserRequestBody } from "../_shared/base64.ts";
+import { fileTooLargeBody, isOverCap, MAX_ANALYSIS_FILE_BYTES, storageObjectSize } from "../_shared/fileSizeGuard.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -66,22 +67,20 @@ function extensionFromName(name: string) {
   return parts.length > 1 ? parts[parts.length - 1] : "";
 }
 
+// Flat path (2026-09-12): base64 from the Blob's stream into one byte buffer, sent as the body as-is
+// — no whole-file ArrayBuffer copy, no rope string, no JSON.stringify copy. See _shared/base64.ts.
 async function extractTextViaLocalParser(params: {
   parserUrl: string;
   fileName: string;
   fileType: string;
-  bytes: Uint8Array;
+  blob: Blob;
 }) {
-  const { parserUrl, fileName, fileType, bytes } = params;
-  const base64 = encodeBase64(bytes);
+  const { parserUrl, fileName, fileType, blob } = params;
+  const base64 = await encodeBlobBase64(blob);
   const response = await fetch(parserUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file_name: fileName,
-      file_type: fileType,
-      content_base64: base64,
-    }),
+    body: parserRequestBody(fileName, fileType, base64),
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -263,6 +262,16 @@ serve(async (req) => {
     );
 
     if (!effectiveFileContent.trim() && filePath) {
+      // Size guard (2026-09-12): refuse above the cap from storage metadata, before any download; this
+      // function writes nothing (the sidecar comes after extraction), so nothing is left half-written.
+      const objectSize = await storageObjectSize(supabase, "input-files", filePath);
+      if (isOverCap(objectSize)) {
+        console.error("analyze-file refused file_too_large:", objectSize, "cap:", MAX_ANALYSIS_FILE_BYTES);
+        return new Response(JSON.stringify(fileTooLargeBody(objectSize)), {
+          status: 413,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       try {
         const { data: downloaded, error: downloadError } = await supabase
           .storage
@@ -270,7 +279,6 @@ serve(async (req) => {
           .download(filePath);
         if (downloadError) throw downloadError;
 
-        const bytes = new Uint8Array(await downloaded.arrayBuffer());
         const ext = extensionFromName(fileName);
         const normalizedType = String(fileType || downloaded.type || "").toLowerCase();
         if (
@@ -286,10 +294,14 @@ serve(async (req) => {
             parserUrl: LOCAL_PARSER_URL,
             fileName,
             fileType: normalizedType,
-            bytes,
+            blob: downloaded,
           });
           effectiveFileContent = parsed.text;
           effectiveExtractionSource = parsed.source;
+        }
+        {
+          const m = Deno.memoryUsage();
+          console.log("[analyze-file] memory after extraction (MB): file", (downloaded.size / 1048576).toFixed(1), "heapUsed", (m.heapUsed / 1048576).toFixed(1), "external", (m.external / 1048576).toFixed(1), "rss", (m.rss / 1048576).toFixed(1), "text length", effectiveFileContent.length);
         }
 
         if (effectiveFileContent.trim()) {

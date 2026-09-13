@@ -9,6 +9,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { mapInputToAreaKey } from '@/lib/areaMapping';
 import { makeAreaSupportTag } from '@/lib/fileTags';
+import { FILE_TOO_LARGE_CAP_BYTES, fileTooLargeMessage, refusalFromInvoke, type FileTooLargeRefusal } from '@/lib/fileTooLarge';
 
 interface Props {
   open: boolean;
@@ -31,6 +32,8 @@ type AnalysisResult = {
   extractionSource: string;
   parserEngine: string;
   reasoning: string;
+  /** analyze-file refused the file by size (413 file_too_large) — the signed reason replaces the parser line. */
+  refusal?: FileTooLargeRefusal;
 };
 
 type AssignmentSource = 'ai' | 'context' | 'filename' | 'fallback' | 'none';
@@ -46,6 +49,7 @@ type UploadSummary = {
   additionalSignals?: string[];
   extractionSource?: string;
   parserEngine?: string;
+  refusal?: FileTooLargeRefusal;
   reasoning: string;
   source: AssignmentSource;
   error?: string;
@@ -62,7 +66,7 @@ type UploadProgress = {
   etaMs: number | null;
 };
 
-const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
+const MAX_FILE_SIZE_BYTES = FILE_TOO_LARGE_CAP_BYTES; // 25 MiB — the same cap the extraction functions enforce
 const ANALYZE_TIMEOUT_MS = 20_000;
 const SUPPORTED_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
@@ -292,7 +296,14 @@ async function analyzeFileForRouting(
       },
     });
 
-    if (error || data?.error) return null;
+    if (error || data?.error) {
+      const refusal = await refusalFromInvoke(data, error);
+      if (!refusal) return null;
+      return {
+        suggestedInputId: null, suggestedTags: [], crossAreaInputIds: [], odiNeedCandidates: [], otherAreaSignals: [],
+        extractionSource: 'refused', parserEngine: 'local_ollama', reasoning: fileTooLargeMessage(refusal), refusal,
+      };
+    }
 
     const suggestedInputId =
       typeof data?.suggested_input_id === 'string' && data.suggested_input_id.trim().length > 0
@@ -469,6 +480,8 @@ export default function FileUploadDialog({
     const accepted: File[] = [];
     let invalidType = 0;
     let invalidSize = 0;
+    // Over-cap files are refused here with the same signed reason the extraction functions give (2026-09-12).
+    const refusedSummaries: UploadSummary[] = [];
 
     for (const nextFile of nextFiles) {
       const ext = getFileExtension(nextFile.name);
@@ -478,6 +491,8 @@ export default function FileUploadDialog({
       }
       if (nextFile.size > MAX_FILE_SIZE_BYTES) {
         invalidSize += 1;
+        const refusal = { size: nextFile.size, cap: MAX_FILE_SIZE_BYTES };
+        refusedSummaries.push({ fileName: nextFile.name, status: 'failed', tags: [], reasoning: fileTooLargeMessage(refusal), source: 'none', error: fileTooLargeMessage(refusal), refusal });
         continue;
       }
       accepted.push(nextFile);
@@ -485,7 +500,10 @@ export default function FileUploadDialog({
 
     if (invalidType > 0) toast.error(`${invalidType} file${invalidType === 1 ? '' : 's'} had unsupported type`);
     if (invalidSize > 0) toast.error(`${invalidSize} file${invalidSize === 1 ? '' : 's'} exceeded 25MB`);
-    if (accepted.length === 0) return;
+    if (accepted.length === 0) {
+      if (refusedSummaries.length > 0) setUploadSummaries(refusedSummaries);
+      return;
+    }
 
     setFiles((current) => {
       const seen = new Set(current.map((file) => fileFingerprint(file)));
@@ -499,7 +517,7 @@ export default function FileUploadDialog({
       return deduped;
     });
 
-    setUploadSummaries([]);
+    setUploadSummaries(refusedSummaries);
     if (selectedProvenanceTags.length === 0) {
       setSelectedProvenanceTags(['Company']);
     }
@@ -678,6 +696,7 @@ export default function FileUploadDialog({
           additionalSignals: (analysis?.otherAreaSignals ?? []).slice(0, 3),
           extractionSource: analysis?.extractionSource || undefined,
           parserEngine: analysis?.parserEngine || 'local_ollama',
+          refusal: analysis?.refusal,
           reasoning: analysis?.reasoning ?? 'Uploaded with automatic mapping.',
           source: finalAssigned.source,
         });
@@ -1030,7 +1049,11 @@ export default function FileUploadDialog({
                             {summary.additionalSignals[0]}
                           </p>
                         ) : null}
-                        {summary.parserEngine ? (
+                        {summary.refusal ? (
+                          <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#915e46' }} data-testid="upload-analysis-refused">
+                            {fileTooLargeMessage(summary.refusal)}
+                          </p>
+                        ) : summary.parserEngine ? (
                           <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#6e847f' }}>
                             Parser: {summary.parserEngine}
                             {summary.extractionSource && summary.extractionSource !== 'unsupported'
@@ -1040,7 +1063,7 @@ export default function FileUploadDialog({
                         ) : null}
                       </>
                     ) : (
-                      <p className="mt-0.5 font-sans text-[12px]" style={{ color: '#915e46' }}>
+                      <p className="mt-0.5 font-sans text-[12px]" style={{ color: '#915e46' }} data-testid={summary.refusal ? 'upload-file-refused' : undefined}>
                         Failed: {summary.error ?? 'Upload failed'}
                       </p>
                     )}

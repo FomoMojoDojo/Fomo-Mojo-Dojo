@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { encode as encodeBase64 } from "https://deno.land/std@0.168.0/encoding/base64.ts";
+import { encodeBlobBase64, parserRequestBody } from "../_shared/base64.ts";
+import { fileTooLargeBody, isOverCap, MAX_ANALYSIS_FILE_BYTES, storageObjectSize } from "../_shared/fileSizeGuard.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
 import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
@@ -101,22 +102,21 @@ function isLocalUrl(rawUrl: string) {
   }
 }
 
+// Flat path (2026-09-12): the file is base64-encoded from the Blob's stream into one byte buffer and
+// sent as the request body as-is — no whole-file ArrayBuffer copy, no rope string, no JSON.stringify
+// copy of the payload. See _shared/base64.ts for the measurement that forced this.
 async function extractTextViaLocalParser(params: {
   parserUrl: string;
   fileName: string;
   fileType: string;
-  bytes: Uint8Array;
+  blob: Blob;
 }) {
-  const { parserUrl, fileName, fileType, bytes } = params;
-  const base64 = encodeBase64(bytes);
+  const { parserUrl, fileName, fileType, blob } = params;
+  const base64 = await encodeBlobBase64(blob);
   const response = await fetch(parserUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file_name: fileName,
-      file_type: fileType,
-      content_base64: base64,
-    }),
+    body: parserRequestBody(fileName, fileType, base64),
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -1032,6 +1032,17 @@ serve(async (req) => {
 
     console.log("[dify-analyze-file] signed URL created (length):", signedData.signedUrl.length);
 
+    // Size guard (2026-09-12): refuse above the cap from storage metadata, before any download and
+    // before any status is written (the file_proposals insert is further down).
+    const objectSize = await storageObjectSize(supabase, "input-files", filePath);
+    if (isOverCap(objectSize)) {
+      console.log("[dify-analyze-file] refused file_too_large:", objectSize, "cap:", MAX_ANALYSIS_FILE_BYTES);
+      return new Response(
+        JSON.stringify(fileTooLargeBody(objectSize)),
+        { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     const { data: downloaded, error: downloadError } = await supabase
       .storage
       .from("input-files")
@@ -1047,7 +1058,6 @@ serve(async (req) => {
 
     let fileText = "";
     try {
-      const bytes = new Uint8Array(await downloaded.arrayBuffer());
       const ext = extensionFromName(fileName ?? "");
       const normalizedType = String(fileType || downloaded.type || "").toLowerCase();
       if (
@@ -1056,13 +1066,13 @@ serve(async (req) => {
         normalizedType.includes("csv") ||
         ["txt", "csv", "md", "json", "xml", "yaml", "yml", "toml"].includes(ext)
       ) {
-        fileText = new TextDecoder().decode(bytes);
+        fileText = await downloaded.text();
       } else {
         const parsed = await extractTextViaLocalParser({
           parserUrl: LOCAL_PARSER_URL,
           fileName: fileName ?? "",
           fileType: normalizedType,
-          bytes,
+          blob: downloaded,
         });
         fileText = parsed.text;
       }
@@ -1072,6 +1082,10 @@ serve(async (req) => {
     }
 
     console.log("[dify-analyze-file] extracted file_text length:", fileText.length);
+    {
+      const m = Deno.memoryUsage();
+      console.log("[dify-analyze-file] memory after extraction (MB): file", (downloaded.size / 1048576).toFixed(1), "heapUsed", (m.heapUsed / 1048576).toFixed(1), "external", (m.external / 1048576).toFixed(1), "rss", (m.rss / 1048576).toFixed(1));
+    }
 
     // Build request body matching the Dify Start node variables:
     // company_id (required), trigger_type, journey_key (required), file_url, file_name, file_text, source_type, enabled_frameworks

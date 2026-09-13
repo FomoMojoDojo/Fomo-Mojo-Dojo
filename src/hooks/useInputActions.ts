@@ -6,6 +6,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { FileProposalRow } from "@/hooks/useFileProposals";
 import { applyAreaTags, FOUNDATION_AREA_TO_AREA_KEY, type FoundationArea } from "@/views/client/workshop/inputsShared";
+import { FileTooLargeError, refusalFromInvoke } from "@/lib/fileTooLarge";
 
 export type DifyAnalyzeInput = {
   fileId: string;
@@ -17,7 +18,11 @@ export type DifyAnalyzeInput = {
   sourceType: string;
 };
 
-/** InputsTab.handleDifyAnalyze's invoke, verbatim: dify-analyze-file with the same body; throws on failure. */
+/**
+ * InputsTab.handleDifyAnalyze's invoke, verbatim: dify-analyze-file with the same body; throws on failure.
+ * A size refusal (413 {error:"file_too_large", size, cap}) throws FileTooLargeError so the surfaces can
+ * render the signed reason; every other failure throws as before.
+ */
 export async function runDifyAnalyzeFile(input: DifyAnalyzeInput): Promise<void> {
   const { data, error } = await supabase.functions.invoke("dify-analyze-file", {
     body: {
@@ -30,6 +35,8 @@ export async function runDifyAnalyzeFile(input: DifyAnalyzeInput): Promise<void>
     },
   });
   if (error || (data as Record<string, unknown> | null)?.error) {
+    const refusal = await refusalFromInvoke(data, error);
+    if (refusal) throw new FileTooLargeError(refusal);
     throw new Error("Dify analysis failed");
   }
 }

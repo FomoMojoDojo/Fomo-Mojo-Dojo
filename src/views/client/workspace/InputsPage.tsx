@@ -12,7 +12,9 @@
 // tab (evidence.manage; governance.proposal.apply on Accept), and every write goes through the SAME hook /
 // lifted function the tab uses (no new path — Option B holds):
 //   Upload file      FileUploadDialog (src/components/FileUploadDialog.tsx) — the tab's dialog, as-is
-//   Run analysis     runDifyAnalyzeFile (lifted from InputsTab.handleDifyAnalyze) — dify-analyze-file invoke
+//   Run analysis     runDifyAnalyzeFile (lifted from InputsTab.handleDifyAnalyze) — dify-analyze-file invoke;
+//                    a failed run renders the tab's "Analysis failed — retry →" (failedIds, parity with the
+//                    tab's difyFailedIds, 2026-09-12); a size refusal renders the signed reason instead
 //   Review proposal  ProposalReviewPanel (moved from InputsTab) with acceptFileProposal / rejectFileProposal /
 //                    dismissFileProposal (lifted) — file_proposals + input_files tag writes
 //   filters          type (the tab's row.type derivation: Intake tag → intake, else file) and foundation
@@ -25,6 +27,7 @@ import { useCompanyFiles, type CompanyFileRow } from "@/hooks/useCompanyFiles";
 import { useFileProposals, type FileProposalRow } from "@/hooks/useFileProposals";
 import { getFileSignedUrl, useArchiveInputFile, useArchivedInputFiles, useRestoreInputFile } from "@/hooks/useInputs";
 import { acceptFileProposal, dismissFileProposal, rejectFileProposal, runDifyAnalyzeFile, unlinkNeedsFromFilePath } from "@/hooks/useInputActions";
+import { FileTooLargeError, fileTooLargeMessage, type FileTooLargeRefusal } from "@/lib/fileTooLarge";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useRoutes } from "@/hooks/useRoutes";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
@@ -84,6 +87,10 @@ export default function InputsPage() {
   const [typeFilter, setTypeFilter] = useState<"all" | "file" | "intake">("all");
   const [foundationFilter, setFoundationFilter] = useState<"all" | "yes" | "no">("all");
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
+  /** The tab's difyFailedIds: a run that threw; cleared on the next attempt for that file. */
+  const [failedIds, setFailedIds] = useState<ReadonlySet<string>>(new Set());
+  /** A size refusal for a file (413 file_too_large) — the signed reason, not a retry. */
+  const [refusedById, setRefusedById] = useState<ReadonlyMap<string, FileTooLargeRefusal>>(new Map());
   const [panelId, setPanelId] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -109,11 +116,17 @@ export default function InputsPage() {
   const analyze = async (f: CompanyFileRow) => {
     if (!gated || !companyId) return;
     setAnalyzingId(f.id);
+    setFailedIds((prev) => { const next = new Set(prev); next.delete(f.id); return next; });
+    setRefusedById((prev) => { if (!prev.has(f.id)) return prev; const next = new Map(prev); next.delete(f.id); return next; });
     try {
       await runDifyAnalyzeFile({ fileId: f.id, filePath: f.file_path, fileName: f.file_name, fileType: f.file_type ?? "", companyId, sourceType: typeOf(f) === "file" ? "uploaded_file" : typeOf(f) });
       await proposals.refetch();
       setPanelId(f.id);
-    } catch { /* the tab's fail-closed: no proposal, the control stays */ } finally { setAnalyzingId(null); }
+    } catch (err) {
+      // the tab's fail-closed: no proposal is written; the failure is shown in the analysis cell
+      if (err instanceof FileTooLargeError) setRefusedById((prev) => new Map(prev).set(f.id, err.refusal));
+      else setFailedIds((prev) => new Set([...prev, f.id]));
+    } finally { setAnalyzingId(null); }
   };
   const archiveFile = async (f: CompanyFileRow, mode: "file-only" | "file-and-unlink") => {
     if (!gated) return;
@@ -210,9 +223,17 @@ export default function InputsPage() {
                           <td className="fr-ws-table-analysis">
                             {!proposal ? (
                               gated ? (
-                                <button type="button" className="fr-ws-control fr-mono" disabled={analyzingId === f.id} onClick={() => { void analyze(f); }} {...{ [OPERATOR_MARK.attr]: "run-analysis" }} data-testid="inputs-run-analysis">
-                                  {analyzingId === f.id ? WORKSPACE_STRINGS.analyzing : WORKSPACE_STRINGS.runAnalysis}
-                                </button>
+                                refusedById.has(f.id) && analyzingId !== f.id ? (
+                                  <span className="fr-ws-analysis-refused fr-mono" data-testid="inputs-analysis-refused">{fileTooLargeMessage(refusedById.get(f.id)!)}</span>
+                                ) : failedIds.has(f.id) && analyzingId !== f.id ? (
+                                  <button type="button" className="fr-ws-control fr-mono" data-fr-failed="" onClick={() => { void analyze(f); }} {...{ [OPERATOR_MARK.attr]: "run-analysis" }} data-testid="inputs-analysis-retry">
+                                    {WORKSPACE_STRINGS.analysisFailedRetry}
+                                  </button>
+                                ) : (
+                                  <button type="button" className="fr-ws-control fr-mono" disabled={analyzingId === f.id} onClick={() => { void analyze(f); }} {...{ [OPERATOR_MARK.attr]: "run-analysis" }} data-testid="inputs-run-analysis">
+                                    {analyzingId === f.id ? WORKSPACE_STRINGS.analyzing : WORKSPACE_STRINGS.runAnalysis}
+                                  </button>
+                                )
                               ) : <Chip tone="neutral">{WORKSPACE_STRINGS.runAnalysis}</Chip>
                             ) : reviewable ? (
                               gated ? (
