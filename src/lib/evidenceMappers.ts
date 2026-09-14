@@ -822,6 +822,8 @@ export function mapDifyFileOutputToSignals(args: {
   rawPayload?: unknown;
   /** The document's origin (doc_voice_verdicts). Required for uploaded_file in practice; absent ⇒ uncertain. */
   origin?: UploadOrigin | null;
+  /** Re-mint (signed 2026-09-13): 2 marks signals minted by the re-mint tool under the authorship rule. */
+  mintingVersion?: number | null;
 }): SignalDraft[] {
   const normalizedSourceType = normalizeStatement(args.sourceType || "file_proposal").toLowerCase() || "file_proposal";
   const sourceTitle = normalizeStatement(args.sourceTitle || "File proposal") || "File proposal";
@@ -840,7 +842,7 @@ export function mapDifyFileOutputToSignals(args: {
   // satisfy Gate 1 ("supports"). mojo_analysis and unknown source types stay "partial".
   // An outside-band upload (third_party / uncertain) is not the organization's confirmation: partial.
   const orgFramingFit: "strong" | "partial" = UPLOAD_ORIGIN_SOURCE_TYPES.has(normalizedSourceType) && signalBand === "organization" ? "strong" : "partial";
-  const originPayload = origin ? { upload_origin: origin } : {};
+  const originPayload: Record<string, unknown> = origin ? { upload_origin: origin, ...(args.mintingVersion ? { minting_version: args.mintingVersion } : {}) } : {};
 
   const summary = normalizeStatement(args.summary);
   if (summary) {

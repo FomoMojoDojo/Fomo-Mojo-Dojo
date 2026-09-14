@@ -35,6 +35,13 @@ export type SignalLandscape = {
     customer: BandStats;
   };
   publicBreakdown: PublicBreakdown;
+  /**
+   * TEAM / CUSTOMER read (operator ruling 2026-09-13): the band counts describe the client's own people
+   * and customers. Rows retired by supersession and rows whose voice is OUR analysis
+   * (voice_class='analysis') are excluded from every band; the exclusions are tallied here so the
+   * count is honest without inventing a surface for them.
+   */
+  excluded: { superseded: number; analysisVoice: number };
   dominantBand: SignalBand | null;
   missingBand: SignalBand | null;
   narrative: string;
@@ -44,6 +51,8 @@ type SignalRow = {
   signal_band: string;
   framing_fit: string;
   directness: string;
+  /** A superseded signal is history (a re-mint or a redesign retired it) — never counted. */
+  superseded_at?: string | null;
   voice_class?: string | null;
   syndicated_from_client?: boolean | null;
   source_url?: string | null;
@@ -123,12 +132,17 @@ export function computeSignalLandscape(signals: SignalRow[], companyHost = ""): 
   };
 
   const seenIdentities = new Set<string>();
+  const excluded = { superseded: 0, analysisVoice: 0 };
 
   for (const s of signals) {
     const band = s.signal_band as SignalBand;
     if (!(band in byBand)) continue;
+    // Superseded = history (re-mint, redesign retirement): never part of the evidence base described here.
+    if (s.superseded_at) { excluded.superseded++; continue; }
 
     if (band !== "outside") {
+      // TEAM means the client's own people; our analysis (voice_class='analysis') is not their voice.
+      if (String(s.voice_class || "").trim() === "analysis") { excluded.analysisVoice++; continue; }
       byBand[band].count++;
       if (s.framing_fit === "strong") byBand[band].strong++;
       if (s.directness === "weak") byBand[band].gaps++;
@@ -202,7 +216,7 @@ export function computeSignalLandscape(signals: SignalRow[], companyHost = ""): 
     narrative = `${total} signal${total === 1 ? "" : "s"} across public, organizational, and customer sources. The picture is forming from multiple angles.`;
   }
 
-  return { total, byBand, publicBreakdown: breakdown, dominantBand, missingBand, narrative };
+  return { total, byBand, publicBreakdown: breakdown, excluded, dominantBand, missingBand, narrative };
 }
 
 export function useSignalLandscape(companyId: string | undefined) {
@@ -226,7 +240,7 @@ export function useSignalLandscape(companyId: string | undefined) {
         supabase.from("companies").select("website").eq("id", companyId).maybeSingle(),
         supabase
           .from("signals")
-          .select("signal_band, framing_fit, directness, voice_class, syndicated_from_client, source_url, claim_text, evidence_excerpt, raw_payload")
+          .select("signal_band, framing_fit, directness, voice_class, syndicated_from_client, source_url, claim_text, evidence_excerpt, raw_payload, superseded_at")
           .eq("company_id", companyId)
           .eq("relevance_state", "active")
           .limit(2000),

@@ -18,6 +18,8 @@
 import { loadContributingDocs, type ContributingDoc } from "./uploadCorpus.ts";
 
 export const CLASSIFIER_MODEL = "qwen2.5:14b-instruct";
+/** Version of the classifier's judgment (doc_voice_verdicts.classifier_version): 2 = authorship + subject (a779766). */
+export const CLASSIFIER_VERSION = 2;
 const CLASSIFY_TIMEOUT_MS = 120_000;
 const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.docker.internal"]);
 
@@ -160,6 +162,8 @@ export type DocVoiceStatus = {
   subject_basis: string | null;
   authorship_override: Authorship | null;
   subject_override: Subject | null;
+  classifier_version: number | null;
+  override_version: number | null;
 };
 
 /** The document's RESOLVED origin for minting: operator override first, then the model, else uncertain. */
@@ -187,32 +191,44 @@ async function readCurrentVerdicts(
   const fileIds = docs.map((d) => d.input_file_id);
   const { data, error } = await supabase
     .from("doc_voice_verdicts")
-    .select("input_file_id, content_sha, verdict, basis, operator_override, authorship, subject, subject_basis")
+    .select("input_file_id, content_sha, verdict, basis, operator_override, authorship, subject, subject_basis, classifier_version, override_version")
     .eq("company_id", companyId)
     .in("input_file_id", fileIds);
   if (error) throw new Error(`doc_voice_verdicts read failed: ${error.message}`);
   const shaByFile = new Map(docs.map((d) => [d.input_file_id, d.content_sha]));
-  for (const row of (data ?? []) as Array<{ input_file_id: string; content_sha: string; verdict: string; basis: string; operator_override: string | null; authorship: string | null; subject: string | null; subject_basis: string | null }>) {
+  // VERSIONED (signed 2026-09-13): for an exact (file, sha) the HIGHEST classifier_version model row and the
+  // HIGHEST override_version override row are current; older rows are history and are not read here.
+  const seenModel = new Map<string, number>();
+  const seenOverride = new Map<string, number>();
+  for (const row of (data ?? []) as Array<{ input_file_id: string; content_sha: string; verdict: string; basis: string; operator_override: string | null; authorship: string | null; subject: string | null; subject_basis: string | null; classifier_version: number | null; override_version: number | null }>) {
     // EXACT sha match only — rows for an older content of the same file are ignored.
     if (shaByFile.get(row.input_file_id) !== row.content_sha) continue;
     const key = `${row.input_file_id}|${row.content_sha}`;
-    const cur = map.get(key) ?? { verdict: null, basis: null, override: null, authorship: null, subject: null, subject_basis: null, authorship_override: null, subject_override: null };
+    const cur = map.get(key) ?? { verdict: null, basis: null, override: null, authorship: null, subject: null, subject_basis: null, authorship_override: null, subject_override: null, classifier_version: null, override_version: null };
     if (row.operator_override === "client_voice" || row.operator_override === "external") {
+      const v = row.override_version ?? 1;
+      if ((seenOverride.get(key) ?? 0) > v) continue;
+      seenOverride.set(key, v);
       cur.override = row.operator_override;
       cur.authorship_override = (row.authorship as Authorship | null) ?? null;
       cur.subject_override = (row.subject as Subject | null) ?? null;
+      cur.override_version = v;
     } else {
+      const v = row.classifier_version ?? 1;
+      if ((seenModel.get(key) ?? 0) > v) continue;
+      seenModel.set(key, v);
       cur.verdict = row.verdict as VoiceVerdict;
       cur.basis = row.basis;
       cur.authorship = (row.authorship as Authorship | null) ?? null;
       cur.subject = (row.subject as Subject | null) ?? null;
       cur.subject_basis = row.subject_basis ?? null;
+      cur.classifier_version = v;
     }
     map.set(key, cur);
   }
   return map;
 }
-type CurrentVerdict = { verdict: VoiceVerdict | null; basis: string | null; override: "client_voice" | "external" | null; authorship: Authorship | null; subject: Subject | null; subject_basis: string | null; authorship_override: Authorship | null; subject_override: Subject | null };
+type CurrentVerdict = { verdict: VoiceVerdict | null; basis: string | null; override: "client_voice" | "external" | null; authorship: Authorship | null; subject: Subject | null; subject_basis: string | null; authorship_override: Authorship | null; subject_override: Subject | null; classifier_version: number | null; override_version: number | null };
 
 // plan:true — list each contributing doc's current status. ZERO model calls, ZERO
 // writes. This is the operator's pre-run manifest.
@@ -235,6 +251,7 @@ export async function planUploadVoice(
         status: cur?.verdict ? "classified" : "unclassified",
         authorship: cur?.authorship ?? null, subject: cur?.subject ?? null, subject_basis: cur?.subject_basis ?? null,
         authorship_override: cur?.authorship_override ?? null, subject_override: cur?.subject_override ?? null,
+        classifier_version: cur?.classifier_version ?? null, override_version: cur?.override_version ?? null,
       };
     }),
   };
@@ -245,7 +262,7 @@ export async function planUploadVoice(
 export async function runUploadVoiceClassification(
   supabase: { from: (t: string) => any } & { storage: any },
   companyId: string,
-  opts: { ollamaUrl: string; model?: string; write?: boolean; inputFileId?: string | null; force?: boolean },
+  opts: { ollamaUrl: string; model?: string; write?: boolean; inputFileId?: string | null; force?: boolean; reclassifyOutdated?: boolean },
 ): Promise<{ docs: DocVoiceStatus[]; totals: { contributing: number; classified_now: number; skipped_existing: number; external: number; client_voice: number; uncertain: number } }> {
   const write = opts.write !== false;
   const allDocs = await loadContributingDocs(supabase as any, companyId);
@@ -265,12 +282,17 @@ export async function runUploadVoiceClassification(
   for (const d of docs) {
     const key = `${d.input_file_id}|${d.content_sha}`;
     const cur = existing.get(key);
-    if (cur?.verdict && !forceReclassify) {
+    // A current model row AT this classifier version is final; a lower-version row is history and the
+    // document is re-judged as a new version-2 row beside it (opts.reclassifyOutdated) — never rewritten.
+    const currentAtVersion = !!cur?.verdict && (cur.classifier_version ?? 1) >= CLASSIFIER_VERSION;
+    const skip = !!cur?.verdict && !forceReclassify && (currentAtVersion || !opts.reclassifyOutdated);
+    if (skip) {
       totals.skipped_existing++;
       out.push({
         input_file_id: d.input_file_id, file_name: d.file_name, content_sha: d.content_sha,
-        verdict: cur.verdict, basis: cur.basis, operator_override: cur.override, status: "classified",
-        authorship: cur.authorship, subject: cur.subject, subject_basis: cur.subject_basis, authorship_override: cur.authorship_override, subject_override: cur.subject_override,
+        verdict: cur!.verdict, basis: cur!.basis, operator_override: cur!.override, status: "classified",
+        authorship: cur!.authorship, subject: cur!.subject, subject_basis: cur!.subject_basis, authorship_override: cur!.authorship_override, subject_override: cur!.subject_override,
+        classifier_version: cur!.classifier_version, override_version: cur!.override_version,
       });
       continue;
     }
@@ -289,6 +311,7 @@ export async function runUploadVoiceClassification(
         authorship: res.authorship,
         subject: res.subject,
         subject_basis: res.subject_basis,
+        classifier_version: CLASSIFIER_VERSION,
       });
       if (error && !String(error.message ?? "").toLowerCase().includes("duplicate")) {
         throw new Error(`doc_voice_verdicts insert failed (${d.file_name}): ${error.message}`);
@@ -298,6 +321,7 @@ export async function runUploadVoiceClassification(
       input_file_id: d.input_file_id, file_name: d.file_name, content_sha: d.content_sha,
       verdict: res.verdict, basis: res.basis, operator_override: cur?.override ?? null, status: "classified",
       authorship: res.authorship, subject: res.subject, subject_basis: res.subject_basis, authorship_override: cur?.authorship_override ?? null, subject_override: cur?.subject_override ?? null,
+      classifier_version: CLASSIFIER_VERSION, override_version: cur?.override_version ?? null,
     });
   }
   return { docs: out, totals };

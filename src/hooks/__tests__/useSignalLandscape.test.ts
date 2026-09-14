@@ -198,3 +198,25 @@ describe("computeSignalLandscape — analysis voice excluded", () => {
   it("six-field sum still equals rawOutsideTotal", () =>
     expect(b.independent + b.ownVoice + b.competitorsMarket + b.syndicatedExcluded + b.duplicatesMerged + b.analysisExcluded).toBe(b.rawOutsideTotal));
 });
+
+// ── TEAM read (operator ruling 2026-09-13): superseded rows and our analysis are not the client's people ──
+
+describe("computeSignalLandscape — superseded and analysis-voice rows are excluded from every band", () => {
+  const signals = [
+    makeSignal("organization", "strong", "inferred"),                                   // the client's own material: counts
+    makeSignal("organization", "strong", "inferred", { superseded_at: "2026-09-14T01:54:52Z" }), // re-mint retired it: history
+    makeSignal("organization", "strong", "inferred", { voice_class: "analysis" }),      // our analysis (a 'us' document): not TEAM
+    makeSignal("customer", "strong", "direct", { superseded_at: "2026-09-01T00:00:00Z" }),
+    makeSignal("outside", "partial", "direct", { superseded_at: "2026-09-01T00:00:00Z" }),
+    makeSignal("outside", "partial", "direct"),
+  ];
+  const result = computeSignalLandscape(signals);
+  it("TEAM counts only the live client row", () => expect(result.byBand.organization.count).toBe(1));
+  it("customer and outside drop their superseded rows", () => {
+    expect(result.byBand.customer.count).toBe(0);
+    expect(result.byBand.outside.count).toBe(1);
+    expect(result.publicBreakdown.rawOutsideTotal).toBe(1);
+  });
+  it("the exclusions are tallied, not hidden", () => expect(result.excluded).toEqual({ superseded: 3, analysisVoice: 1 }));
+  it("total reflects the live, non-analysis base", () => expect(result.total).toBe(2));
+});

@@ -39,9 +39,9 @@ type SupabaseClient = ReturnType<typeof createClient>;
 // Keyed on (companyId, normalizedStatement) → same signals produce the same UUID
 // across rebuilds, so claim rows persist in-place (no cascade-delete churn).
 // Uses Web Crypto API (available in Deno without imports).
-async function deterministicSignalClaimId(companyId: string, statement: string): Promise<string> {
+async function deterministicSignalClaimId(companyId: string, statement: string, segment = "signal_derived"): Promise<string> {
   const NAMESPACE = "signal-derived-claims-2026-06";
-  const input = `${NAMESPACE}:${companyId}:signal_derived:${statement.trim().toLowerCase()}`;
+  const input = `${NAMESPACE}:${companyId}:${segment}:${statement.trim().toLowerCase()}`;
   const hashBuffer = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(input));
   const hash = new Uint8Array(hashBuffer);
   hash[6] = (hash[6] & 0x0f) | 0x50; // version 5
@@ -205,8 +205,20 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   const candidates = mapSignalsToClaimCandidates(companyId, signals as Array<SignalDraft & { id?: string }>, anchors, companyHost);
 
   // Compute deterministic stable IDs for every candidate.
+  // RE-MINT NAMESPACE (signed 2026-09-13, the FR-D1 coexistence rule): a candidate backed by a signal the
+  // re-mint tool minted (raw_payload.minting_version = 2) takes the 'signal_derived:remint2' segment, so it
+  // can never collide with — and silently inherit the birth provenance of — a claim of identical text
+  // minted under the superseded rule. That older claim is struck and kept as history.
+  const mintingVersionOf = (sig: unknown): number | null => {
+    const rp = (sig as { raw_payload?: unknown } | undefined)?.raw_payload;
+    const v = rp && typeof rp === "object" ? (rp as { minting_version?: unknown }).minting_version : null;
+    return typeof v === "number" ? v : null;
+  };
   const stableIds = await Promise.all(
-    candidates.map((c) => deterministicSignalClaimId(companyId, c.claim.statement)),
+    candidates.map((c) => {
+      const remint = c.sourceSignals.some((ref) => mintingVersionOf(signals[ref.signalIndex]) === 2);
+      return deterministicSignalClaimId(companyId, c.claim.statement, remint ? "signal_derived:remint2" : "signal_derived");
+    }),
   );
   const allCandidateIdSet = new Set(stableIds);
 
@@ -582,12 +594,15 @@ export async function persistSignalsAndRebuildClaims(args: {
   }
 
   if (normalizedSourceId) {
+    // HISTORY GUARD (signed 2026-09-13): a re-ingest replaces the LIVE signals of a source; rows a re-mint
+    // superseded (superseded_at set) are history and are never deleted by any ingest.
     const { error: deleteExistingError } = await supabase
       .from("signals")
       .delete()
       .eq("company_id", companyId)
       .eq("source_type", sourceType)
-      .eq("source_id", normalizedSourceId);
+      .eq("source_id", normalizedSourceId)
+      .is("superseded_at", null);
     if (deleteExistingError) {
       throw new Error(`Failed clearing existing signals: ${deleteExistingError.message}`);
     }
@@ -866,6 +881,8 @@ export async function ingestDifyProposalSignals(args: {
   rawPayload?: unknown;
   /** Import provenance (2026-09-13): the document's resolved origin — REQUIRED for an upload; absent ⇒ uncertain (never declared). */
   origin?: { authorship: "client" | "us" | "third_party" | "uncertain"; subject: "this_company" | "the_market" | "uncertain" } | null;
+  /** Re-mint tool only: stamps raw_payload.minting_version on the minted signals. */
+  mintingVersion?: number | null;
 }) {
   const signals = mapDifyFileOutputToSignals({
     companyId: args.companyId,
@@ -879,6 +896,7 @@ export async function ingestDifyProposalSignals(args: {
     questionsToVerify: args.questionsToVerify,
     rawPayload: args.rawPayload,
     origin: args.origin ?? null,
+    mintingVersion: args.mintingVersion ?? null,
   });
 
   const stats = await persistSignalsAndRebuildClaims({

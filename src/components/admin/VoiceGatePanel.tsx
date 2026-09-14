@@ -114,6 +114,15 @@ export default function VoiceGatePanel({ companyId }: { companyId: string }) {
     async (rows: Array<{ input_file_id: string; content_sha: string }>, value: Override, basis: string, reason: string, facts?: { authorship?: Authorship | null; subject?: Subject | null }) => {
       const { data: authRes } = await supabase.auth.getUser();
       const overrideBy = authRes?.user?.id ?? null;
+      // VERSIONED overrides (signed 2026-09-13): a later decision is a NEW row at the next override_version
+      // beside the earlier one — the earlier row is never edited and stays readable as history.
+      const { data: prior } = await supabase.from("doc_voice_verdicts").select("input_file_id, content_sha, override_version").eq("company_id", companyId).in("input_file_id", rows.map((r) => r.input_file_id)).not("operator_override", "is", null);
+      const nextVersion = new Map<string, number>();
+      // (the generated types predate override_version — read through unknown)
+      for (const p of ((prior ?? []) as unknown as Array<{ input_file_id: string; content_sha: string; override_version: number | null }>)) {
+        const k = `${p.input_file_id}|${p.content_sha}`;
+        nextVersion.set(k, Math.max(nextVersion.get(k) ?? 1, (p.override_version ?? 1) + 1));
+      }
       const payload = rows.map((r) => ({
         input_file_id: r.input_file_id,
         company_id: companyId,
@@ -126,14 +135,10 @@ export default function VoiceGatePanel({ companyId }: { companyId: string }) {
         // the two facts ride on the same immutable override row (NULL = "voice-only override")
         authorship: facts?.authorship ?? null,
         subject: facts?.subject ?? null,
+        override_version: nextVersion.get(`${r.input_file_id}|${r.content_sha}`) ?? 1,
       }));
       const { error } = await supabase.from("doc_voice_verdicts").insert(payload);
-      if (error) {
-        if (String(error.message ?? "").toLowerCase().includes("duplicate")) {
-          throw new Error("An override already exists for this exact document content (overrides are immutable per content — re-upload to reset).");
-        }
-        throw error;
-      }
+      if (error) throw error;
     },
     [companyId],
   );
@@ -275,7 +280,7 @@ export default function VoiceGatePanel({ companyId }: { companyId: string }) {
                       {d.subject_basis && !d.subject_override ? <span style={{ fontStyle: "italic" }}> — “{d.subject_basis}”</span> : null}
                     </div>
                   )}
-                  {!d.operator_override && (
+                  {(
                     <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6, flexWrap: "wrap" }} data-testid="voice-gate-facts-override">
                       <select value={(pick[d.input_file_id]?.authorship ?? d.authorship ?? "uncertain")} disabled={busy !== null}
                         onChange={(e) => setPick((p) => ({ ...p, [d.input_file_id]: { authorship: e.target.value as Authorship, subject: p[d.input_file_id]?.subject ?? d.subject ?? "uncertain" } }))}
@@ -287,7 +292,7 @@ export default function VoiceGatePanel({ companyId }: { companyId: string }) {
                         style={{ fontSize: 12 }} aria-label="subject">
                         {(["this_company", "the_market", "uncertain"] as Subject[]).map((sub) => <option key={sub} value={sub}>subject: {SUBJECT_WORD[sub]}</option>)}
                       </select>
-                      <button onClick={() => void overrideFacts(d)} disabled={busy !== null} style={btn(c.charcoal, false)} title="Write one immutable override row carrying authorship and subject">Override facts</button>
+                      <button onClick={() => void overrideFacts(d)} disabled={busy !== null} style={btn(c.charcoal, false)} title="Write a new immutable override row (next version) carrying authorship and subject">Override facts</button>
                     </div>
                   )}
                   {decision === "blocked" && d.status === "unclassified" && (

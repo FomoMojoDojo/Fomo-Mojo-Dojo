@@ -47,20 +47,23 @@ export async function assertCorpusVoiceClassified(
 
   const { data, error } = await supabase
     .from("doc_voice_verdicts")
-    .select("input_file_id, content_sha, verdict, operator_override")
+    .select("input_file_id, content_sha, verdict, operator_override, classifier_version, override_version")
     .eq("company_id", companyId)
     .in("input_file_id", docs.map((d) => d.input_file_id));
   if (error) throw new Error(`voice gate: doc_voice_verdicts read failed: ${error.message}`);
 
-  // Index EXACT (input_file_id, content_sha) → {modelVerdict, override}.
-  const byKey = new Map<string, { verdict: string | null; override: string | null }>();
-  for (const row of (data ?? []) as VerdictRow[]) {
+  // Index EXACT (input_file_id, content_sha) → {modelVerdict, override}; VERSIONED (signed 2026-09-13):
+  // the highest classifier_version model row and the highest override_version override row are current.
+  const byKey = new Map<string, { verdict: string | null; override: string | null; mv: number; ov: number }>();
+  for (const row of (data ?? []) as Array<VerdictRow & { classifier_version?: number | null; override_version?: number | null }>) {
     const key = `${row.input_file_id}|${row.content_sha}`;
-    const cur = byKey.get(key) ?? { verdict: null, override: null };
+    const cur = byKey.get(key) ?? { verdict: null, override: null, mv: 0, ov: 0 };
     if (row.operator_override === "client_voice" || row.operator_override === "external") {
-      cur.override = row.operator_override;
+      const v = row.override_version ?? 1;
+      if (v >= cur.ov) { cur.override = row.operator_override; cur.ov = v; }
     } else {
-      cur.verdict = row.verdict;
+      const v = row.classifier_version ?? 1;
+      if (v >= cur.mv) { cur.verdict = row.verdict; cur.mv = v; }
     }
     byKey.set(key, cur);
   }

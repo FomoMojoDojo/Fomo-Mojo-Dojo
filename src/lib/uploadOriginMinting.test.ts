@@ -8,8 +8,9 @@
 //   b. third_party × this_company ⇒ outside, market_signal, outside_voice_about_client; MAY mint a
 //                                   public_observed claim with a supports ref (outside support)
 //   c. client                     ⇒ organization, internal_data, framing strong, internal_declared (today's behaviour)
-//   d. us                         ⇒ organization, voice_class analysis, provenance ANALYTIC — never declared,
-//                                   never halves Gate 1, excluded from the First Read like every upload
+//   d. us                         ⇒ organization, voice_class analysis — signals only end to end (the ingest drops
+//                                   analysis-voice signals before candidate mapping); at the mapper level a claim
+//                                   would be ANALYTIC, never declared; never halves Gate 1; excluded from the First Read
 //   e. uncertain                  ⇒ outside, never declared
 //   f. "…Survey….pdf" from a third party ⇒ NOT customer band (the exact exposure in the inventory)
 //   g. UNDERSERVED unreachable (survey provenance only); First Read still excludes upload-derived claims
@@ -106,7 +107,10 @@ describe("c. CLIENT document: unchanged from today", () => {
 
 describe("d. 'us' document (our analysis): analytic, never the client's words", () => {
   const signals = mint({ origin: { authorship: "us", subject: "this_company" }, summary: "Edgewood's advantage is coordination through the continuum of care.", evidence: ["Coordination is the advantage."], frameworkResults: [] });
-  it("organization band with voice_class 'analysis'; claims born ANALYTIC (like mojo_analysis), not internal_declared", () => {
+  // MAPPER-LEVEL: the candidate builder would birth an analytic claim from these signals. END TO END the
+  // ingest (evidencePhase1) filters voice_class 'analysis' signals out BEFORE candidate mapping, so a 'us'
+  // document mints SIGNALS ONLY and no claim at all — proven live by scripts/guards/remint-guard.sh (c).
+  it("organization band with voice_class 'analysis'; at the mapper level any claim would be ANALYTIC, never internal_declared", () => {
     for (const s of signals) {
       expect(s.signal_band).toBe("organization");
       expect(s.voice_class).toBe("analysis");
