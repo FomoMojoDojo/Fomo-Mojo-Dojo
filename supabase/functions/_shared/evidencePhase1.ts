@@ -6,8 +6,9 @@ import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } fro
 import { liftVerbatimQuote, pickEventDate } from "../../../src/lib/verbatimQuote.ts";
 import { produceQuote, normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 import { applyUploadExcerptGuard, applyExcerptGuard } from "../../../src/lib/evidenceExcerptGuard.ts";
+import { basisSha, EXCERPT_GUARD_VERSION, retainPublicPages, sourceKeyFor, verifyAndRecord } from "./excerptVerification.ts";
 import { isSiteCrawlReceiptRow } from "../../../src/lib/siteCrawl/mint.ts";
-import { contentIdentity } from "./contentIdentity.ts";
+import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
 import { normalizeHost } from "./firstReadProvenance.ts";
 import { withRebuildLedger } from "./rebuildLedger.ts";
 import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
@@ -727,21 +728,50 @@ export async function ingestPublicBaselineSignals(args: {
   // renders it). The interpretation stays untouched in raw_payload. A draft with no retained
   // source basis is left as-is (nothing to verify against; gate-3 re-crawl supplies the basis).
   // Deterministic string op — zero model calls.
+  // VERIFICATION RECORDS (signed 2026-09-14): a PASS is stamped too — raw_payload.excerpt_guard on the row and a
+  // durable excerpt_verifications row (basis retained_page, sha, guard_version). A draft with no retained basis
+  // gets NO verification row (never_checked = absence; the back-verification supplies a basis later) and only a
+  // raw_payload note that no basis existed at mint. The crawl's page text is retained so the verdict is repeatable.
   if (args.sourceTextByUrl && args.sourceTextByUrl.size > 0) {
     const map = args.sourceTextByUrl;
-    let droppedExcerpts = 0;
+    const mintedAt = new Date().toISOString();
+    let droppedExcerpts = 0, passed = 0, noBasis = 0, recorded = 0;
+    try {
+      const kept = await retainPublicPages(args.supabase as unknown as { from: (t: string) => any }, args.companyId, map, args.runId);
+      console.log("[excerpt-guard] retained pages", kept);
+    } catch (err) {
+      console.error("[excerpt-guard] page retention failed (non-fatal):", String(err instanceof Error ? err.message : err));
+    }
     for (const draft of signals) {
       if (isListingDraft(draft)) continue; // LISTING CLASS: the title line is verified at mint, not by the prose E4 guard
       const src = map.get(normalizeUrlKey(String(draft.source_url || "")));
-      if (!src) continue; // no retained basis → honest limit, leave as-is
+      const rp = draft.raw_payload && typeof draft.raw_payload === "object" ? (draft.raw_payload as Record<string, unknown>) : {};
+      if (!src) { // no retained basis → honest limit, leave as-is; say so on the row
+        if (normalizeForHash(draft.evidence_excerpt)) { draft.raw_payload = { ...rp, excerpt_guard: { basis: "none", guard_version: EXCERPT_GUARD_VERSION } }; noBasis++; }
+        continue;
+      }
+      const excerptAtMint = draft.evidence_excerpt;
       const guarded = applyExcerptGuard(draft, src);
+      const sha = await basisSha(src);
       if (guarded.dropped) {
         draft.evidence_excerpt = guarded.evidence_excerpt;
         draft.claim_text = guarded.claim_text;
+        draft.raw_payload = { ...rp, excerpt_guard: { basis: "retained_page", traced: false, basis_sha: sha, guard_version: EXCERPT_GUARD_VERSION, blanked_excerpt: excerptAtMint } };
         droppedExcerpts++;
+      } else if (normalizeForHash(excerptAtMint)) {
+        draft.raw_payload = { ...rp, excerpt_guard: { basis: "retained_page", traced: true, basis_sha: sha, guard_version: EXCERPT_GUARD_VERSION } };
+        passed++;
+      }
+      if (normalizeForHash(excerptAtMint)) {
+        try {
+          const r = await verifyAndRecord(args.supabase as unknown as { from: (t: string) => any }, { companyId: args.companyId, signalId: null, sourceKey: sourceKeyFor({ source_url: draft.source_url, source_id: String(args.runId) }), excerpt: excerptAtMint, basis: { kind: "retained_page", text: src, at: mintedAt }, recordedBy: "ingest:public_baseline" });
+          if (r?.written) recorded++;
+        } catch (err) {
+          console.error("[excerpt-guard] verification record failed (non-fatal):", String(err instanceof Error ? err.message : err));
+        }
       }
     }
-    console.log("[excerpt-guard] dropped_unverifiable", { droppedExcerpts, of_signals: signals.length });
+    console.log("[excerpt-guard] public", { passed, dropped_unverifiable: droppedExcerpts, no_basis_at_mint: noBasis, records_written: recorded, of_signals: signals.length });
   }
 
   // B2.0 ingest stamping: every outside_voice_about_client draft gets a syndication
@@ -888,6 +918,8 @@ export async function ingestDifyProposalSignals(args: {
   /** The document's extracted-text sidecar (ruling 5): the basis the E4 excerpt guard verifies every upload
    *  excerpt against. null ⇒ no basis ⇒ drafts left as-is (honest limit) — the caller logs it. */
   sourceText?: string | null;
+  /** The document's storage path — the verification record's source key ('file:<path>'). */
+  sourceFilePath?: string | null;
 }) {
   const signals = mapDifyFileOutputToSignals({
     companyId: args.companyId,
@@ -910,14 +942,25 @@ export async function ingestDifyProposalSignals(args: {
   // document's words. The signal is KEPT as interpretation-only (claim_text stays, excerpt blanked, gate
   // recorded in raw_payload). This is what catches "missing_information: …" — by traceability, not by prefix.
   if (args.sourceText) {
-    let blanked = 0, traced = 0;
+    let blanked = 0, traced = 0, recorded = 0;
+    const mintedAt = new Date().toISOString();
     for (const draft of signals) {
+      const excerptAtMint = draft.evidence_excerpt;
       const guarded = applyUploadExcerptGuard(draft, args.sourceText);
       draft.evidence_excerpt = guarded.evidence_excerpt;
       draft.raw_payload = guarded.raw_payload as typeof draft.raw_payload;
       if (guarded.dropped) blanked++; else traced++;
+      // durable record (signed 2026-09-14) — the sidecar is the basis; the document's storage path is the source key
+      if (normalizeForHash(excerptAtMint)) {
+        try {
+          const r = await verifyAndRecord(args.supabase as unknown as { from: (t: string) => any }, { companyId: args.companyId, signalId: null, sourceKey: sourceKeyFor({ source_url: null, file_path: args.sourceFilePath ?? null, source_id: args.proposalId }), excerpt: excerptAtMint, basis: { kind: "sidecar", text: args.sourceText, at: mintedAt }, recordedBy: "ingest:upload" });
+          if (r?.written) recorded++;
+        } catch (err) {
+          console.error("[excerpt-guard:upload] verification record failed (non-fatal):", String(err instanceof Error ? err.message : err));
+        }
+      }
     }
-    console.log("[excerpt-guard:upload] sidecar basis", { traced, blanked, of_signals: signals.length, proposal: args.proposalId });
+    console.log("[excerpt-guard:upload] sidecar basis", { traced, blanked, records_written: recorded, of_signals: signals.length, proposal: args.proposalId });
   } else {
     console.log("[excerpt-guard:upload] no basis — drafts left as-is", { of_signals: signals.length, proposal: args.proposalId });
   }

@@ -5,7 +5,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
 import { isLocalOllamaUrl as isLocalClassifierUrl, resolveUploadOrigin } from "../_shared/uploadVoiceClassifier.ts";
 import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
-import { loadUploadSidecarText } from "../_shared/uploadSidecar.ts";
+import { loadUploadSidecar } from "../_shared/uploadSidecar.ts";
 import { FILE_ANALYSIS_VERSION } from "../../../src/lib/fileAnalysis.ts";
 
 const corsHeaders = {
@@ -599,7 +599,8 @@ async function persistDifyResult(params: {
     }
     // E4 EXCERPT GUARD on the upload path (ruling 5, 2026-09-14): the sidecar is the basis. Absent (orphan
     // file row, no sidecar) ⇒ null ⇒ the guard leaves drafts as-is (its honest-limit law) and we say so.
-    const sidecarText = effectiveSourceType === "intake" ? null : await loadUploadSidecarText(supabase as unknown as { from: (t: string) => any; storage: any }, (proposalRow as { file_id?: unknown }).file_id as string | null);
+    const sidecar = effectiveSourceType === "intake" ? null : await loadUploadSidecar(supabase as unknown as { from: (t: string) => any; storage: any }, (proposalRow as { file_id?: unknown }).file_id as string | null);
+    const sidecarText = sidecar?.text ?? null;
     if (effectiveSourceType !== "intake" && !sidecarText) console.warn("[dify-analyze-file] no sidecar basis for the excerpt guard:", proposalId);
     const analysisVersion = Number((proposalRow as { analysis_version?: unknown }).analysis_version ?? 1) || 1;
     await ingestDifyProposalSignals({
@@ -617,6 +618,7 @@ async function persistDifyResult(params: {
       rawPayload: structuredOutputs,
       analysisVersion,
       sourceText: sidecarText,
+      sourceFilePath: sidecar?.filePath ?? null,
     });
     await snapshotMojoScore(supabase, companyId);
   }

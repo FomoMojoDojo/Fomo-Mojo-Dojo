@@ -5,7 +5,7 @@
 // the guard then leaves drafts as-is — its honest-limit law — and the caller logs it.
 type Sb = { from: (t: string) => any; storage: any };
 
-export async function loadUploadSidecarText(supabase: Sb, fileId: string | null | undefined): Promise<string | null> {
+export async function loadUploadSidecar(supabase: Sb, fileId: string | null | undefined): Promise<{ text: string; filePath: string } | null> {
   const id = String(fileId ?? "").trim();
   if (!id) return null;
   const { data: file } = await supabase.from("input_files").select("file_path").eq("id", id).maybeSingle();
@@ -14,5 +14,8 @@ export async function loadUploadSidecarText(supabase: Sb, fileId: string | null 
   const { data: sidecar, error } = await supabase.storage.from("input-files").download(`${filePath}.extracted.txt`);
   if (error || !sidecar) return null;
   const text = await sidecar.text();
-  return text.trim() ? text : null;
+  return text.trim() ? { text, filePath } : null;
+}
+export async function loadUploadSidecarText(supabase: Sb, fileId: string | null | undefined): Promise<string | null> {
+  return (await loadUploadSidecar(supabase, fileId))?.text ?? null;
 }
