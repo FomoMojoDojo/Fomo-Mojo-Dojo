@@ -112,3 +112,91 @@ export async function applyRetirement(supabase: Sb, companyId: string, plans: Re
   if (out.some((o) => o.superseded > 0 || o.struck > 0)) await snapshotMojoScore(supabase as any, companyId);
   return out;
 }
+
+// ── SIGNAL-LEVEL variant (operator ruling 2026-09-14, "evidence: correct Edgewood's fabricated excerpts") ──
+// The same supersede + strike + ledger, addressed BY SIGNAL ID: for named live signals of one company, supersede
+// each (superseded_reason=<reason>, raw_payload.superseded_by_retirement with the interpretation left intact in
+// the row), strike any claim whose ENTIRE live backing was these signals, and write one ledger row per signal
+// (kind 'retirement', proposal_id = the signal's source). No re-mint. Idempotent: a signal already superseded
+// (or not this company's) is 'none' and writes nothing.
+export type SignalRetirementPlan = {
+  signal_id: string;
+  found: boolean;
+  source_id: string | null;
+  claim_text: string | null;
+  evidence_excerpt: string | null;
+  change: "none" | "retire" | "not_found";
+  struck_claim_ids: Array<{ id: string; statement: string; provenance: string; state: string }>;
+};
+
+export async function planSignalRetirement(supabase: Sb, companyId: string, signalIds: string[], reason: string): Promise<SignalRetirementPlan[]> {
+  if (!isRetirementReason(reason)) throw new Error(`reason must be <who>:<what> snake_case, got "${reason}"`);
+  const ids = [...new Set(signalIds.map(String))];
+  if (ids.length === 0) throw new Error("signal_ids required");
+  const { data: rows, error } = await supabase.from("signals").select("id, source_id, claim_text, evidence_excerpt, superseded_at").eq("company_id", companyId).in("id", ids);
+  if (error) throw new Error(`load signals: ${error.message}`);
+  const found = new Map((((rows ?? []) as Array<{ id: string; source_id: string | null; claim_text: string | null; evidence_excerpt: string | null; superseded_at: string | null }>)).map((r) => [r.id, r]));
+  const plans: SignalRetirementPlan[] = [];
+  const retiring = new Map<string, string>();
+  for (const id of ids) {
+    const r = found.get(id);
+    if (!r) { plans.push({ signal_id: id, found: false, source_id: null, claim_text: null, evidence_excerpt: null, change: "not_found", struck_claim_ids: [] }); continue; }
+    const live = !r.superseded_at;
+    if (live) retiring.set(r.id, r.id);
+    plans.push({ signal_id: r.id, found: true, source_id: r.source_id, claim_text: r.claim_text, evidence_excerpt: r.evidence_excerpt, change: live ? "retire" : "none", struck_claim_ids: [] });
+  }
+  if (retiring.size === 0) return plans;
+  const [{ data: refRows, error: rErr }, { data: deadRows, error: dErr }] = await Promise.all([
+    supabase.from("claim_signal_refs").select("claim_id, signal_id").eq("company_id", companyId),
+    supabase.from("signals").select("id").eq("company_id", companyId).not("superseded_at", "is", null),
+  ]);
+  if (rErr) throw new Error(`load refs: ${rErr.message}`);
+  if (dErr) throw new Error(`load superseded: ${dErr.message}`);
+  const dead = new Set(((deadRows ?? []) as Array<{ id: string }>).map((s) => s.id));
+  const candidates = claimsWhollyBackedBy((refRows ?? []) as Array<{ claim_id: string; signal_id: string }>, retiring, dead);
+  if (candidates.length === 0) return plans;
+  const { data: claimRows, error: cErr } = await supabase.from("claims").select("id, statement, provenance, state, status").in("id", candidates.map((c) => c.claim_id));
+  if (cErr) throw new Error(`load claims: ${cErr.message}`);
+  const byId = new Map((((claimRows ?? []) as Array<{ id: string; statement: string; provenance: string; state: string; status: string }>)).map((c) => [c.id, c]));
+  for (const c of candidates) {
+    const row = byId.get(c.claim_id);
+    if (!row || row.status === "struck") continue;
+    plans.find((p) => p.signal_id === c.attributedTo)!.struck_claim_ids.push({ id: row.id, statement: row.statement, provenance: row.provenance, state: row.state });
+  }
+  return plans;
+}
+
+export async function applySignalRetirement(supabase: Sb, companyId: string, plans: SignalRetirementPlan[], opts: { reason: string; actor: string; note?: string }): Promise<Array<{ signal_id: string; superseded: number; struck: number; ledger_id: string | null }>> {
+  if (!isRetirementReason(opts.reason)) throw new Error(`reason must be <who>:<what> snake_case, got "${opts.reason}"`);
+  if (!opts.actor || !opts.actor.trim()) throw new Error("actor required");
+  const out: Array<{ signal_id: string; superseded: number; struck: number; ledger_id: string | null }> = [];
+  const nowIso = new Date().toISOString();
+  for (const plan of plans) {
+    if (plan.change !== "retire") { out.push({ signal_id: plan.signal_id, superseded: 0, struck: 0, ledger_id: null }); continue; }
+    const { data: row } = await supabase.from("signals").select("raw_payload").eq("id", plan.signal_id).is("superseded_at", null).maybeSingle();
+    if (!row) { out.push({ signal_id: plan.signal_id, superseded: 0, struck: 0, ledger_id: null }); continue; }
+    const rp = row.raw_payload && typeof row.raw_payload === "object" ? (row.raw_payload as Record<string, unknown>) : {};
+    const { error } = await supabase.from("signals").update({
+      superseded_at: nowIso, superseded_reason: opts.reason, updated_at: nowIso,
+      raw_payload: { ...rp, superseded_by_retirement: { at: nowIso, reason: opts.reason, actor: opts.actor, signal_id: plan.signal_id, from: "live", to: "retired" } },
+    }).eq("id", plan.signal_id).is("superseded_at", null);
+    if (error) throw new Error(`supersede signal ${plan.signal_id}: ${error.message}`);
+    let struck = 0;
+    for (const c of plan.struck_claim_ids) {
+      const { data: cur } = await supabase.from("claims").select("status").eq("id", c.id).maybeSingle();
+      if (!cur || cur.status === "struck") continue;
+      const { error: sErr } = await supabase.rpc("set_claim_status", { p_claim_id: c.id, p_status: "struck", p_reason: opts.reason, p_actor: opts.actor });
+      if (sErr) throw new Error(`strike claim ${c.id}: ${sErr.message}`);
+      struck++;
+    }
+    const { data: ledger, error: ledgerErr } = await supabase.from("provenance_remints").insert({
+      company_id: companyId, kind: "retirement", input_file_id: null, proposal_id: plan.source_id, reason: opts.reason,
+      superseded_signal_ids: [plan.signal_id], struck_claim_ids: plan.struck_claim_ids.map((c) => c.id), minted_signal_ids: [], minted_claim_ids: [],
+      dry_run: false, actor: opts.actor, note: opts.note ?? null,
+    }).select("id").maybeSingle();
+    if (ledgerErr) throw new Error(`ledger: ${ledgerErr.message}`);
+    out.push({ signal_id: plan.signal_id, superseded: 1, struck, ledger_id: ledger?.id ?? null });
+  }
+  if (out.some((o) => o.superseded > 0 || o.struck > 0)) await snapshotMojoScore(supabase as any, companyId);
+  return out;
+}
