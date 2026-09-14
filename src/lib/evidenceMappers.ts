@@ -516,15 +516,41 @@ function defaultValidationStatusForBand(band: SignalBand): ValidationStatus {
   return "unvalidated";
 }
 
-function looksLikeCustomerResearchSource(sourceType: string, sourceTitle: string) {
-  if (isCustomerSignalSourceType(sourceType)) return true;
-  const normalizedTitle = sourceTitle.toLowerCase();
-  return /(interview|survey|transcript|customer[\s_-]?research|owner[\s_-]?research|buyer[\s_-]?research|user[\s_-]?research)/.test(normalizedTitle);
-}
+// ── UPLOAD ORIGIN (import provenance, rulings 1–5 & 11, 2026-09-13) ─────────────────────────────
+// An uploaded document's origin is a per-document fact from doc_voice_verdicts (model-judged at upload,
+// operator-overridable): AUTHORSHIP client | us | third_party | uncertain and SUBJECT this_company |
+// the_market | uncertain. The band is derived from these two facts and the source type — NEVER from the
+// file name (ruling 5: the old looksLikeCustomerResearchSource title regex is gone from band
+// determination; "Youth Mental Health Survey 2024.pdf" is not customer validation of anyone).
+//   customer      ⇐ a customer source type (interview / survey / transcript / …) — the row's own type
+//   organization  ⇐ authorship client (the client's material) or us (our analysis; claims go analytic)
+//   outside       ⇐ authorship third_party or uncertain (a document that is not the client's words)
+// An uploaded_file signal WITHOUT an origin is treated as uncertain — it can inform but never speak.
+export type UploadAuthorship = "client" | "us" | "third_party" | "uncertain";
+export type UploadSubject = "this_company" | "the_market" | "uncertain";
+export type UploadOrigin = { authorship: UploadAuthorship; subject: UploadSubject };
+export const UPLOAD_ORIGIN_SOURCE_TYPES = new Set(["uploaded_file", "file", "file_proposal"]);
 
-function detectBandFromSourceMeta(sourceType: string, sourceTitle: string): SignalBand {
-  if (looksLikeCustomerResearchSource(sourceType, sourceTitle)) return "customer";
-  return isCustomerSignalSourceType(sourceType) ? "customer" : "organization";
+function withOrigin(raw: unknown, originPayload: Record<string, unknown>): unknown {
+  if (Object.keys(originPayload).length === 0) return raw;
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? { ...(raw as Record<string, unknown>), ...originPayload } : { value: raw ?? null, ...originPayload };
+}
+export function bandFromOrigin(sourceType: string, origin: UploadOrigin | null | undefined): SignalBand {
+  if (isCustomerSignalSourceType(sourceType)) return "customer";
+  if (!UPLOAD_ORIGIN_SOURCE_TYPES.has(sourceType)) return "organization"; // intake / mojo_analysis / manual_note: as before
+  const a = origin?.authorship ?? "uncertain";
+  return a === "client" || a === "us" ? "organization" : "outside";
+}
+/** voice_class stamped on upload signals: never null for a non-client document (ruling 2). */
+export function voiceClassFromOrigin(sourceType: string, origin: UploadOrigin | null | undefined): string | null {
+  if (!UPLOAD_ORIGIN_SOURCE_TYPES.has(sourceType)) return null;
+  const a = origin?.authorship ?? "uncertain";
+  if (a === "client") return null; // the client's own document: unchanged from today (no own-voice restamp)
+  if (a === "us") return "analysis";
+  return origin?.subject === "this_company" ? "outside_voice_about_client" : "market_context";
+}
+function detectBandFromSourceMeta(sourceType: string, _sourceTitle: string, origin?: UploadOrigin | null): SignalBand {
+  return bandFromOrigin(sourceType, origin ?? null);
 }
 
 // Tunable heuristic — conservative by design; prefer precision over recall.
@@ -552,8 +578,9 @@ function detectEvidenceType(sourceType: string, signalBand: SignalBand, sourceTi
   return "internal_data";
 }
 
-function defaultCustomerDirectness(sourceType: string, sourceTitle: string): Directness {
-  return isCustomerSignalSourceType(sourceType) ? "direct" : looksLikeCustomerResearchSource(sourceType, sourceTitle) ? "inferred" : "weak";
+function defaultCustomerDirectness(sourceType: string, _sourceTitle: string): Directness {
+  // ruling 5 (2026-09-13): a file name carries no evidentiary weight — only a customer source type is direct.
+  return isCustomerSignalSourceType(sourceType) ? "direct" : "weak";
 }
 
 function topicFromFramework(framework: string, fallback: SignalTopic = "unknown"): SignalTopic {
@@ -793,12 +820,16 @@ export function mapDifyFileOutputToSignals(args: {
   frameworkResults?: unknown;
   questionsToVerify?: unknown;
   rawPayload?: unknown;
+  /** The document's origin (doc_voice_verdicts). Required for uploaded_file in practice; absent ⇒ uncertain. */
+  origin?: UploadOrigin | null;
 }): SignalDraft[] {
   const normalizedSourceType = normalizeStatement(args.sourceType || "file_proposal").toLowerCase() || "file_proposal";
   const sourceTitle = normalizeStatement(args.sourceTitle || "File proposal") || "File proposal";
-  const signalBand = detectBandFromSourceMeta(normalizedSourceType, sourceTitle);
+  const origin: UploadOrigin | null = UPLOAD_ORIGIN_SOURCE_TYPES.has(normalizedSourceType) ? (args.origin ?? { authorship: "uncertain", subject: "uncertain" }) : null;
+  const signalBand = detectBandFromSourceMeta(normalizedSourceType, sourceTitle, origin);
   const sourceType = (normalizedSourceType as SignalSourceType) || "file_proposal";
-  const evidenceType = detectEvidenceType(sourceType, signalBand, sourceTitle);
+  const evidenceType = signalBand === "outside" ? "market_signal" : detectEvidenceType(sourceType, signalBand, sourceTitle);
+  const voiceClass = voiceClassFromOrigin(normalizedSourceType, origin);
   const sourceUrl = normalizeStatement(args.sourceUrl) || null;
   const sourceId = args.sourceId ?? null;
   const signals: SignalDraft[] = [];
@@ -807,8 +838,9 @@ export function mapDifyFileOutputToSignals(args: {
   const customerConfidence = isCustomerSignalSourceType(sourceType) ? "high" : signalBand === "customer" ? "medium" : "medium";
   // Uploaded company documents get "strong" framing_fit so org-band signals can
   // satisfy Gate 1 ("supports"). mojo_analysis and unknown source types stay "partial".
-  const FILE_SOURCE_TYPES = new Set(["file", "uploaded_file", "file_proposal"]);
-  const orgFramingFit: "strong" | "partial" = FILE_SOURCE_TYPES.has(normalizedSourceType) ? "strong" : "partial";
+  // An outside-band upload (third_party / uncertain) is not the organization's confirmation: partial.
+  const orgFramingFit: "strong" | "partial" = UPLOAD_ORIGIN_SOURCE_TYPES.has(normalizedSourceType) && signalBand === "organization" ? "strong" : "partial";
+  const originPayload = origin ? { upload_origin: origin } : {};
 
   const summary = normalizeStatement(args.summary);
   if (summary) {
@@ -824,13 +856,15 @@ export function mapDifyFileOutputToSignals(args: {
       evidence_excerpt: normalizeStatement(asArray(args.evidence)[0]) || summary,
       topic: signalBand === "customer" ? "problem" : "strategy",
       framework: "dify_summary",
-      directness: signalBand === "customer" ? customerDirectness : "inferred",
+      directness: signalBand === "customer" ? customerDirectness : signalBand === "outside" ? "direct" : "inferred", // outside (third-party) mirrors the public baseline: a published record is direct
       recency: null,
       framing_fit: signalBand === "customer" ? customerFramingFit : orgFramingFit,
       structure_level: "interpreted",
       validation_status: defaultValidationStatusForBand(signalBand),
       confidence_to_use: signalBand === "customer" ? customerConfidence : "medium",
-      raw_payload: args.rawPayload ?? {},
+      voice_class: voiceClass,
+
+      raw_payload: withOrigin(args.rawPayload ?? {}, originPayload),
     });
   }
 
@@ -849,13 +883,15 @@ export function mapDifyFileOutputToSignals(args: {
       evidence_excerpt: text,
       topic: signalBand === "customer" ? "problem" : (signalBand === "organization" && isCompanySubjectStatement(text) ? "strategy" : "unknown"),
       framework: null,
-      directness: signalBand === "customer" ? customerDirectness : "inferred",
+      directness: signalBand === "customer" ? customerDirectness : signalBand === "outside" ? "direct" : "inferred", // outside (third-party) mirrors the public baseline: a published record is direct
       recency: null,
       framing_fit: signalBand === "customer" ? customerFramingFit : orgFramingFit,
       structure_level: "extracted",
       validation_status: defaultValidationStatusForBand(signalBand),
       confidence_to_use: signalBand === "customer" ? customerConfidence : "medium",
-      raw_payload: { evidence: text },
+      voice_class: voiceClass,
+
+      raw_payload: withOrigin({ evidence: text }, originPayload),
     });
   }
 
@@ -879,13 +915,15 @@ export function mapDifyFileOutputToSignals(args: {
       evidence_excerpt: record ? asString(record.evidence) || text : text,
       topic: record ? asString(record.mojo_area) || (signalBand === "customer" ? "problem" : "unknown") : signalBand === "customer" ? "problem" : "unknown",
       framework: record ? asString(record.framework) || "dify_contradiction" : "dify_contradiction",
-      directness: signalBand === "customer" ? customerDirectness : "inferred",
+      directness: signalBand === "customer" ? customerDirectness : signalBand === "outside" ? "direct" : "inferred", // outside (third-party) mirrors the public baseline: a published record is direct
       recency: null,
       framing_fit: signalBand === "customer" ? customerFramingFit : "partial",
       structure_level: "interpreted",
       validation_status: "contradicted",
       confidence_to_use: confidenceFromValue(record?.confidence, "medium"),
-      raw_payload: record ?? { contradiction: text },
+      voice_class: voiceClass,
+
+      raw_payload: withOrigin(record ?? { contradiction: text }, originPayload),
     });
   }
 
@@ -914,13 +952,15 @@ export function mapDifyFileOutputToSignals(args: {
           ? "strategy"
           : asString(findingRecord.mojo_area) || topicFromFramework(framework),
         framework: framework || null,
-        directness: signalBand === "customer" ? customerDirectness : "inferred",
+        directness: signalBand === "customer" ? customerDirectness : signalBand === "outside" ? "direct" : "inferred", // outside (third-party) mirrors the public baseline: a published record is direct
         recency: null,
         framing_fit: signalBand === "customer" ? customerFramingFit : orgFramingFit,
         structure_level: "interpreted",
         validation_status: defaultValidationStatusForBand(signalBand),
         confidence_to_use: confidenceFromValue(findingRecord.confidence, signalBand === "customer" ? customerConfidence : "medium"),
-        raw_payload: findingRecord,
+        voice_class: voiceClass,
+
+        raw_payload: withOrigin(findingRecord, originPayload),
       });
     }
   }
@@ -946,7 +986,9 @@ export function mapDifyFileOutputToSignals(args: {
       structure_level: "interpreted",
       validation_status: "unvalidated",
       confidence_to_use: "low",
-      raw_payload: { question: text },
+      voice_class: voiceClass,
+
+      raw_payload: withOrigin({ question: text }, originPayload),
     });
   }
 
@@ -962,9 +1004,17 @@ export function mapDifyFileOutputToSignals(args: {
 // This function is the ONLY place provenance is assigned (conflation guard layer 2);
 // the DB trigger makes it immutable after birth (layer 1).
 export function deriveClaimProvenance(
-  backing: Array<{ sourceType: string; band: SignalBand }>,
+  backing: Array<{ sourceType: string; band: SignalBand; authorship?: UploadAuthorship | null }>,
 ): ClaimProvenance {
   if (backing.length === 0) return "public_observed";
+  // Import provenance (rulings 2, 3, 11 — 2026-09-13): an uploaded document speaks as the client ONLY
+  // when its authorship is 'client'. 'us' (our analysis) backs an ANALYTIC claim like mojo_analysis;
+  // 'third_party' and 'uncertain' are outside-band and can only ever back public_observed.
+  const isOurs = (b: { sourceType: string; authorship?: UploadAuthorship | null }) => b.sourceType === "mojo_analysis" || (UPLOAD_ORIGIN_SOURCE_TYPES.has(b.sourceType) && b.authorship === "us");
+  if (backing.every(isOurs)) return "analytic";
+  const isClientDeclared = (b: { sourceType: string; band: SignalBand; authorship?: UploadAuthorship | null }) =>
+    b.band === "organization" && (b.sourceType === "intake" || (UPLOAD_ORIGIN_SOURCE_TYPES.has(b.sourceType) && b.authorship === "client"));
+  if (backing.every(isClientDeclared)) return "internal_declared";
   // V2-5c — a claim backed ENTIRELY by analysis (mojo_analysis) is OUR reading, not the
   // client's declared words and not the outside record: provenance='analytic' (renders
   // nowhere client-facing). MIXED backing (analytic + public/uploaded) is NOT tainted to
@@ -972,17 +1022,10 @@ export function deriveClaimProvenance(
   // REPORTED (not silently fixed): a claim with SOME analytic backing but ALSO public
   // backing keeps public_observed, so an analytic-flavored line CAN reach a public
   // surface if its public backing is thin — the V2-5b render guard is the backstop there.
-  if (backing.every((b) => b.sourceType === "mojo_analysis")) return "analytic";
-  // R4 (intake gate, 2026-08-12): intake-derived signals (source_type='intake') are the client's
-  // OWN declared quiz answers — the same standing as their uploaded org material — so an all-intake
-  // (or all-upload) organization-band group is internal_declared, never public_observed. This is
-  // orthogonal to the First Read provenance gate, which still ADMITS intake (it excludes
-  // 'uploaded_file' specifically); only true uploads stay excluded there.
-  return backing.every(
-    (b) => (b.sourceType === "uploaded_file" || b.sourceType === "intake") && b.band === "organization",
-  )
-    ? "internal_declared"
-    : "public_observed";
+  // (The pre-2026-09-13 rule — every backing uploaded_file|intake in the organization band ⇒
+  // internal_declared — is subsumed above with the authorship test; an uploaded_file signal that
+  // carries no origin is uncertain and can no longer be born declared.)
+  return "public_observed";
 }
 
 // D3 (generator root-cause): the ANCHOR GATE. An OUTSIDE-band signal may mint a
@@ -1003,20 +1046,35 @@ export function signalAnchorBasis(signal: { claim_text?: string | null; evidence
   // source_title is NOT page metadata (it carries the run label on baseline signals) — only og:title / H1 / the slug count.
   return anchorBasisFor({ text, sourceUrl: signal.source_url ?? null, ogTitle: typeof rp.og_title === "string" ? rp.og_title : null, h1: typeof rp.h1 === "string" ? rp.h1 : null, companyHost }, anchors);
 }
+/** The origin an upload signal carries (raw_payload.upload_origin); null for anything else. */
+export function uploadOriginOf(signal: { source_type?: string | null; raw_payload?: unknown }): UploadOrigin | null {
+  if (!UPLOAD_ORIGIN_SOURCE_TYPES.has(String(signal.source_type ?? ""))) return null;
+  const rp = signal.raw_payload && typeof signal.raw_payload === "object" ? (signal.raw_payload as { upload_origin?: unknown }) : null;
+  const o = rp?.upload_origin && typeof rp.upload_origin === "object" ? (rp.upload_origin as Partial<UploadOrigin>) : null;
+  const authorship: UploadAuthorship = o?.authorship === "client" || o?.authorship === "us" || o?.authorship === "third_party" ? o.authorship : "uncertain";
+  const subject: UploadSubject = o?.subject === "this_company" || o?.subject === "the_market" ? o.subject : "uncertain";
+  // A signal with NO origin at all (pre-2026-09-13 rows, or an unclassified upload) reads as uncertain.
+  return { authorship, subject };
+}
 export function signalMatchesAnchor(signal: { claim_text?: string | null; evidence_excerpt?: string | null; source_url?: string | null; source_title?: string | null; raw_payload?: unknown }, anchors: string[]): boolean {
   return signalAnchorBasis(signal, anchors) !== null;
 }
 
 /** companyHost: the company's own host (www-stripped) — grants anchor basis 'host' to own-site sentences via isOwnDomainUrl. */
 export function mapSignalsToClaimCandidates(companyId: string, signals: Array<SignalDraft & { id?: string }>, anchors: string[] = [], companyHost: string | null = null): ClaimCandidate[] {
-  const grouped = new Map<string, { claim: ClaimDraft; sourceSignals: ClaimCandidate["sourceSignals"]; qualities: Array<{ band: SignalBand; directness: Directness; confidence: ConfidenceLevel; validation: ValidationStatus; sourceType: string }> }>();
+  const grouped = new Map<string, { claim: ClaimDraft; sourceSignals: ClaimCandidate["sourceSignals"]; qualities: Array<{ band: SignalBand; directness: Directness; confidence: ConfidenceLevel; validation: ValidationStatus; sourceType: string; authorship: UploadAuthorship | null }> }>();
 
   signals.forEach((signal, index) => {
     if (!isSignalProvenanceWorthy(signal)) return;
     // D3 anchor gate — outside-band signals must reference a client anchor to mint a client
     // claim (inert when no anchors are configured for the company).
-    const anchorBasis = signal.signal_band === "outside" ? signalAnchorBasis(signal, anchors, companyHost) : null;
-    if (signal.signal_band === "outside" && anchorBasis === null) return;
+    // Upload subject gate (ruling 4, 2026-09-13): an outside-band UPLOAD signal (third_party / uncertain
+    // authorship) may mint or corroborate a client claim only when its document is ABOUT THIS COMPANY;
+    // a sector / market document stays a signal — it can inform job steps and needs, never a claim.
+    const uploadOrigin = uploadOriginOf(signal);
+    if (signal.signal_band === "outside" && uploadOrigin && uploadOrigin.subject !== "this_company") return;
+    const anchorBasis = signal.signal_band === "outside" && !uploadOrigin ? signalAnchorBasis(signal, anchors, companyHost) : null;
+    if (signal.signal_band === "outside" && !uploadOrigin && anchorBasis === null) return;
     // LISTING CLASS (operator ruling 2026-09-04): a listing signal maps to an inference claim whose statement
     // IS the title line — never prose-canonicalized, never dropped as a "quoted excerpt", never summarized.
     // The claim carries a listing marker in raw_payload so every reader can tell it from prose.
@@ -1082,13 +1140,14 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
       confidence: signal.confidence_to_use,
       validation: signal.validation_status,
       sourceType: signal.source_type,
+      authorship: uploadOrigin?.authorship ?? null,
     });
   });
 
   return [...grouped.values()].map((entry) => {
     // INT-2: provenance from the FULL backing group (sole authority).
     entry.claim.provenance = deriveClaimProvenance(
-      entry.qualities.map((q) => ({ sourceType: q.sourceType, band: q.band })),
+      entry.qualities.map((q) => ({ sourceType: q.sourceType, band: q.band, authorship: q.authorship })),
     );
     const bands = new Set<SignalBand>();
     let hasContradiction = false;

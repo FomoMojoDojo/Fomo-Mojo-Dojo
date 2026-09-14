@@ -3,6 +3,7 @@ import { encodeBlobBase64, parserRequestBody } from "../_shared/base64.ts";
 import { fileTooLargeBody, isOverCap, MAX_ANALYSIS_FILE_BYTES, storageObjectSize } from "../_shared/fileSizeGuard.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
+import { isLocalOllamaUrl as isLocalClassifierUrl, resolveUploadOrigin } from "../_shared/uploadVoiceClassifier.ts";
 import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
 
 const corsHeaders = {
@@ -561,17 +562,35 @@ async function persistDifyResult(params: {
 
   const { data: proposalRow } = await supabase
     .from("file_proposals")
-    .select("company_id, file_name, source_type")
+    .select("company_id, file_name, source_type, file_id")
     .eq("id", proposalId)
     .maybeSingle();
 
   if (proposalRow?.company_id) {
     const companyId = String(proposalRow.company_id);
+    const effectiveSourceType = String(proposalRow.source_type ?? sourceType ?? "file_proposal");
+    // VOICE GATE on the minting path (rulings 1, 2, 11 — 2026-09-13): an uploaded document's signals and
+    // claims are minted from its AUTHORSHIP + SUBJECT (doc_voice_verdicts), classified on demand when the
+    // document has no sha-matched verdict. Intake rows are the client's own answers and carry no document.
+    let origin: { authorship: "client" | "us" | "third_party" | "uncertain"; subject: "this_company" | "the_market" | "uncertain" } | null = null;
+    if (effectiveSourceType !== "intake") {
+      const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
+      const fileId = String((proposalRow as { file_id?: unknown }).file_id ?? "").trim();
+      if (fileId && isLocalClassifierUrl(ollamaUrl)) {
+        const resolved = await resolveUploadOrigin(supabase as unknown as { from: (t: string) => any; storage: any }, companyId, fileId, { ollamaUrl, model: Deno.env.get("OLLAMA_MODEL") ?? undefined });
+        origin = { authorship: resolved.authorship, subject: resolved.subject };
+        console.log("[dify-analyze-file] upload origin:", JSON.stringify({ proposalId, fileId, ...origin, source: resolved.source }));
+      } else {
+        origin = { authorship: "uncertain", subject: "uncertain" };
+        console.warn("[dify-analyze-file] upload origin unresolved (no file id or non-local classifier) → uncertain:", proposalId);
+      }
+    }
     await ingestDifyProposalSignals({
       supabase,
       companyId,
       proposalId,
-      sourceType: String(proposalRow.source_type ?? sourceType ?? "file_proposal"),
+      origin,
+      sourceType: effectiveSourceType,
       sourceTitle: String(proposalRow.file_name ?? "Dify proposal"),
       summary,
       evidence,

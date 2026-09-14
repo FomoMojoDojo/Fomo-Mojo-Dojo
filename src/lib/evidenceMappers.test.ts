@@ -177,19 +177,25 @@ describe("evidence mappers", () => {
     expect(candidates[0].sourceSignals[0]?.relationship).toBe("contradicts");
   });
 
-  it("maps customer-research file outputs to customer signals conservatively", () => {
-    const signals = mapDifyFileOutputToSignals({
-      companyId: "company-1",
-      sourceId: "file-1",
-      sourceType: "file",
-      sourceTitle: "Cafe_Owner_Research_Reddit_March_2026.pdf",
-      evidence: ["Under-roasted beans forced extra dialing-in during service."],
-    });
-
-    expect(signals.length).toBeGreaterThan(0);
-    expect(signals.every((signal) => signal.signal_band === "customer")).toBe(true);
-    expect(signals.every((signal) => signal.evidence_type === "customer_validation")).toBe(true);
-    expect(signals.every((signal) => signal.validation_status === "directional")).toBe(true);
+  // Ruling 5 (2026-09-13): A FILE NAME MAY NEVER MINT A BAND. This test used to assert the opposite — a
+  // file named "…Owner_Research…" was born customer band / customer_validation / directional from its
+  // title alone. Band now derives from authorship + subject (doc_voice_verdicts) and the source type.
+  it("a research-looking FILE NAME does not mint the customer band: origin decides (ruling 5)", () => {
+    const base = { companyId: "company-1", sourceId: "file-1", sourceType: "file", sourceTitle: "Cafe_Owner_Research_Reddit_March_2026.pdf", evidence: ["Under-roasted beans forced extra dialing-in during service."] };
+    const thirdParty = mapDifyFileOutputToSignals({ ...base, origin: { authorship: "third_party", subject: "the_market" } });
+    expect(thirdParty.length).toBeGreaterThan(0);
+    expect(thirdParty.every((signal) => signal.signal_band === "outside")).toBe(true);
+    expect(thirdParty.every((signal) => signal.evidence_type === "market_signal")).toBe(true);
+    expect(thirdParty.every((signal) => signal.voice_class === "market_context")).toBe(true);
+    const client = mapDifyFileOutputToSignals({ ...base, origin: { authorship: "client", subject: "this_company" } });
+    expect(client.every((signal) => signal.signal_band === "organization")).toBe(true);
+    expect(client.every((signal) => signal.evidence_type === "internal_data")).toBe(true);
+    // no origin at all ⇒ uncertain ⇒ outside, never customer
+    const none = mapDifyFileOutputToSignals(base);
+    expect(none.every((signal) => signal.signal_band === "outside")).toBe(true);
+    // only a customer SOURCE TYPE (the row's own kind) is customer band
+    const survey = mapDifyFileOutputToSignals({ ...base, sourceType: "survey" });
+    expect(survey.every((signal) => signal.signal_band === "customer")).toBe(true);
   });
 
   it("maps public baseline output to outside signals", () => {
@@ -272,13 +278,30 @@ describe("evidence mappers", () => {
 // ── INT-2: sole provenance-derivation authority ────────────────────────────────
 
 describe("deriveClaimProvenance", () => {
-  it("all uploaded_file org signals ⇒ internal_declared", () => {
+  // Rulings 1–3 (2026-09-13): an upload speaks as the client ONLY with authorship 'client'.
+  it("all uploaded_file org signals with authorship client ⇒ internal_declared; without authorship ⇒ never declared", () => {
+    expect(
+      deriveClaimProvenance([
+        { sourceType: "uploaded_file", band: "organization", authorship: "client" },
+        { sourceType: "uploaded_file", band: "organization", authorship: "client" },
+      ]),
+    ).toBe("internal_declared");
     expect(
       deriveClaimProvenance([
         { sourceType: "uploaded_file", band: "organization" },
         { sourceType: "uploaded_file", band: "organization" },
       ]),
-    ).toBe("internal_declared");
+    ).toBe("public_observed");
+    expect(deriveClaimProvenance([{ sourceType: "uploaded_file", band: "organization", authorship: "uncertain" }])).toBe("public_observed");
+  });
+  it("authorship us ⇒ analytic (our analysis, like mojo_analysis); us + client mixed ⇒ the client said it: internal_declared", () => {
+    expect(deriveClaimProvenance([{ sourceType: "uploaded_file", band: "organization", authorship: "us" }])).toBe("analytic");
+    expect(deriveClaimProvenance([{ sourceType: "uploaded_file", band: "organization", authorship: "us" }, { sourceType: "mojo_analysis", band: "organization" }])).toBe("analytic");
+    expect(deriveClaimProvenance([{ sourceType: "uploaded_file", band: "organization", authorship: "us" }, { sourceType: "uploaded_file", band: "organization", authorship: "client" }])).toBe("public_observed");
+  });
+  it("authorship third_party ⇒ public_observed, alone or mixed", () => {
+    expect(deriveClaimProvenance([{ sourceType: "uploaded_file", band: "outside", authorship: "third_party" }])).toBe("public_observed");
+    expect(deriveClaimProvenance([{ sourceType: "uploaded_file", band: "outside", authorship: "third_party" }, { sourceType: "uploaded_file", band: "organization", authorship: "client" }])).toBe("public_observed");
   });
 
   it("any public signal in the mix keeps it public_observed (no laundering)", () => {
@@ -296,13 +319,20 @@ describe("deriveClaimProvenance", () => {
 
   it("R4: all-intake org signals ⇒ internal_declared (client's own declared answers)", () => {
     expect(deriveClaimProvenance([{ sourceType: "intake", band: "organization" }])).toBe("internal_declared");
-    // intake mixed with uploaded org material is still all-declared
+    // intake mixed with the client's OWN uploaded material is still all-declared (authorship client)
+    expect(
+      deriveClaimProvenance([
+        { sourceType: "intake", band: "organization" },
+        { sourceType: "uploaded_file", band: "organization", authorship: "client" },
+      ]),
+    ).toBe("internal_declared");
+    // intake mixed with an upload of unknown authorship is NOT (2026-09-13)
     expect(
       deriveClaimProvenance([
         { sourceType: "intake", band: "organization" },
         { sourceType: "uploaded_file", band: "organization" },
       ]),
-    ).toBe("internal_declared");
+    ).toBe("public_observed");
   });
 
   it("R4: intake mixed with a public signal keeps public_observed (no laundering)", () => {
@@ -322,19 +352,22 @@ describe("deriveClaimProvenance", () => {
     expect(deriveClaimProvenance([])).toBe("public_observed");
   });
 
-  it("mapper births uploaded-doc claims internal_declared end to end", () => {
-    const candidates = mapSignalsToClaimCandidates("company-1", [
-      makeSignal({
-        source_type: "uploaded_file",
-        signal_band: "organization",
-        claim_text: "We will become the system of record for strategy decisions",
-        evidence_excerpt: "We will become the system of record for strategy decisions",
-        directness: "direct",
-        structure_level: "interpreted",
-      }),
-    ]);
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0].claim.provenance).toBe("internal_declared");
+  it("mapper births uploaded-doc claims internal_declared end to end ONLY when the signal carries authorship client", () => {
+    const sig = (raw: unknown) => makeSignal({
+      source_type: "uploaded_file",
+      signal_band: "organization",
+      claim_text: "We will become the system of record for strategy decisions",
+      evidence_excerpt: "We will become the system of record for strategy decisions",
+      directness: "direct",
+      structure_level: "interpreted",
+      raw_payload: raw,
+    });
+    const declared = mapSignalsToClaimCandidates("company-1", [sig({ upload_origin: { authorship: "client", subject: "this_company" } })]);
+    expect(declared).toHaveLength(1);
+    expect(declared[0].claim.provenance).toBe("internal_declared");
+    const unknown = mapSignalsToClaimCandidates("company-1", [sig({})]);
+    expect(unknown).toHaveLength(1);
+    expect(unknown[0].claim.provenance).toBe("public_observed"); // no origin ⇒ uncertain ⇒ never declared
   });
 });
 

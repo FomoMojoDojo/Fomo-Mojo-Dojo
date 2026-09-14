@@ -13,6 +13,13 @@ import { supabase } from "@/integrations/supabase/client";
 type Verdict = "client_voice" | "external" | "uncertain";
 type Override = "client_voice" | "external";
 
+// Import provenance (rulings 3, 4, 11 — 2026-09-13): the two facts beside the voice verdict.
+type Authorship = "client" | "us" | "third_party" | "uncertain";
+type Subject = "this_company" | "the_market" | "uncertain";
+const AUTHORSHIP_WORD: Record<Authorship, string> = { client: "client", us: "us", third_party: "third party", uncertain: "uncertain" };
+const SUBJECT_WORD: Record<Subject, string> = { this_company: "this company", the_market: "the market", uncertain: "uncertain" };
+const voiceOf = (a: Authorship): Override | "uncertain" => (a === "client" ? "client_voice" : a === "uncertain" ? "uncertain" : "external");
+
 type DocStatus = {
   input_file_id: string;
   file_name: string;
@@ -21,6 +28,11 @@ type DocStatus = {
   basis: string | null;
   operator_override: Override | null;
   status: "classified" | "unclassified";
+  authorship: Authorship | null;
+  subject: Subject | null;
+  subject_basis: string | null;
+  authorship_override: Authorship | null;
+  subject_override: Subject | null;
 };
 
 const c = {
@@ -99,7 +111,7 @@ export default function VoiceGatePanel({ companyId }: { companyId: string }) {
 
   // Immutable override row written BESIDE the model verdict, attributed.
   const writeOverride = useCallback(
-    async (rows: Array<{ input_file_id: string; content_sha: string }>, value: Override, basis: string, reason: string) => {
+    async (rows: Array<{ input_file_id: string; content_sha: string }>, value: Override, basis: string, reason: string, facts?: { authorship?: Authorship | null; subject?: Subject | null }) => {
       const { data: authRes } = await supabase.auth.getUser();
       const overrideBy = authRes?.user?.id ?? null;
       const payload = rows.map((r) => ({
@@ -111,6 +123,9 @@ export default function VoiceGatePanel({ companyId }: { companyId: string }) {
         basis,
         override_by: overrideBy,
         override_reason: reason,
+        // the two facts ride on the same immutable override row (NULL = "voice-only override")
+        authorship: facts?.authorship ?? null,
+        subject: facts?.subject ?? null,
       }));
       const { error } = await supabase.from("doc_voice_verdicts").insert(payload);
       if (error) {
@@ -137,6 +152,29 @@ export default function VoiceGatePanel({ companyId }: { companyId: string }) {
       }
     },
     [writeOverride, loadPlan],
+  );
+  // One override row carries BOTH facts: the operator picks authorship and subject together; the voice
+  // projection follows authorship (client ⇒ client_voice, us / third party ⇒ external). 'uncertain' is not
+  // an override value — an operator who cannot tell leaves the model's word standing.
+  const [pick, setPick] = useState<Record<string, { authorship: Authorship; subject: Subject }>>({});
+  const overrideFacts = useCallback(
+    async (d: DocStatus) => {
+      const chosen = pick[d.input_file_id] ?? { authorship: d.authorship ?? "uncertain", subject: d.subject ?? "uncertain" };
+      if (chosen.authorship === "uncertain") { toast.message("Pick client, us or third party — uncertain is not an override."); return; }
+      const voice = voiceOf(chosen.authorship);
+      if (voice === "uncertain") return;
+      setBusy(d.input_file_id);
+      try {
+        await writeOverride([{ input_file_id: d.input_file_id, content_sha: d.content_sha }], voice, "operator override", `operator set authorship=${chosen.authorship} subject=${chosen.subject} via files panel`, { authorship: chosen.authorship, subject: chosen.subject === "uncertain" ? null : chosen.subject });
+        toast.success(`Marked “${d.file_name}”: ${AUTHORSHIP_WORD[chosen.authorship]} · ${SUBJECT_WORD[chosen.subject]}.`);
+        await loadPlan();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [pick, writeOverride, loadPlan],
   );
 
   const attestAll = useCallback(async () => {
@@ -229,6 +267,28 @@ export default function VoiceGatePanel({ companyId }: { companyId: string }) {
                   </div>
                   {d.basis && (
                     <div style={{ fontSize: 12, color: c.secondary, marginTop: 6, fontStyle: "italic" }}>“{d.basis}”</div>
+                  )}
+                  {(d.authorship || d.subject || d.authorship_override || d.subject_override) && (
+                    <div style={{ fontSize: 12, color: c.secondary, marginTop: 6 }} data-testid="voice-gate-facts">
+                      authorship: <b>{AUTHORSHIP_WORD[(d.authorship_override ?? d.authorship ?? "uncertain") as Authorship]}</b>{d.authorship_override ? " (override)" : ""}
+                      {" · "}subject: <b>{SUBJECT_WORD[(d.subject_override ?? d.subject ?? "uncertain") as Subject]}</b>{d.subject_override ? " (override)" : ""}
+                      {d.subject_basis && !d.subject_override ? <span style={{ fontStyle: "italic" }}> — “{d.subject_basis}”</span> : null}
+                    </div>
+                  )}
+                  {!d.operator_override && (
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6, flexWrap: "wrap" }} data-testid="voice-gate-facts-override">
+                      <select value={(pick[d.input_file_id]?.authorship ?? d.authorship ?? "uncertain")} disabled={busy !== null}
+                        onChange={(e) => setPick((p) => ({ ...p, [d.input_file_id]: { authorship: e.target.value as Authorship, subject: p[d.input_file_id]?.subject ?? d.subject ?? "uncertain" } }))}
+                        style={{ fontSize: 12 }} aria-label="authorship">
+                        {(["client", "us", "third_party", "uncertain"] as Authorship[]).map((a) => <option key={a} value={a}>authorship: {AUTHORSHIP_WORD[a]}</option>)}
+                      </select>
+                      <select value={(pick[d.input_file_id]?.subject ?? d.subject ?? "uncertain")} disabled={busy !== null}
+                        onChange={(e) => setPick((p) => ({ ...p, [d.input_file_id]: { authorship: p[d.input_file_id]?.authorship ?? d.authorship ?? "uncertain", subject: e.target.value as Subject } }))}
+                        style={{ fontSize: 12 }} aria-label="subject">
+                        {(["this_company", "the_market", "uncertain"] as Subject[]).map((sub) => <option key={sub} value={sub}>subject: {SUBJECT_WORD[sub]}</option>)}
+                      </select>
+                      <button onClick={() => void overrideFacts(d)} disabled={busy !== null} style={btn(c.charcoal, false)} title="Write one immutable override row carrying authorship and subject">Override facts</button>
+                    </div>
                   )}
                   {decision === "blocked" && d.status === "unclassified" && (
                     <div style={{ fontSize: 11.5, color: c.warn, marginTop: 4 }}>Not classified for the current content — run Classify uploads, or override.</div>

@@ -94,3 +94,14 @@ export async function assertCorpusVoiceClassified(
   }
   return { ok: true, cleared, excluded };
 }
+
+/**
+ * INFERRED READ (ruling 10, 2026-09-13): which contributing docs an internal_inferred synthesis must DROP.
+ * Operator-excluded docs always; when the gate is not ok, every BLOCKED doc too (model external /
+ * uncertain without override, or unclassified). Before this ruling a not-ok gate fed every document.
+ */
+export function inferredReadDroppedFileIds(gate: CorpusVoiceGateResult): Set<string> {
+  const dropped = new Set<string>(gate.excluded.map((d) => d.input_file_id));
+  if (!gate.ok) for (const b of gate.blocked) dropped.add(b.input_file_id);
+  return dropped;
+}

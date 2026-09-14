@@ -11,7 +11,9 @@ describe("V2-5c — deriveClaimProvenance stamps 'analytic' for all-analysis bac
   it("all mojo_analysis → 'analytic'; all uploaded_file+organization → 'internal_declared'", () => {
     expect(deriveClaimProvenance([{ sourceType: "mojo_analysis", band: "organization" }])).toBe("analytic");
     expect(deriveClaimProvenance([{ sourceType: "mojo_analysis", band: "outside" }, { sourceType: "mojo_analysis", band: "customer" }])).toBe("analytic");
-    expect(deriveClaimProvenance([{ sourceType: "uploaded_file", band: "organization" }])).toBe("internal_declared");
+    // 2026-09-13 (import provenance): an upload is declared only with authorship 'client'; without it, never.
+    expect(deriveClaimProvenance([{ sourceType: "uploaded_file", band: "organization", authorship: "client" }])).toBe("internal_declared");
+    expect(deriveClaimProvenance([{ sourceType: "uploaded_file", band: "organization" }])).toBe("public_observed");
     // FALSIFICATION: a public_baseline signal is NOT analytic
     expect(deriveClaimProvenance([{ sourceType: "public_baseline_run", band: "outside" }])).toBe("public_observed");
     expect(deriveClaimProvenance([])).toBe("public_observed");

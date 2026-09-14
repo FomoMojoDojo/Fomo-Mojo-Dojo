@@ -27,7 +27,9 @@ function json(body: unknown, status = 200) {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
-    const { company_id, plan, write } = await req.json();
+    // input_file_id: classify ONE document (the upload path); force + write:false: re-judge classified docs
+    // without writing (the accuracy read). Overrides are written by the admin panel, not here.
+    const { company_id, plan, write, input_file_id, force } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
 
     const supabase = createClient(
@@ -48,6 +50,8 @@ serve(async (req) => {
       ollamaUrl,
       model: Deno.env.get("OLLAMA_MODEL") ?? undefined,
       write: write !== false,
+      inputFileId: typeof input_file_id === "string" && input_file_id ? input_file_id : null,
+      force: force === true,
     });
     return json({ ok: true, dry_run: write === false, ...result });
   } catch (err) {

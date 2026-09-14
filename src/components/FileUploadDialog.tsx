@@ -347,15 +347,48 @@ async function analyzeFileWithTimeout(
   ]);
 }
 
+/** Import provenance (rulings 1, 8, 11 — 2026-09-13): the uploaded document's origin, judged once its sidecar exists. */
+type UploadOrigin = { authorship: 'client' | 'us' | 'third_party' | 'uncertain'; subject: 'this_company' | 'the_market' | 'uncertain' };
+async function classifyUploadedDocument(companyId: string | null, inputFileId: string | null): Promise<UploadOrigin> {
+  const uncertain: UploadOrigin = { authorship: 'uncertain', subject: 'uncertain' };
+  if (!companyId || !inputFileId) return uncertain;
+  try {
+    const { data, error } = await supabase.functions.invoke('classify-upload-voice', { body: { company_id: companyId, input_file_id: inputFileId } });
+    if (error || !data?.ok) return uncertain;
+    const doc = (Array.isArray(data.docs) ? data.docs : []).find((d: { input_file_id?: string }) => d?.input_file_id === inputFileId);
+    if (!doc) return uncertain;
+    const authorship = doc.authorship_override ?? doc.authorship;
+    const subject = doc.subject_override ?? doc.subject;
+    return {
+      authorship: authorship === 'client' || authorship === 'us' || authorship === 'third_party' ? authorship : 'uncertain',
+      subject: subject === 'this_company' || subject === 'the_market' ? subject : 'uncertain',
+    };
+  } catch {
+    return uncertain;
+  }
+}
+/**
+ * Ruling 8: an upload-derived need carries the DOCUMENT'S origin, never the `manual` default that read as
+ * "Backed by your research". client ⇒ manual (unchanged: the client's own material); third_party ⇒
+ * public_research ("From outside signals"); us / uncertain ⇒ no need is written from the upload at all.
+ */
+export function needProvenanceForOrigin(origin: UploadOrigin): 'manual' | 'public_research' | null {
+  if (origin.authorship === 'client') return 'manual';
+  if (origin.authorship === 'third_party') return 'public_research';
+  return null;
+}
 async function persistUploadDerivedNeeds(params: {
   companyId: string | null;
   userId: string | null;
   sourcePath: string | null;
   inputLabel: string;
   candidates: AnalysisResult['odiNeedCandidates'];
+  origin: UploadOrigin;
 }) {
-  const { companyId, userId, sourcePath, inputLabel, candidates } = params;
+  const { companyId, userId, sourcePath, inputLabel, candidates, origin } = params;
   if (!companyId || !userId || !sourcePath || candidates.length === 0) return 0;
+  const provenanceType = needProvenanceForOrigin(origin);
+  if (!provenanceType) return 0;
 
   try {
     const { data: existingRows, error: existingError } = await supabase
@@ -400,6 +433,7 @@ async function persistUploadDerivedNeeds(params: {
           service_state: 'monitor',
           source_path: sourcePath,
           frameworks_used: ['JTBD', 'Strategic Decision System', 'Local Upload Analysis'],
+          provenance_type: provenanceType,
         };
       });
 
@@ -518,9 +552,8 @@ export default function FileUploadDialog({
     });
 
     setUploadSummaries(refusedSummaries);
-    if (selectedProvenanceTags.length === 0) {
-      setSelectedProvenanceTags(['Company']);
-    }
+    // Ruling 7 (2026-09-13): no default provenance tag — an unchosen "Company" was the forced-tag defect in
+    // UI form. The operator's tags are a hint to the authorship classifier and a record, never a verdict.
   }
 
   function handleDrop(event: DragEvent<HTMLButtonElement>) {
@@ -676,12 +709,16 @@ export default function FileUploadDialog({
           }
         }
 
+        // Authorship + subject are judged as soon as the sidecar exists (post-upload analyze-file wrote it),
+        // BEFORE any need is written from this document.
+        const origin = await classifyUploadedDocument(selectedCompanyId, uploadResult?.id ?? null);
         const derivedNeedsAdded = await persistUploadDerivedNeeds({
           companyId: selectedCompanyId,
           userId: currentUserId,
           sourcePath: uploadResult?.filePath ?? null,
           inputLabel: finalInput.input_label,
           candidates: analysis?.odiNeedCandidates ?? [],
+          origin,
         });
 
         successCount += 1;

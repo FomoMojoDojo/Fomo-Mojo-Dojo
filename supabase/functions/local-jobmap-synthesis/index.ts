@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { regenerateJobMapJourney } from "../_shared/jobMapRegeneration.ts";
 import { protectedJourneyKeys } from "../_shared/journeyProtection.ts";
 import { loadContributingDocs } from "../_shared/uploadCorpus.ts";
-import { assertCorpusVoiceClassified } from "../_shared/corpusVoiceGate.ts";
+import { assertCorpusVoiceClassified, inferredReadDroppedFileIds } from "../_shared/corpusVoiceGate.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { judgeStepPerspectives } from "../_shared/stepPerspectiveJudge.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
@@ -1034,8 +1034,11 @@ Deno.serve(async (req) => {
     // context through the ONE shared corpus loader (deterministic, B2B_-core first,
     // archived excluded). This function is internal_inferred by construction, so it
     // does NOT refuse a mixed corpus (an inferred read of an upload is honest — it
-    // never claims the words are the client's). It only DROPS docs the operator has
-    // explicitly overridden to 'external'. The declared refusal lives in Gate 3b.
+    // never claims the words are the client's). It DROPS every document that is not the
+    // client's voice: operator-overridden 'external', AND (ruling 10, 2026-09-13) any doc the
+    // gate BLOCKS — model 'external' / 'uncertain' without override, or unclassified. Before
+    // this ruling a not-ok gate fed EVERY document (the excluded list was read only when ok).
+    // The declared refusal lives in Gate 3b.
     const contributingDocs = await loadContributingDocs(
       supabase as unknown as Parameters<typeof loadContributingDocs>[0],
       companyId,
@@ -1045,7 +1048,10 @@ Deno.serve(async (req) => {
       companyId,
       contributingDocs.map((d) => ({ input_file_id: d.input_file_id, content_sha: d.content_sha, file_name: d.file_name })),
     );
-    const excludedFileIds = new Set(voiceGate.ok ? voiceGate.excluded.map((d) => d.input_file_id) : []);
+    const excludedFileIds = inferredReadDroppedFileIds(voiceGate);
+    if (!voiceGate.ok) {
+      console.log(`[local-jobmap-synthesis] voice gate not ok — dropping ${voiceGate.blocked.length} blocked doc(s) from the inferred read: ${voiceGate.blocked.map((b) => `“${b.file_name}”: ${b.reason}`).join("; ")}`);
+    }
     const internalDocuments: Array<{ file_name: string; excerpt: string }> = contributingDocs
       .filter((d) => !excludedFileIds.has(d.input_file_id))
       .map((d) => ({ file_name: d.file_name, excerpt: d.excerpt }));

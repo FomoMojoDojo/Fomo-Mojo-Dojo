@@ -359,9 +359,9 @@ export function useUploadInputFile() {
       const safeInputKey = sanitizePathSegment(inputKey || "input");
       const safeFile = sanitizeFileName(file.name);
       const filePath = `${user.id}/${safeCompany}/${safeInputKey}/${inputId}/${Date.now()}-${safeFile}`;
-      const normalizedTags = Array.from(
-        new Set([...(Array.isArray(tags) ? tags : []), "Company"]),
-      );
+      // Ruling 7 (2026-09-13): the operator's provenance tags are load-bearing and "Company" is no longer
+      // forced onto every upload — a tag the operator did not choose said nothing about the document.
+      const normalizedTags = Array.from(new Set(Array.isArray(tags) ? tags : []));
 
       const { error: uploadError } = await supabase.storage.from('input-files').upload(filePath, file);
       if (uploadError) throw uploadError;
