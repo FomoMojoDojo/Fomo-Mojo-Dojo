@@ -4,6 +4,7 @@
 // proves its controls still call the same functions with the same arguments.
 import { useState, useEffect, type Dispatch, type SetStateAction } from "react";
 import type { FileProposalRow } from "@/hooks/useFileProposals";
+import { formatAnalysisVersion, formatExtractionShape } from "@/lib/fileAnalysis";
 import { isInternalFileTag, makeAreaSupportTag } from "@/lib/fileTags";
 
 export const WORKSHOP_TAGS = [
@@ -440,6 +441,19 @@ export function ProposalReviewPanel({
           {proposal.confidence} confidence
         </span>
       </div>
+      {/* Ruling 9 (2026-09-14): Dify's own reason for its confidence — the one place thinness registered. */}
+      {proposal.confidence_reason ? (
+        <p style={{ ...MONO, fontSize: 10, color: "#777", margin: "-8px 0 8px", lineHeight: 1.5 }} data-testid="proposal-confidence-reason">{proposal.confidence_reason}</p>
+      ) : null}
+      {/* Ruling 8 (2026-09-14): what the parser actually read — an image-borne document is visibly thin. Signed strings. */}
+      {formatExtractionShape({ chars: proposal.extraction_chars ?? null, images: proposal.extraction_images ?? null, pages: proposal.extraction_pages ?? null }) ? (
+        <p style={{ ...MONO, fontSize: 10, color: "#888", margin: "0 0 8px" }} data-testid="proposal-extraction-shape">
+          {formatExtractionShape({ chars: proposal.extraction_chars ?? null, images: proposal.extraction_images ?? null, pages: proposal.extraction_pages ?? null })}
+        </p>
+      ) : null}
+      <p style={{ ...MONO, fontSize: 9, color: "#999", margin: "0 0 8px", letterSpacing: "0.06em", textTransform: "uppercase" }} data-testid="proposal-analysis-version">
+        {formatAnalysisVersion(proposal.analysis_version)}
+      </p>
 
       {proposal.signal_type && (
         <p style={{ ...MONO, fontSize: 10, color: "#888", margin: "0 0 8px" }}>

@@ -42,7 +42,7 @@ const ACCEPTED: FileProposalRow = {
     { title: "Structured fundraising", why_this_could_matter: "Funding gap.", linked_opportunity: "Fund the work", evidence: "Underfunded.", confidence: "medium" },
   ],
   experiments_to_run: [], contradictions: [], confidence: "medium",
-  confidence_reason: "Detailed insights but no timelines or budgets.", questions_to_verify: [],
+  confidence_reason: "Detailed insights but no timelines or budgets.", analysis_version: 1, extraction_chars: null, extraction_images: null, extraction_pages: null, questions_to_verify: [],
   status: "accepted", processing_state: "ready", processing_error: null,
   processing_started_at: "2026-07-16T17:00:00Z", processing_completed_at: "2026-07-16T17:05:00Z",
   applied_areas: ["jobmap", "odi", "strategy", "routes"], created_at: "2026-07-16T17:00:00Z", reviewed_at: "2026-07-16T17:08:04.105+00:00",
@@ -97,5 +97,26 @@ describe("ProposalReviewPanel — status-aware", () => {
     const { container } = render(<ProposalReviewPanel proposal={{ ...ACCEPTED, id: "prop-rejected", status: "rejected", applied_areas: [] }} {...handlers()} />);
     expect(buttons(container)).toEqual(["Close"]);
     expect(container.querySelector("[data-testid=proposal-decision-record]")!.textContent).toMatch(/rejected Jul 16, 2026/);
+  });
+
+  // Rulings 8 / 9 / 1b (2026-09-14): the extraction shape (signed strings), the methodology stamp, and Dify's
+  // confidence reason beneath the existing "{confidence} confidence" chip.
+  it("v2 proposal: extraction shape line, Analysis v2, confidence reason", () => {
+    const v2 = { ...PENDING, analysis_version: 2, extraction_chars: 341, extraction_images: 5, extraction_pages: null, confidence: "low" as const, confidence_reason: "The document provides strong positioning statements but lacks specific details." };
+    const { container } = render(<ProposalReviewPanel proposal={v2} {...handlers()} />);
+    expect(container.querySelector("[data-testid=proposal-extraction-shape]")!.textContent).toBe("341 characters of text read · 5 images not read");
+    expect(container.querySelector("[data-testid=proposal-analysis-version]")!.textContent).toBe("Analysis v2");
+    expect(container.querySelector("[data-testid=proposal-confidence-reason]")!.textContent).toBe("The document provides strong positioning statements but lacks specific details.");
+    expect(container.textContent).toContain("low confidence");
+  });
+  it("prior proposal (no shape recorded): no extraction line, Analysis v1, no reason paragraph when empty", () => {
+    const { container } = render(<ProposalReviewPanel proposal={{ ...PENDING, confidence_reason: "" }} {...handlers()} />);
+    expect(container.querySelector("[data-testid=proposal-extraction-shape]")).toBeNull();
+    expect(container.querySelector("[data-testid=proposal-analysis-version]")!.textContent).toBe("Analysis v1");
+    expect(container.querySelector("[data-testid=proposal-confidence-reason]")).toBeNull();
+  });
+  it("PDF shape: pages appended, no images clause at zero", () => {
+    const { container } = render(<ProposalReviewPanel proposal={{ ...PENDING, analysis_version: 2, extraction_chars: 13139, extraction_images: 0, extraction_pages: 24 }} {...handlers()} />);
+    expect(container.querySelector("[data-testid=proposal-extraction-shape]")!.textContent).toBe("13,139 characters of text read · 24 pages");
   });
 });

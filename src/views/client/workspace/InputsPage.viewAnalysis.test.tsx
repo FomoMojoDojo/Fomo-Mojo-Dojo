@@ -37,7 +37,7 @@ const PROPOSAL: FileProposalRow = {
   id: "prop-1", company_id: "c1", file_id: "file-1", file_name: FILE.file_name, source_type: "uploaded_file",
   summary: "The document outlines a strategic review session.", evidence: ["Funds it on a shoestring."], signal_type: "document", framework_results: [],
   suggested_areas: ["job_map"], candidate_positioning_updates: [], candidate_job_steps: [], candidate_needs: [{ desired_outcome: "A structured approach.", importance: 0, satisfaction: 0 }],
-  candidate_outcomes: [], possible_gaps: [], possible_routes: [], experiments_to_run: [], contradictions: [], confidence: "medium", confidence_reason: "", questions_to_verify: [],
+  candidate_outcomes: [], possible_gaps: [], possible_routes: [], experiments_to_run: [], contradictions: [], confidence: "medium", confidence_reason: "", analysis_version: 1, extraction_chars: null, extraction_images: null, extraction_pages: null, questions_to_verify: [],
   status: "accepted", processing_state: "ready", processing_error: null, processing_started_at: null, processing_completed_at: "2026-07-16T17:05:00Z",
   applied_areas: ["jobmap", "odi"], created_at: "2026-07-16T17:00:00Z", reviewed_at: "2026-07-16T17:08:04Z",
 };
@@ -76,7 +76,9 @@ describe("InputsPage — View analysis → on an accepted row", () => {
     const c = cell(container);
     expect(c.querySelector("[data-testid=inputs-view-analysis]")).toBeNull();
     expect(c.querySelectorAll("[data-fr-operator]")).toHaveLength(0);
-    expect(c.textContent?.trim()).toBe("Analysis ready");
+    // Ruling 9 (2026-09-14): the cell also carries Dify's proposal-level confidence, ungated — same string as the panel chip.
+    expect(c.querySelector("[data-testid=inputs-analysis-confidence]")?.textContent).toBe("medium confidence");
+    expect(c.textContent?.replace("medium confidence", "").trim()).toBe("Analysis ready");
     expect(c.firstElementChild?.tagName).toBe("SPAN");
   });
   it("capability FALSE with operator ON: no control, the chip", () => {
@@ -85,6 +87,8 @@ describe("InputsPage — View analysis → on an accepted row", () => {
     const c = cell(container);
     expect(c.querySelector("[data-testid=inputs-view-analysis]")).toBeNull();
     expect(c.querySelectorAll("[data-fr-operator]")).toHaveLength(0);
-    expect(c.textContent?.trim()).toBe("Analysis ready");
+    // Ruling 9 (2026-09-14): the cell also carries Dify's proposal-level confidence, ungated — same string as the panel chip.
+    expect(c.querySelector("[data-testid=inputs-analysis-confidence]")?.textContent).toBe("medium confidence");
+    expect(c.textContent?.replace("medium confidence", "").trim()).toBe("Analysis ready");
   });
 });

@@ -1847,6 +1847,12 @@ export type Database = {
       }
       file_proposals: {
         Row: {
+          analysis_version: number
+          analysis_workflow_id: string | null
+          extraction_chars: number | null
+          extraction_images: number | null
+          extraction_pages: number | null
+          extraction_source: string | null
           applied_areas: string[]
           candidate_job_steps: Json
           candidate_needs: Json
@@ -1880,6 +1886,12 @@ export type Database = {
           summary: string
         }
         Insert: {
+          analysis_version?: number
+          analysis_workflow_id?: string | null
+          extraction_chars?: number | null
+          extraction_images?: number | null
+          extraction_pages?: number | null
+          extraction_source?: string | null
           applied_areas?: string[]
           candidate_job_steps?: Json
           candidate_needs?: Json
@@ -1913,6 +1925,12 @@ export type Database = {
           summary?: string
         }
         Update: {
+          analysis_version?: number
+          analysis_workflow_id?: string | null
+          extraction_chars?: number | null
+          extraction_images?: number | null
+          extraction_pages?: number | null
+          extraction_source?: string | null
           applied_areas?: string[]
           candidate_job_steps?: Json
           candidate_needs?: Json

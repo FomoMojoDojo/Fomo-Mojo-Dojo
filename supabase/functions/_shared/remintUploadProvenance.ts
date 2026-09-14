@@ -20,6 +20,7 @@ import { ingestDifyProposalSignals } from "./evidencePhase1.ts";
 import { loadContributingDocs } from "./uploadCorpus.ts";
 import { resolveUploadOrigin, type UploadOrigin } from "./uploadVoiceClassifier.ts";
 import { snapshotMojoScore } from "./snapshotMojoScore.ts";
+import { loadUploadSidecarText } from "./uploadSidecar.ts";
 
 export const REMINT_REASON = "remint_authorship_v2";
 export const REMINT_MINTING_VERSION = 2;
@@ -124,14 +125,18 @@ export async function applyRemint(supabase: Sb, companyId: string, plans: Remint
       if (error) throw new Error(`supersede signal ${sid}: ${error.message}`);
     }
     // 2. re-ingest under the current origin (new signals at minting_version 2; company rebuild)
-    const { data: p } = await supabase.from("file_proposals").select("id, company_id, file_name, source_type, summary, evidence, contradictions, framework_results, questions_to_verify, suggested_areas, confidence, confidence_reason").eq("id", plan.proposal_id).maybeSingle();
+    const { data: p } = await supabase.from("file_proposals").select("id, company_id, file_name, source_type, summary, evidence, contradictions, framework_results, questions_to_verify, suggested_areas, confidence, confidence_reason, analysis_version").eq("id", plan.proposal_id).maybeSingle();
     if (!p) throw new Error(`proposal ${plan.proposal_id} not found`);
+    // A re-mint re-ingests the proposal's OWN findings under its own methodology version (never re-analysed);
+    // the upload excerpt guard applies here too (ruling 5), with the sidecar as basis.
+    const sidecarText = await loadUploadSidecarText(supabase as unknown as { from: (t: string) => any; storage: any }, plan.input_file_id);
     await ingestDifyProposalSignals({
       supabase: supabase as any, companyId, proposalId: plan.proposal_id,
       sourceType: String(p.source_type ?? "uploaded_file"), sourceTitle: String(p.file_name ?? ""),
       summary: p.summary, evidence: p.evidence, contradictions: p.contradictions, frameworkResults: p.framework_results, questionsToVerify: p.questions_to_verify,
       rawPayload: { summary: p.summary, suggested_areas: p.suggested_areas, confidence: p.confidence, confidence_reason: p.confidence_reason, reminted: true },
       origin: plan.current_origin, mintingVersion: REMINT_MINTING_VERSION,
+      analysisVersion: Number(p.analysis_version ?? 1) || 1, sourceText: sidecarText,
     });
     const { data: minted } = await supabase.from("signals").select("id").eq("company_id", companyId).eq("source_id", plan.proposal_id).is("superseded_at", null);
     const mintedIds = ((minted ?? []) as Array<{ id: string }>).map((s) => s.id);

@@ -100,6 +100,8 @@ test("d. operator OFF: no view-analysis control, zero operator nodes; the accept
   await expect(page.locator("[data-fr-operator]")).toHaveCount(0);
   await expect(page.getByTestId("inputs-view-analysis")).toHaveCount(0);
   const row = page.locator("tr[data-testid=inputs-file-row]", { hasText: ACCEPTED_FILE });
-  await expect(row.locator(".fr-ws-table-analysis")).toHaveText("Analysis ready");
-  expect(await row.locator(".fr-ws-table-analysis > *").evaluate((el) => el.tagName)).toBe("SPAN");
+  // Ruling 9 (2026-09-14): the cell also carries Dify's proposal-level confidence ("{confidence} confidence"), ungated.
+  await expect(row.locator(".fr-ws-table-analysis > *").first()).toHaveText("Analysis ready");
+  await expect(row.getByTestId("inputs-analysis-confidence")).toHaveText(/^(high|medium|low) confidence$/);
+  expect(await row.locator(".fr-ws-table-analysis > *").first().evaluate((el) => el.tagName)).toBe("SPAN");
 });

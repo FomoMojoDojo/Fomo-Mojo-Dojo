@@ -5,6 +5,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
 import { isLocalOllamaUrl as isLocalClassifierUrl, resolveUploadOrigin } from "../_shared/uploadVoiceClassifier.ts";
 import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
+import { loadUploadSidecarText } from "../_shared/uploadSidecar.ts";
+import { FILE_ANALYSIS_VERSION } from "../../../src/lib/fileAnalysis.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -126,7 +128,9 @@ async function extractTextViaLocalParser(params: {
   const data = await response.json().catch(() => ({}));
   const text = typeof data?.text === "string" ? data.text : "";
   const source = typeof data?.source === "string" ? data.source : "local_parser";
-  return { text, source };
+  // EXTRACTION SHAPE (ruling 8, 2026-09-14): what the parser read and did not read, carried onto the proposal.
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return { text, source, images: num(data?.images) ?? 0, pages: num(data?.pages) };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -562,9 +566,17 @@ async function persistDifyResult(params: {
 
   const { data: proposalRow } = await supabase
     .from("file_proposals")
-    .select("company_id, file_name, source_type, file_id")
+    .select("company_id, file_name, source_type, file_id, analysis_version")
     .eq("id", proposalId)
     .maybeSingle();
+  // The Dify published workflow the run actually used (ruling 2): traceable to supabase/dify-workflows/.
+  {
+    const topLevel = asRecord(difyResult) ?? {};
+    const data = asRecord(topLevel.data) ?? {};
+    const workflowRun = asRecord(topLevel.workflow_run) ?? asRecord(data.workflow_run) ?? {};
+    const workflowId = String(data.workflow_id ?? workflowRun.workflow_id ?? topLevel.workflow_id ?? "").trim();
+    if (workflowId) await supabase.from("file_proposals").update({ analysis_workflow_id: workflowId }).eq("id", proposalId).is("analysis_workflow_id", null);
+  }
 
   if (proposalRow?.company_id) {
     const companyId = String(proposalRow.company_id);
@@ -585,6 +597,11 @@ async function persistDifyResult(params: {
         console.warn("[dify-analyze-file] upload origin unresolved (no file id or non-local classifier) → uncertain:", proposalId);
       }
     }
+    // E4 EXCERPT GUARD on the upload path (ruling 5, 2026-09-14): the sidecar is the basis. Absent (orphan
+    // file row, no sidecar) ⇒ null ⇒ the guard leaves drafts as-is (its honest-limit law) and we say so.
+    const sidecarText = effectiveSourceType === "intake" ? null : await loadUploadSidecarText(supabase as unknown as { from: (t: string) => any; storage: any }, (proposalRow as { file_id?: unknown }).file_id as string | null);
+    if (effectiveSourceType !== "intake" && !sidecarText) console.warn("[dify-analyze-file] no sidecar basis for the excerpt guard:", proposalId);
+    const analysisVersion = Number((proposalRow as { analysis_version?: unknown }).analysis_version ?? 1) || 1;
     await ingestDifyProposalSignals({
       supabase,
       companyId,
@@ -598,6 +615,8 @@ async function persistDifyResult(params: {
       frameworkResults,
       questionsToVerify,
       rawPayload: structuredOutputs,
+      analysisVersion,
+      sourceText: sidecarText,
     });
     await snapshotMojoScore(supabase, companyId);
   }
@@ -1086,6 +1105,8 @@ serve(async (req) => {
     }
 
     let fileText = "";
+    // Extraction shape (ruling 8): persisted on the proposal so an image-borne document is visibly thin.
+    let extraction: { images: number; pages: number | null; source: string } = { images: 0, pages: null, source: "local_text_reader" };
     try {
       const ext = extensionFromName(fileName ?? "");
       const normalizedType = String(fileType || downloaded.type || "").toLowerCase();
@@ -1104,13 +1125,15 @@ serve(async (req) => {
           blob: downloaded,
         });
         fileText = parsed.text;
+        extraction = { images: parsed.images, pages: parsed.pages, source: parsed.source };
       }
     } catch (extractError) {
       console.log("[dify-analyze-file] extraction error:", String((extractError as Error)?.message ?? extractError));
       fileText = "";
+      extraction = { images: 0, pages: null, source: "local_parser_error" };
     }
 
-    console.log("[dify-analyze-file] extracted file_text length:", fileText.length);
+    console.log("[dify-analyze-file] extracted file_text length:", fileText.length, "shape:", JSON.stringify({ chars: fileText.length, ...extraction }));
     {
       const m = Deno.memoryUsage();
       console.log("[dify-analyze-file] memory after extraction (MB): file", (downloaded.size / 1048576).toFixed(1), "heapUsed", (m.heapUsed / 1048576).toFixed(1), "external", (m.external / 1048576).toFixed(1), "rss", (m.rss / 1048576).toFixed(1));
@@ -1178,6 +1201,12 @@ serve(async (req) => {
         dify_workflow_run_id: null,
         dify_task_id:        null,
         applied_areas:       [],
+        // Methodology version (ruling 2, 2026-09-14): stamped at birth, never re-rolled. Priors read 1 by default.
+        analysis_version:    FILE_ANALYSIS_VERSION,
+        extraction_chars:    fileText.length,
+        extraction_images:   extraction.images,
+        extraction_pages:    extraction.pages,
+        extraction_source:   extraction.source,
       })
       .select()
       .single();

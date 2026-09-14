@@ -89,6 +89,12 @@ export interface FileProposalRow {
   contradictions: ProposalContradiction[];
   confidence: ProposalConfidence;
   confidence_reason: string;
+  /** Methodology version (2026-09-14): 1 = frameworks read Grounding's summary; 2 = frameworks read the file. Priors read 1. */
+  analysis_version: number;
+  /** Extraction shape (ruling 8): what the parser read / did not read. null on proposals from before the stamp. */
+  extraction_chars: number | null;
+  extraction_images: number | null;
+  extraction_pages: number | null;
   questions_to_verify: string[];
   status: 'pending' | 'accepted' | 'rejected';
   processing_state: 'queued' | 'running' | 'ready' | 'failed';

@@ -54,3 +54,26 @@ export function applyExcerptGuard<T extends { evidence_excerpt: string; claim_te
   // Unverifiable excerpt → store no excerpt/claim; the interpretation remains in raw_payload.
   return { evidence_excerpt: "", claim_text: "", dropped: true };
 }
+
+/** UPLOAD variant (rulings 5–7, 2026-09-14). On the upload path claim_text is the FINDING (the model's
+ *  interpretation) and evidence_excerpt is the quote it attributes to the document — two different things.
+ *  When the excerpt does not trace to the sidecar the signal is KEPT as interpretation-only: the excerpt is
+ *  blanked (it loses the claim to a quote it cannot produce), claim_text stays, and raw_payload records the
+ *  gate. Absence-as-evidence ("missing_information: …") is caught here by TRACEABILITY, whatever the
+ *  workflow emitted. No basis ⇒ untouched (honest limit), as with the public gate. Deterministic. */
+export function applyUploadExcerptGuard<T extends { evidence_excerpt: string; claim_text: string; voice_class?: string | null; raw_payload?: unknown }>(
+  draft: T,
+  sidecarText: string | null | undefined,
+): { evidence_excerpt: string; raw_payload: unknown; dropped: boolean } {
+  const hasBasis = !!normalizeForHash(String(sidecarText ?? ""));
+  if (!hasBasis) return { evidence_excerpt: draft.evidence_excerpt, raw_payload: draft.raw_payload, dropped: false };
+  const rp = draft.raw_payload && typeof draft.raw_payload === "object" ? (draft.raw_payload as Record<string, unknown>) : {};
+  if (excerptTracesToSource(draft.evidence_excerpt, sidecarText)) {
+    return { evidence_excerpt: draft.evidence_excerpt, raw_payload: { ...rp, excerpt_guard: { basis: "sidecar", traced: true } }, dropped: false };
+  }
+  return {
+    evidence_excerpt: "",
+    raw_payload: { ...rp, excerpt_guard: { basis: "sidecar", traced: false, blanked_excerpt: draft.evidence_excerpt } },
+    dropped: true,
+  };
+}

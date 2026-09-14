@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import http from "node:http";
 import mammoth from "mammoth";
+import JSZip from "jszip";
 
 const HOST = process.env.LOCAL_PARSER_HOST || "0.0.0.0";
 const PORT = Number(process.env.LOCAL_PARSER_PORT || 8789);
@@ -33,12 +34,19 @@ function normalizeText(text, maxChars = 120_000) {
   return `${compact.slice(0, maxChars).trimEnd()}\n\n[truncated]`;
 }
 
+// EXTRACTION SHAPE (ruling 8, 2026-09-14): every path reports chars (text read), images (images it did NOT
+// read — no OCR exists), pages where the format knows them, and the parser path. An image-borne document
+// is then distinguishable from a two-sentence one downstream.
+const IMAGE_OPS = new Set(["paintImageXObject", "paintImageXObjectRepeat", "paintJpegXObject", "paintInlineImageXObject", "paintImageMaskXObject"]);
+
 async function extractPdfText(buffer) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const task = pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true });
   const doc = await task.promise;
   const pageCount = Math.min(doc.numPages, 30);
   const chunks = [];
+  let images = 0;
+  const opNames = new Map(Object.entries(pdfjs.OPS).map(([name, code]) => [code, name]));
   for (let page = 1; page <= pageCount; page += 1) {
     const p = await doc.getPage(page);
     const content = await p.getTextContent();
@@ -47,19 +55,33 @@ async function extractPdfText(buffer) {
       .filter(Boolean)
       .join(" ");
     if (text.trim()) chunks.push(`[Page ${page}] ${text.trim()}`);
+    try {
+      const ops = await p.getOperatorList();
+      for (const fn of ops.fnArray) if (IMAGE_OPS.has(opNames.get(fn))) images += 1;
+    } catch {
+      // image count is best-effort; text extraction is the authority
+    }
   }
-  return normalizeText(chunks.join("\n\n"));
+  return { text: normalizeText(chunks.join("\n\n")), images, pages: doc.numPages };
 }
 
 async function extractDocxText(buffer) {
   const result = await mammoth.extractRawText({ buffer });
-  return normalizeText(result.value || "");
+  let images = 0;
+  try {
+    const zip = await JSZip.loadAsync(buffer);
+    images = Object.keys(zip.files).filter((name) => /^word\/media\//.test(name) && !zip.files[name].dir).length;
+  } catch {
+    // not a readable package: mammoth already parsed the text; image count unknown → 0
+  }
+  return { text: normalizeText(result.value || ""), images, pages: null };
 }
 
 async function extractText({ fileName, fileType, contentBase64 }) {
   const buffer = Buffer.from(String(contentBase64 || ""), "base64");
   const ext = extensionFromName(fileName);
   const normalizedType = String(fileType || "").toLowerCase();
+  const shaped = (text, source, images = 0, pages = null) => ({ text, source, chars: text.length, images, pages });
 
   const isText =
     normalizedType.startsWith("text/") ||
@@ -67,23 +89,23 @@ async function extractText({ fileName, fileType, contentBase64 }) {
     normalizedType.includes("csv") ||
     ["txt", "csv", "md", "json", "xml", "yaml", "yml", "toml"].includes(ext);
   if (isText) {
-    return { text: normalizeText(buffer.toString("utf8")), source: "local_text_reader" };
+    return shaped(normalizeText(buffer.toString("utf8")), "local_text_reader");
   }
 
   const isPdf = normalizedType.includes("pdf") || ext === "pdf";
   if (isPdf) {
-    const text = await extractPdfText(buffer);
-    return { text, source: "local_parser_pdfjs" };
+    const { text, images, pages } = await extractPdfText(buffer);
+    return shaped(text, "local_parser_pdfjs", images, pages);
   }
 
   const isDocx =
     normalizedType.includes("officedocument.wordprocessingml.document") || ext === "docx";
   if (isDocx) {
-    const text = await extractDocxText(buffer);
-    return { text, source: "local_parser_mammoth" };
+    const { text, images, pages } = await extractDocxText(buffer);
+    return shaped(text, "local_parser_mammoth", images, pages);
   }
 
-  return { text: "", source: "unsupported" };
+  return shaped("", "unsupported");
 }
 
 function jsonResponse(res, status, body) {

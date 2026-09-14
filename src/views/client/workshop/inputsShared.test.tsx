@@ -12,7 +12,7 @@ const proposal: FileProposalRow = {
   evidence: [], signal_type: "", framework_results: [], suggested_areas: [], candidate_positioning_updates: [], candidate_job_steps: [],
   candidate_needs: [{ desired_outcome: "Minimize wait", tier: "need", step_label: "Define", importance: 8, satisfaction: 3, rationale: "" } as never],
   candidate_outcomes: [], possible_gaps: [], possible_routes: [], experiments_to_run: [], contradictions: [], confidence: "high",
-  confidence_reason: "", questions_to_verify: [], status: "pending", processing_state: "ready", processing_error: null,
+  confidence_reason: "", analysis_version: 1, extraction_chars: null, extraction_images: null, extraction_pages: null, questions_to_verify: [], status: "pending", processing_state: "ready", processing_error: null,
   processing_started_at: null, processing_completed_at: "2026-07-01T00:00:00Z", applied_areas: [], created_at: "2026-07-01T00:00:00Z", reviewed_at: null,
 };
 const accept = (c: HTMLElement) => Array.from(c.querySelectorAll("button")).find((b) => (b.textContent || "").startsWith("Accept"));

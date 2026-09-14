@@ -256,6 +256,10 @@ export default function InputsPage() {
                                 {WORKSPACE_STRINGS.viewAnalysis}
                               </button>
                             ) : badge ? <Chip tone={badge.tone}>{badge.label}</Chip> : null}
+                            {/* Ruling 9 (2026-09-14): Dify's proposal-level confidence, visible before the panel is opened. Same string as the panel chip. */}
+                            {proposal && proposal.processing_state === "ready" && proposal.confidence ? (
+                              <span className="fr-ws-analysis-confidence fr-mono" data-testid="inputs-analysis-confidence" data-fr-confidence={proposal.confidence}>{proposal.confidence} confidence</span>
+                            ) : null}
                           </td>
                           {gated ? (
                             <td className="fr-ws-table-actions">

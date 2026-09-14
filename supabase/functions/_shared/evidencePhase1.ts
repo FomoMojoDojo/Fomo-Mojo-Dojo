@@ -5,7 +5,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } from "../../../src/lib/evidenceDomain.ts";
 import { liftVerbatimQuote, pickEventDate } from "../../../src/lib/verbatimQuote.ts";
 import { produceQuote, normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
-import { applyExcerptGuard } from "../../../src/lib/evidenceExcerptGuard.ts";
+import { applyUploadExcerptGuard, applyExcerptGuard } from "../../../src/lib/evidenceExcerptGuard.ts";
 import { isSiteCrawlReceiptRow } from "../../../src/lib/siteCrawl/mint.ts";
 import { contentIdentity } from "./contentIdentity.ts";
 import { normalizeHost } from "./firstReadProvenance.ts";
@@ -883,6 +883,11 @@ export async function ingestDifyProposalSignals(args: {
   origin?: { authorship: "client" | "us" | "third_party" | "uncertain"; subject: "this_company" | "the_sector" | "uncertain" } | null;
   /** Re-mint tool only: stamps raw_payload.minting_version on the minted signals. */
   mintingVersion?: number | null;
+  /** File-analysis methodology version (ruling 2, 2026-09-14) — raw_payload.analysis_version on every minted signal. */
+  analysisVersion?: number | null;
+  /** The document's extracted-text sidecar (ruling 5): the basis the E4 excerpt guard verifies every upload
+   *  excerpt against. null ⇒ no basis ⇒ drafts left as-is (honest limit) — the caller logs it. */
+  sourceText?: string | null;
 }) {
   const signals = mapDifyFileOutputToSignals({
     companyId: args.companyId,
@@ -897,7 +902,25 @@ export async function ingestDifyProposalSignals(args: {
     rawPayload: args.rawPayload,
     origin: args.origin ?? null,
     mintingVersion: args.mintingVersion ?? null,
+    analysisVersion: args.analysisVersion ?? null,
   });
+
+  // E4 EXCERPT GUARD — UPLOAD PATH (rulings 5–7, 2026-09-14). Same discipline as the public gate, with the
+  // sidecar as basis: an excerpt that is not a normalizeForHash-substring of what the parser read is not the
+  // document's words. The signal is KEPT as interpretation-only (claim_text stays, excerpt blanked, gate
+  // recorded in raw_payload). This is what catches "missing_information: …" — by traceability, not by prefix.
+  if (args.sourceText) {
+    let blanked = 0, traced = 0;
+    for (const draft of signals) {
+      const guarded = applyUploadExcerptGuard(draft, args.sourceText);
+      draft.evidence_excerpt = guarded.evidence_excerpt;
+      draft.raw_payload = guarded.raw_payload as typeof draft.raw_payload;
+      if (guarded.dropped) blanked++; else traced++;
+    }
+    console.log("[excerpt-guard:upload] sidecar basis", { traced, blanked, of_signals: signals.length, proposal: args.proposalId });
+  } else {
+    console.log("[excerpt-guard:upload] no basis — drafts left as-is", { of_signals: signals.length, proposal: args.proposalId });
+  }
 
   const stats = await persistSignalsAndRebuildClaims({
     supabase: args.supabase,

@@ -2610,6 +2610,10 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-table-analysis .fr-ws-control[data-fr-failed] { color: hsl(var(--fr-bad)); border-color: hsl(var(--fr-bad) / 0.4); }
 .fr-ws-table-analysis .fr-ws-control[data-fr-failed]:hover { background: hsl(var(--fr-bad) / 0.08); }
 .fr-ws-table-analysis .fr-ws-analysis-refused { display: inline-block; max-width: 22rem; color: hsl(var(--fr-bad)); font-size: 10px; letter-spacing: 0.04em; line-height: 1.4; }
+/* Ruling 9 (2026-09-14): Dify's proposal-level confidence beside the analysis control — selector-only mapping to existing tokens. */
+.fr-ws-table-analysis .fr-ws-analysis-confidence { display: block; margin-top: 4px; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: hsl(var(--fr-muted)); }
+.fr-ws-table-analysis .fr-ws-analysis-confidence[data-fr-confidence="low"] { color: hsl(var(--fr-bad)); }
+.fr-ws-table-analysis .fr-ws-analysis-confidence[data-fr-confidence="medium"] { color: hsl(var(--fr-warn)); }
 
 /* Council (P:391-397). */
 .fr-ws-section { margin-bottom: 3.5rem; }
