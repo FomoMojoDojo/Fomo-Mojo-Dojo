@@ -21,6 +21,7 @@ import { loadContributingDocs } from "./uploadCorpus.ts";
 import { resolveUploadOrigin, type UploadOrigin } from "./uploadVoiceClassifier.ts";
 import { snapshotMojoScore } from "./snapshotMojoScore.ts";
 import { loadUploadSidecar } from "./uploadSidecar.ts";
+import { authorshipForSource } from "../../../src/lib/evidenceMappers.ts";
 
 export const REMINT_REASON = "remint_authorship_v2";
 export const REMINT_MINTING_VERSION = 2;
@@ -162,5 +163,120 @@ export async function applyRemint(supabase: Sb, companyId: string, plans: Remint
     out.push({ proposal_id: plan.proposal_id, superseded: plan.superseded_signal_ids.length, minted: mintedIds.length, struck, ledger_id: ledger?.id ?? null });
   }
   if (out.some((o) => o.superseded > 0 || o.struck > 0)) await snapshotMojoScore(supabase as any, companyId);
+  return out;
+}
+
+// ── ANALYSIS RE-MINT (operator rulings 1–4, 2026-09-14): a mojo-analysis proposal, addressed BY ID ──────
+// No document, so no origin to resolve: authorship comes from the source type through the one authority
+// (authorshipForSource: mojo_analysis ⇒ us). The proposal's live signals are superseded and re-ingested at
+// minting_version 3 with origin {us, this_company} ⇒ organization band, voice_class 'analysis' (excluded from
+// TEAM). Its ANALYTIC claim is KEPT (ruling 2/4): the rebuild re-links the same stable claim id to the new
+// signals; only a claim the rebuild does NOT re-link (its whole live backing gone) is struck. Ledger per proposal.
+export const ANALYSIS_REMINT_MINTING_VERSION = 3;
+export const ANALYSIS_REMINT_REASON = "remint_authorship_v3";
+export const ANALYSIS_ORIGIN: Origin = { authorship: "us", subject: "this_company" };
+
+export type AnalysisRemintPlan = {
+  proposal_id: string; found: boolean; source_type: string | null; file_name: string | null;
+  live_signals: number; live_voice: Record<string, number>; change: "none" | "remint" | "not_found" | "not_analysis";
+  superseded_signal_ids: string[];
+  claims_on_signals: Array<{ id: string; statement: string; provenance: string; state: string; status: string; other_live_refs: number }>;
+  would_mint: { signals: number; band: string; voice_class: string };
+};
+
+export async function planAnalysisRemint(supabase: Sb, companyId: string, proposalIds: string[]): Promise<AnalysisRemintPlan[]> {
+  const ids = [...new Set(proposalIds.map(String))];
+  if (ids.length === 0) throw new Error("proposal_ids required");
+  const { data: rows, error } = await supabase.from("file_proposals").select("id, source_type, file_name").eq("company_id", companyId).in("id", ids);
+  if (error) throw new Error(`load proposals: ${error.message}`);
+  const found = new Map((((rows ?? []) as Array<{ id: string; source_type: string | null; file_name: string | null }>)).map((r) => [r.id, r]));
+  const plans: AnalysisRemintPlan[] = [];
+  for (const id of ids) {
+    const p = found.get(id);
+    if (!p) { plans.push({ proposal_id: id, found: false, source_type: null, file_name: null, live_signals: 0, live_voice: {}, change: "not_found", superseded_signal_ids: [], claims_on_signals: [], would_mint: { signals: 0, band: "organization", voice_class: "analysis" } }); continue; }
+    if (authorshipForSource(String(p.source_type ?? ""), null) !== "us" || UPLOAD_ORIGIN_SOURCE_TYPES_LOCAL.has(String(p.source_type ?? ""))) {
+      plans.push({ proposal_id: id, found: true, source_type: p.source_type, file_name: p.file_name, live_signals: 0, live_voice: {}, change: "not_analysis", superseded_signal_ids: [], claims_on_signals: [], would_mint: { signals: 0, band: "organization", voice_class: "analysis" } }); continue;
+    }
+    const { data: sigs } = await supabase.from("signals").select("id, voice_class, raw_payload").eq("company_id", companyId).eq("source_id", p.id).is("superseded_at", null);
+    const live = (sigs ?? []) as Array<{ id: string; voice_class: string | null; raw_payload: unknown }>;
+    const liveVoice: Record<string, number> = {};
+    for (const s of live) liveVoice[s.voice_class ?? "null"] = (liveVoice[s.voice_class ?? "null"] ?? 0) + 1;
+    // already minted as ours at v3 ⇒ nothing to correct (idempotent)
+    // Idempotent: a proposal whose live rows are ALL already ours-as-analysis (the correction's observable
+    // property) has nothing to correct — re-running supersedes and mints nothing.
+    const alreadyV3 = live.length > 0 && live.every((s) => s.voice_class === "analysis");
+    const plan: AnalysisRemintPlan = { proposal_id: id, found: true, source_type: p.source_type, file_name: p.file_name, live_signals: live.length, live_voice: liveVoice, change: live.length === 0 || alreadyV3 ? "none" : "remint", superseded_signal_ids: live.map((s) => s.id), claims_on_signals: [], would_mint: { signals: live.length, band: "organization", voice_class: "analysis" } };
+    if (plan.change === "remint") {
+      const { data: refRows } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").eq("company_id", companyId);
+      const refs = (refRows ?? []) as Array<{ claim_id: string; signal_id: string }>;
+      const mine = new Set(plan.superseded_signal_ids);
+      const { data: deadRows } = await supabase.from("signals").select("id").eq("company_id", companyId).not("superseded_at", "is", null);
+      const dead = new Set(((deadRows ?? []) as Array<{ id: string }>).map((s) => s.id));
+      const byClaim = new Map<string, string[]>();
+      for (const r of refs) byClaim.set(r.claim_id, [...(byClaim.get(r.claim_id) ?? []), r.signal_id]);
+      const touched = [...byClaim.entries()].filter(([, sids]) => sids.some((s) => mine.has(s)));
+      if (touched.length > 0) {
+        const { data: claimRows } = await supabase.from("claims").select("id, statement, provenance, state, status").in("id", touched.map(([cid]) => cid));
+        const byId = new Map((((claimRows ?? []) as Array<{ id: string; statement: string; provenance: string; state: string; status: string }>)).map((c) => [c.id, c]));
+        for (const [cid, sids] of touched) {
+          const c = byId.get(cid); if (!c) continue;
+          plan.claims_on_signals.push({ id: c.id, statement: c.statement, provenance: c.provenance, state: c.state, status: c.status, other_live_refs: sids.filter((s) => !mine.has(s) && !dead.has(s)).length });
+        }
+      }
+    }
+    plans.push(plan);
+  }
+  return plans;
+}
+const UPLOAD_ORIGIN_SOURCE_TYPES_LOCAL = new Set(["uploaded_file", "file", "file_proposal"]);
+
+export async function applyAnalysisRemint(supabase: Sb, companyId: string, plans: AnalysisRemintPlan[], opts: { actor?: string; note?: string }): Promise<Array<{ proposal_id: string; superseded: number; minted: number; claims_relinked: number; struck: number; ledger_id: string | null }>> {
+  const out: Array<{ proposal_id: string; superseded: number; minted: number; claims_relinked: number; struck: number; ledger_id: string | null }> = [];
+  const nowIso = new Date().toISOString();
+  const actor = opts.actor ?? `${ANALYSIS_REMINT_REASON} (operator brief 2026-09-14)`;
+  for (const plan of plans) {
+    if (plan.change !== "remint") { out.push({ proposal_id: plan.proposal_id, superseded: 0, minted: 0, claims_relinked: 0, struck: 0, ledger_id: null }); continue; }
+    for (const sid of plan.superseded_signal_ids) {
+      const { data: row } = await supabase.from("signals").select("raw_payload").eq("id", sid).maybeSingle();
+      const rp = row?.raw_payload && typeof row.raw_payload === "object" ? (row.raw_payload as Record<string, unknown>) : {};
+      const { error } = await supabase.from("signals").update({
+        superseded_at: nowIso, superseded_reason: ANALYSIS_REMINT_REASON, updated_at: nowIso,
+        raw_payload: { ...rp, superseded_by_minting_version: ANALYSIS_REMINT_MINTING_VERSION, superseded_by_remint: { at: nowIso, from: { authorship: "client", subject: "this_company", note: "minted as the client's material (no voice class)" }, to: ANALYSIS_ORIGIN } },
+      }).eq("id", sid).is("superseded_at", null);
+      if (error) throw new Error(`supersede signal ${sid}: ${error.message}`);
+    }
+    const { data: p } = await supabase.from("file_proposals").select("id, company_id, file_name, source_type, summary, evidence, contradictions, framework_results, questions_to_verify, suggested_areas, confidence, confidence_reason, analysis_version").eq("id", plan.proposal_id).maybeSingle();
+    if (!p) throw new Error(`proposal ${plan.proposal_id} not found`);
+    await ingestDifyProposalSignals({
+      supabase: supabase as any, companyId, proposalId: plan.proposal_id,
+      sourceType: String(p.source_type ?? "mojo_analysis"), sourceTitle: String(p.file_name ?? ""),
+      summary: p.summary, evidence: p.evidence, contradictions: p.contradictions, frameworkResults: p.framework_results, questionsToVerify: p.questions_to_verify,
+      rawPayload: { summary: p.summary, suggested_areas: p.suggested_areas, confidence: p.confidence, confidence_reason: p.confidence_reason, reminted: true },
+      origin: ANALYSIS_ORIGIN, mintingVersion: ANALYSIS_REMINT_MINTING_VERSION, analysisVersion: Number(p.analysis_version ?? 1) || 1, sourceText: null,
+    });
+    const { data: minted } = await supabase.from("signals").select("id").eq("company_id", companyId).eq("source_id", plan.proposal_id).is("superseded_at", null);
+    const mintedIds = ((minted ?? []) as Array<{ id: string }>).map((s) => s.id);
+    // claims that stood on the superseded signals: re-linked by the rebuild (kept) or not (struck)
+    let relinked = 0, struck = 0; const struckIds: string[] = [];
+    for (const c of plan.claims_on_signals) {
+      const { data: liveRefs } = await supabase.from("claim_signal_refs").select("signal_id, signals!inner(superseded_at)").eq("claim_id", c.id).is("signals.superseded_at", null);
+      const hasLive = Array.isArray(liveRefs) && liveRefs.length > 0;
+      const { data: cur } = await supabase.from("claims").select("status").eq("id", c.id).maybeSingle();
+      if (!cur || cur.status === "struck") continue;
+      if (hasLive) { relinked++; continue; }
+      const { error } = await supabase.rpc("set_claim_status", { p_claim_id: c.id, p_status: "struck", p_reason: `${ANALYSIS_REMINT_REASON}: whole live backing superseded and not re-linked by the rebuild`, p_actor: actor });
+      if (error) throw new Error(`strike claim ${c.id}: ${error.message}`);
+      struck++; struckIds.push(c.id);
+    }
+    const { data: ledger, error: ledgerErr } = await supabase.from("provenance_remints").insert({
+      company_id: companyId, kind: "remint", input_file_id: null, content_sha: null, proposal_id: plan.proposal_id,
+      from_authorship: "client", from_subject: "this_company", to_authorship: ANALYSIS_ORIGIN.authorship, to_subject: ANALYSIS_ORIGIN.subject,
+      superseded_signal_ids: plan.superseded_signal_ids, struck_claim_ids: struckIds, minted_signal_ids: mintedIds,
+      dry_run: false, actor, note: opts.note ?? null,
+    }).select("id").maybeSingle();
+    if (ledgerErr) throw new Error(`ledger: ${ledgerErr.message}`);
+    out.push({ proposal_id: plan.proposal_id, superseded: plan.superseded_signal_ids.length, minted: mintedIds.length, claims_relinked: relinked, struck, ledger_id: ledger?.id ?? null });
+  }
+  if (out.some((o) => o.superseded > 0)) await snapshotMojoScore(supabase as any, companyId);
   return out;
 }

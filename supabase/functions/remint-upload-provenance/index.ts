@@ -8,7 +8,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isLocalOllamaUrl } from "../_shared/uploadVoiceClassifier.ts";
-import { applyRemint, planRemint } from "../_shared/remintUploadProvenance.ts";
+import { applyAnalysisRemint, applyRemint, planAnalysisRemint, planRemint } from "../_shared/remintUploadProvenance.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,8 +21,16 @@ function json(body: unknown, status = 200) {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
-    const { company_id, input_file_ids, dry_run, note } = await req.json();
+    const { company_id, input_file_ids, proposal_ids, dry_run, note, actor } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
+    // ANALYSIS RE-MINT (rulings 1–4, 2026-09-14): a mojo-analysis proposal by id — no document, no classifier.
+    if (Array.isArray(proposal_ids) && proposal_ids.length > 0) {
+      const supabase = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "") as unknown as { from: (t: string) => any; rpc: (fn: string, a: Record<string, unknown>) => any; storage: any };
+      const plans = await planAnalysisRemint(supabase, company_id, proposal_ids.map(String));
+      if (dry_run !== false) return json({ ok: true, dry_run: true, mode: "analysis", plans });
+      const applied = await applyAnalysisRemint(supabase, company_id, plans, { note: typeof note === "string" ? note : undefined, actor: typeof actor === "string" && actor.trim() ? actor : undefined });
+      return json({ ok: true, dry_run: false, mode: "analysis", plans, applied });
+    }
     const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
     if (!isLocalOllamaUrl(ollamaUrl)) return json({ ok: false, error: "Local-only policy violation: OLLAMA_BASE_URL must resolve to localhost/host.docker.internal." }, 500);
     const supabase = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "") as unknown as { from: (t: string) => any; rpc: (fn: string, a: Record<string, unknown>) => any; storage: any };

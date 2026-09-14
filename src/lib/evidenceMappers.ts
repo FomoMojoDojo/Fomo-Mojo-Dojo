@@ -535,17 +535,29 @@ function withOrigin(raw: unknown, originPayload: Record<string, unknown>): unkno
   if (Object.keys(originPayload).length === 0) return raw;
   return raw && typeof raw === "object" && !Array.isArray(raw) ? { ...(raw as Record<string, unknown>), ...originPayload } : { value: raw ?? null, ...originPayload };
 }
+// ── THE ONE AUTHORSHIP AUTHORITY (operator ruling 1, 2026-09-14) ─────────────────────────────────────
+// Who wrote a signal's source, in the a779766 vocabulary, for EVERY source type — one fact in one place,
+// consumed by bandFromOrigin, voiceClassFromOrigin AND deriveClaimProvenance's isOurs (never two rules that
+// can drift). For an uploaded document the answer comes from its judged origin; for a document-less source
+// it is knowable without a document:
+//   mojo_analysis  → us      (we generated it: our synthesis over the client's own records)
+//   intake         → client  (the client's own questionnaire answers)
+//   anything else  → client  (manual notes and legacy document-less rows: as before — the client's material)
+export function authorshipForSource(sourceType: string, origin: UploadOrigin | null | undefined): UploadAuthorship {
+  if (UPLOAD_ORIGIN_SOURCE_TYPES.has(sourceType)) return origin?.authorship ?? "uncertain";
+  if (sourceType === "mojo_analysis") return "us";
+  return "client"; // intake / manual_note / …: the client's own input, unchanged
+}
 export function bandFromOrigin(sourceType: string, origin: UploadOrigin | null | undefined): SignalBand {
   if (isCustomerSignalSourceType(sourceType)) return "customer";
-  if (!UPLOAD_ORIGIN_SOURCE_TYPES.has(sourceType)) return "organization"; // intake / mojo_analysis / manual_note: as before
-  const a = origin?.authorship ?? "uncertain";
+  const a = authorshipForSource(sourceType, origin);
   return a === "client" || a === "us" ? "organization" : "outside";
 }
-/** voice_class stamped on upload signals: never null for a non-client document (ruling 2). */
+/** voice_class stamped at mint: null only for the client's own material; 'analysis' for ours (excluded from
+ *  the TEAM read and from DECLARED claim candidates); an outside voice for a third party (ruling 2, a779766). */
 export function voiceClassFromOrigin(sourceType: string, origin: UploadOrigin | null | undefined): string | null {
-  if (!UPLOAD_ORIGIN_SOURCE_TYPES.has(sourceType)) return null;
-  const a = origin?.authorship ?? "uncertain";
-  if (a === "client") return null; // the client's own document: unchanged from today (no own-voice restamp)
+  const a = authorshipForSource(sourceType, origin);
+  if (a === "client") return null; // the client's own document / intake: unchanged (no own-voice restamp)
   if (a === "us") return "analysis";
   return origin?.subject === "this_company" ? "outside_voice_about_client" : "market_context";
 }
@@ -845,8 +857,13 @@ export function mapDifyFileOutputToSignals(args: {
   // satisfy Gate 1 ("supports"). mojo_analysis and unknown source types stay "partial".
   // An outside-band upload (third_party / uncertain) is not the organization's confirmation: partial.
   const orgFramingFit: "strong" | "partial" = UPLOAD_ORIGIN_SOURCE_TYPES.has(normalizedSourceType) && signalBand === "organization" ? "strong" : "partial";
+  // The stamp every minted row carries: the judged origin for an upload; for a document-less source the
+  // authority's answer (ruling 1, 2026-09-14: mojo_analysis ⇒ us) so a reader — and the re-mint tool's
+  // idempotence check — can tell a corrected row from an uncorrected one; minting_version when re-minted.
+  const stampedOrigin: UploadOrigin | null = origin ?? (UPLOAD_ORIGIN_SOURCE_TYPES.has(normalizedSourceType) ? null : { authorship: authorshipForSource(normalizedSourceType, null), subject: "this_company" });
   const originPayload: Record<string, unknown> = {
-    ...(origin ? { upload_origin: origin, ...(args.mintingVersion ? { minting_version: args.mintingVersion } : {}) } : {}),
+    ...(stampedOrigin ? { upload_origin: stampedOrigin } : {}),
+    ...(args.mintingVersion ? { minting_version: args.mintingVersion } : {}),
     ...(args.analysisVersion ? { analysis_version: args.analysisVersion } : {}),
   };
 
@@ -1020,10 +1037,13 @@ export function deriveClaimProvenance(
   // Import provenance (rulings 2, 3, 11 — 2026-09-13): an uploaded document speaks as the client ONLY
   // when its authorship is 'client'. 'us' (our analysis) backs an ANALYTIC claim like mojo_analysis;
   // 'third_party' and 'uncertain' are outside-band and can only ever back public_observed.
-  const isOurs = (b: { sourceType: string; authorship?: UploadAuthorship | null }) => b.sourceType === "mojo_analysis" || (UPLOAD_ORIGIN_SOURCE_TYPES.has(b.sourceType) && b.authorship === "us");
+  // Ruling 1 (2026-09-14): the SAME authority the signal layer mints from — authorshipForSource.
+  const authorshipOf = (b: { sourceType: string; authorship?: UploadAuthorship | null }) =>
+    authorshipForSource(b.sourceType, b.authorship ? { authorship: b.authorship, subject: "uncertain" } : null);
+  const isOurs = (b: { sourceType: string; authorship?: UploadAuthorship | null }) => authorshipOf(b) === "us";
   if (backing.every(isOurs)) return "analytic";
   const isClientDeclared = (b: { sourceType: string; band: SignalBand; authorship?: UploadAuthorship | null }) =>
-    b.band === "organization" && (b.sourceType === "intake" || (UPLOAD_ORIGIN_SOURCE_TYPES.has(b.sourceType) && b.authorship === "client"));
+    b.band === "organization" && authorshipOf(b) === "client" && (b.sourceType === "intake" || UPLOAD_ORIGIN_SOURCE_TYPES.has(b.sourceType));
   if (backing.every(isClientDeclared)) return "internal_declared";
   // V2-5c — a claim backed ENTIRELY by analysis (mojo_analysis) is OUR reading, not the
   // client's declared words and not the outside record: provenance='analytic' (renders
@@ -1106,8 +1126,12 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
     // (raw_payload.source = manual_*) never enter this path so they are unaffected.
     if (!isListing && (claimType === "strategic_belief" || topic === "positioning" || topic === "strategy")) return;
 
-    const key = normalizeClaimKey(statement);
-    if (!key) return;
+    const baseKey = normalizeClaimKey(statement);
+    if (!baseKey) return;
+    // Ruling 2 (2026-09-14): an analysis-voice signal (ours) may mint an ANALYTIC claim but never a declared
+    // one — it groups on its own key, so it can neither make a group internal_declared nor join (and demote)
+    // a group of the client's own material. Same statement, two provenances ⇒ two candidates.
+    const key = String(signal.voice_class ?? "") === "analysis" ? `analysis::${baseKey}` : baseKey;
     if (!grouped.has(key)) {
       grouped.set(key, {
         claim: {

@@ -8,8 +8,9 @@
 #   a. IDEMPOTENT: the second apply supersedes 0, mints 0, strikes 0 and writes no ledger row
 #   b. HISTORY: the old signals survive with superseded_reason='remint_authorship_v2' and their raw_payload
 #      records the from/to origin; the struck claim survives with its refs, reason and claim_events row
-#   c. 'us' does not speak: the minted signals are organization-band voice_class='analysis' at
-#      minting_version 2 and back NO claim; no internal_declared claim is live for the document
+#   c. 'us' does not speak AS THE CLIENT: the minted signals are organization-band voice_class='analysis' at
+#      minting_version 2 and back no DECLARED claim (ruling 2, 2026-09-14: our analysis may back ANALYTIC
+#      claims); no internal_declared claim is live for the document
 #   d. OVERRIDE UNTOUCHED: a second document whose July-style override says client_voice is resolved
 #      'client' — its live signals are left alone (change='none') and its override rows are unchanged
 #   e. DOWNSTREAM COMPLETE: no active claim in the company has every backing signal superseded
@@ -34,7 +35,8 @@ cleanup() {
   curl -s -X DELETE "$API/storage/v1/object/input-files" -H "Authorization: Bearer $SR" -H 'Content-Type: application/json' --data "{\"prefixes\":[\"$PREFIX/us.md\",\"$PREFIX/us.md.extracted.txt\",\"$PREFIX/ov.md\",\"$PREFIX/ov.md.extracted.txt\"]}" >/dev/null || true
   # a struck claim refuses deletion (struck-preservation law): restore the throwaway's struck claims first (the strike is reversible by law)
   psql "select set_claim_status(id, 'active', 'guard cleanup', 'guard') from claims where company_id='$CO' and status='struck'" >/dev/null 2>&1 || true
-  psql "begin; set local app.remint_ledger_purge = 'on'; delete from provenance_remints where company_id='$CO'; delete from long_runner_runs where company_id='$CO'; delete from companies where id='$CO'; delete from claim_removals where company_id='$CO'; commit;" >/dev/null || true
+  # the forward stamping (9fa9337) writes excerpt_verifications on every upload ingest — append-only, so the throwaway's rows need the purge switch too
+  psql "begin; set local app.remint_ledger_purge = 'on'; set local app.excerpt_verifications_purge = 'on'; delete from provenance_remints where company_id='$CO'; delete from excerpt_verifications where company_id='$CO'; delete from long_runner_runs where company_id='$CO'; delete from companies where id='$CO'; delete from claim_removals where company_id='$CO'; commit;" >/dev/null || true
 }
 remint() { curl -s --max-time 600 -X POST "$API/functions/v1/remint-upload-provenance" -H "Authorization: Bearer $SR" -H 'Content-Type: application/json' --data "$1"; }
 sha() { python3 -c "import hashlib,sys,re; t=sys.argv[1]; n=re.sub(r'\s+',' ',t.lower()).strip(); print(hashlib.sha256(n.encode()).hexdigest())" "$1"; }
@@ -102,9 +104,10 @@ echo "b. history: 2 signals superseded (reason + from/to in raw_payload), claim 
 # c. us does not speak
 NEW=$(psql "select count(*) from signals where company_id='$CO' and source_id='$P_US' and superseded_at is null and signal_band='organization' and voice_class='analysis' and raw_payload->>'minting_version'='2' and raw_payload->'upload_origin'->>'authorship'='us'")
 [ "$NEW" = 2 ] || fail c "expected 2 minted analysis-voice signals, got $NEW"
-[ "$(psql "select count(*) from claim_signal_refs r join signals s on s.id=r.signal_id where s.company_id='$CO' and s.source_id='$P_US' and s.superseded_at is null")" = 0 ] || fail c "a minted 'us' signal backs a claim"
+# Ruling 2 (2026-09-14) supersedes "mints signals only": OUR analysis may back ANALYTIC claims — never a declared one.
+[ "$(psql "select count(*) from claim_signal_refs r join signals s on s.id=r.signal_id join claims c on c.id=r.claim_id where s.company_id='$CO' and s.source_id='$P_US' and s.superseded_at is null and c.provenance<>'analytic'")" = 0 ] || fail c "a minted 'us' signal backs a non-analytic claim"
 [ "$(psql "select count(*) from claims where company_id='$CO' and provenance='internal_declared' and status<>'struck'")" = 0 ] || fail c "a live internal_declared claim remains for the withdrawn document"
-echo "c. 'us' mints 2 organization/analysis signals at minting_version 2 that back NO claim; no live internal_declared claim remains"
+echo "c. 'us' mints 2 organization/analysis signals at minting_version 2 that back no DECLARED claim (analytic only, ruling 2 2026-09-14); no live internal_declared claim remains"
 # d. override untouched
 [ "$(psql "select md5(string_agg(row_to_json(v)::text, ',' order by id)) from doc_voice_verdicts v where input_file_id='$F_OV'")" = "$BEFORE_OV_ROWS" ] || fail d "the attested document's verdict rows changed"
 [ "$(psql "select count(*) from signals where company_id='$CO' and source_id='$P_OV' and superseded_at is null")" = 2 ] || fail d "the attested document's live signals were touched"

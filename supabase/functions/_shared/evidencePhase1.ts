@@ -14,6 +14,8 @@ import { withRebuildLedger } from "./rebuildLedger.ts";
 import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
 import { isTerminalSupersession, selectPruneVictims } from "../../../src/lib/claimState/prunePolicy.ts";
 import {
+  authorshipForSource,
+  uploadOriginOf,
   matchStrengthFromScore,
   mapDifyFileOutputToSignals,
   mapPublicBaselineOutputToSignals,
@@ -182,7 +184,16 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
     // awaiting-evidence is not the-world-moved, and dropping it would erase the reverifying /
     // held-echo state a future re-crawl restores. See isTerminalSupersession.
     if (isTerminalSupersession(row as { held_at?: string | null; superseded_at?: string | null; superseded_reason?: string | null })) return false;
-    return vc !== "competitor_voice" && vc !== "analysis";
+    if (vc === "competitor_voice") return false;
+    // Ruling 2 (2026-09-14): OUR analysis (authorship 'us' by the one authority — mojo_analysis, or an
+    // uploaded document judged 'us') stays a candidate and mints ANALYTIC claims only (the mapper groups
+    // analysis-voice on its own key). Analysis-voice rows that are NOT ours by that authority (the public
+    // baseline's hypotheses, D1) stay excluded exactly as before.
+    if (vc === "analysis") {
+      const r = row as { source_type?: string | null; raw_payload?: unknown };
+      return authorshipForSource(String(r.source_type ?? ""), uploadOriginOf(r as { raw_payload?: unknown })) === "us";
+    }
+    return true;
   });
 
   // D3 anchor gate — load the company's operator-editable entity anchors (name / domain /
@@ -215,6 +226,9 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
     const v = rp && typeof rp === "object" ? (rp as { minting_version?: unknown }).minting_version : null;
     return typeof v === "number" ? v : null;
   };
+  // minting_version 3 (the analysis re-mint, ruling 4 2026-09-14) keeps the DEFAULT segment on purpose: its
+  // provenance is unchanged (analytic → analytic), so the same stable id lets the rebuild re-link the existing
+  // claim to the re-minted signals instead of striking it.
   const stableIds = await Promise.all(
     candidates.map((c) => {
       const remint = c.sourceSignals.some((ref) => mintingVersionOf(signals[ref.signalIndex]) === 2);
