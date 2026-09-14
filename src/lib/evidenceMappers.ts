@@ -758,7 +758,8 @@ export function mapPublicBaselineOutputToSignals(args: {
       voice_class: asString(record.voice_class) || null,
       evidence_type: "market_signal",
       claim_text: claimText,
-      evidence_excerpt: asString(record.snippet) || claimText,
+      // EXCERPT LAW (2026-09-14): the document's words or absent — a bucket label is never a quote.
+      evidence_excerpt: asString(record.snippet),
       topic: asString(record.bucket).toLowerCase() || "market",
       framework: "public_baseline",
       directness: asString(record.url) ? "direct" : "inferred",
@@ -783,7 +784,7 @@ export function mapPublicBaselineOutputToSignals(args: {
       signal_band: "outside",
       evidence_type: "market_signal",
       claim_text: text,
-      evidence_excerpt: text,
+      evidence_excerpt: "", // EXCERPT LAW (2026-09-14): a hypothesis is an interpretation, never the source's words
       topic: "market",
       framework: "public_baseline",
       directness: "inferred",
@@ -860,7 +861,7 @@ export function mapDifyFileOutputToSignals(args: {
       signal_band: signalBand,
       evidence_type: evidenceType,
       claim_text: summary,
-      evidence_excerpt: normalizeStatement(asArray(args.evidence)[0]) || summary,
+      evidence_excerpt: normalizeStatement(asArray(args.evidence)[0]), // EXCERPT LAW (2026-09-14): no evidence ⇒ no excerpt; the summary stays claim_text
       topic: signalBand === "customer" ? "problem" : "strategy",
       framework: "dify_summary",
       directness: signalBand === "customer" ? customerDirectness : signalBand === "outside" ? "direct" : "inferred", // outside (third-party) mirrors the public baseline: a published record is direct
@@ -919,7 +920,7 @@ export function mapDifyFileOutputToSignals(args: {
       signal_band: signalBand,
       evidence_type: evidenceType,
       claim_text: text,
-      evidence_excerpt: record ? asString(record.evidence) || text : text,
+      evidence_excerpt: record ? asString(record.evidence) : "", // EXCERPT LAW (2026-09-14): the claim is never its own quote
       topic: record ? asString(record.mojo_area) || (signalBand === "customer" ? "problem" : "unknown") : signalBand === "customer" ? "problem" : "unknown",
       framework: record ? asString(record.framework) || "dify_contradiction" : "dify_contradiction",
       directness: signalBand === "customer" ? customerDirectness : signalBand === "outside" ? "direct" : "inferred", // outside (third-party) mirrors the public baseline: a published record is direct
@@ -950,7 +951,9 @@ export function mapDifyFileOutputToSignals(args: {
         signal_band: signalBand,
         evidence_type: evidenceType,
         claim_text: claimText,
-        evidence_excerpt: asString(findingRecord.evidence) || claimText,
+        // EXCERPT LAW (2026-09-14): an empty finding.evidence (a v2 gap finding — absence may motivate, not attest)
+        // yields an EMPTY excerpt; the claim stays in claim_text and raw_payload. Never the interpretation as the quote.
+        evidence_excerpt: asString(findingRecord.evidence),
         // D+A: org-band + discovery framework = company recommendation, not customer need.
         // Re-topic to "strategy" so Bug-2 excludes from claims; signal is retained in DB.
         topic: signalBand === "organization" &&
@@ -984,7 +987,7 @@ export function mapDifyFileOutputToSignals(args: {
       signal_band: signalBand,
       evidence_type: defaultEvidenceTypeForBand(signalBand, sourceType),
       claim_text: text,
-      evidence_excerpt: text,
+      evidence_excerpt: "", // EXCERPT LAW (2026-09-14): a question is never the source's words
       topic: "question",
       framework: "dify_question",
       directness: "weak",
