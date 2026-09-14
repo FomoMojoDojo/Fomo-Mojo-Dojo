@@ -101,6 +101,10 @@ export type FRGapPair = {
   declared: string | null;
   /** Public-record side statement; null for `unechoed` (the record is silent). */
   record: string | null;
+  /** QUOTE WARRANT (operator ruling 2026-09-14): true only when a passed excerpt_verifications record at
+   *  guard_version 1 against the mint-time page or the sidecar backs `record` — the ONLY case the render
+   *  wraps it in quotation marks. Everything else is attributed text, unquoted. Absent = false (default-deny). */
+  recordVerified?: boolean;
   sourceTag: SourceTagResult;
   eventDate: string | null;
   /** Bare host of the public-record signal (e.g. "indeed.com") — for the derived contradiction "why". */

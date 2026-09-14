@@ -1675,8 +1675,12 @@ function StatementEvidence({ statement, struck = [] }: { statement: FRGapStateme
             {pair.listing ? (
               <ListingRow listing={pair.listing} sourceTag={null} extra={<OperatorKindTag kind="listing" reason={null} />} />
             ) : pair.record ? (
-              <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-                {pair.record}
+              // QUOTE WARRANT (operator ruling 2026-09-14): quotation marks ONLY on a record with a passed
+              // verification against the mint-time page or the sidecar (quoteWarrant.ts); every other record is
+              // attributed text without quotation marks, rendered EXACTLY as stored — the analyst's own inner
+              // punctuation is content, not our glyph, and trimming it (beat 2's stray-mark rule) unbalances it here.
+              <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }} data-fr-record-verified={pair.recordVerified === true ? "true" : "false"}>
+                {pair.recordVerified === true ? <>&ldquo;{pair.record}&rdquo;</> : pair.record}
               </p>
             ) : null}
           </div>

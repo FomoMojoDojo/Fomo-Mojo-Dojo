@@ -34,6 +34,7 @@ import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { classifyFindingAge, orderFindings } from "./findingsAge";
 import { isProvablyVerbatim } from "@/lib/firstRead/provableVerbatim";
+import { QUOTE_GUARD_VERSION, sourceKeyForSignal, warrantKey, warrantKeySet } from "@/lib/firstRead/quoteWarrant";
 import { isPairAdmissible } from "@/lib/firstRead/relevanceActive";
 import { ownWordsClientVisible, parseOwnWordsKind } from "../../../../supabase/functions/_shared/ownWordsKinds";
 import { bareHost, coldOpenLadder, facetForTopic, foldIdenticalSignals, groupGapStatements, hoistStrongestNegative, orderBeat2Signals, orderGapPairs, refreshStatusConflictLiveness, strengthForSignal, verdictForDeltaType, type Beat2Sortable, type CitationLiveness, type RawStatusSource } from "./mapping";
@@ -106,7 +107,9 @@ type SignalRow = {
 };
 
 /**
- * The verbatim source quote for a record side, or null when none is provable.
+ * The record-side TEXT for a pair, or null when none should show. This gate decides visibility only —
+ * it confers NO quotation: the substring test is vacuous for rows whose excerpt is their claim text, so
+ * quotation marks come solely from a passed verification record (recordVerified / quoteWarrant.ts).
  * Tri-state honesty (a beat-4 record must NEVER show a synthesized claim as a source quote):
  *   (a) a backing outside signal whose evidence_excerpt is non-empty, NOT model-'interpreted', and is
  *       a normalizeForHash-substring of the signal's claim_text → return that verbatim excerpt.
@@ -156,6 +159,28 @@ function publicSignalTag(sig: SignalRow, runDates: Map<string, string>) {
 // Gate 1: the provable-verbatim signal ids — own-words candidates the judge kept AND graded a
 // verbatim exact copy of the snapshot raw page (the ONE provable ground truth). Everything absent
 // from this set is unprovable and renders un-quoted. Reuses beat-3's own_words_candidates authority.
+// QUOTE WARRANT (operator ruling 2026-09-14): the durable excerpt_verifications records that let a RECORD
+// side render inside quotation marks — passed at guard_version 1 against the mint-time page or the sidecar
+// (quoteWarrant.ts holds the rule; widening it is an operator ruling). Read from the record, never
+// re-derived at render time: a quotation requires evidence that a check happened, not a re-check.
+async function loadQuoteWarrants(companyId: string): Promise<Set<string>> {
+  const { data } = await loose()
+    .from("excerpt_verifications")
+    .select("source_url, excerpt_identity, verdict, basis_kind, guard_version")
+    .eq("company_id", companyId)
+    .eq("guard_version", QUOTE_GUARD_VERSION)
+    .eq("verdict", "passed");
+  return warrantKeySet((data ?? []) as Array<{ source_url: string; excerpt_identity: string; verdict: string; basis_kind: string; guard_version: number }>);
+}
+/** Whether the record side of `sig` is a warranted quotation: its (source key, excerpt identity) has a
+ *  qualifying record. The substring test in verbatimRecord decides only whether record TEXT shows. */
+async function recordVerified(sig: SignalRow | null, warrants: ReadonlySet<string>): Promise<boolean> {
+  if (!sig || warrants.size === 0) return false;
+  const excerpt = (sig.evidence_excerpt ?? "").trim();
+  if (!excerpt) return false;
+  return warrants.has(await warrantKey(sourceKeyForSignal(sig), excerpt));
+}
+
 async function loadProvableVerbatimSignalIds(companyId: string): Promise<Set<string>> {
   const { data } = await loose()
     .from("own_words_candidates")
@@ -359,6 +384,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         // other signal (all outside reviews/press, market_context, competitor, analysis) is absent
         // → renders un-quoted with attribution. Built once; used by beats 2, 5, and the cold-open.
         const provableVerbatim = await loadProvableVerbatimSignalIds(companyId);
+        const quoteWarrants = await loadQuoteWarrants(companyId);
 
         // ── Outside-voice signals + strength (beats 0 fallback + 2) ────────
         const { signals } = await loadSignals(companyId, runDates, provableVerbatim);
@@ -714,6 +740,8 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             // statement (which can carry synthesis garble, e.g. "team"→"Cafe operators"). No provable
             // verbatim backing ⇒ null ⇒ the render shows source attribution with NO quote.
             record: verbatimRecord(sig),
+            // QUOTE WARRANT (2026-09-14): quotation marks only on a record with a passed mint-time/sidecar verification.
+            recordVerified: await recordVerified(sig, quoteWarrants),
             // LISTING CLASS: a listing observed side renders ListingRow, never the record paragraph.
             listing: toFRListing(sig),
             sourceTag: sig ? publicSignalTag(sig, runDates) : null,
