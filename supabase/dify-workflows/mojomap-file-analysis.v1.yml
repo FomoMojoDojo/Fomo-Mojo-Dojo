@@ -1,0 +1,1403 @@
+app:
+  description: Fetches company data from Supabase, runs framework analysis through
+    Ollama, adjudicates signals, and triggers re-scoring.
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  icon_type: emoji
+  mode: workflow
+  name: MojoMap File Analysis
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/ollama:0.1.3@66e156c4f612964c131c49168882e78c2cdfe366879506b97ad855b23c5d6d98
+    version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1776718133707-source-1776720558355-target
+      selected: false
+      source: '1776718133707'
+      sourceHandle: source
+      target: '1776720558355'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: end
+      id: 1776720558355-source-1777744406938-target
+      selected: false
+      source: '1776720558355'
+      sourceHandle: source
+      target: '1777744406938'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: 1777861850698-source-1777908051953-target
+      source: '1777861850698'
+      sourceHandle: source
+      target: '1777908051953'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: llm
+      id: 1777908051953-source-1777908061879-target
+      source: '1777908051953'
+      sourceHandle: source
+      target: '1777908061879'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: llm
+      id: 1777908051953-source-1777908080921-target
+      source: '1777908051953'
+      sourceHandle: source
+      target: '1777908080921'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: llm
+      id: 1777908051953-source-1777908097475-target
+      source: '1777908051953'
+      sourceHandle: source
+      target: '1777908097475'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: llm
+      id: 1777908051953-source-1777908338411-target
+      source: '1777908051953'
+      sourceHandle: source
+      target: '1777908338411'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: llm
+      id: 1777908051953-source-1777908111748-target
+      source: '1777908051953'
+      sourceHandle: source
+      target: '1777908111748'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1777908061879-source-1777908159548-target
+      source: '1777908061879'
+      sourceHandle: source
+      target: '1777908159548'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1777908080921-source-1777908159548-target
+      source: '1777908080921'
+      sourceHandle: source
+      target: '1777908159548'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1777908097475-source-1777908159548-target
+      source: '1777908097475'
+      sourceHandle: source
+      target: '1777908159548'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1777908338411-source-1777908159548-target
+      source: '1777908338411'
+      sourceHandle: source
+      target: '1777908159548'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1777908111748-source-1777908159548-target
+      source: '1777908111748'
+      sourceHandle: source
+      target: '1777908159548'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: 1777908159548-source-1776718133707-target
+      source: '1777908159548'
+      sourceHandle: source
+      target: '1776718133707'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            json_schema: ''
+            temperature: 0
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 7f1b810e-0359-4183-8ec4-bf34d6388b5a
+          role: system
+          text: 'You are a MojoMap file-analysis adjudication agent.
+
+
+            Use only:
+
+            - grounded file evidence
+
+            - framework findings generated from this file
+
+
+            Do not use system scores, archetypes, prior analysis, database values,
+            or inferred metrics unless explicitly passed as evidence.
+
+
+            Your job is to convert framework findings into MojoMap proposal objects
+            for human review.
+
+
+            Dify should suggest.
+
+            Humans decide.
+
+            MojoMap updates only after review.
+
+
+            Return only valid JSON.
+
+            '
+        - id: dea866da-0621-4051-82b2-9e406e573dd3
+          role: user
+          text: "Uploaded file name:\n{{#1777861850698.file_name#}}\nUploaded file\
+            \ content:\n{{#1777861850698.file_text#}}\n\nGrounded summary:\n{{#1777908159548.summary#}}\n\
+            \nGrounded evidence:\n{{#1777908159548.evidence#}}\n\nGrounded document\
+            \ signals:\n{{#1777908159548.document_signals#}}\n\nMissing information:\n\
+            {{#1777908159548.missing_information#}}\n\nGrounding confidence:\n{{#1777908159548.grounding_confidence#}}\n\
+            \nGrounding confidence reason:\n{{#1777908159548.grounding_confidence_reason#}}\n\
+            \nFramework results:\n{{#1777908159548.framework_results#}}\n\nGrounding\
+            \ confidence reason:\n{{#1777908159548.grounding_confidence_reason#}}\n\
+            \nFramework results:\n{{#1777908159548.framework_results#}}\n\n\nCreate\
+            \ MojoMap proposal output.\n\nRules:\n- every proposal must trace back\
+            \ to file evidence\n- preserve the incoming framework_results in the output\n\
+            - if framework_results contains findings, return them in framework_results\n\
+            - use framework_results to derive proposal objects\n- do not create final\
+            \ records\n- do not mark anything customer validated unless source_type\
+            \ is interview or survey\n- if a proposal is not strongly supported, omit\
+            \ it\n- normalize missing sections to empty arrays\n- do not wrap the\
+            \ result in a \"proposals\" array or any other wrapper object\n- return\
+            \ the required fields at the top level of the JSON object\n- suggested_areas\
+            \ is required and must always be present as an array\n- if you return\
+            \ any proposal fields inside a nested object instead of at the top level,\
+            \ the output is invalid\n\nAllowed suggested_areas:\n- positioning\n-\
+            \ job_map\n- opportunities\n- strategy\n- routes\n\nPriority rules:\n\
+            - candidate_positioning_updates must come only from april_dunford findings\n\
+            - candidate_job_steps must come only from jtbd findings\n- candidate_needs\
+            \ must come from odi findings first, then jtbd findings only if odi does\
+            \ not provide a better desired outcome statement\n- candidate_outcomes\
+            \ must be CUSTOMER-subject desired end-states, drawn only from odi/jtbd/teresa_torres\
+            \ customer findings; do NOT source candidate_outcomes from strategy_cascade\
+            \ findings — strategy_cascade findings are the company's own strategy\
+            \ and must stay in framework_results (and suggested_areas: strategy),\
+            \ never in candidate_outcomes or candidate_needs\n- possible_routes and\
+            \ experiments_to_run must come only from teresa_torres findings and explicit\
+            \ file-stated actions\n- candidate_positioning_updates must be sparse\
+            \ and high-confidence\n- do not populate all positioning fields by default\n\
+            - only include a positioning field when the file contains specific evidence\
+            \ for that exact field\n- if the file does not clearly support a target_customer,\
+            \ alternatives, category, proof, value, or unique_attributes update, omit\
+            \ that field\n- prefer at most 1 to 3 positioning updates unless the file\
+            \ is explicitly rich in positioning detail\n- candidate_job_steps must\
+            \ come only from jtbd findings that describe the customer's or team's\
+            \ ongoing work\n- do not create candidate_job_steps from odi, strategy_cascade,\
+            \ or teresa_torres findings\n\n\n\nConversion rules:\n- candidate_positioning_updates\
+            \ must only be included when the file provides clear evidence for a concrete\
+            \ positioning change\n- avoid generic advisory language unless the file\
+            \ directly supports the update\n- candidate_needs should prefer underserved\
+            \ outcome statements over workflow-step phrasing\n- if a statement sounds\
+            \ like a step the team performs, keep it in candidate_job_steps instead\
+            \ of candidate_needs\n- every candidate_need and candidate_outcome must\
+            \ be DERIVED FROM and EVIDENCED BY a specific customer-friction or desired-progress\
+            \ sentence in THIS file; set evidence to that exact sentence and phrase\
+            \ the need as a faithful restatement of it\n- a company-strategy or positioning\
+            \ sentence is NOT valid evidence for a need — if that is the only support,\
+            \ omit the need\n- the following show only the required SHAPE — do NOT\
+            \ copy their wording; derive actual content from this file:\n  - need\
+            \ shape:    \"<the customer> cannot <achieve X> / struggles to <do Y>\"\
+            \n  - outcome shape: \"<the customer> can <achieve X> reliably\"\n- if\
+            \ the file contains no sentence stating a customer friction or desired\
+            \ progress, return candidate_needs: [] and candidate_outcomes: [] — never\
+            \ copy an example or invent one\n- avoid step-like needs such as:\n  -\
+            \ clarify priorities\n  - validate customer needs\n- candidate_job_steps.step_description\
+            \ must describe the nature of the work, not what the team should do about\
+            \ it\n- keep step descriptions short, neutral, and non-prescriptive\n\
+            - each candidate_job_step must be a recurring customer/team work step\
+            \ that THIS file explicitly describes; quote the file sentence as evidence\
+            \ and keep the label short and neutral\n- if the file describes no such\
+            \ ongoing work, return candidate_job_steps: [] — never emit a generic\
+            \ step\n- for each possible_route and experiment_to_run, the evidence\
+            \ must directly support the exact action named\n- if the named action\
+            \ is more specific than the evidence, omit it\n- prefer one strong explicit\
+            \ route over multiple inferred implementation routes\n- candidate_job_steps\
+            \ must describe recurring customer or team work, not validation actions,\
+            \ experiments, rollout actions, or delivery actions\n- do not treat flagship\
+            \ engagements, before/after capture, documentation, proof steps, MVP work,\
+            \ or product delivery actions as candidate_job_steps\n- if a candidate\
+            \ step sounds like a route or experiment, omit it from candidate_job_steps\n\
+            SUBJECT GATE — applies to candidate_needs and candidate_outcomes:\n- the\
+            \ subject of every candidate_need and candidate_outcome MUST be the customer\
+            \ (cafe operator / client / buyer / end-customer), describing a friction,\
+            \ unmet progress, or desired end-state THEY experience\n- if the subject\
+            \ is the company (\"we\", \"our brand\") with an aspirational/strategic\
+            \ verb (aims, wants, positions, wins, focuses, believes, should), it is\
+            \ company strategy — exclude it from candidate_needs and candidate_outcomes;\
+            \ it belongs in framework_results / strategy\n- do not rescue a company\
+            \ statement by rephrasing it as a customer outcome\n- one source sentence\
+            \ yields at most one customer need or outcome — never spin multiple from\
+            \ a single strategy or positioning sentence\n- if you cannot decide whether\
+            \ a statement is customer-subject or company-subject, treat it as company-subject\
+            \ and exclude it from needs and outcomes\n\n- possible_routes should represent\
+            \ the top-level explicit action only\n- supporting sub-steps like \"capture\
+            \ before/after states\" and \"document decisions and outcomes\" should\
+            \ usually be folded into the parent route rather than returned as separate\
+            \ routes\n- possible_routes and experiments_to_run must name an explicit\
+            \ action, initiative, pilot, or test that THIS file literally states;\
+            \ quote that sentence as evidence\n- if the file names no explicit action,\
+            \ return possible_routes: [] and experiments_to_run: [] — do not emit\
+            \ \"run flagship engagements\" or any example action that the file does\
+            \ not contain\n\n\n- candidate_job_steps must be neutral work statements,\
+            \ not solution statements\n- candidate_job_steps must describe customer\
+            \ or team work only\n- do not include product, system, brand, or framework\
+            \ names in candidate_job_steps\n- do not use implementation phrasing like\
+            \ use, implement, install, deploy, refine, standardize, build, ensure,\
+            \ identify, continuously, or make in candidate_job_steps\n- candidate_job_steps.step_description\
+            \ must not be advice, recommendations, or instructions\n- if a jtbd finding\
+            \ already works as a job step on its own, keep step_description short\
+            \ and descriptive, not prescriptive\n- each candidate_job_step must be\
+            \ a recurring customer/team work step that THIS file explicitly describes;\
+            \ quote the file sentence as evidence and keep the label short and neutral\n\
+            - if the file describes no such ongoing work, return candidate_job_steps:\
+            \ [] — never emit a generic step\n\n- candidate_needs must be the CLIENT'S\
+            \ CUSTOMER's unmet desired outcome or friction — not a company goal, product\
+            \ concept, team behavior, or internal-process improvement\n- a candidate_need\
+            \ is valid ONLY if a specific sentence in THIS file states a customer\
+            \ friction or desired progress; quote that exact sentence as evidence\n\
+            - never emit a generic process need (reduce uncertainty, reduce misalignment,\
+            \ improve clarity, improve decision quality, make better decisions); if\
+            \ no customer-friction sentence exists in the file, return candidate_needs:\
+            \ []\n\n- candidate_outcomes must describe the improved end state the\
+            \ CLIENT'S CUSTOMER wants (cafe operator / buyer / end-user) — not the\
+            \ company, team, or organization\n- candidate_outcomes must not describe\
+            \ a product category, company ambition, branded system, product usage\
+            \ metric, implementation plan, or internal-process improvement\n- a candidate_outcome\
+            \ is valid ONLY if a specific sentence in THIS file states the customer's\
+            \ desired progress; quote that exact sentence as evidence\n- never emit\
+            \ a generic process outcome (improve decision quality, reduce internal\
+            \ misalignment, increase clarity); if no such customer sentence exists,\
+            \ return candidate_outcomes: []\n- possible_routes must stay very close\
+            \ to explicit file language\n- possible_routes must be explicit initiatives,\
+            \ actions, or structured approaches stated in the file\n- if the file\
+            \ says \"run flagship engagements\", preserve that wording\n- do not turn\
+            \ strategic intent, positioning language, or generic company vision into\
+            \ routes\n- do not infer product-refinement routes unless directly stated\
+            \ in the file\n\n- experiments_to_run must stay very close to explicit\
+            \ file language\n- experiments_to_run must only come from explicit tests,\
+            \ pilots, proof steps, or learning actions named in the file\n- if the\
+            \ file says \"run flagship engagements\", \"capture before/after states\"\
+            , or \"document decisions and outcomes\", preserve that wording\n- do\
+            \ not rewrite \"flagship engagements\" as \"pilots\" unless the file explicitly\
+            \ says pilots\n- do not create experiments from implied ideas alone\n\
+            - if a route or experiment is only a sub-step of a larger explicit action,\
+            \ keep it nested under that larger action rather than returning it as\
+            \ a separate standalone item\n- \"capture before/after states\" and \"\
+            document decisions and outcomes\" should usually support \"run flagship\
+            \ engagements\" rather than appear as separate experiments\n- do not include\
+            \ system-refinement routes such as refining scoring logic unless explicitly\
+            \ stated in the file\n- if the file explicitly supports only \"run flagship\
+            \ engagements\", return only that route/experiment and fold supporting\
+            \ sub-steps into its why_this_could_matter or what_it_tests\n- if multiple\
+            \ experiment items are sub-steps of one larger explicit action, return\
+            \ one experiment only\n- fold sub-steps such as \"capture before/after\
+            \ states\" and \"document decisions and outcomes\" into what_it_tests\
+            \ or evidence for the parent experiment\n\n\n\n\n- suggested_areas must\
+            \ only include areas backed by non-empty proposal sections\n- include\
+            \ positioning only if candidate_positioning_updates is non-empty\n- include\
+            \ job_map only if candidate_job_steps is non-empty\n- include opportunities\
+            \ only if candidate_needs is non-empty\n- include strategy only if candidate_outcomes\
+            \ is non-empty\n- include routes only if possible_routes or experiments_to_run\
+            \ is non-empty\n- if candidate_positioning_updates is empty, positioning\
+            \ must not appear in suggested_areas\n\n\nProhibited outputs:\n- do not\
+            \ use product slogans as candidate_needs\n- do not use MojoMap, MojoScore,\
+            \ Strategic Decision System, or other product names in candidate_job_steps\n\
+            - do not use implementation recommendations as candidate_job_steps\n-\
+            \ do not use category-defining or company-aspiration language as candidate_outcomes\n\
+            - do not use product adoption or product usage metrics as candidate_outcomes\n\
+            - do not include strategy in suggested_areas if no strategy section is\
+            \ populated\n- do not include positioning in suggested_areas if no positioning\
+            \ section is populated\n- do not rewrite \"flagship engagements\" as \"\
+            pilots\" unless the file explicitly uses the word pilot\n- do not create\
+            \ route or experiment wording that is more implementation-specific than\
+            \ the file itself\n- do not convert generic consulting recommendations\
+            \ into candidate_positioning_updates unless directly supported by the\
+            \ file\n- do not use prescriptive language such as ensure, gather, use,\
+            \ implement, or provide in candidate_job_steps.step_description\n- do\
+            \ not split one explicit route into multiple separate route items when\
+            \ the file presents them as sub-steps of the same action\n- do not include\
+            \ positioning in suggested_areas if candidate_positioning_updates is empty\n\
+            - do not output routes or experiments containing MojoScore, UI, MVP, productize,\
+            \ refine, standardize, or build unless those exact terms appear explicitly\
+            \ in the uploaded file evidence\n- if a route or experiment is not directly\
+            \ supported by quoted file evidence, omit it\n- do not use run flagship\
+            \ engagements, capture before/after states, document decisions and outcomes,\
+            \ build UI, refine scoring logic, or any proof/rollout action as candidate_job_steps\n\
+            - do not include positioning in suggested_areas if candidate_positioning_updates\
+            \ is empty\n\n\n\n\nReturn exactly this JSON:\n\n{\n  \"summary\": \"\
+            string\",\n  \"evidence\": [\"string\"],\n  \"framework_results\": [],\n\
+            \  \"suggested_areas\": [],\n  \"candidate_positioning_updates\": [],\n\
+            \  \"candidate_job_steps\": [],\n  \"candidate_needs\": [],\n  \"candidate_outcomes\"\
+            : [],\n  \"possible_routes\": [],\n  \"experiments_to_run\": [],\n  \"\
+            contradictions\": [],\n  \"questions_to_verify\": [],\n  \"confidence\"\
+            : \"high | medium | low\",\n  \"confidence_reason\": \"string\"\n}\n\n\
+            Section rules:\n\ncandidate_positioning_updates:\n{\n  \"field\": \"target_customer\
+            \ | category | alternatives | unique_attributes | value | proof\",\n \
+            \ \"current_issue\": \"string\",\n  \"suggested_update\": \"string\",\n\
+            \  \"evidence\": \"string\",\n  \"confidence\": \"high | medium | low\"\
+            \n}\n\ncandidate_job_steps:\n{\n  \"step_label\": \"string\",\n  \"step_description\"\
+            : \"string\",\n  \"evidence\": \"string\",\n  \"confidence\": \"high |\
+            \ medium | low\"\n}\n\ncandidate_needs:\n{\n  \"desired_outcome\": \"\
+            string\",\n  \"importance\": 0,\n  \"satisfaction\": 0,\n  \"evidence\"\
+            : \"string\",\n  \"confidence\": \"high | medium | low\"\n}\n\ncandidate_outcomes:\n\
+            {\n  \"outcome\": \"string\",\n  \"related_opportunities\": [\"string\"\
+            ],\n  \"evidence\": \"string\",\n  \"confidence\": \"high | medium | low\"\
+            \n}\n\npossible_routes:\n{\n  \"title\": \"string\",\n  \"why_this_could_matter\"\
+            : \"string\",\n  \"linked_opportunity\": \"string\",\n  \"evidence\":\
+            \ \"string\",\n  \"confidence\": \"high | medium | low\"\n}\n\nexperiments_to_run:\n\
+            {\n  \"experiment\": \"string\",\n  \"what_it_tests\": \"string\",\n \
+            \ \"evidence\": \"string\"\n}\n\ncontradictions:\n{\n  \"claim\": \"string\"\
+            ,\n  \"conflicts_with\": \"string\",\n  \"evidence\": \"string\"\n}\n\n\
+            questions_to_verify:\n[\"string\"]\n\nReturn only JSON. No markdown. No\
+            \ explanation outside JSON.\n"
+        selected: false
+        title: Adjudication
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1776718133707'
+      position:
+        x: 1035.5028793789158
+        y: 391.65395081829877
+      positionAbsolute:
+        x: 1035.5028793789158
+        y: 391.65395081829877
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "function parseJson(value) {\n  if (typeof value !== \"string\") return\
+          \ value;\n  const trimmed = value.trim();\n  if (!trimmed) return value;\n\
+          \  try {\n    return JSON.parse(trimmed);\n  } catch {\n    return value;\n\
+          \  }\n}\n\nfunction asArray(value) {\n  const parsed = parseJson(value);\n\
+          \  return Array.isArray(parsed) ? parsed : [];\n}\n\nfunction asStringArray(value)\
+          \ {\n  return asArray(value)\n    .map((item) => String(item || \"\").trim())\n\
+          \    .filter(Boolean);\n}\n\nfunction asObjectArray(value) {\n  return asArray(value).filter((item)\
+          \ => item && typeof item === \"object\" && !Array.isArray(item));\n}\n\n\
+          function normalizeConfidence(value, fallback = \"low\") {\n  const normalized\
+          \ = String(value || fallback).trim().toLowerCase();\n  return [\"high\"\
+          , \"medium\", \"low\"].includes(normalized) ? normalized : fallback;\n}\n\
+          \nfunction normalizeSuggestedAreas(value) {\n  const allowed = new Set([\n\
+          \    \"positioning\",\n    \"job_map\",\n    \"opportunities\",\n    \"\
+          strategy\",\n    \"routes\",\n  ]);\n\n  if (typeof value === \"string\"\
+          ) {\n    return value\n      .split(\"|\")\n      .map((item) => item.trim())\n\
+          \      .filter((item) => allowed.has(item));\n  }\n\n  return asStringArray(value).filter((item)\
+          \ => allowed.has(item));\n}\n\nfunction normalizeFrameworkResults(value)\
+          \ {\n  return asObjectArray(value).map((framework) => ({\n    framework:\
+          \ String(framework.framework || \"\").trim(),\n    findings: Array.isArray(framework.findings)\n\
+          \      ? framework.findings\n          .filter((f) => f && typeof f ===\
+          \ \"object\" && !Array.isArray(f))\n          .map((f) => ({\n         \
+          \   claim: String(f.claim || \"\").trim(),\n            evidence: String(f.evidence\
+          \ || \"\").trim(),\n            confidence: normalizeConfidence(f.confidence,\
+          \ \"low\"),\n            mojo_area: String(f.mojo_area || \"\").trim(),\n\
+          \            suggested_update: String(f.suggested_update || \"\").trim(),\n\
+          \            risk_if_ignored: String(f.risk_if_ignored || \"\").trim(),\n\
+          \          }))\n          .filter((f) => f.claim)\n      : [],\n  })).filter((framework)\
+          \ => framework.framework);\n}\n\nfunction normalizePositioningUpdates(value)\
+          \ {\n  const allowedFields = new Set([\n    \"target_customer\",\n    \"\
+          category\",\n    \"alternatives\",\n    \"unique_attributes\",\n    \"value\"\
+          ,\n    \"proof\",\n  ]);\n\n  return asObjectArray(value)\n    .map((item)\
+          \ => ({\n      field: String(item.field || \"\").trim(),\n      current_issue:\
+          \ String(item.current_issue || \"\").trim(),\n      suggested_update: String(item.suggested_update\
+          \ || \"\").trim(),\n      evidence: String(item.evidence || \"\").trim(),\n\
+          \      confidence: normalizeConfidence(item.confidence, \"low\"),\n    }))\n\
+          \    .filter((item) => allowedFields.has(item.field) && item.suggested_update);\n\
+          }\n\nfunction normalizeJobSteps(value) {\n  return asObjectArray(value)\n\
+          \    .map((item) => ({\n      step_label: String(item.step_label || \"\"\
+          ).trim(),\n      step_description: String(item.step_description || \"\"\
+          ).trim(),\n      evidence: String(item.evidence || \"\").trim(),\n     \
+          \ confidence: normalizeConfidence(item.confidence, \"low\"),\n    }))\n\
+          \    .filter((item) => item.step_label);\n}\n\nfunction normalizeCandidateNeeds(value)\
+          \ {\n  return asObjectArray(value)\n    .map((item) => ({\n      desired_outcome:\
+          \ String(item.desired_outcome || \"\").trim(),\n      importance: Number.isFinite(Number(item.importance))\
+          \ ? Math.max(0, Math.min(10, Math.round(Number(item.importance)))) : 0,\n\
+          \      satisfaction: Number.isFinite(Number(item.satisfaction)) ? Math.max(0,\
+          \ Math.min(10, Math.round(Number(item.satisfaction)))) : 0,\n      evidence:\
+          \ String(item.evidence || \"\").trim(),\n      confidence: normalizeConfidence(item.confidence,\
+          \ \"low\"),\n    }))\n    .filter((item) => item.desired_outcome);\n}\n\n\
+          function normalizeCandidateOutcomes(value) {\n  return asObjectArray(value)\n\
+          \    .map((item) => ({\n      outcome: String(item.outcome || \"\").trim(),\n\
+          \      related_opportunities: Array.isArray(item.related_opportunities)\n\
+          \        ? item.related_opportunities.map((v) => String(v || \"\").trim()).filter(Boolean)\n\
+          \        : [],\n      evidence: String(item.evidence || \"\").trim(),\n\
+          \      confidence: normalizeConfidence(item.confidence, \"low\"),\n    }))\n\
+          \    .filter((item) => item.outcome);\n}\n\nfunction normalizePossibleRoutes(value)\
+          \ {\n  return asObjectArray(value)\n    .map((item) => ({\n      title:\
+          \ String(item.title || \"\").trim(),\n      why_this_could_matter: String(item.why_this_could_matter\
+          \ || \"\").trim(),\n      linked_opportunity: String(item.linked_opportunity\
+          \ || \"\").trim(),\n      evidence: String(item.evidence || \"\").trim(),\n\
+          \      confidence: normalizeConfidence(item.confidence, \"low\"),\n    }))\n\
+          \    .filter((item) => item.title);\n}\n\nfunction normalizeExperiments(value)\
+          \ {\n  return asObjectArray(value)\n    .map((item) => ({\n      experiment:\
+          \ String(item.experiment || \"\").trim(),\n      what_it_tests: String(item.what_it_tests\
+          \ || \"\").trim(),\n      evidence: String(item.evidence || \"\").trim(),\n\
+          \    }))\n    .filter((item) => item.experiment);\n}\n\nfunction normalizeContradictions(value)\
+          \ {\n  return asObjectArray(value)\n    .map((item) => ({\n      claim:\
+          \ String(item.claim || \"\").trim(),\n      conflicts_with: String(item.conflicts_with\
+          \ || \"\").trim(),\n      evidence: String(item.evidence || \"\").trim(),\n\
+          \    }))\n    .filter((item) => item.claim);\n}\n\nfunction main({ arg1\
+          \ }) {\n  const data = typeof arg1 === \"string\" ? (parseJson(arg1) ||\
+          \ {}) : (arg1 || {});\n\n  const summary = String(data.summary || \"\").trim();\n\
+          \  const evidence = asStringArray(data.evidence);\n  const frameworkResults\
+          \ = normalizeFrameworkResults(data.framework_results);\n  const suggestedAreas\
+          \ = normalizeSuggestedAreas(data.suggested_areas);\n  const candidatePositioningUpdates\
+          \ = normalizePositioningUpdates(data.candidate_positioning_updates);\n \
+          \ const candidateJobSteps = normalizeJobSteps(data.candidate_job_steps);\n\
+          \  const candidateNeeds = normalizeCandidateNeeds(data.candidate_needs);\n\
+          \  const candidateOutcomes = normalizeCandidateOutcomes(data.candidate_outcomes);\n\
+          \  const possibleRoutes = normalizePossibleRoutes(data.possible_routes);\n\
+          \  const experimentsToRun = normalizeExperiments(data.experiments_to_run);\n\
+          \  const contradictions = normalizeContradictions(data.contradictions);\n\
+          \  const questionsToVerify = asStringArray(data.questions_to_verify);\n\
+          \  const confidence = normalizeConfidence(data.confidence, \"low\");\n \
+          \ const confidenceReason = String(data.confidence_reason || \"\").trim();\n\
+          \n  const result = [\n    \"THIS FILE SUGGESTS:\",\n    summary || \"No\
+          \ file-specific summary was produced.\",\n    \"\",\n    \"Evidence:\",\n\
+          \    ...(evidence.length ? evidence.map((item) => `- ${item}`) : [\"- No\
+          \ concrete evidence extracted.\"]),\n    \"\",\n    \"Frameworks:\",\n \
+          \   ...(frameworkResults.length\n      ? frameworkResults.map((f) => `-\
+          \ ${f.framework}: ${f.findings.length} finding(s)`)\n      : [\"- No framework\
+          \ findings returned.\"]),\n    \"\",\n    \"Contradictions:\",\n    ...(contradictions.length\n\
+          \      ? contradictions.map((item) => `- ${item.claim}`)\n      : [\"- None\
+          \ identified.\"]),\n    \"\",\n    `Confidence: ${confidence}`,\n    `Why:\
+          \ ${confidenceReason || \"Confidence reason missing.\"}`,\n  ].join(\"\\\
+          n\");\n\n  return {\n    result,\n    summary,\n    evidence: JSON.stringify(evidence),\n\
+          \    framework_results: JSON.stringify(frameworkResults),\n    suggested_areas:\
+          \ suggestedAreas.join(\"|\"),\n    candidate_positioning_updates: JSON.stringify(candidatePositioningUpdates),\n\
+          \    candidate_job_steps: JSON.stringify(candidateJobSteps),\n    candidate_needs:\
+          \ JSON.stringify(candidateNeeds),\n    candidate_outcomes: JSON.stringify(candidateOutcomes),\n\
+          \    possible_routes: JSON.stringify(possibleRoutes),\n    experiments_to_run:\
+          \ JSON.stringify(experimentsToRun),\n    contradictions: JSON.stringify(contradictions),\n\
+          \    questions_to_verify: JSON.stringify(questionsToVerify),\n    confidence,\n\
+          \    confidence_reason: confidenceReason,\n  };\n}\n"
+        code_language: javascript
+        outputs:
+          candidate_job_steps:
+            children: null
+            type: string
+          candidate_needs:
+            children: null
+            type: string
+          candidate_outcomes:
+            children: null
+            type: string
+          candidate_positioning_updates:
+            children: null
+            type: string
+          confidence:
+            children: null
+            type: string
+          confidence_reason:
+            children: null
+            type: string
+          contradictions:
+            children: null
+            type: string
+          evidence:
+            children: null
+            type: string
+          experiments_to_run:
+            children: null
+            type: string
+          framework_results:
+            children: null
+            type: string
+          possible_routes:
+            children: null
+            type: string
+          questions_to_verify:
+            children: null
+            type: string
+          result:
+            children: null
+            type: string
+          suggested_areas:
+            children: null
+            type: string
+          summary:
+            children: null
+            type: string
+        selected: false
+        title: Code
+        type: code
+        variables:
+        - value_selector:
+          - '1776718133707'
+          - text
+          value_type: string
+          variable: arg1
+      height: 52
+      id: '1776720558355'
+      position:
+        x: 1365.8383553571166
+        y: 391.65395081829877
+      positionAbsolute:
+        x: 1365.8383553571166
+        y: 391.65395081829877
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1776720558355'
+          - result
+          value_type: string
+          variable: result
+        - value_selector:
+          - '1776720558355'
+          - summary
+          value_type: string
+          variable: summary
+        - value_selector:
+          - '1776720558355'
+          - evidence
+          value_type: string
+          variable: evidence
+        - value_selector:
+          - '1776720558355'
+          - framework_results
+          value_type: string
+          variable: framework_results
+        - value_selector:
+          - '1776720558355'
+          - suggested_areas
+          value_type: string
+          variable: suggested_areas
+        - value_selector:
+          - '1776720558355'
+          - candidate_positioning_updates
+          value_type: string
+          variable: candidate_positioning_updates
+        - value_selector:
+          - '1776720558355'
+          - candidate_job_steps
+          value_type: string
+          variable: candidate_job_steps
+        - value_selector:
+          - '1776720558355'
+          - candidate_needs
+          value_type: string
+          variable: candidate_needs
+        - value_selector:
+          - '1776720558355'
+          - candidate_outcomes
+          value_type: string
+          variable: candidate_outcomes
+        - value_selector:
+          - '1776720558355'
+          - possible_routes
+          value_type: string
+          variable: possible_routes
+        - value_selector:
+          - '1776720558355'
+          - experiments_to_run
+          value_type: string
+          variable: experiments_to_run
+        - value_selector:
+          - '1776720558355'
+          - contradictions
+          value_type: string
+          variable: contradictions
+        - value_selector:
+          - '1776720558355'
+          - questions_to_verify
+          value_type: string
+          variable: questions_to_verify
+        - value_selector:
+          - '1776720558355'
+          - confidence
+          value_type: string
+          variable: confidence
+        - value_selector:
+          - '1776720558355'
+          - confidence_reason
+          value_type: string
+          variable: confidence_reason
+        selected: false
+        title: Output
+        type: end
+      height: 452
+      id: '1777744406938'
+      position:
+        x: 1669.6929058800972
+        y: 391.65395081829877
+      positionAbsolute:
+        x: 1669.6929058800972
+        y: 391.65395081829877
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        selected: false
+        title: User Input
+        type: start
+        variables:
+        - default: ''
+          hint: ''
+          label: file_name
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: file_name
+        - default: ''
+          hint: ''
+          label: file_text
+          options: []
+          placeholder: ''
+          required: true
+          type: paragraph
+          variable: file_text
+        - default: ''
+          hint: ''
+          label: source_type
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: source_type
+        - default: ''
+          hint: ''
+          label: enabled_frameworks
+          options: []
+          placeholder: ''
+          required: true
+          type: paragraph
+          variable: enabled_frameworks
+      height: 187
+      id: '1777861850698'
+      position:
+        x: -682.8346908393406
+        y: 370.65395081829877
+      positionAbsolute:
+        x: -682.8346908393406
+        y: 370.65395081829877
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 58311562-abe4-41f4-96c3-5a48bc996f9a
+          role: system
+          text: 'You are a file-grounding analysis agent.
+
+
+            Use only the uploaded file content as your source of truth.
+
+            Do not use system scores, archetypes, prior analysis, database values,
+            inferred metrics, or external assumptions.
+
+
+            Your job is to extract what the document actually says.
+
+
+            Rules:
+
+            - Include at least 2 concrete evidence items when available.
+
+            - Evidence must be direct quotes or concrete paraphrases tied to specific
+            file content.
+
+            - If the file lacks usable specificity, say exactly what is missing.
+
+            - If your output could apply to most companies, rewrite it or lower confidence.
+
+            - Return only valid JSON.
+
+            '
+        - id: aa84d165-b4fd-4473-b9c3-ccee16c00814
+          role: user
+          text: "Uploaded file name:\n{{#1777861850698.file_name#}}\n\nUploaded file\
+            \ content:\n{{#1777861850698.file_text#}}\n\nExtract grounded signals\
+            \ from this file.\n\nReturn exactly this JSON:\n\n{\n  \"summary\": \"\
+            string\",\n  \"evidence\": [\"string\"],\n  \"document_signals\": [\"\
+            string\"],\n  \"missing_information\": [\"string\"],\n  \"confidence\"\
+            : \"high | medium | low\",\n  \"confidence_reason\": \"string\"\n}\n\n\
+            Rules:\n- summary must describe what is specific or distinctive in the\
+            \ file\n- evidence must contain direct quotes or concrete paraphrases\
+            \ from the file\n- document_signals should capture meaningful claims,\
+            \ themes, or actions stated in the file\n- missing_information should\
+            \ identify what the file does not provide but would be needed for stronger\
+            \ analysis\n- if evidence is weak, lower confidence\n- return every key\n\
+            - return only JSON\n"
+        selected: false
+        title: Grounding
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1777908051953'
+      position:
+        x: -283.51067934360907
+        y: 391.65395081829877
+      positionAbsolute:
+        x: -283.51067934360907
+        y: 391.65395081829877
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 83c99f92-9fc2-4a8e-892c-f198ffffcd77
+          role: system
+          text: 'You are a positioning analysis agent using April Dunford''s framework.
+
+
+            Use only the uploaded file content and grounded evidence provided.
+
+            Do not use system context or external assumptions.
+
+
+            Look for:
+
+            - target customer
+
+            - competitive alternatives
+
+            - unique attributes
+
+            - differentiated value
+
+            - category / market frame
+
+            - proof points
+
+
+            Return only evidence-backed findings.
+
+            Return only valid JSON.
+
+            '
+        - id: ed42206c-8b17-4ec0-8a77-ef0659c5117c
+          role: user
+          text: "Uploaded file name:\n{{#1777908051953.text#}}\n\nUploaded file content:\n\
+            {{#1777908051953.text#}}\n\nGrounded file summary and evidence:\n{{Grounding.text}}\n\
+            \nAnalyze this file through the April Dunford positioning lens.\n\nReturn\
+            \ exactly this JSON:\n\n{\n  \"framework\": \"april_dunford\",\n  \"findings\"\
+            : [\n    {\n      \"claim\": \"string\",\n      \"evidence\": \"string\"\
+            ,\n      \"confidence\": \"high | medium | low\",\n      \"mojo_area\"\
+            : \"positioning\",\n      \"suggested_update\": \"string\",\n      \"\
+            risk_if_ignored\": \"string\"\n    }\n  ]\n}\n\nRules:\n- include only\
+            \ findings explicitly supported by the file\n- if no useful positioning\
+            \ signal exists, return an empty findings array\n- do not invent category,\
+            \ alternatives, or proof\n- return only JSON\n"
+        selected: false
+        title: April Dunford
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1777908061879'
+      position:
+        x: 207.3459352259465
+        y: 141.4894957407397
+      positionAbsolute:
+        x: 207.3459352259465
+        y: 141.4894957407397
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 5c296001-754d-4149-be6e-19ebf9a363de
+          role: system
+          text: 'You are a JTBD analysis agent.
+
+
+            Use only the uploaded file content and grounded evidence provided.
+
+            Do not use system context or external assumptions.
+
+
+            Look for:
+
+            - job executor
+
+            - job-to-be-done
+
+            - job steps
+
+            - pains / struggles
+
+            - desired outcomes
+
+            - context of use
+
+
+            Return only evidence-backed findings.
+
+            Return only valid JSON.
+
+            '
+        - id: 2710f03b-f795-4952-911a-b99c242da39f
+          role: user
+          text: "Uploaded file name:\n{{#1777908051953.text#}}/\n\nUploaded file content:\n\
+            {{#1777908051953.text#}}\n\nGrounded file summary and evidence:\n{{#1777908051953.text#}}\n\
+            \nAnalyze this file through the JTBD lens.\n\nYour job is to extract the\
+            \ underlying customer or team work described in the file.\n\nLook for:\n\
+            - what a person or team is trying to get done\n- decision steps\n- coordination\
+            \ steps\n- validation steps\n- planning or prioritization steps\n- struggles\
+            \ during those steps\n- desired progress or improved end state\n\nImportant:\n\
+            - do not restate MojoMap, Strategic Decision System, or any product concept\
+            \ as the job\n- do not say the job is to build, refine, adopt, or develop\
+            \ MojoMap\n- do not output product strategy as job map work\n- each finding\
+            \ must describe a customer/team action, struggle, or desired progress\n\
+            - each finding must be a job step, struggle, or desired progress that\
+            \ THIS file explicitly describes for the customer or team; quote the file\
+            \ sentence as evidence\n- if the file describes no such work, return an\
+            \ empty findings array — do not emit a generic job step\n- if the file\
+            \ describes a blocker, translate it into the affected job step\n- use\
+            \ only file evidence\n\nReturn exactly this JSON:\n\n{\n  \"framework\"\
+            : \"jtbd\",\n  \"findings\": [\n    {\n      \"claim\": \"string\",\n\
+            \      \"evidence\": \"string\",\n      \"confidence\": \"high | medium\
+            \ | low\",\n      \"mojo_area\": \"job_map | opportunities\",\n      \"\
+            suggested_update\": \"string\",\n      \"risk_if_ignored\": \"string\"\
+            \n    }\n  ]\n}\n\nRules:\n- findings must be job-step, struggle, or desired-progress\
+            \ statements\n- do not return product-building statements\n- do not invent\
+            \ steps not supported by the file\n- do not use markdown\n- return only\
+            \ raw JSON\n"
+        selected: false
+        title: JTBD
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1777908080921'
+      position:
+        x: 212.07684327145137
+        y: 269.03298677596854
+      positionAbsolute:
+        x: 212.07684327145137
+        y: 269.03298677596854
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: faa660c5-b0ab-464f-9794-8279ed0f559b
+          role: system
+          text: 'You are an ODI analysis agent.
+
+
+            Use only the uploaded file content and grounded evidence provided.
+
+            Do not use system context or external assumptions.
+
+
+            Look for:
+
+            - desired outcomes
+
+            - importance signals
+
+            - satisfaction or frustration signals
+
+            - underserved or overserved needs
+
+            - prioritization evidence
+
+
+            Important:
+
+            - do not fabricate ODI scores
+
+            - if the file does not contain enough evidence to score importance or
+            satisfaction, return 0 and mark confidence low
+
+            - treat ODI as directional unless survey data is present
+
+
+            Return only evidence-backed findings.
+
+            Return only valid JSON.
+
+            '
+        - id: 8a7d3f47-60a0-4983-b7c8-8a7131988aa6
+          role: user
+          text: "Uploaded file name:\n{{#1777908051953.text#}}\n\nUploaded file content:\n\
+            {{#1777908051953.text#}}\n\nGrounded file summary and evidence:\n{{#1777908051953.text#}}\n\
+            \nSource type:\n{{#1777908051953.text#}}\n\nAnalyze this file through\
+            \ the ODI lens.\n\nYour job is to extract directional desired outcome\
+            \ statements from the file, even when formal ODI survey evidence is missing.\n\
+            \nLook for:\n- desired progress\n- what success should improve\n- bottlenecks,\
+            \ delays, uncertainty, rework, lack of clarity\n- any signal that a team\
+            \ wants to get an outcome faster, more reliably, or with less effort\n\
+            \nImportant:\n- do not fabricate ODI scores\n- if the file does not contain\
+            \ enough evidence to score importance or satisfaction, treat them as unknown\
+            \ rather than absent\n- still return useful ODI findings when the file\
+            \ clearly implies desired progress\n- internal strategy files describe\
+            \ the COMPANY's own intent, not customer needs; from them extract ONLY\
+            \ the customer frictions or desired progress the file explicitly describes\
+            \ (what the target customer struggles with or wants), NEVER the company's\
+            \ aspirations, positioning, or how-we-win statements\n- every finding's\
+            \ subject must be the CUSTOMER (buyer/operator/end-user); if the subject\
+            \ is the company (\"we\", \"Cafe Barra\", \"our brand\") describing what\
+            \ it aims to do or how it wins, it is NOT an ODI finding — omit it\n-\
+            \ only interview or survey files count as primary customer validation\n\
+            - do not claim customer validation unless the source explicitly supports\
+            \ it\n\nReturn exactly this JSON:\n\n{\n  \"framework\": \"odi\",\n  \"\
+            findings\": [\n    {\n      \"claim\": \"string\",\n      \"evidence\"\
+            : \"string\",\n      \"confidence\": \"high | medium | low\",\n      \"\
+            mojo_area\": \"opportunities\",\n      \"suggested_update\": \"string\"\
+            ,\n      \"risk_if_ignored\": \"string\"\n    }\n  ]\n}\n\nRules:\n- express\
+            \ findings as directional outcome opportunities, not generic absence statements\n\
+            - do not say “no desired outcomes” if the file clearly implies a desired\
+            \ end state\n- if scoring evidence is missing, keep confidence low but\
+            \ still return outcome-oriented findings when justified\n- use only file\
+            \ evidence\n- do not use markdown\n- return only raw JSON\n- Do not express\
+            \ findings as solutions, products, systems, or implementation approaches.\n\
+            Express findings as desired outcome improvement statements.\nIf the file\
+            \ names a solution, translate it into the underlying outcome the customer\
+            \ wants to improve.\n\n"
+        selected: false
+        title: ODI
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1777908097475'
+      position:
+        x: 207.3459352259465
+        y: 399.35493669593995
+      positionAbsolute:
+        x: 207.3459352259465
+        y: 399.35493669593995
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 0e4fa323-6f3e-44f8-be83-fcf13376caae
+          role: system
+          text: 'You are an opportunity mapping analysis agent using Teresa Torres''
+            framework.
+
+
+            Use only the uploaded file content and grounded evidence provided.
+
+            Do not use system context or external assumptions.
+
+
+            Look for:
+
+            - desired outcome
+
+            - opportunities under that outcome
+
+            - possible solutions
+
+            - experiments or tests
+
+
+            Return only evidence-backed findings.
+
+            Return only valid JSON.
+
+            '
+        - id: 7b8b1a7a-29bf-48d3-ba66-043bc3a197f4
+          role: user
+          text: "Uploaded file name:\n{{#1777908051953.text#}}\n\nUploaded file content:\n\
+            {{#1777908051953.text#}}\n\nGrounded file summary and evidence:\n{{#1777908051953.text#}}\n\
+            \nAnalyze this file through the Teresa Torres opportunity mapping lens.\n\
+            \nYour job is to extract:\n- desired outcomes\n- opportunity spaces under\
+            \ those outcomes\n- explicit route candidates named in the file\n- explicit\
+            \ experiments or learning steps named in the file\n\nImportant:\n- opportunity\
+            \ findings must describe unmet progress, problem spaces, or obstacles\n\
+            - do not describe the product or solution itself as the opportunity\n\
+            - if the file names a solution, translate it into the underlying opportunity\
+            \ only when that opportunity is explicit\n- route findings must be explicit\
+            \ initiatives, approaches, or next paths stated in the file\n- missing\
+            \ information by itself is not a route\n- proof gaps by themselves are\
+            \ not an experiment unless the file names a concrete test or learning\
+            \ action\n- use only file evidence\n\nReturn exactly this JSON:\n\n{\n\
+            \  \"framework\": \"teresa_torres\",\n  \"findings\": [\n    {\n     \
+            \ \"claim\": \"string\",\n      \"evidence\": \"string\",\n      \"confidence\"\
+            : \"high | medium | low\",\n      \"mojo_area\": \"opportunities | routes\"\
+            ,\n      \"suggested_update\": \"string\",\n      \"risk_if_ignored\"\
+            : \"string\"\n    }\n  ]\n}\n\nRules:\n- opportunities must be opportunity-space\
+            \ statements, not product slogans\n- routes must be explicit actions or\
+            \ structured approaches from the file\n- experiments must only be included\
+            \ if the file explicitly names a test, pilot, proof step, or learning\
+            \ step\n- do not turn missing details into route findings\n- do not invent\
+            \ pilots, tests, or initiatives\n- do not use markdown\n- return only\
+            \ raw JSON\n- route findings must stay very close to the wording of the\
+            \ file\n- do not infer productization, pilots, A/B tests, or transition\
+            \ plans unless the file explicitly states them\n- suggested_update must\
+            \ be empty unless the file explicitly proposes a next step or action\n\
+            - if a proof gap is identified without a concrete file-stated route, keep\
+            \ it as an opportunity finding, not a route\n\n"
+        selected: false
+        title: Teresa Torres
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1777908111748'
+      position:
+        x: 199.72493571204717
+        y: 653.8184245949561
+      positionAbsolute:
+        x: 199.72493571204717
+        y: 653.8184245949561
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "function parseJson(v) {\n  if (typeof v !== \"string\") return v ||\
+          \ {};\n  try { return JSON.parse(v); } catch { return {}; }\n}\n\nfunction\
+          \ normalizeFramework(v, expected) {\n  const parsed = parseJson(v);\n  const\
+          \ framework = typeof parsed.framework === \"string\" ? parsed.framework\
+          \ : expected;\n  const findings = Array.isArray(parsed.findings) ? parsed.findings\
+          \ : [];\n  return { framework, findings };\n}\n\nfunction main({ grounding,\
+          \ april_dunford, jtbd, odi, strategy_cascade, teresa_torres }) {\n  const\
+          \ g = parseJson(grounding);\n\n  return {\n    summary: typeof g.summary\
+          \ === \"string\" ? g.summary : \"\",\n    evidence: JSON.stringify(Array.isArray(g.evidence)\
+          \ ? g.evidence : []),\n    document_signals: JSON.stringify(Array.isArray(g.document_signals)\
+          \ ? g.document_signals : []),\n    missing_information: JSON.stringify(Array.isArray(g.missing_information)\
+          \ ? g.missing_information : []),\n    grounding_confidence: typeof g.confidence\
+          \ === \"string\" ? g.confidence : \"low\",\n    grounding_confidence_reason:\
+          \ typeof g.confidence_reason === \"string\" ? g.confidence_reason : \"\"\
+          ,\n    framework_results: JSON.stringify([\n      normalizeFramework(april_dunford,\
+          \ \"april_dunford\"),\n      normalizeFramework(jtbd, \"jtbd\"),\n     \
+          \ normalizeFramework(odi, \"odi\"),\n      normalizeFramework(strategy_cascade,\
+          \ \"strategy_cascade\"),\n      normalizeFramework(teresa_torres, \"teresa_torres\"\
+          ),\n    ]),\n  };\n}\n"
+        code_language: javascript
+        outputs:
+          document_signals:
+            children: null
+            type: string
+          evidence:
+            children: null
+            type: string
+          framework_results:
+            children: null
+            type: string
+          grounding_confidence:
+            children: null
+            type: string
+          grounding_confidence_reason:
+            children: null
+            type: string
+          missing_information:
+            children: null
+            type: string
+          summary:
+            children: null
+            type: string
+        selected: false
+        title: Framework Merge
+        type: code
+        variables:
+        - value_selector:
+          - '1777908051953'
+          - text
+          value_type: string
+          variable: grounding
+        - value_selector:
+          - '1777908061879'
+          - text
+          value_type: string
+          variable: april_dunford
+        - value_selector:
+          - '1777908080921'
+          - text
+          value_type: string
+          variable: jtbd
+        - value_selector:
+          - '1777908097475'
+          - text
+          value_type: string
+          variable: odi
+        - value_selector:
+          - '1777908338411'
+          - text
+          value_type: string
+          variable: strategy_cascade
+        - value_selector:
+          - '1777908111748'
+          - text
+          value_type: string
+          variable: teresa_torres
+      height: 52
+      id: '1777908159548'
+      position:
+        x: 740.921962656751
+        y: 391.65395081829877
+      positionAbsolute:
+        x: 740.921962656751
+        y: 391.65395081829877
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 87ac023f-d76d-4a8e-a127-dce594042ea2
+          role: system
+          text: 'You are a strategy cascade analysis agent.
+
+
+            Use only the uploaded file content and grounded evidence provided.
+
+            Do not use system context or external assumptions.
+
+
+            Look for:
+
+            - winning aspiration
+
+            - where to play
+
+            - how to win
+
+            - capabilities
+
+            - management systems
+
+            - assumptions / constraints
+
+
+            Return only evidence-backed findings.
+
+            Return only valid JSON.
+
+            '
+        - id: 67274124-7d93-442c-a0f2-bc38a5c044a2
+          role: user
+          text: "Uploaded file name:\n{{#1777908051953.text#}}\n\nUploaded file content:\n\
+            {{#1777908051953.text#}}\n\nGrounded file summary and evidence:\n{{#1777908051953.text#}}\n\
+            \nAnalyze this file through the Strategy Cascade lens.\n\nReturn exactly\
+            \ this JSON:\n\n{\n  \"framework\": \"strategy_cascade\",\n  \"findings\"\
+            : [\n    {\n      \"claim\": \"string\",\n      \"evidence\": \"string\"\
+            ,\n      \"confidence\": \"high | medium | low\",\n      \"mojo_area\"\
+            : \"strategy\",\n      \"suggested_update\": \"string\",\n      \"risk_if_ignored\"\
+            : \"string\"\n    }\n  ]\n}\n\nRules:\n- only identify strategic choices\
+            \ explicitly supported by the file\n- if no useful strategy signal exists,\
+            \ return an empty findings array\n- return only JSON\n"
+        selected: false
+        title: Strategy Cascade
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1777908338411'
+      position:
+        x: 207.3459352259465
+        y: 529.1908615606376
+      positionAbsolute:
+        x: 207.3459352259465
+        y: 529.1908615606376
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: 304.9909560361689
+      y: 382.7800598948698
+      zoom: 0.6380183937495069
+  rag_pipeline_variables: []
