@@ -35,12 +35,12 @@ export function isLocalOllamaUrl(rawUrl: string): boolean {
 
 // AUTHORSHIP + SUBJECT (rulings 3, 4, 11 — 2026-09-13). The classifier now returns two facts, and the
 // binary VOICE verdict every existing gate reads is a projection of authorship:
-//   authorship: client | us | third_party | uncertain      subject: this_company | the_market | uncertain
+//   authorship: client | us | third_party | uncertain      subject: this_company | the_sector | uncertain
 //   voice:      client ⇒ client_voice; us | third_party ⇒ external; uncertain ⇒ uncertain
 // "us" is operator-authored analysis — an advisor's landscape read, a consultant's framing, our own notes
 // addressed to the client. It is NOT the client's voice (never declared) and NOT third-party record.
 export type Authorship = "client" | "us" | "third_party" | "uncertain";
-export type Subject = "this_company" | "the_market" | "uncertain";
+export type Subject = "this_company" | "the_sector" | "uncertain";
 export function voiceFromAuthorship(a: Authorship): VoiceVerdict {
   return a === "client" ? "client_voice" : a === "uncertain" ? "uncertain" : "external";
 }
@@ -57,10 +57,10 @@ const CLASSIFY_SYSTEM =
   "- uncertain: you genuinely cannot tell from what is shown.\n" +
   "FACT 2 — SUBJECT: WHAT is the document about? Exactly one of:\n" +
   "- this_company: the client company itself is the subject — its strategy, brand, programs, people, plans, performance, or a study/report specifically about it.\n" +
-  "- the_market: the sector, the population served, competitors, the region, policy, or the field in general — the client may be mentioned in passing or not at all.\n" +
+  "- the_sector: the sector, the population served, competitors, the region, policy, or the field in general — anything other than this company; the client may be mentioned in passing or not at all.\n" +
   "- uncertain: you genuinely cannot tell.\n" +
   "Judge authorship by voice and role, never by topic: a document ABOUT the client written by someone else is not 'client'. When the excerpt is too thin, answer uncertain — never guess client. " +
-  'Return JSON only: {"authorship":"client|us|third_party|uncertain","basis":"one sentence, in your own words, citing what in the document shows who wrote it","subject":"this_company|the_market|uncertain","subject_basis":"one sentence citing what shows what it is about"}.';
+  'Return JSON only: {"authorship":"client|us|third_party|uncertain","basis":"one sentence, in your own words, citing what in the document shows who wrote it","subject":"this_company|the_sector|uncertain","subject_basis":"one sentence citing what shows what it is about"}.';
 
 function buildClassifyUser(doc: { file_name: string; file_type: string; excerpt: string; operator_tags?: string[] }): string {
   return (
@@ -132,7 +132,7 @@ export async function classifyUploadVoice(
           : null;
     const basis = String(parsed.basis ?? "").trim();
     const subjectRaw = String(parsed.subject ?? "").trim();
-    const subject: Subject = subjectRaw === "this_company" || subjectRaw === "the_market" ? (subjectRaw as Subject) : "uncertain";
+    const subject: Subject = subjectRaw === "this_company" || subjectRaw === "the_sector" ? (subjectRaw as Subject) : "uncertain";
     const subjectBasis = String(parsed.subject_basis ?? "").trim() || (subjectRaw ? `classifier returned subject '${subjectRaw}' without a basis` : "classifier returned no subject — uncertain");
     if (authorship && basis) {
       return { verdict: voiceFromAuthorship(authorship), basis, model, authorship, subject, subject_basis: subjectBasis };

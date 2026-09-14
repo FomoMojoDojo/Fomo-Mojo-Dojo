@@ -182,7 +182,7 @@ describe("evidence mappers", () => {
   // title alone. Band now derives from authorship + subject (doc_voice_verdicts) and the source type.
   it("a research-looking FILE NAME does not mint the customer band: origin decides (ruling 5)", () => {
     const base = { companyId: "company-1", sourceId: "file-1", sourceType: "file", sourceTitle: "Cafe_Owner_Research_Reddit_March_2026.pdf", evidence: ["Under-roasted beans forced extra dialing-in during service."] };
-    const thirdParty = mapDifyFileOutputToSignals({ ...base, origin: { authorship: "third_party", subject: "the_market" } });
+    const thirdParty = mapDifyFileOutputToSignals({ ...base, origin: { authorship: "third_party", subject: "the_sector" } });
     expect(thirdParty.length).toBeGreaterThan(0);
     expect(thirdParty.every((signal) => signal.signal_band === "outside")).toBe(true);
     expect(thirdParty.every((signal) => signal.evidence_type === "market_signal")).toBe(true);

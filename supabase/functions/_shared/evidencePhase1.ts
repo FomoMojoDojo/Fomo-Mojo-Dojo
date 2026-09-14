@@ -880,7 +880,7 @@ export async function ingestDifyProposalSignals(args: {
   questionsToVerify?: unknown;
   rawPayload?: unknown;
   /** Import provenance (2026-09-13): the document's resolved origin — REQUIRED for an upload; absent ⇒ uncertain (never declared). */
-  origin?: { authorship: "client" | "us" | "third_party" | "uncertain"; subject: "this_company" | "the_market" | "uncertain" } | null;
+  origin?: { authorship: "client" | "us" | "third_party" | "uncertain"; subject: "this_company" | "the_sector" | "uncertain" } | null;
   /** Re-mint tool only: stamps raw_payload.minting_version on the minted signals. */
   mintingVersion?: number | null;
 }) {

@@ -14,6 +14,8 @@
 #      'client' — its live signals are left alone (change='none') and its override rows are unchanged
 #   e. DOWNSTREAM COMPLETE: no active claim in the company has every backing signal superseded
 #   f. DRY RUN writes nothing (ledger, signals, claims all unchanged)
+#   g. UNJUDGEABLE (sidecar backfill brief, 2026-09-14): a document with no sidecar and no verdict row is
+#      reported skipped_unclassified and left untouched by apply — never forced to a verdict, never minted uncertain
 # Exit 0 = every proof held.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -22,8 +24,8 @@ API=http://127.0.0.1:54321
 SR=$(supabase status -o env 2>/dev/null | grep -E '^SERVICE_ROLE_KEY=' | cut -d= -f2- | tr -d '"')
 CO="00000000-0000-4000-8000-00000000aaac"
 IN="00000000-0000-4000-8000-00000000ab01"
-F_US="00000000-0000-4000-8000-00000000ab10"; F_OV="00000000-0000-4000-8000-00000000ab20"
-P_US="00000000-0000-4000-8000-00000000ab11"; P_OV="00000000-0000-4000-8000-00000000ab21"
+F_US="00000000-0000-4000-8000-00000000ab10"; F_OV="00000000-0000-4000-8000-00000000ab20"; F_NO="00000000-0000-4000-8000-00000000ab30"
+P_US="00000000-0000-4000-8000-00000000ab11"; P_OV="00000000-0000-4000-8000-00000000ab21"; P_NO="00000000-0000-4000-8000-00000000ab31"
 CL="00000000-0000-5000-8000-00000000ab12"
 PREFIX="zz-throwaway/remint"
 psql() { docker exec -i "$DB" psql -U postgres -Atc "$1"; }
@@ -46,7 +48,7 @@ for pair in "us:$TEXT_US" "ov:$TEXT_OV"; do k=${pair%%:*}; t=${pair#*:}; printf 
   curl -s -o /dev/null -X POST "$API/storage/v1/object/input-files/$PREFIX/$k.md" -H "Authorization: Bearer $SR" -H "Content-Type: text/markdown" -H "x-upsert: true" --data-binary "@/tmp/zz-$k.md"
   curl -s -o /dev/null -X POST "$API/storage/v1/object/input-files/$PREFIX/$k.md.extracted.txt" -H "Authorization: Bearer $SR" -H "Content-Type: text/plain" -H "x-upsert: true" --data-binary "@/tmp/zz-$k.md.extracted.txt"; done
 SHA_US=$(sha "$TEXT_US"); SHA_OV=$(sha "$TEXT_OV")
-psql "insert into input_files (id, input_id, file_name, file_type, file_path, tags) values ('$F_US','$IN','guard-us.md','text/markdown','$PREFIX/us.md','{}'), ('$F_OV','$IN','guard-ov.md','text/markdown','$PREFIX/ov.md','{}')" >/dev/null
+psql "insert into input_files (id, input_id, file_name, file_type, file_path, tags) values ('$F_US','$IN','guard-us.md','text/markdown','$PREFIX/us.md','{}'), ('$F_OV','$IN','guard-ov.md','text/markdown','$PREFIX/ov.md','{}'), ('$F_NO','$IN','guard-nosidecar.md','text/markdown','$PREFIX/nosidecar.md','{}')" >/dev/null
 # verdicts: doc US — v1 model client (legacy), v2 model us; v1 override client_voice (July-style), v2 override us (withdrawn)
 psql "insert into doc_voice_verdicts (input_file_id, company_id, content_sha, verdict, basis, classifier_model, authorship, classifier_version) values
   ('$F_US','$CO','$SHA_US','client_voice','legacy v1','guard', 'client', 1), ('$F_US','$CO','$SHA_US','external','v2 read: advisor memo','guard','us',2),
@@ -57,7 +59,7 @@ psql "insert into doc_voice_verdicts (input_file_id, company_id, content_sha, ve
   ('$F_US','$CO','$SHA_US','external','external','withdrawn','guard: withdrawn to us','us',2),
   ('$F_OV','$CO','$SHA_OV','client_voice','client_voice','corpus attestation','guard: attestation STANDS (co-created)','client',1)" >/dev/null
 # legacy proposals + legacy org-band signals (no upload_origin) + an internal_declared claim in diagnose backed only by doc US
-for pair in "$P_US:$F_US:guard-us.md" "$P_OV:$F_OV:guard-ov.md"; do pid=${pair%%:*}; rest=${pair#*:}; fid=${rest%%:*}; name=${rest#*:}
+for pair in "$P_US:$F_US:guard-us.md" "$P_OV:$F_OV:guard-ov.md" "$P_NO:$F_NO:guard-nosidecar.md"; do pid=${pair%%:*}; rest=${pair#*:}; fid=${rest%%:*}; name=${rest#*:}
   psql "insert into file_proposals (id, company_id, file_id, file_name, source_type, summary, signal_type, status, processing_state, evidence, framework_results, candidate_needs, candidate_job_steps, candidate_outcomes, possible_routes, experiments_to_run, contradictions, questions_to_verify, processing_completed_at) values ('$pid','$CO','$fid','$name','uploaded_file','Families wait three weeks for a first appointment.','document','accepted','ready','[\"Families wait three weeks for a first appointment.\"]','[]','[]','[]','[]','[]','[]','[]','[]', now())" >/dev/null
   psql "insert into signals (company_id, source_id, source_type, source_title, signal_band, evidence_type, claim_text, evidence_excerpt, topic, framework, directness, framing_fit, structure_level, validation_status, confidence_to_use, raw_payload) values
     ('$CO','$pid','uploaded_file','$name','organization','internal_data','Families wait three weeks for a first appointment.','Families wait three weeks for a first appointment.','strategy',null,'inferred','strong','extracted','unvalidated','medium','{}'),
@@ -74,13 +76,16 @@ echo "$DRY" | grep -q '"dry_run":true' || fail f "dry run failed: $(echo "$DRY" 
 [ "$(psql "select count(*) from provenance_remints where company_id='$CO'")" = 0 ] || fail f "dry run wrote a ledger row"
 [ "$(psql "select count(*) from signals where company_id='$CO'")" = "$BEFORE_SIGS" ] || fail f "dry run changed signals"
 [ "$(psql "select status from claims where id='$CL'")" = active ] || fail f "dry run touched the claim"
-set +e; python3 - "$DRY" "$P_US" "$P_OV" "$CL" <<'EOF'
+set +e; python3 - "$DRY" "$P_US" "$P_OV" "$CL" "$P_NO" <<'EOF'
 import json,sys
 d=json.loads(sys.argv[1]); us=[p for p in d['plans'] if p['proposal_id']==sys.argv[2]][0]; ov=[p for p in d['plans'] if p['proposal_id']==sys.argv[3]][0]
 assert us['change']=='remint' and us['current_origin']['authorship']=='us' and us['origin_source']=='override', us
 assert len(us['superseded_signal_ids'])==2 and [c['id'] for c in us['struck_claim_ids']]==[sys.argv[4]], us
 assert us['would_mint']=={'signals':2,'band':'organization','voice_class':'analysis'}, us
 assert ov['change']=='none' and ov['current_origin']['authorship']=='client' and ov['origin_source']=='override', ov
+no=[p for p in d['plans'] if p['proposal_id']==sys.argv[5]][0]
+assert no['change']=='skipped_unclassified' and no['origin_source']=='none' and no['current_origin']=={'authorship':'uncertain','subject':'uncertain'}, no
+print("g. unjudgeable (no sidecar, no verdict): skipped_unclassified, origin none")
 print("f. dry run: plan = supersede 2, strike 1 (the declared claim), mint 2 organization/analysis; the attested doc is 'none'; nothing written")
 EOF
 [ $? = 0 ] || fail f "plan mismatch (see traceback above)"; set -e
@@ -109,6 +114,10 @@ ORPHANS=$(psql "select count(*) from claims c where c.company_id='$CO' and c.sta
 [ "$ORPHANS" = 0 ] || fail e "$ORPHANS active claim(s) stand only on superseded signals"
 LEDGER=$(psql "select count(*) from provenance_remints where company_id='$CO' and dry_run=false and kind='remint'"); [ "$LEDGER" = 1 ] || fail e "expected 1 ledger row, got $LEDGER"
 echo "e. downstream complete: 0 active claims stand on superseded signals; 1 ledger row"
+# g. unjudgeable untouched by apply
+[ "$(psql "select count(*) from signals where company_id='$CO' and source_id='$P_NO' and superseded_at is null and raw_payload->'upload_origin' is null")" = 2 ] || fail g "the unjudgeable document's signals were touched"
+[ "$(psql "select count(*) from doc_voice_verdicts where input_file_id='$F_NO'")" = 0 ] || fail g "a verdict was forced onto the unjudgeable document"
+echo "g. unjudgeable document: 2 legacy signals untouched, no verdict forced"
 # a. idempotent
 SNAP=$(psql "select md5((select string_agg(row_to_json(s)::text, ',' order by id) from signals s where company_id='$CO') || (select string_agg(row_to_json(c)::text, ',' order by id) from claims c where company_id='$CO'))")
 R2=$(remint "{\"company_id\":\"$CO\",\"dry_run\":false}")

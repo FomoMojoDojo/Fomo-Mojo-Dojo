@@ -2,7 +2,7 @@
 // Pure proofs on the mapper and the gates: the same functions dify-analyze-file's persist path calls
 // (mapDifyFileOutputToSignals → mapSignalsToClaimCandidates → deriveClaimProvenance) and the state
 // machine reads (checkOutsideViewToDiagnose).
-//   a. third_party × the_market  ⇒ signals only: outside, market_signal, voice_class market_context; NO claim
+//   a. third_party × the_sector  ⇒ signals only: outside, market_signal, voice_class market_context; NO claim
 //                                   candidate (so no supports ref can reach an Edgewood claim); Gate 1 is
 //                                   not halved (nothing is declared)
 //   b. third_party × this_company ⇒ outside, market_signal, outside_voice_about_client; MAY mint a
@@ -31,7 +31,7 @@ const gateRefs = (signals: ReturnType<typeof mint>, relationship = "supports") =
   signals.map((signal) => ({ relationship, signal: { signal_band: signal.signal_band, directness: signal.directness, structure_level: signal.structure_level, framing_fit: signal.framing_fit } }));
 
 describe("a. third-party SECTOR document: informs, never speaks, never corroborates", () => {
-  const signals = mint({ origin: { authorship: "third_party", subject: "the_market" }, sourceTitle: "Youth Mental Health Survey 2024.pdf" });
+  const signals = mint({ origin: { authorship: "third_party", subject: "the_sector" }, sourceTitle: "Youth Mental Health Survey 2024.pdf" });
   it("mints outside-band market_signal signals with voice_class stamped (never null)", () => {
     expect(signals.length).toBeGreaterThan(0);
     for (const s of signals) {
@@ -39,13 +39,13 @@ describe("a. third-party SECTOR document: informs, never speaks, never corrobora
       expect(s.evidence_type).toBe("market_signal");
       expect(s.voice_class).toBe("market_context");
       expect(s.framing_fit).not.toBe("strong");
-      expect((s.raw_payload as { upload_origin?: unknown }).upload_origin).toEqual({ authorship: "third_party", subject: "the_market" });
+      expect((s.raw_payload as { upload_origin?: unknown }).upload_origin).toEqual({ authorship: "third_party", subject: "the_sector" });
     }
   });
   it("mints NO claim candidate — so no supports ref can ever reach an Edgewood claim", () => {
     expect(mapSignalsToClaimCandidates("c1", signals, [], null)).toEqual([]);
     // even with the company's anchors configured and its name in the text, the SUBJECT fact decides
-    const named = mint({ origin: { authorship: "third_party", subject: "the_market" }, summary: COMPANY_TEXT, evidence: [COMPANY_TEXT], frameworkResults: [] });
+    const named = mint({ origin: { authorship: "third_party", subject: "the_sector" }, summary: COMPANY_TEXT, evidence: [COMPANY_TEXT], frameworkResults: [] });
     expect(mapSignalsToClaimCandidates("c1", named, ["edgewood"], null)).toEqual([]);
   });
   it("cannot satisfy Gate 1 as declared: a public_observed claim with only outside refs stays blocked", () => {
@@ -143,7 +143,7 @@ describe("e. 'uncertain' authorship never mints declared", () => {
 describe("f. a FILE NAME never mints a band (ruling 5)", () => {
   it("'Youth Mental Health Survey 2024.pdf' from a third party is outside, not customer validation", () => {
     for (const name of ["Youth Mental Health Survey 2024.pdf", "Parent Interview Transcript.pdf", "Customer Research - Buyer Research.pdf"]) {
-      const signals = mint({ origin: { authorship: "third_party", subject: "the_market" }, sourceTitle: name });
+      const signals = mint({ origin: { authorship: "third_party", subject: "the_sector" }, sourceTitle: name });
       expect(signals.every((s) => s.signal_band === "outside" && s.evidence_type === "market_signal" && s.validation_status !== "validated")).toBe(true);
       expect(signals.some((s) => s.evidence_type === "customer_validation")).toBe(false);
     }
@@ -173,7 +173,7 @@ describe("h. upload-derived needs carry the document's origin (ruling 8)", () =>
   it("client ⇒ manual (unchanged); third_party ⇒ public_research; us / uncertain ⇒ no need is written", async () => {
     const { needProvenanceForOrigin } = await import("@/components/FileUploadDialog");
     expect(needProvenanceForOrigin({ authorship: "client", subject: "this_company" })).toBe("manual");
-    expect(needProvenanceForOrigin({ authorship: "third_party", subject: "the_market" })).toBe("public_research");
+    expect(needProvenanceForOrigin({ authorship: "third_party", subject: "the_sector" })).toBe("public_research");
     expect(needProvenanceForOrigin({ authorship: "third_party", subject: "this_company" })).toBe("public_research");
     expect(needProvenanceForOrigin({ authorship: "us", subject: "this_company" })).toBeNull();
     expect(needProvenanceForOrigin({ authorship: "uncertain", subject: "uncertain" })).toBeNull();

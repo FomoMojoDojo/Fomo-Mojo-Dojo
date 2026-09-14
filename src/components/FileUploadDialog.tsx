@@ -348,7 +348,7 @@ async function analyzeFileWithTimeout(
 }
 
 /** Import provenance (rulings 1, 8, 11 — 2026-09-13): the uploaded document's origin, judged once its sidecar exists. */
-type UploadOrigin = { authorship: 'client' | 'us' | 'third_party' | 'uncertain'; subject: 'this_company' | 'the_market' | 'uncertain' };
+type UploadOrigin = { authorship: 'client' | 'us' | 'third_party' | 'uncertain'; subject: 'this_company' | 'the_sector' | 'uncertain' };
 async function classifyUploadedDocument(companyId: string | null, inputFileId: string | null): Promise<UploadOrigin> {
   const uncertain: UploadOrigin = { authorship: 'uncertain', subject: 'uncertain' };
   if (!companyId || !inputFileId) return uncertain;
@@ -361,7 +361,7 @@ async function classifyUploadedDocument(companyId: string | null, inputFileId: s
     const subject = doc.subject_override ?? doc.subject;
     return {
       authorship: authorship === 'client' || authorship === 'us' || authorship === 'third_party' ? authorship : 'uncertain',
-      subject: subject === 'this_company' || subject === 'the_market' ? subject : 'uncertain',
+      subject: subject === 'this_company' || subject === 'the_sector' ? subject : 'uncertain',
     };
   } catch {
     return uncertain;

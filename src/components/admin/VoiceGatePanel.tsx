@@ -15,9 +15,9 @@ type Override = "client_voice" | "external";
 
 // Import provenance (rulings 3, 4, 11 — 2026-09-13): the two facts beside the voice verdict.
 type Authorship = "client" | "us" | "third_party" | "uncertain";
-type Subject = "this_company" | "the_market" | "uncertain";
+type Subject = "this_company" | "the_sector" | "uncertain";
 const AUTHORSHIP_WORD: Record<Authorship, string> = { client: "client", us: "us", third_party: "third party", uncertain: "uncertain" };
-const SUBJECT_WORD: Record<Subject, string> = { this_company: "this company", the_market: "the market", uncertain: "uncertain" };
+const SUBJECT_WORD: Record<Subject, string> = { this_company: "this company", the_sector: "the sector", uncertain: "uncertain" };
 const voiceOf = (a: Authorship): Override | "uncertain" => (a === "client" ? "client_voice" : a === "uncertain" ? "uncertain" : "external");
 
 type DocStatus = {
@@ -290,7 +290,7 @@ export default function VoiceGatePanel({ companyId }: { companyId: string }) {
                       <select value={(pick[d.input_file_id]?.subject ?? d.subject ?? "uncertain")} disabled={busy !== null}
                         onChange={(e) => setPick((p) => ({ ...p, [d.input_file_id]: { authorship: p[d.input_file_id]?.authorship ?? d.authorship ?? "uncertain", subject: e.target.value as Subject } }))}
                         style={{ fontSize: 12 }} aria-label="subject">
-                        {(["this_company", "the_market", "uncertain"] as Subject[]).map((sub) => <option key={sub} value={sub}>subject: {SUBJECT_WORD[sub]}</option>)}
+                        {(["this_company", "the_sector", "uncertain"] as Subject[]).map((sub) => <option key={sub} value={sub}>subject: {SUBJECT_WORD[sub]}</option>)}
                       </select>
                       <button onClick={() => void overrideFacts(d)} disabled={busy !== null} style={btn(c.charcoal, false)} title="Write a new immutable override row (next version) carrying authorship and subject">Override facts</button>
                     </div>

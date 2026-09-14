@@ -572,7 +572,7 @@ async function persistDifyResult(params: {
     // VOICE GATE on the minting path (rulings 1, 2, 11 — 2026-09-13): an uploaded document's signals and
     // claims are minted from its AUTHORSHIP + SUBJECT (doc_voice_verdicts), classified on demand when the
     // document has no sha-matched verdict. Intake rows are the client's own answers and carry no document.
-    let origin: { authorship: "client" | "us" | "third_party" | "uncertain"; subject: "this_company" | "the_market" | "uncertain" } | null = null;
+    let origin: { authorship: "client" | "us" | "third_party" | "uncertain"; subject: "this_company" | "the_sector" | "uncertain" } | null = null;
     if (effectiveSourceType !== "intake") {
       const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
       const fileId = String((proposalRow as { file_id?: unknown }).file_id ?? "").trim();

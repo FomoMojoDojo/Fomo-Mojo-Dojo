@@ -519,7 +519,7 @@ function defaultValidationStatusForBand(band: SignalBand): ValidationStatus {
 // ── UPLOAD ORIGIN (import provenance, rulings 1–5 & 11, 2026-09-13) ─────────────────────────────
 // An uploaded document's origin is a per-document fact from doc_voice_verdicts (model-judged at upload,
 // operator-overridable): AUTHORSHIP client | us | third_party | uncertain and SUBJECT this_company |
-// the_market | uncertain. The band is derived from these two facts and the source type — NEVER from the
+// the_sector | uncertain. The band is derived from these two facts and the source type — NEVER from the
 // file name (ruling 5: the old looksLikeCustomerResearchSource title regex is gone from band
 // determination; "Youth Mental Health Survey 2024.pdf" is not customer validation of anyone).
 //   customer      ⇐ a customer source type (interview / survey / transcript / …) — the row's own type
@@ -527,7 +527,7 @@ function defaultValidationStatusForBand(band: SignalBand): ValidationStatus {
 //   outside       ⇐ authorship third_party or uncertain (a document that is not the client's words)
 // An uploaded_file signal WITHOUT an origin is treated as uncertain — it can inform but never speak.
 export type UploadAuthorship = "client" | "us" | "third_party" | "uncertain";
-export type UploadSubject = "this_company" | "the_market" | "uncertain";
+export type UploadSubject = "this_company" | "the_sector" | "uncertain";
 export type UploadOrigin = { authorship: UploadAuthorship; subject: UploadSubject };
 export const UPLOAD_ORIGIN_SOURCE_TYPES = new Set(["uploaded_file", "file", "file_proposal"]);
 
@@ -1054,7 +1054,7 @@ export function uploadOriginOf(signal: { source_type?: string | null; raw_payloa
   const rp = signal.raw_payload && typeof signal.raw_payload === "object" ? (signal.raw_payload as { upload_origin?: unknown }) : null;
   const o = rp?.upload_origin && typeof rp.upload_origin === "object" ? (rp.upload_origin as Partial<UploadOrigin>) : null;
   const authorship: UploadAuthorship = o?.authorship === "client" || o?.authorship === "us" || o?.authorship === "third_party" ? o.authorship : "uncertain";
-  const subject: UploadSubject = o?.subject === "this_company" || o?.subject === "the_market" ? o.subject : "uncertain";
+  const subject: UploadSubject = o?.subject === "this_company" || o?.subject === "the_sector" ? o.subject : "uncertain";
   // A signal with NO origin at all (pre-2026-09-13 rows, or an unclassified upload) reads as uncertain.
   return { authorship, subject };
 }
