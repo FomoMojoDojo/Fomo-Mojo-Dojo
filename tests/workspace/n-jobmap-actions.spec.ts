@@ -109,7 +109,7 @@ test("a. switcher: picking the other set changes the stage list and never shows 
   const options = page.getByTestId("jobmap-switcher-option");
   expect(await options.count()).toBeGreaterThan(1);
   await expect(page.locator(`[data-testid=jobmap-switcher-option][data-fr-set-key="${before}"]`)).toHaveAttribute("aria-selected", "true");
-  const other = page.locator(`[data-testid=jobmap-switcher-option]:not([data-fr-set-key="${before}"])`).first();
+  const other = page.locator(`[data-testid=jobmap-switcher-option][data-fr-mapped="true"]:not([data-fr-set-key="${before}"])`).first();
   const otherKey = await other.getAttribute("data-fr-set-key");
   await other.click();
   await expect(list).toHaveCount(0);
@@ -176,7 +176,7 @@ test("b2. Choose B while A is chosen: no set reads as chosen until the read conf
     await expect(stages(page)).toHaveAttribute("data-fr-set-key", key);
   };
   await page.getByTestId("jobmap-switcher-open").click();
-  const other = page.locator(`[data-testid=jobmap-switcher-option]:not([data-fr-set-key="${keyA}"])`).first();
+  const other = page.locator(`[data-testid=jobmap-switcher-option][data-fr-mapped="true"]:not([data-fr-set-key="${keyA}"])`).first();
   const b = (await other.getAttribute("data-fr-set-key"))!;
   await other.click();
   await expect(stages(page)).toHaveAttribute("data-fr-set-key", b);

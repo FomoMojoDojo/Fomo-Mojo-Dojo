@@ -116,6 +116,14 @@ export const WORKSPACE_STRINGS = {
   /** Existing (JobMapOrgPanel need row). */
   reviewPending: "review pending",
   markReviewed: "Mark reviewed",
+  // ── Job Map: market door (signed 2026-09-15, item 2, R2) — the ONLY new strings. The working state
+  //    reuses `working` above; the empty state stays wordless (absent.tsx). ──
+  /** The one operator-gated control on an unmapped market (signed 2026-09-15, item 2). */
+  generateJobMap: "Generate job map",
+  /** Switcher state word on an entry with no job_steps (signed 2026-09-15, item 2). */
+  notMapped: "Not mapped",
+  /** Failure note under the control — any 4xx/422, or nothing landed by the bound (signed 2026-09-15, item 2). */
+  jobMapGenerationFailed: "Generation did not complete — no steps were written for this market.",
   // ── Opportunities body (P:362-389) ──
   filterAll: "All",
   filterHighValue: "High value",

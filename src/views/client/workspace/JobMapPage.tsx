@@ -21,10 +21,18 @@
 //   Show evidence   EvidenceDrawer (moved to workshop/jobMapShared) on the stage panel
 //   Mark reviewed   markNeedReviewed ← JobMapOrgPanel.handleMarkNeedReviewed (odi_needs update); the row
 //                   reflects the re-read of needs, not a local flag
+//
+// Market door (item 2, signed 2026-09-15): the switcher lists the UNION of live definitions and step sets
+// (viewedSet R1) — an unmapped entry carries the "Not mapped" state word. Viewing an unmapped market shows
+// the executor band (already keyed), the wordless Absent, and ONE operator-gated control, "Generate job
+// map" (data-fr-operator="generate-jobmap") → useJobMapGeneration (local-jobmap-synthesis, one key,
+// selected_maps_only + require_model). Working… while in flight; the signed failure note on any failure
+// path (R3); the operator alone sees the server's code/message as a mono line under the note.
 import { useState } from "react";
 import { useCompany } from "@/hooks/useCompany";
 import { useChooseJobStepSet } from "@/hooks/useChooseJobStepSet";
 import { setHasConditions, useConditionsGeneration } from "@/hooks/useConditionsGeneration";
+import { useJobMapGeneration } from "@/hooks/useJobMapGeneration";
 import { markNeedReviewed, useOdiNeeds, type OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import { DEFAULT_SEED_NOTE } from "@/lib/chosenJobStepSet";
@@ -73,6 +81,7 @@ export default function JobMapPage() {
   const { needs, marketDefinition, loading: needsLoading } = useOdiNeeds(companyId, needsRefresh, set.viewedKey ?? undefined);
   const { choose, choosing } = useChooseJobStepSet(companyId);
   const conditionsRun = useConditionsGeneration({ companyId, setKey: set.viewedKey, steps: set.viewedSteps, refetch: set.refetchSteps });
+  const jobMapRun = useJobMapGeneration({ companyId, journeyKey: set.viewedKey, journeyTitle: set.viewedTitle, refetch: set.refetchSteps });
   const stage = useWorkspaceStage();
   const steps = set.viewedSteps;
   const n = steps.length;
@@ -87,7 +96,8 @@ export default function JobMapPage() {
   const highNeeds = stepNeeds.filter((x) => needBestGuessBand(x) === "High");
   const conditions = step && Array.isArray(step.conditions_json) ? admissibleStepConditions(step.conditions_json) : [];
   const hypothesis = marketDefinition?.job_executor?.trim() || null;
-  const canRegenerate = gated && Boolean(set.viewedKey) && !isFrozenCompany(companyId);
+  const canRegenerate = gated && Boolean(set.viewedKey) && set.viewedMapped && !isFrozenCompany(companyId);
+  const canGenerateJobMap = gated && Boolean(set.viewedKey) && !set.viewedMapped;
 
   const viewSet = (key: string) => {
     setSwitcherOpen(false);
@@ -123,15 +133,16 @@ export default function JobMapPage() {
                   <div role="listbox" aria-label={WORKSPACE_STRINGS.switchMarketViewingOnly} className="fr-ws-switcher-list" data-testid="jobmap-switcher-list">
                     <p className="fr-ws-switcher-note fr-mono">{WORKSPACE_STRINGS.switchMarketViewingOnly}</p>
                     {set.sets.map((s) => (
-                      <button key={s.key} type="button" role="option" aria-selected={s.key === set.viewedKey} className="fr-ws-switcher-option" data-fr-set-key={s.key} data-testid="jobmap-switcher-option" onClick={() => viewSet(s.key)}>
+                      <button key={s.key} type="button" role="option" aria-selected={s.key === set.viewedKey} className="fr-ws-switcher-option" data-fr-set-key={s.key} data-fr-mapped={s.mapped ? "true" : "false"} data-testid="jobmap-switcher-option" onClick={() => viewSet(s.key)}>
                         {s.title ?? s.key}
+                        {s.mapped ? null : <span className="fr-ws-switcher-state fr-mono" data-testid="jobmap-switcher-state">{WORKSPACE_STRINGS.notMapped}</span>}
                       </button>
                     ))}
                   </div>
                 ) : null}
               </div>
             ) : null}
-            {gated && set.viewedKey && !set.chosen ? (
+            {gated && set.viewedKey && set.viewedMapped && !set.chosen ? (
               <button type="button" className="fr-ws-control fr-mono" disabled={choosing} onClick={() => { void chooseViewed(); }} {...mark("choose")} data-testid="jobmap-choose">
                 {choosing ? WORKSPACE_STRINGS.working : WORKSPACE_STRINGS.chooseSet}
               </button>
@@ -141,7 +152,18 @@ export default function JobMapPage() {
                 {conditionsRun.running ? WORKSPACE_STRINGS.working : setHasConditions(steps) ? WORKSPACE_STRINGS.regenerateConditions : WORKSPACE_STRINGS.generateConditions}
               </button>
             ) : null}
+            {canGenerateJobMap ? (
+              <button type="button" className="fr-ws-control fr-mono" disabled={jobMapRun.running} data-fr-failed={jobMapRun.failed ? "" : undefined} onClick={() => { void jobMapRun.run(); }} {...mark("generate-jobmap")} data-testid="jobmap-generate">
+                {jobMapRun.running ? WORKSPACE_STRINGS.working : WORKSPACE_STRINGS.generateJobMap}
+              </button>
+            ) : null}
           </div>
+          {canGenerateJobMap && jobMapRun.failed ? (
+            <div className="fr-ws-generate-failed" data-testid="jobmap-generate-failed" {...mark("generate-jobmap-failed")}>
+              <p className="fr-ws-generate-failed-note">{WORKSPACE_STRINGS.jobMapGenerationFailed}</p>
+              {jobMapRun.failureDetail ? <p className="fr-ws-generate-failed-detail fr-mono" data-testid="jobmap-generate-failed-detail">{jobMapRun.failureDetail}</p> : null}
+            </div>
+          ) : null}
 
           {hypothesis ? (
             <div className="fr-ws-accent" data-fr-tone="periwinkle" data-testid="jobmap-hypothesis" data-fr-region="hypothesis">

@@ -2703,6 +2703,7 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-switcher-list {
   position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 340px; max-width: 560px; padding: 6px;
   background: hsl(var(--fr-paper)); border: 1px solid hsl(var(--fr-line)); box-shadow: 0 8px 28px hsl(var(--fr-ink) / 0.12);
+  max-height: 60vh; overflow-y: auto; /* item 2: the union lists every market (Edgewood: 19) — scroll inside the popover */
 }
 .fr-ws-switcher-note { margin: 4px 10px 6px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
 .fr-ws-switcher-option {
@@ -2711,6 +2712,11 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 }
 .fr-ws-switcher-option:hover { background: hsl(var(--fr-line) / 0.5); }
 .fr-ws-switcher-option[aria-selected="true"] { background: hsl(var(--fr-lime) / 0.15); }
+/* Market door (item 2, 2026-09-15): the switcher's state word on an unmapped entry, and the failure note. */
+.fr-ws-switcher-state { margin-left: 10px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+.fr-ws-generate-failed { margin-top: 0.75rem; }
+.fr-ws-generate-failed-note { font-family: var(--fr-font-display); font-size: 0.875rem; line-height: 1.4; color: hsl(var(--fr-bad)); }
+.fr-ws-generate-failed-detail { margin-top: 4px; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
 .fr-ws-stage-aside { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; flex-shrink: 0; }
 .fr-ws-evidence { margin-top: 1.25rem; }
 .first-read .fr-ws-evidence > div { border-top: 0 !important; padding-top: 0 !important; margin-top: 0 !important; gap: 8px !important; }
