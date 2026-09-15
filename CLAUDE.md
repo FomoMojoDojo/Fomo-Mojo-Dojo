@@ -120,3 +120,16 @@ These files are long — search within them rather than reading top-to-bottom:
 - **Evidence bands:** `src/lib/evidenceBands.ts` — `EvidenceBand` type, `BAND_LABELS`, `computeArtifactUnlockSummary`.
 - **StatementField:** Prose-first editable field at 30px Inter. Click to edit, Enter to save, Shift+Enter for newline. Used in Positioning/Strategy/JTBD org panels.
 - **FieldBlock:** Traditional label+textarea. Still used in compare tab and single-line/numeric fields.
+
+---
+
+## Playwright login state
+
+- The workspace specs (`tests/workspace/`, `playwright.config.ts`) run under an admin storage state at `backups/fr-state.json` (`backups/` is gitignored).
+- `tests/workspace/global-setup.ts` mints it when missing: signs in through the dev server's DEV `window.supabase` with `FR_LOGIN_EMAIL` / `FR_LOGIN_PASSWORD`, pins `FR_COMPANY_ID`, writes the state. If the file exists it is reused as-is (no expiry check — delete it to re-mint).
+- The local test credential lives in `backups/fr-login.env` (gitignored, local stack only). It is `bob2@fomomojodojo.com`, a CC-owned test account with a `user_roles` admin row; its password was set via the service-role auth admin API and exists nowhere else. Never use the operator's own login here.
+- Mint / run:
+
+  ```bash
+  source backups/fr-login.env && npx playwright test --retries=0
+  ```
