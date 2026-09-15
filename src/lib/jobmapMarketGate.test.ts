@@ -45,3 +45,20 @@ describe("R2 — every definition read is keyed, live-only, no latest-row fallba
     expect(src).not.toMatch(/\.order\("(created_at|updated_at)"/);
   });
 });
+
+describe("R3 — the per-set synthesizers read the set's own definition, live-only, no fallback", () => {
+  for (const file of ["supabase/functions/_shared/opportunitySynthesis.ts", "supabase/functions/_shared/stepConditionsSynthesis.ts"]) {
+    it(`${file}: reads through readLiveDefinitionByKey and has no direct definition read`, () => {
+      const src = read(file);
+      expect(src).toMatch(/readLiveDefinitionByKey\(args\.supabase, args\.companyId, args\.journeyKey\)/);
+      expect(src).toMatch(/skipped: NO_MARKET_DEFINITION/);
+      expect(src.match(/from\("odi_market_definitions"\)/g) ?? []).toEqual([]);
+    });
+  }
+  for (const file of ["supabase/functions/generate-step-opportunities/index.ts", "supabase/functions/generate-step-conditions/index.ts"]) {
+    it(`${file}: maps no_market_definition to a 422 with the message`, () => {
+      expect(read(file)).toMatch(/result\.skipped === "no_market_definition"[^\n]*422/);
+    });
+  }
+});
+

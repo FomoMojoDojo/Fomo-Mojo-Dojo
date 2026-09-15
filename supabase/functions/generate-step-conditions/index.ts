@@ -70,6 +70,7 @@ serve(async (req) => {
     if ("skipped" in result) {
       if (result.skipped === "frozen_company") return json({ ok: false, error: "This company is a frozen reference fixture (SELECT-only); conditions are not generated for it." }, 403);
       if (result.skipped === "no_steps") return json({ ok: false, error: `no steps for journey '${journey_key}'` }, 404);
+      if (result.skipped === "no_market_definition") return json({ ok: false, error: "no_market_definition", journey_key, message: result.message }, 422);
       return json({ ok: false, error: `set '${journey_key}' is not a declared/internal_derived set (provenance: ${(result.provenances ?? []).join(",") || "null"}); conditions are internal-layer only.` }, 422);
     }
     return json({ ok: false, error: result.error }, 500);

@@ -16,6 +16,7 @@
 // under internal_declared is A2-2. No route to OpenAI / mojo_opps_v1 (local only).
 
 import { journeyIsRetracted, RETRACTED_MARKET_SKIP } from "./retractedMarket.ts";
+import { NO_MARKET_DEFINITION, noMarketDefinitionMessage, readLiveDefinitionByKey } from "./marketDefinitionByKey.ts";
 import { buildExecutorBrief, buildOrgNameGuard, FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { judgeOpportunityLikelihood, type LikelihoodBand } from "./opportunityLikelihoodJudge.ts";
 import { planReconcile } from "./reconcilePublicSynthesis.ts";
@@ -465,7 +466,7 @@ export async function writeDeclaredOpportunities(args: {
 
 export type SetOpportunitiesResult =
   | { ok: true; result: OppSynthesisResult; write?: DeclaredWriteResult }
-  | { ok: false; skipped: "frozen_company" | "no_steps" | "non_writable_provenance" | "retracted_market"; provenances?: string[] }
+  | { ok: false; skipped: "frozen_company" | "no_steps" | "non_writable_provenance" | "retracted_market" | typeof NO_MARKET_DEFINITION; provenances?: string[]; message?: string }
   | { ok: false; error: string };
 
 export async function generateOpportunitiesForSet(args: {
@@ -505,16 +506,12 @@ export async function generateOpportunitiesForSet(args: {
 
   // Gate 8b: a retracted market resolves, but nothing is synthesised from it.
   if (await journeyIsRetracted(args.supabase, args.companyId, args.journeyKey)) return { ok: false, skipped: RETRACTED_MARKET_SKIP };
-  let { data: md } = await args.supabase
-    .from("odi_market_definitions").select("job_executor, jtbd")
-    .eq("company_id", args.companyId).eq("journey_key", args.journeyKey).maybeSingle();
-  if (!md) {
-    const { data: anyMd } = await args.supabase
-      .from("odi_market_definitions").select("job_executor, jtbd")
-      .eq("company_id", args.companyId).eq("retracted", false)   // Gate 8b: never fall back onto a retracted def
-      .order("created_at", { ascending: false }).limit(1).maybeSingle();
-    md = anyMd ?? null;
-  }
+  // R3 (2026-09-15): the set's OWN definition by (company_id, journey_key), live only.
+  // No fallback to a latest row — before this, a set with no definition was briefed
+  // with whichever definition the company wrote last (Edgewood 'internal' → the
+  // public-register New Clinicians row). A missing definition refuses, before any write.
+  const md = await readLiveDefinitionByKey(args.supabase, args.companyId, args.journeyKey);
+  if (!md) return { ok: false, skipped: NO_MARKET_DEFINITION, message: noMarketDefinitionMessage([args.journeyKey]) };
 
   const { data: companyRow } = await args.supabase.from("companies").select("name, created_by").eq("id", args.companyId).maybeSingle();
 
@@ -532,7 +529,7 @@ export async function generateOpportunitiesForSet(args: {
     companyName: String((companyRow as { name?: unknown } | null)?.name ?? ""),
     journeyKey: args.journeyKey,
     steps,
-    marketDef: md as { job_executor?: string | null; jtbd?: string | null } | null,
+    marketDef: md,
     ollamaUrl: args.ollamaUrl,
     genModel: args.genModel,
     judgeModel: args.judgeModel,

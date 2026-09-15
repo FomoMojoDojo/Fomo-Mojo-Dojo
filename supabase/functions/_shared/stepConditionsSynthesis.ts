@@ -19,6 +19,7 @@
 // sets; conditions stay OUT of mojoScore. Production triggering is a later step.
 
 import { journeyIsRetracted, RETRACTED_MARKET_SKIP } from "./retractedMarket.ts";
+import { NO_MARKET_DEFINITION, noMarketDefinitionMessage, readLiveDefinitionByKey } from "./marketDefinitionByKey.ts";
 import { judgeConditionPerspectives } from "./stepPerspectiveJudge.ts";
 import { isCannedConditionString } from "./cannedConditionGuard.ts";
 import { jaccardSimilarity } from "./opportunityTreeSemantics.ts";
@@ -345,7 +346,7 @@ const WRITABLE_PROVENANCE = new Set(["internal_derived", "internal_declared", "o
 
 export type SetConditionsResult =
   | { ok: true; totals: SynthesisResult["totals"] }
-  | { ok: false; skipped: "frozen_company" | "no_steps" | "non_writable_provenance" | "retracted_market"; provenances?: string[] }
+  | { ok: false; skipped: "frozen_company" | "no_steps" | "non_writable_provenance" | "retracted_market" | typeof NO_MARKET_DEFINITION; provenances?: string[]; message?: string }
   | { ok: false; error: string };
 
 // True if any step in the set already carries a condition — the bootstrap-gen
@@ -388,23 +389,19 @@ export async function generateConditionsForSet(args: {
 
   // Gate 8b: a retracted market resolves, but nothing is synthesised from it.
   if (await journeyIsRetracted(args.supabase, args.companyId, args.journeyKey)) return { ok: false, skipped: RETRACTED_MARKET_SKIP };
-  let { data: md } = await args.supabase
-    .from("odi_market_definitions").select("job_executor, jtbd")
-    .eq("company_id", args.companyId).eq("journey_key", args.journeyKey).maybeSingle();
-  if (!md) {
-    const { data: anyMd } = await args.supabase
-      .from("odi_market_definitions").select("job_executor, jtbd")
-      .eq("company_id", args.companyId).eq("retracted", false)   // Gate 8b: never fall back onto a retracted def
-      .order("created_at", { ascending: false }).limit(1).maybeSingle();
-    md = anyMd ?? null;
-  }
+  // R3 (2026-09-15): the set's OWN definition by (company_id, journey_key), live only.
+  // No fallback to a latest row — before this, a set with no definition was briefed
+  // with whichever definition the company wrote last (Edgewood 'internal' → the
+  // public-register New Clinicians row). A missing definition refuses, before any write.
+  const md = await readLiveDefinitionByKey(args.supabase, args.companyId, args.journeyKey);
+  if (!md) return { ok: false, skipped: NO_MARKET_DEFINITION, message: noMarketDefinitionMessage([args.journeyKey]) };
 
   const steps: StepInput[] = list.map((r) => ({ id: r.id, step_number: r.step_number, step_label: r.step_label, description: r.description, evidence_basis: r.evidence_basis }));
   const result = await synthesizeStepConditions({
     supabase: args.supabase,
     companyId: args.companyId,
     steps,
-    marketDef: md as { job_executor?: string | null; jtbd?: string | null } | null,
+    marketDef: md,
     ollamaUrl: args.ollamaUrl,
     nowIso: args.nowIso,
     genModel: args.genModel,

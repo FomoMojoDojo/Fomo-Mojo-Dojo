@@ -56,9 +56,14 @@ describe("Gate 8b — retracted defs excluded on every enumerator (checklist gua
     for (const f of ["opportunitySynthesis", "stepConditionsSynthesis", "marketHypothesisSynthesis"]) {
       expect(read(`supabase/functions/_shared/${f}.ts`)).toMatch(/journeyIsRetracted\(args\.supabase, args\.companyId, args\.journeyKey\)/);
     }
-    // and the two fall-back-to-newest-def reads never fall back onto a retracted one
-    expect(eqFilters(read("supabase/functions/_shared/opportunitySynthesis.ts"))).toBe(1);
-    expect(eqFilters(read("supabase/functions/_shared/stepConditionsSynthesis.ts"))).toBe(1);
+    // R3 (2026-09-15): the fall-back-to-newest-def reads are GONE — both read the set's
+    // own definition through readLiveDefinitionByKey (retracted_at IS NULL, no fallback).
+    for (const f of ["opportunitySynthesis", "stepConditionsSynthesis"]) {
+      const src = read(`supabase/functions/_shared/${f}.ts`);
+      expect(src).toMatch(/readLiveDefinitionByKey\(args\.supabase, args\.companyId, args\.journeyKey\)/);
+      expect(eqFilters(src)).toBe(0);
+    }
+    expect(read("supabase/functions/_shared/marketDefinitionByKey.ts")).toMatch(/\.is\("retracted_at",\s*null\)/);
   });
   it("the admin portfolio hook is UNFILTERED by design and selects `retracted` for the resolver's bucket", () => {
     const src = read("src/hooks/useMarketPortfolio.ts");
