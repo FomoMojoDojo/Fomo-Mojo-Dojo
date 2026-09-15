@@ -12,6 +12,9 @@ export type ClaimRow = {
   organization_support_count: number;
   customer_support_count: number;
   updated_at: string | null;
+  /** Strike law (Gate A, 2026-09-14): carried so the live score can exclude struck claims exactly as
+   *  snapshotMojoScore does (.neq("status","struck")); minimized keeps counting. */
+  status?: "active" | "minimized" | "struck" | string | null;
 };
 
 export function useCompanyClaims(companyId?: string, refreshKey = 0) {
@@ -29,7 +32,7 @@ export function useCompanyClaims(companyId?: string, refreshKey = 0) {
       const { data, error } = await supabase
         .from("claims")
         .select(
-          "id, state, claim_type, topic, statement, outside_support_count, organization_support_count, customer_support_count, updated_at",
+          "id, state, claim_type, topic, statement, outside_support_count, organization_support_count, customer_support_count, updated_at, status",
         )
         .eq("company_id", companyId);
 

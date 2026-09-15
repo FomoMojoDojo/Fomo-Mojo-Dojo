@@ -61,6 +61,7 @@ import type { EngagementPhase } from "@/lib/engagementPhase";
 import { useDesiredOutcomes } from "@/lib/desiredOutcomes";
 import type { DesiredOutcomeRow } from "@/lib/desiredOutcomes";
 import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
+import { excludeStruck } from "@/views/client/workspace/useLiveMojoScore";
 import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { SignalBasisChip } from "@/components/design-system/SignalBasisChip";
@@ -1052,11 +1053,11 @@ export function RoutesOrgPanel({
   const ungroupedCreate  = useMemo(() => ungroupedRoutes.filter((r) => String(r.category).toLowerCase() === "create"),  [ungroupedRoutes]);
 
   const focusClaims = useMemo(
-    () => Array.from(claimsMap.values()).filter((c) => c.state === "focus"),
+    () => excludeStruck(Array.from(claimsMap.values())).filter((c) => c.state === "focus"), // strike law: a struck claim is not in focus
     [claimsMap],
   );
   const flowClaims = useMemo(
-    () => Array.from(claimsMap.values()).filter((c) => c.state === "flow"),
+    () => excludeStruck(Array.from(claimsMap.values())).filter((c) => c.state === "flow"), // strike law: a struck claim is not in flow
     [claimsMap],
   );
   const routeByClaimId = useMemo(() => {
@@ -1072,7 +1073,8 @@ export function RoutesOrgPanel({
     if (!hasHierarchy || !activeCompany?.id) return null;
     return computeMojoScore({
       companyId: activeCompany.id,
-      claims: Array.from(claimsMap.values()).map((c) => ({
+      // STRIKE LAW (Gate A, 2026-09-14): the same rule as useLiveMojoScore / snapshotMojoScore — struck out, minimized in.
+      claims: excludeStruck(Array.from(claimsMap.values())).map((c) => ({
         id: c.id,
         state: c.state,
         claim_type: c.claim_type,

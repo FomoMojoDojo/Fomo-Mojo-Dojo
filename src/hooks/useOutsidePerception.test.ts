@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({ result: null as null | { data: unknown; error: unk
 vi.mock("@/integrations/supabase/client", () => {
   const chain = () => {
     const b: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "order", "in", "not", "maybeSingle", "abortSignal"]) b[m] = () => b;
+    for (const m of ["select", "eq", "neq", "order", "in", "not", "maybeSingle", "abortSignal"]) b[m] = () => b;
     // thenable: awaiting the built query resolves to the scripted result (or never resolves).
     (b as { then: unknown }).then = (res: (v: unknown) => void, rej: (e: unknown) => void) =>
       (h.never ? new Promise(() => {}) : Promise.resolve(h.result)).then(res, rej);
@@ -49,6 +49,13 @@ describe("useOutsidePerception (Gate B honest read)", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.claims).toEqual([]);
     expect(result.current.error).toBeNull();
+  });
+
+  it("strike law (2026-09-14): a struck public_observed claim never reaches the story acts / export", async () => {
+    h.result = { data: [{ id: "live", statement: "Public line.", topic: null, provenance: "public_observed", status: "active" }, { id: "min", statement: "Minimized line.", topic: null, provenance: "public_observed", status: "minimized" }, { id: "gone", statement: "Struck line.", topic: null, provenance: "public_observed", status: "struck" }], error: null };
+    const { result } = renderHook(() => useOutsidePerception("co-1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.claims.map((c) => c.id)).toEqual(["live", "min"]); // minimized kept, struck out — the server's rule
   });
 
   it("successful with rows → claims populated (statement-trimmed), no error", async () => {

@@ -1,12 +1,14 @@
 // (q) Score band honesty (operator ruling 3, 2026-09-12): both client-visible "+N PTS" banners are gone —
 // the EVIDENCE UNLOCK banner on /workspace/routes and the KEY MOVE stripe on the older routes view —
 // and the three-number band on BOTH surfaces is byte-identical to before the removal (Edgewood:
-// 28 NOW · 47 REACHABLE · 84 CEILING / UNLOCKABLE), operator ON and OFF. Reads only — no writes occur
+// 28 NOW · 46 REACHABLE · 84 CEILING / UNLOCKABLE), operator ON and OFF. Reads only — no writes occur
 // on either page load, and the guard proves it.
 import { expect, test, type Page } from "playwright/test";
 import { open, openWorkspace } from "./helpers";
 
-const EXPECTED = { now: "28", reachable: "47", ceiling: "84" };
+// REACHABLE 46 (2026-09-14): the earlier 47 was produced by the struck-inclusive live path — REACHABLE derives
+// from NOW, so a wrong NOW propagated into what we tested against. The live score now honours the strike law.
+const EXPECTED = { now: "28", reachable: "46", ceiling: "84" };
 
 async function guardNoWrites(page: Page): Promise<string[]> {
   const writes: string[] = [];
@@ -24,7 +26,7 @@ async function operatorOn(page: Page) {
 }
 
 for (const operator of [false, true]) {
-  test(`workspace /routes — no EVIDENCE UNLOCK banner; band 28 / 47 / 84 (operator ${operator ? "ON" : "OFF"})`, async ({ page }) => {
+  test(`workspace /routes — no EVIDENCE UNLOCK banner; band 28 / 46 / 84 (operator ${operator ? "ON" : "OFF"})`, async ({ page }) => {
     const writes = await guardNoWrites(page);
     await openWorkspace(page, "routes");
     if (operator) await operatorOn(page);
@@ -45,7 +47,7 @@ for (const operator of [false, true]) {
   });
 }
 
-test("older routes view — no KEY MOVE stripe; strip NOW 28 · REACHABLE 47 · UNLOCKABLE 84", async ({ page }) => {
+test("older routes view — no KEY MOVE stripe; strip NOW 28 · REACHABLE 46 · UNLOCKABLE 84", async ({ page }) => {
   const writes = await guardNoWrites(page);
   await open(page, "/preview/client-refine/routes");
   // The hierarchy strip renders three ScoreChips (value span above a label span) NOW / REACHABLE / UNLOCKABLE.

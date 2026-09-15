@@ -9,6 +9,11 @@ import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { MojoScoreResult } from "@/lib/mojoScore/types";
 import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
 
+/** The live score's claim set: the server's rule, verbatim — struck out, minimized in. */
+export function excludeStruck<T extends { status?: string | null }>(claims: T[]): T[] {
+  return claims.filter((c) => c.status !== "struck");
+}
+
 export function useLiveMojoScore(
   companyId: string | undefined,
   claimsMap: Map<string, ClaimRow>,
@@ -21,7 +26,10 @@ export function useLiveMojoScore(
     if (!companyId) return null;
     return computeMojoScore({
       companyId,
-      claims: Array.from(claimsMap.values()).map((c) => ({
+      // STRIKE LAW (Gate A, 2026-09-14): struck claims stop counting EVERYWHERE — the home's live score
+      // mirrors snapshotMojoScore exactly (.neq("status","struck")); minimized claims keep counting
+      // (display-only de-emphasis). Before this the home counted every struck claim the server excluded.
+      claims: excludeStruck(Array.from(claimsMap.values())).map((c) => ({
         id: c.id, state: c.state, claim_type: c.claim_type, topic: c.topic,
         outside_support_count: c.outside_support_count,
         organization_support_count: c.organization_support_count,

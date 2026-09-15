@@ -49,14 +49,18 @@ export function useOutsidePerception(companyId?: string) {
       // (isPublicProvenance) is the authority that actually decides admission.
       const { data, error: qErr } = await supabase
         .from("claims")
-        .select("id, statement, topic, provenance")
+        .select("id, statement, topic, provenance, status")
         .eq("company_id", companyId)
         .eq("provenance", "public_observed")
+        // Strike law (Gate A, 2026-09-14): struck claims stop counting EVERYWHERE — this reader is
+        // client-facing (story acts, export), so a struck public claim never reaches it. Same filter as
+        // snapshotMojoScore; minimized stays (display-only de-emphasis).
+        .neq("status", "struck")
         .order("created_at", { ascending: true });
       if (cancelled) return;
       clearTimeout(deadline);
       if (qErr) { setError(qErr.message); setLoading(false); return; }
-      setClaims(((data as PerceptionClaim[] | null) ?? []).filter((c) => c.statement?.trim()));
+      setClaims(((data as Array<PerceptionClaim & { status?: string | null }> | null) ?? []).filter((c) => c.statement?.trim() && c.status !== "struck"));
       setLoading(false);
     })();
     return () => { cancelled = true; clearTimeout(deadline); };
