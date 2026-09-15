@@ -76,9 +76,10 @@ describe("register law tripwire — every def writer birth-stamps market_registe
   const sites = scan();
 
   it("finds the writer population (guards against a silently broken scan)", () => {
-    // 7 writer sites exist today (2 stamped + 5 pinned legacy). If this drops
-    // to 0 the scan itself broke — that must fail, not silently pass.
-    expect(sites.length).toBeGreaterThanOrEqual(7);
+    // 6 writer sites exist today (1 stamped + 5 pinned legacy). Was 7 until R1
+    // (2026-09-15) removed the job-map generator's definition insert. If this
+    // drops to 0 the scan itself broke — that must fail, not silently pass.
+    expect(sites.length).toBeGreaterThanOrEqual(6);
   });
 
   it("has NO unstamped writer outside the pinned legacy set", () => {
