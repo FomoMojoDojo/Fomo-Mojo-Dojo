@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useJobSteps, type JobStepRow } from "@/hooks/useJobSteps";
 import { heuristicDefaultViewSeed, useChosenSetKey } from "@/lib/chosenJobStepSet";
+import { readLiveDefinitionKeys } from "@/lib/liveDefinitionKeys";
 
 export type ViewedSetEntry = {
   key: string;
@@ -57,12 +58,11 @@ function useMarketIndex(companyId?: string): MarketIndex {
     let cancelled = false;
     setState((s) => ({ ...s, loading: true }));
     (async () => {
-      const [defs, lens] = await Promise.all([
-        supabase.from("odi_market_definitions").select("journey_key").eq("company_id", companyId).is("retracted_at", null),
+      const [defKeys, lens] = await Promise.all([
+        readLiveDefinitionKeys(supabase, companyId),
         supabase.from("market_lens").select("journey_key, title").eq("company_id", companyId),
       ]);
       if (cancelled) return;
-      const defKeys = ((defs.data as Array<{ journey_key: string | null }> | null) ?? []).map((r) => String(r.journey_key ?? "")).filter(Boolean);
       const lensTitles = new Map<string, string>();
       for (const r of ((lens.data as Array<{ journey_key: string | null; title: string | null }> | null) ?? [])) {
         const k = String(r.journey_key ?? ""); const t = String(r.title ?? "").trim();

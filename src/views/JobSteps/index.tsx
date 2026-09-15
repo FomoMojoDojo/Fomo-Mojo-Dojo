@@ -6,7 +6,6 @@ import { FunctionsHttpError } from "@supabase/supabase-js";
 import TopNav from "@/components/layout/TopNav";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import { supabase } from "@/integrations/supabase/client";
-import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
 import { useCompany } from "@/hooks/useCompany";
 import { useJobSteps, type JobStepRow } from "@/hooks/useJobSteps";
 import { useOdiNeeds, type OdiMarketDefinitionRow, type OdiNeedRow } from "@/hooks/useOdiNeeds";
@@ -52,9 +51,10 @@ import {
   normalizeFrameOfReference,
   normalizeRoleLabel,
   shouldUseLocalMapFallback,
-  shouldAttemptBaselineRetry,
   isMissingTableError,
 } from "./helpers/textUtils";
+import { buildLocalJobMapSynthesisBody, scopeMapsToLiveDefinitions } from "./helpers/jobMapSynthesisRequest";
+import { readLiveDefinitionKeys } from "@/lib/liveDefinitionKeys";
 import {
   isGenericAudienceLabel,
   isLikelyJobActionLabel,
@@ -76,8 +76,6 @@ import {
   subtitleFromKey,
   titleCaseFromKey,
   fallbackStyleForJourney,
-  LOCAL_ODI_STEP_SEED,
-  checkpointSeedForJourneyKey,
   groupJourneys,
 } from "./helpers/journeyUtils";
 import {
@@ -2183,71 +2181,24 @@ export default function JobStepsView() {
     }));
   };
 
-  const insertLocalDraftMap = async (args: {
-    key: string;
-    title: string;
-    subtitle: string;
-    checkpointSeed?: Array<{ label: string; description: string }>;
-  }) => {
-    if (!activeCompanyId) throw new Error("No active company selected.");
-    const { data: authData, error: authError } = await supabase.auth.getUser();
-    if (authError || !authData?.user?.id) {
-      throw new Error("Sign in required to add a local checkpoint map draft.");
-    }
+  // Item 2 gate 2 (R4, 2026-09-15): insertLocalDraftMap is GONE. A failed generation surfaces as failure
+  // and writes nothing — no seed rows are ever inserted as a stand-in for a job map.
 
-    const { data: existingRows, error: existingErr } = await supabase
-      .from("job_steps")
-      .select("id")
-      .eq("company_id", activeCompanyId)
-      .eq("journey_key", args.key)
-      .limit(1);
-    if (existingErr) throw new Error(existingErr.message || "Failed to verify existing map.");
-    if ((existingRows ?? []).length > 0) return false;
-
-    const draftCheckpointSeed = Array.isArray(args.checkpointSeed) && args.checkpointSeed.length === JTBD_CHECKPOINT_COUNT
-      ? args.checkpointSeed
-      : LOCAL_ODI_STEP_SEED;
-    const rows = draftCheckpointSeed.map((seed, index) => ({
-      company_id: activeCompanyId,
-      user_id: authData.user.id,
-      // Phase 2 Gate 1: operator-authored steps are inadmissible to external prompt
-      // framing (council decision 3 — same standing as internal).
-      provenance_type: "operator_authored",
-      journey_key: args.key,
-      journey_title: args.title,
-      journey_subtitle: args.subtitle,
-      step_number: index + 1,
-      step_label: seed.label,
-      description: seed.description,
-      designed: false,
-      has_gap: true,
-      evidence_status: "unclear",
-      evidence_basis: "Local draft step generated without external model run.",
-      evidence_confidence: 20,
-      gap_note: "Awaiting evidence-backed research and validation.",
-    }));
-
-    const { error: insertErr } = await supabase.from("job_steps").insert(rows);
-    if (insertErr) throw new Error(insertErr.message || "Failed to insert local checkpoint map draft.");
-    return true;
-  };
-
-  const currentSelectedMapsForSynthesis = () => {
+  // Item 2 gate 2 (R4): the re-synthesis lists only the current maps whose key holds a LIVE market
+  // definition (the Gate 1 read) — under selected_maps_only every listed key is regenerated, and a key
+  // without a definition is refused by the generator (no_market_definition) before any write. An empty
+  // scope is a refusal here, not a run (buildLocalJobMapSynthesisBody throws into the existing toast path).
+  const currentSelectedMapsForSynthesis = async () => {
+    if (!activeCompany?.id) return [];
     const maps = journeys.map((journey) => ({
       journey_key: journey.key,
       journey_title: safeText(journey.title, titleFromKey(journey.key)),
       journey_subtitle: safeText(journey.subtitle, subtitleFromKey(journey.key)),
     }));
-    if (maps.length === 0) {
-      return [
-        {
-          journey_key: "customer",
-          journey_title: titleFromKey("customer"),
-          journey_subtitle: subtitleFromKey("customer"),
-        },
-      ];
-    }
-    return maps;
+    const candidates = maps.length === 0
+      ? [{ journey_key: "customer", journey_title: titleFromKey("customer"), journey_subtitle: subtitleFromKey("customer") }]
+      : maps;
+    return scopeMapsToLiveDefinitions(candidates, await readLiveDefinitionKeys(supabase, activeCompany.id));
   };
 
   const invokeLocalJobMapSynthesis = async (args: {
@@ -2256,12 +2207,10 @@ export default function JobStepsView() {
   }) => {
     if (!activeCompany?.id) throw new Error("Select a company before running local synthesis.");
 
+    // Item 2 gate 2 (R4): every run from this surface is scoped + strict — selected_maps_only:true,
+    // require_model:true — and lists exactly the keys the caller means to regenerate.
     const invocation = await supabase.functions.invoke("local-jobmap-synthesis", {
-      body: {
-        company_id: activeCompany.id,
-        selected_job_maps: args.selectedJobMaps,
-        trigger: args.trigger,
-      },
+      body: buildLocalJobMapSynthesisBody({ companyId: activeCompany.id, selectedJobMaps: args.selectedJobMaps, trigger: args.trigger }),
     });
 
     if (invocation.error) {
@@ -2324,171 +2273,30 @@ export default function JobStepsView() {
         return;
       }
 
+      // Item 2 gate 2 (R4, 2026-09-15): add-map goes straight to local-jobmap-synthesis with the NEW key
+      // only. Before this the path ran a neutralised research-company stub (research_rerun_deprecated)
+      // whose result threw before local synthesis could ever be reached; when it had been reachable it
+      // sent the existing customer map alongside as "support" — under selected_maps_only that would
+      // regenerate the customer spine too — and fell back to inserting seed rows (insertLocalDraftMap)
+      // when the model did not answer. All three are gone: one key, both flags, failure surfaces, and
+      // nothing is written on any failure path.
       const jobMap = {
         journey_key: key,
         journey_title: safeText(args.title, titleFromKey(key)),
         journey_subtitle: safeText(args.subtitle, subtitleFromKey(key)),
-        source: args.source || "custom",
       };
-      const existingCustomerJourney = journeys.find((journey) => journey.key === "customer");
-      const customerSupportMap =
-        key !== "customer" && existingCustomerJourney
-          ? {
-              journey_key: "customer",
-              journey_title: safeText(existingCustomerJourney.title, titleFromKey("customer")),
-              journey_subtitle: safeText(existingCustomerJourney.subtitle, subtitleFromKey("customer")),
-              source: "existing" as const,
-            }
-          : null;
-      const jobMapsPayload = customerSupportMap ? [customerSupportMap, jobMap] : [jobMap];
-
-      // DEPRECATED: this re-ran research-company (cold-start) on an existing company
-      // to add/rebuild a journey map = re-birth, now blocked by the cold-start guard.
-      // Invoke neutralized — it resolves a benign deprecation result and makes NO
-      // research-company call. To start fresh, create a NEW company (+ Add Client).
-      const runResearchMap = async () =>
-        invokeFunctionWithTimeout(
-          () =>
-            Promise.resolve({
-              data: {
-                error: "research_rerun_deprecated",
-                message: "Adding maps via re-research is disabled. To start fresh, create a new company (+ Add Client).",
-                journeys: [key],
-                maps: jobMapsPayload.length,
-              },
-              error: null,
-            }),
-          90_000,
-        );
-
-      let data: { error?: unknown; message?: unknown } | null = null;
-      let invokeError: unknown;
-      try {
-        const first = await runResearchMap();
-        data =
-          first?.data && typeof first.data === "object"
-            ? (first.data as { error?: unknown; message?: unknown })
-            : null;
-        invokeError = first?.error;
-      } catch (err) {
-        if (err instanceof InvokeTimeoutError) {
-          await Promise.all([refetchJobSteps(), refetchBaseline()]);
-          toast.message(err.message);
-          return;
-        }
-        throw err;
+      const localSynthesisPayload = await invokeLocalJobMapSynthesis({
+        selectedJobMaps: [jobMap],
+        trigger: `jobsteps_add_map:${key}`,
+      });
+      const generatedJourneyKeys = new Set(
+        (localSynthesisPayload?.artifacts?.journeys ?? [])
+          .map((entry) => normalizeJourneyKey(entry?.journey_key))
+          .filter(Boolean),
+      );
+      if (!generatedJourneyKeys.has(key)) {
+        throw new Error("Local synthesis did not return the requested map key.");
       }
-      let invokeMessage = invokeError ? await describeJobMapInvokeError(invokeError) : "";
-
-      if (invokeError && shouldAttemptBaselineRetry(invokeMessage)) {
-        toast.message("Refreshing public baseline, then retrying map generation once.");
-        const baselineStartedAt = new Date().toISOString();
-        const { error: baselineErr } = await supabase.functions.invoke("public-baseline", {
-          body: {
-            company_id: activeCompany.id,
-            company_name: activeCompany.name,
-            website: activeCompany.website ?? "",
-          },
-        });
-        // The 150s wall may cut the browser after the isolate landed its write — poll the
-        // durable run-status row before treating the baseline refresh as failed.
-        let baselineOk = !baselineErr;
-        if (baselineErr) {
-          const terminal = await pollPublicBaselineTerminal({ companyId: activeCompany.id, sinceIso: baselineStartedAt });
-          if (terminal === "completed") baselineOk = true;
-        }
-        if (baselineOk) {
-          await refetchBaseline();
-          try {
-            const retry = await runResearchMap();
-            data =
-              retry?.data && typeof retry.data === "object"
-                ? (retry.data as { error?: unknown; message?: unknown })
-                : null;
-            invokeError = retry?.error;
-          } catch (retryErr) {
-            if (retryErr instanceof InvokeTimeoutError) {
-              await Promise.all([refetchJobSteps(), refetchBaseline()]);
-              toast.message(retryErr.message);
-              return;
-            }
-            throw retryErr;
-          }
-          invokeMessage = invokeError ? await describeJobMapInvokeError(invokeError) : "";
-        } else {
-          const baselineMessage = await describeJobMapInvokeError(baselineErr);
-          invokeMessage = `${invokeMessage}. Baseline refresh failed: ${baselineMessage}`;
-        }
-      }
-
-      if (invokeError) {
-        if (shouldUseLocalMapFallback(invokeMessage)) {
-          let localSynthesisPayload:
-            | {
-                summary?: {
-                  journeys_generated?: number;
-                  odi_needs_inserted?: number;
-                  affected_artifacts_marked?: number;
-                };
-                artifacts?: {
-                  journeys?: Array<{ journey_key?: string }>;
-                };
-              }
-            | null = null;
-          let localSynthesisError: string | null = null;
-
-          try {
-            localSynthesisPayload = await invokeLocalJobMapSynthesis({
-              selectedJobMaps: jobMapsPayload.map((entry) => ({
-                journey_key: entry.journey_key,
-                journey_title: entry.journey_title,
-                journey_subtitle: entry.journey_subtitle,
-              })),
-              trigger: `jobsteps_add_map:${key}`,
-            });
-          } catch (synthesisErr) {
-            localSynthesisError = synthesisErr instanceof Error ? synthesisErr.message : String(synthesisErr);
-          }
-
-          const generatedJourneyKeys = new Set(
-            (localSynthesisPayload?.artifacts?.journeys ?? [])
-              .map((entry) => normalizeJourneyKey(entry?.journey_key))
-              .filter(Boolean),
-          );
-          let insertedDraft = false;
-          if (!generatedJourneyKeys.has(key)) {
-            insertedDraft = await insertLocalDraftMap({
-              key,
-              title: jobMap.journey_title,
-              subtitle: jobMap.journey_subtitle,
-              checkpointSeed: checkpointSeedForJourneyKey(key),
-            });
-          }
-
-            await Promise.all([refetchJobSteps(), refetchBaseline()]);
-          if (generatedJourneyKeys.has(key)) {
-            const affectedArtifacts = Number(localSynthesisPayload?.summary?.affected_artifacts_marked ?? 0);
-            toast.success(
-              `${titleCaseJourney(key)} map generated from local synthesis (${localSynthesisPayload?.summary?.journeys_generated ?? 0} map(s), ${affectedArtifacts} dependent item${affectedArtifacts === 1 ? "" : "s"} marked for review).`,
-            );
-          } else if (insertedDraft) {
-            toast.success(`${titleCaseJourney(key)} map added as a local draft.`);
-            toast.message(
-              localSynthesisError
-                ? `Local synthesis was unavailable (${localSynthesisError}).`
-                : "Local synthesis did not return the requested map key, so a draft was added.",
-            );
-          } else {
-            toast.message(`${titleCaseJourney(key)} map already exists.`);
-          }
-          return;
-        }
-        throw new Error(invokeMessage);
-      }
-      if (data?.error) {
-        throw new Error(String(data.message || data.error));
-      }
-
       await Promise.all([refetchJobSteps(), refetchBaseline()]);
       if (activeCompanyId) {
         setRecentlyRemovedKeysByCompany((previous) => ({
@@ -2496,7 +2304,10 @@ export default function JobStepsView() {
           [activeCompanyId]: (previous[activeCompanyId] ?? []).filter((removed) => removed !== key),
         }));
       }
-      toast.success(`${titleCaseJourney(key)} map added.`);
+      const affectedArtifacts = Number(localSynthesisPayload?.summary?.affected_artifacts_marked ?? 0);
+      toast.success(
+        `${titleCaseJourney(key)} map generated from local synthesis (${localSynthesisPayload?.summary?.journeys_generated ?? 0} map(s), ${affectedArtifacts} dependent item${affectedArtifacts === 1 ? "" : "s"} marked for review).`,
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to add checkpoint map.");
     } finally {
@@ -2719,7 +2530,6 @@ export default function JobStepsView() {
       });
 
       let usedLocalSynthesis = false;
-      let usedDraftFallback = false;
       if (uploadedFileCount > 0) {
         try {
           await runResearchFromUploadedEvidence();
@@ -2731,22 +2541,14 @@ export default function JobStepsView() {
 
           try {
             await invokeLocalJobMapSynthesis({
-              selectedJobMaps: currentSelectedMapsForSynthesis(),
+              selectedJobMaps: await currentSelectedMapsForSynthesis(),
               trigger: "jobsteps_save_context_fallback",
             });
             usedLocalSynthesis = true;
           } catch (localErr) {
+            // R4: no draft-row stand-in — the failure surfaces through the existing toast path.
             const localMessage = localErr instanceof Error ? localErr.message : String(localErr);
-            const inserted = await insertLocalDraftMap({
-              key: "customer",
-              title: safeText(activeCustomerJourneyTitle, titleFromKey("customer")),
-              subtitle: safeText(activeCustomerJourneySubtitle, subtitleFromKey("customer")),
-              checkpointSeed: checkpointSeedForJourneyKey("customer"),
-            });
-            usedDraftFallback = inserted;
-            if (!inserted) {
-              throw new Error(`${researchMessage}. Local synthesis fallback failed: ${localMessage}`);
-            }
+            throw new Error(`${researchMessage}. Local synthesis fallback failed: ${localMessage}`);
           }
         }
       }
@@ -2757,8 +2559,6 @@ export default function JobStepsView() {
       if (uploadedFileCount > 0) {
         if (usedLocalSynthesis) {
           toast.success("Saved context edits and regenerated checkpoint map + Strategic Decision System artifacts through local synthesis.");
-        } else if (usedDraftFallback) {
-          toast.success("Saved context edits and added a local draft customer map while model-backed synthesis is unavailable.");
         } else {
           toast.success("Saved context edits and regenerated downstream artifacts.");
         }
