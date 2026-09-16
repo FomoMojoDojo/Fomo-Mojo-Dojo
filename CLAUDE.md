@@ -133,3 +133,18 @@ These files are long — search within them rather than reading top-to-bottom:
   ```bash
   source backups/fr-login.env && npx playwright test --retries=0
   ```
+
+---
+
+## Session-open ritual — terminal boot list
+
+Empty-body / `{}` POST with a service-role bearer to each; expect `400 company_id required` (or that
+terminal's own 4xx), never `503 Module not found`. A NEW function directory or `_shared` file is not
+served until the stack is recreated (`source supabase/functions/.env.local` → `supabase stop` →
+`supabase start`; volumes kept, NEVER `db reset`) — an operator-approved step, reported first.
+
+- public-baseline (pair proof: with `x-internal-call` → 400, without → 401)
+- gateway-resume-step · local-jobmap-synthesis · dify-analyze-file / analyze-file
+- generate-step-opportunities · generate-step-conditions · generate-market-hypothesis
+- feed-first-read-corrections · record-check-outcome
+- record-interview-finding (gate 2, 2026-09-16 — the one write path for interview findings)
