@@ -48,6 +48,9 @@ export type OdiNeedRow = {
   odi_canonical_statement?: string | null;
   updated_at?: string | null;
   created_at: string;
+  /** Gate 3: the interview record an interview-sourced need points at (keyed read only; embedded through the FK). */
+  interview_record_id?: string | null;
+  interview_records?: { id: string; speaker_role: string; person_name: string; interviewed_at: string; verbatim: string; retracted_at: string | null } | null;
   strategy_alignment?: "aligned" | "off_strategy" | "unknown" | null;
   strategy_alignment_reason?: string | null;
   strategy_alignment_evaluated_at?: string | null;
@@ -127,17 +130,30 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: str
       // Lens-reads law: when a focus key is passed, needs are scoped server-side to
       // that journey — a focused lens must never receive another market's needs.
       // No key ⇒ legacy company-wide list (pre-lens consumers filter client-side).
-      const needsQuery = supabase
-        .from("odi_needs")
-        .select("*")
-        .eq("company_id", companyId)
-        .order("tier", { ascending: true })
-        .order("sort_order", { ascending: true, nullsFirst: false })
-        .order("opportunity_score", { ascending: false });
-      const [marketRes, needsRes] = await Promise.all([
-        marketQuery,
-        journeyKey ? needsQuery.eq("journey_key", journeyKey) : needsQuery,
-      ]);
+      // Gate 3 (2026-09-16): the KEYED read embeds the interview record an interview-sourced need
+      // points at (speaker role, name, date, verbatim — the frame's inputs) and excludes rows whose
+      // record was retracted (status='retracted', set by the retraction trigger). The no-key path
+      // (legacy company-wide list) keeps select("*") and ALSO excludes retracted rows (gate 3 delta,
+      // ruling 1: a retracted finding vanishes from every surface, the home and the shell included).
+      const needsQuery = journeyKey
+        ? supabase
+            .from("odi_needs")
+            .select("*, interview_records(id, speaker_role, person_name, interviewed_at, verbatim, retracted_at)")
+            .eq("company_id", companyId)
+            .eq("journey_key", journeyKey)
+            .neq("status", "retracted")
+            .order("tier", { ascending: true })
+            .order("sort_order", { ascending: true, nullsFirst: false })
+            .order("opportunity_score", { ascending: false })
+        : supabase
+            .from("odi_needs")
+            .select("*")
+            .eq("company_id", companyId)
+            .neq("status", "retracted")
+            .order("tier", { ascending: true })
+            .order("sort_order", { ascending: true, nullsFirst: false })
+            .order("opportunity_score", { ascending: false });
+      const [marketRes, needsRes] = await Promise.all([marketQuery, needsQuery]);
 
       if (cancelled) return;
 

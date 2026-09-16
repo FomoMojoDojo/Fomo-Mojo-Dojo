@@ -42,6 +42,8 @@ export type ViewedSet = {
   viewedTitle: string | null;
   /** False when the viewed key is a definition with no job_steps (the market door). */
   viewedMapped: boolean;
+  /** market_lens.title by key — the market chip's label source (lens title → key; never the step title). */
+  lensTitles: ReadonlyMap<string, string>;
   /** Re-read the steps (after a generation run). */
   refetchSteps: () => void;
   /** After a successful choose: clear the chosen key, then re-read it — the chip returns only with the read. */
@@ -102,6 +104,6 @@ export function useViewedSet(companyId?: string, viewKey?: string | null): Viewe
       .sort((a, b) => (a.step_number ?? 0) - (b.step_number ?? 0));
     const viewedTitle = viewedKey ? titleFor(viewedKey) : null;
     const viewedMapped = viewedSteps.length > 0;
-    return { loading: stepsLoading || chosenLoading || market.loading, steps: items, keys, sets, viewedKey, chosenKey, chosen, viewedSteps, viewedTitle, viewedMapped, refetchSteps, invalidateChosen };
+    return { loading: stepsLoading || chosenLoading || market.loading, steps: items, keys, sets, viewedKey, chosenKey, chosen, viewedSteps, viewedTitle, viewedMapped, lensTitles: market.lensTitles, refetchSteps, invalidateChosen };
   }, [rawChosen, chosenLoading, items, stepsLoading, viewKey, invalidateChosen, refetchSteps, market]);
 }

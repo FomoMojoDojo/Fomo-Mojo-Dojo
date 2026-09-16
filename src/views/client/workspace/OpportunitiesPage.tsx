@@ -34,6 +34,7 @@ import { OpportunityProposalSection, SuggestEditLane } from "@/views/client/work
 import { useOperatorControls } from "@/views/client/firstReadPreview/operatorControls";
 import { OPERATOR_MARK } from "@/views/client/firstReadPreview/operatorStrings";
 import { WorkspaceAbsent } from "./absent";
+import { InterviewOriginChip, marketChipLabel, needShowsBand } from "./InterviewOrigin";
 import { useViewedSet } from "./viewedSet";
 import { WorkspaceWorkingPage } from "./WorkspaceWorkingPage";
 import { WORKSPACE_STRINGS, pageLabel } from "./workspaceNav";
@@ -84,7 +85,8 @@ export default function OpportunitiesPage() {
   const ranked = useMemo(() => [...needs].sort(compareNeedsByValue), [needs]);
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return ranked.filter((x) => (filter === "all" || needBestGuessBand(x) === "High") && (!q || x.desired_outcome.toLowerCase().includes(q)));
+    // Gate 3: an interview-sourced finding carries no value band — it never counts as High.
+    return ranked.filter((x) => (filter === "all" || (needShowsBand(x) && needBestGuessBand(x) === "High")) && (!q || x.desired_outcome.toLowerCase().includes(q)));
   }, [filter, query, ranked]);
   const selected = visible.find((x) => x.id === selectedId) ?? visible[0] ?? null;
   const busy = set.loading || loading;
@@ -125,8 +127,8 @@ export default function OpportunitiesPage() {
                     return (
                       <button key={x.id} type="button" className="fr-ws-opprow" data-active={active ? "true" : undefined} aria-pressed={active} onClick={() => setSelectedId(x.id)} data-testid="opps-row" data-fr-need-id={x.id} data-fr-provenance={x.provenance_type ?? undefined}>
                         <span className="fr-ws-opprow-num fr-mono">{pad(rank + 1)}</span>
-                        <span className="fr-ws-opprow-text">{textOf(x)}</span>
-                        <span className="fr-ws-opprow-band fr-mono">{bandLabel(x)}</span>
+                        <span className="fr-ws-opprow-text">{textOf(x)}<InterviewOriginChip need={x} marketLabel={marketChipLabel(x.journey_key, set.lensTitles)} /></span>
+                        {needShowsBand(x) ? <span className="fr-ws-opprow-band fr-mono">{bandLabel(x)}</span> : null}
                       </button>
                     );
                   })}
@@ -136,7 +138,7 @@ export default function OpportunitiesPage() {
                     <p className="fr-ws-band-eyebrow fr-mono">{WORKSPACE_STRINGS.selectedOpportunity}</p>
                     <p className="fr-ws-oppaside-title" data-testid="opps-aside-title">{textOf(selected)}</p>
                     <dl className="fr-ws-oppaside-facts">
-                      <div><dt className="fr-mono">{WORKSPACE_STRINGS.potential}</dt><dd>{bandLabel(selected)}</dd></div>
+                      {needShowsBand(selected) ? <div><dt className="fr-mono">{WORKSPACE_STRINGS.potential}</dt><dd>{bandLabel(selected)}</dd></div> : null}
                     </dl>
                     {gated ? (
                       <div className="fr-ws-oppactions" data-testid="opps-actions" data-fr-region="actions">

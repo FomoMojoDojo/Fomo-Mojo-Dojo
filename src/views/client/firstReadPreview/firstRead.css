@@ -2791,3 +2791,12 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .first-read .fr-ws-legtest [style*="rgb(180, 83, 9)"] { color: hsl(var(--fr-warn)) !important; }
 .first-read .fr-ws-route-drift button[style*="background: rgb(255, 91, 41)"] { background: hsl(var(--fr-warn)) !important; }
 .first-read .fr-ws-route-drift span[style*="rgb(196, 125, 57)"] { background: hsl(var(--fr-warn)) !important; }
+/* Interview origin frame (gate 3, 2026-09-16): a wordless <details> whose summary is the signed chip; open = the verbatim as a quotation. */
+.fr-ws-origin { display: block; margin-top: 6px; }
+.fr-ws-origin > summary { list-style: none; cursor: pointer; display: inline-block; }
+.fr-ws-origin > summary::-webkit-details-marker { display: none; }
+.fr-ws-origin-chip { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--fr-steel)); border: 1px solid hsl(var(--fr-line)); padding: 2px 8px; }
+.fr-ws-origin[open] > summary.fr-ws-origin-chip { background: hsl(var(--fr-lime) / 0.15); }
+.fr-ws-origin-quote { margin: 8px 0 0; padding: 8px 12px; border-left: 2px solid hsl(var(--fr-line)); font-family: var(--fr-font-display); font-size: 0.9375rem; line-height: 1.5; color: hsl(var(--fr-ink)); }
+.fr-ws-origin-quote p { margin: 0; font-style: italic; }
+.fr-ws-origin-quote cite { display: block; margin-top: 4px; font-style: normal; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--fr-faint)); }

@@ -47,6 +47,7 @@ import { OPERATOR_MARK } from "@/views/client/firstReadPreview/operatorStrings";
 import { EvidenceDrawer, NEEDS_REVIEW_STATES } from "@/views/client/workshop/jobMapShared";
 import { InternalConditions, admissibleStepConditions } from "@/views/client/workshop/tabs/internalConditions";
 import { WorkspaceAbsent } from "./absent";
+import { InterviewOriginChip, marketChipLabel, needShowsBand } from "./InterviewOrigin";
 import { useViewedSet } from "./viewedSet";
 import { useWorkspaceStage } from "./workspaceContext";
 import { WorkspaceWorkingPage } from "./WorkspaceWorkingPage";
@@ -93,7 +94,8 @@ export default function JobMapPage() {
   };
   const stepNeeds = step ? needs.filter((x) => x.step_number === step.step_number) : [];
   // The high-band rows and the band word they carry (the word comes from the row, never a literal).
-  const highNeeds = stepNeeds.filter((x) => needBestGuessBand(x) === "High");
+  // Gate 3: an interview-sourced finding carries no value band — it never counts as High.
+  const highNeeds = stepNeeds.filter((x) => needShowsBand(x) && needBestGuessBand(x) === "High");
   const conditions = step && Array.isArray(step.conditions_json) ? admissibleStepConditions(step.conditions_json) : [];
   const hypothesis = marketDefinition?.job_executor?.trim() || null;
   const canRegenerate = gated && Boolean(set.viewedKey) && set.viewedMapped && !isFrozenCompany(companyId);
@@ -236,6 +238,7 @@ export default function JobMapPage() {
                               <span className="fr-ws-opp-num fr-mono">{pad(i + 1)}</span>
                               <span className="fr-ws-opp-text">
                                 {x.desired_outcome}
+                                <InterviewOriginChip need={x} marketLabel={marketChipLabel(x.journey_key, set.lensTitles)} />
                                 {pending ? (
                                   <span className="fr-ws-opp-review" {...mark("review")}>
                                     <span className="fr-tag fr-mono">{WORKSPACE_STRINGS.reviewPending}</span>
@@ -245,7 +248,7 @@ export default function JobMapPage() {
                                   </span>
                                 ) : null}
                               </span>
-                              <span className="fr-ws-opp-band fr-mono">{bandLabel(x)}</span>
+                              {needShowsBand(x) ? <span className="fr-ws-opp-band fr-mono">{bandLabel(x)}</span> : null}
                             </li>
                           );
                         })}
