@@ -26,6 +26,7 @@
 //   Archived · Restore  useArchivedInputFiles / useRestoreInputFile
 import { Fragment, useMemo, useState } from "react";
 import { useCompany } from "@/hooks/useCompany";
+import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useCapability } from "@/hooks/useCapability";
 import { useCompanyFiles, type CompanyFileRow } from "@/hooks/useCompanyFiles";
 import { useFileProposals, type FileProposalRow } from "@/hooks/useFileProposals";
@@ -74,6 +75,9 @@ function readyStatus(p: FileProposalRow | undefined): { label: string; tone: Chi
 export default function InputsPage() {
   const { activeCompany } = useCompany();
   const companyId = activeCompany?.id;
+  // Gate B: the latest outside read's plan (name_only ⇒ "read by name" beside the signal basis).
+  const { run: latestBaselineRun } = usePublicBaseline(companyId);
+  const readByName = String((latestBaselineRun as { plan_kind?: string } | null)?.plan_kind ?? "") === "name_only";
   const files = useCompanyFiles(companyId);
   const proposals = useFileProposals(companyId);
   const { landscape } = useSignalLandscape(companyId);
@@ -154,6 +158,7 @@ export default function InputsPage() {
       actions={counts ? (
         <div className="fr-ws-signals" data-fr-region="signal-basis" data-testid="inputs-signals">
           <span className="fr-ws-signals-label fr-mono">{WORKSPACE_STRINGS.signalBasis}</span>
+          {readByName ? <span className="fr-tag fr-mono" data-fr-plan="name_only" data-testid="inputs-read-by-name">{WORKSPACE_STRINGS.readByName}</span> : null}
           <Chip tone={counts.pub > 0 ? "accent-2" : "neutral"}>{WORKSPACE_STRINGS.signalPublic} {counts.pub}</Chip>
           <Chip tone={counts.team > 0 ? "accent-4" : "neutral"}>{WORKSPACE_STRINGS.signalTeam} {counts.team}</Chip>
           <Chip tone={counts.cust > 0 ? "accent-1" : "neutral"}>{WORKSPACE_STRINGS.signalCustomers} {counts.cust}</Chip>

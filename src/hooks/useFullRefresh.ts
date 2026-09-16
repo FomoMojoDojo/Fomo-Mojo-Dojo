@@ -49,7 +49,7 @@ const WINDOW_MS = 35 * 60_000; // covers a full baseline (~4-5min) + delta loop 
 // the server (public-baseline opens the parent BEFORE its work) → INVOKE_FAILED, not a halt.
 const INVOKE_GRACE_MS = 30_000;
 
-export function useFullRefresh(companyId?: string, companyName?: string, website?: string | null) {
+export function useFullRefresh(companyId?: string, companyName?: string, website?: string | null, noPublicSite = false) {
   const queryClient = useQueryClient();
   const [state, setState] = useState<FullRefreshState>(IDLE);
   const pollRef = useRef<number | null>(null);
@@ -143,7 +143,8 @@ export function useFullRefresh(companyId?: string, companyName?: string, website
   }, [companyId]);
 
   const start = useCallback(async () => {
-    if (!companyId || !companyName || !website?.trim() || state.running) return;
+    // Gate B (2026-09-16): a company with no public site is read BY NAME — the website is not required.
+    if (!companyId || !companyName || (!website?.trim() && !noPublicSite) || state.running) return;
     // FREEZE courtesy gate: a frozen reference fixture (CB1) is never refreshed. Refuse BEFORE any
     // invoke so the chain never fires — no ledger row, no baseline write. (The server refuses
     // authoritatively too; this just spares the round-trip and shows an honest message.)
@@ -158,10 +159,10 @@ export function useFullRefresh(companyId?: string, companyName?: string, website
     parentRef.current = null;
     firedAtRef.current = Date.now();
     void supabase.functions.invoke("public-baseline", {
-      body: { company_id: companyId, company_name: companyName, website, chain: true },
+      body: { company_id: companyId, company_name: companyName, website: website ?? "", chain: true },
     });
     startPolling();
-  }, [companyId, companyName, website, state.running, startPolling]);
+  }, [companyId, companyName, website, noPublicSite, state.running, startPolling]);
 
   return { state, start };
 }

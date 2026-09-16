@@ -480,7 +480,7 @@ export default function InputsTab({
   // FULL REFRESH G2 — the one-click server-driven chain (baseline → deltas), watched via the
   // ledger. Replaces the bare baseline invoke: the button now fires the whole refresh and the
   // delta stage runs server-side even if this tab closes.
-  const fullRefresh = useFullRefresh(companyId ?? undefined, companyName ?? undefined, companyWebsite);
+  const fullRefresh = useFullRefresh(companyId ?? undefined, companyName ?? undefined, companyWebsite, Boolean(companyNoPublicSite));
   const fullRefreshBusy = baselineRunning || fullRefresh.state.running;
 
   // handleRefreshBaseline (bare baseline invoke + toast) RETIRED — the button now drives the
@@ -857,7 +857,8 @@ export default function InputsTab({
   // AND "not fetched yet". Conflating them would flash "Run outside signals" at a
   // company that already has one, so the label waits for `baselineLoading` to clear
   // rather than guessing.
-  const hasWebsiteForBaseline = Boolean(companyWebsite?.trim());
+  // Gate B (2026-09-16): a company with no public site is read BY NAME — the control is enabled without a website.
+  const hasWebsiteForBaseline = Boolean(companyWebsite?.trim()) || Boolean(companyNoPublicSite);
   const hasBaselineRun = !baselineLoading && !!baselineRun;
   // Ruling C (switcher fix): the else-branch refresh control also NAMES its target company, so a
   // full refresh can never be fired at the wrong same-name company. DRAFT string pending signature.
@@ -1029,7 +1030,7 @@ export default function InputsTab({
               {WORKSPACE_STRINGS.noPublicSiteState}
             </p>
           ) : null}
-          {isAdmin && !companyNoPublicSite && (
+          {isAdmin && (
             <>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
               <button

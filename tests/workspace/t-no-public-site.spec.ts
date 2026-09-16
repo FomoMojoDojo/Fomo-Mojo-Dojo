@@ -48,7 +48,7 @@ test("dialog with the box checked → company created, no crawl/baseline/birth, 
   await expect(page.getByTestId("add-client-no-public-site")).toContainText("No public site");
   await shot(page, "30-add-client-no-public-site");
   await page.getByRole("button", { name: "Create client" }).click();
-  await expect(page.getByText(`${NAME}: No public site — nothing is crawled or searched for this company.`)).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText(`${NAME}: No public site — the outside read runs on the name only.`)).toBeVisible({ timeout: 60_000 });
 
   // the row
   await expect.poll(() => companyByName(page, NAME), { timeout: 30_000 }).not.toBeNull();
@@ -66,15 +66,32 @@ test("dialog with the box checked → company created, no crawl/baseline/birth, 
   await page.addInitScript((id) => { try { localStorage.setItem("active_company_id", id); } catch { /* */ } }, co.id);
   await page.goto("/preview/client-refine/workshop", { waitUntil: "networkidle", timeout: 120_000 });
   await expect(page.locator("body")).not.toContainText("Outside signals being collected");
-  await expect(page.getByText("No public site — nothing is crawled or searched for this company.").first()).toBeVisible();
+  await expect(page.getByText("No public site — the outside read runs on the name only.").first()).toBeVisible();
   await page.getByRole("button", { name: /^inputs$/i }).first().click();
-  await expect(page.getByTestId("inputs-no-public-site")).toHaveText("No public site — nothing is crawled or searched for this company.");
+  await expect(page.getByTestId("inputs-no-public-site")).toHaveText("No public site — the outside read runs on the name only.");
   await shot(page, "31-workshop-inputs-state-line");
   // the workspace Inputs page + the home
   await page.addInitScript((id) => { try { localStorage.setItem("active_company_id", id); } catch { /* */ } }, co.id);
   await page.goto("/preview/client-refine/workspace/inputs", { waitUntil: "networkidle", timeout: 120_000 });
-  await expect(page.getByTestId("inputs-no-public-site")).toHaveText("No public site — nothing is crawled or searched for this company.");
+  await expect(page.getByTestId("inputs-no-public-site")).toHaveText("No public site — the outside read runs on the name only.");
   await shot(page, "32-workspace-inputs-state-line");
+
+  // Gate B: the flagged company can START an outside read by name from the Inputs tab — public-baseline
+  // is stubbed at the boundary (no real search); the request carries the name and an empty website.
+  await page.goto("/preview/client-refine/workshop", { waitUntil: "networkidle", timeout: 120_000 });
+  await page.getByRole("button", { name: /^inputs$/i }).first().click();
+  const baselineCalls: Array<Record<string, unknown>> = [];
+  await page.route(/\/functions\/v1\/public-baseline/, async (route) => {
+    baselineCalls.push(route.request().postDataJSON() as Record<string, unknown>);
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, stubbed: true }) });
+  });
+  const run = page.getByRole("button", { name: /Run outside signals/ });
+  await expect(run).toBeEnabled();
+  await run.click();
+  await expect.poll(() => baselineCalls.length, { timeout: 15_000 }).toBe(1);
+  expect(baselineCalls[0]).toEqual({ company_id: co.id, company_name: NAME, website: "", chain: true });
+  await page.unroute(/\/functions\/v1\/public-baseline/);
+  expect((await counts(page, co.id)).baseline_runs).toBe(0); // the stub wrote nothing
 
   // cleanup: delete the throwaway (cascade); it never had interview records. NPS_KEEP=1 leaves it for
   // a SQL-side proof (deleted by the operator/session afterwards).

@@ -16,7 +16,7 @@ const fn = src.slice(src.indexOf("const handleCreateClient = useCallback"), src.
 describe("Add-Client: no public site", () => {
   it("strings (draft pending signature): checkbox label + state line", () => {
     expect(WORKSPACE_STRINGS.noPublicSiteLabel).toBe("No public site");
-    expect(WORKSPACE_STRINGS.noPublicSiteState).toBe("No public site — nothing is crawled or searched for this company.");
+    expect(WORKSPACE_STRINGS.noPublicSiteState).toBe("No public site — the outside read runs on the name only.");
   });
   it("the checkbox carries the operator mark and clears + disables the website input", () => {
     expect(src).toMatch(/data-fr-operator="no-public-site"/);

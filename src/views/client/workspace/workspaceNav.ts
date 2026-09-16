@@ -175,7 +175,9 @@ export const WORKSPACE_STRINGS = {
   /** Add-Client checkbox label (given by the operator). */
   noPublicSiteLabel: "No public site",
   /** The company-surface state line, in place of any "baseline failed / not run" state. */
-  noPublicSiteState: "No public site — nothing is crawled or searched for this company.",
+  noPublicSiteState: "No public site — the outside read runs on the name only.",
+  /** Operator-facing plan tag on the signal basis when the last outside read was by name (gate B). Not a client string. */
+  readByName: "read by name",
   // ── Inputs (P:71-106) ──
   signalBasis: "Signal basis",
   /** Existing (HomepageHierarchyFR signal chips: "PUBLIC n" / "TEAM n" / "CUSTOMERS n"). */

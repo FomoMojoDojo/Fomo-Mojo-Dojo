@@ -5197,6 +5197,7 @@ export type Database = {
           company_name: string
           created_at: string
           id: number
+          plan_kind: string
           result_json: Json | null
           sources_json: Json | null
           website: string
@@ -5206,6 +5207,7 @@ export type Database = {
           company_name?: string
           created_at?: string
           id?: number
+          plan_kind?: string
           result_json?: Json | null
           sources_json?: Json | null
           website?: string
@@ -5215,6 +5217,7 @@ export type Database = {
           company_name?: string
           created_at?: string
           id?: number
+          plan_kind?: string
           result_json?: Json | null
           sources_json?: Json | null
           website?: string

@@ -2,7 +2,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestPublicBaselineSignals } from "../_shared/evidencePhase1.ts";
 import { mintSiteCrawlSignals, parseSitemapUrls, type SiteReadLedger } from "../../../src/lib/siteCrawl/mint.ts";
-import { NO_PUBLIC_SITE_MESSAGE } from "../_shared/birthAdmission.ts";
+import { buildBaselineQueryPlan, QUERY_COUNTS, QUERY_KEYS, type PlanKind } from "../_shared/baselineQueryPlan.ts";
 import { normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 import { extractCitationSourceText, mergeCitationSourceText } from "../../../src/lib/firstRead/citationSource.ts";
 // FREEZE GATE — authoritative server-side frozen set (same source the delta guard uses via
@@ -2089,6 +2089,9 @@ Deno.serve(async (req) => {
       local_only: boolean;
       generated_at: string;
       degraded_default?: string;
+      plan_kind: PlanKind;
+      site_crawl: "ran" | "skipped_no_public_site";
+      thin_reason?: "no_results" | "fallback_only" | null;
     } = {
       provider: "openai_public",
       model: openaiModel,
@@ -2097,6 +2100,9 @@ Deno.serve(async (req) => {
       path: "public_web_research",
       local_only: false,
       generated_at: new Date().toISOString(),
+      plan_kind: "domain", // re-stamped once the company row is read (gate B)
+      site_crawl: "ran",
+      thin_reason: null,
     };
 
     console.log(
@@ -2247,11 +2253,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // No-public-site refusal (2026-09-16): the site hunt is refused by NAME, not by a missing field.
-    if ((companyRow as { no_public_site?: unknown } | null)?.no_public_site === true) {
-      return json({ error: "no_public_site", message: NO_PUBLIC_SITE_MESSAGE }, 422);
-    }
-    if (!company_name || !website) {
+    // Gate B (2026-09-16): a company with no public site is read BY NAME — no domain terms, no own-site
+    // crawl, no site-mint; the fallback crawl over result hosts still runs. Every other company keeps
+    // the domain plan byte-for-byte (baselineQueryPlan.test.ts pins it).
+    const noPublicSite = (companyRow as { no_public_site?: unknown } | null)?.no_public_site === true;
+    const planKind: PlanKind = noPublicSite ? "name_only" : "domain";
+    runLedger.plan_kind = planKind;
+    runLedger.site_crawl = noPublicSite ? "skipped_no_public_site" : "ran";
+    if (!company_name || (!website && !noPublicSite)) {
       return json({ error: "company_name and website are required (via request or company record)" }, 400);
     }
 
@@ -2342,27 +2351,17 @@ Deno.serve(async (req) => {
     const spaced = splitCamelCase(company_name);
     const quoted = `"${company_name}"`;
 
-    // Search passes (general-purpose + works for many companies)
-    const queryA =
-      `${quoted} (site:${domain} OR "${domain}" OR "${stem}") ` +
-      `("about" OR "company" OR "press" OR "investor" OR "careers")`;
-
-    const queryB =
-      `"${spaced}" "${domain}" (company OR product OR services OR platform) ` +
-      `(competitors OR pricing OR reviews OR news OR investors)`;
-
-    const queryC =
-      `${domain} ${variants.join(" OR ")} (about OR company OR pricing OR reviews OR news)`;
-    const queryD =
-      `"${spaced}" "${domain}" (glassdoor OR indeed OR g2 OR capterra OR trustpilot OR reddit OR forum OR complaints)`;
-    const queryE =
-      `${quoted} "${domain}" (customer reviews OR employee reviews OR testimonials OR ratings OR reddit OR community OR nonprofit)`;
-    const queryF =
-      `site:linkedin.com/company ("${company_name}" OR "${spaced}" OR "${domain}" OR "${stem}")`;
-    const queryG =
-      `site:linkedin.com/posts ("${company_name}" OR "${spaced}" OR "${domain}" OR "${stem}")`;
-    const queryH =
-      `"${spaced}" ("${company_name}" OR "${stem}") (company OR platform OR product OR services OR leadership OR funding OR linkedin OR crunchbase OR newsroom)`;
+    // Search passes — the plan module is the ONE authority (domain: byte-identical to the pre-gate
+    // strings; name_only: no domain/stem/site: terms, F/G dropped). A null pass is never sent.
+    const plan = buildBaselineQueryPlan({ planKind, companyName: company_name, domain, stem, variants, spaced });
+    const queryA = plan.queryA ?? "";
+    const queryB = plan.queryB ?? "";
+    const queryC = plan.queryC ?? "";
+    const queryD = plan.queryD ?? "";
+    const queryE = plan.queryE ?? "";
+    const queryF = plan.queryF ?? "";
+    const queryG = plan.queryG ?? "";
+    const queryH = plan.queryH ?? "";
 
     const mergeUnique = (a: any[], b: any[]) => {
       const seen = new Set<string>();
@@ -2378,14 +2377,15 @@ Deno.serve(async (req) => {
     // SRCH-1: one accumulator across every query in this run — the outage rule is a
     // whole-run judgement, never a per-query one.
     const searchDiag = newSearchDiag();
-    const sourcesA = await searxSearch(searxUrl, queryA, 20, searchDiag);
-    const sourcesB = await searxSearch(searxUrl, queryB, 20, searchDiag);
-    const sourcesC = await searxSearch(searxUrl, queryC, 20, searchDiag);
-    const sourcesD = await searxSearch(searxUrl, queryD, 16, searchDiag);
-    const sourcesE = await searxSearch(searxUrl, queryE, 16, searchDiag);
-    const sourcesF = await searxSearch(searxUrl, queryF, 16, searchDiag);
-    const sourcesG = await searxSearch(searxUrl, queryG, 16, searchDiag);
-    const sourcesH = await searxSearch(searxUrl, queryH, 20, searchDiag);
+    const runPass = async (key: (typeof QUERY_KEYS)[number]) => (plan[key] === null ? [] : await searxSearch(searxUrl, plan[key]!, QUERY_COUNTS[key], searchDiag));
+    const sourcesA = await runPass("queryA");
+    const sourcesB = await runPass("queryB");
+    const sourcesC = await runPass("queryC");
+    const sourcesD = await runPass("queryD");
+    const sourcesE = await runPass("queryE");
+    const sourcesF = await runPass("queryF");
+    const sourcesG = await runPass("queryG");
+    const sourcesH = await runPass("queryH");
     console.log("[baseline] search health", {
       queriesRun: searchDiag.queriesRun,
       queriesWithResults: searchDiag.queriesWithResults,
@@ -2408,9 +2408,10 @@ Deno.serve(async (req) => {
       ),
       mergeUnique(sourcesG, sourcesH),
     );
-    // Always attempt same-domain website crawl (helps tiny footprints / thin homepages)
+    // Same-domain website crawl (helps tiny footprints / thin homepages) — SKIPPED for a company with
+    // no public site (gate B): there is no own domain to read, and nothing may be minted as its voice.
     const directUrl = website.startsWith("http") ? website : `https://${website}`;
-    const crawlResult = await crawlWebsiteEvidence({
+    const crawlResult = noPublicSite ? null : await crawlWebsiteEvidence({
       startUrl: directUrl,
       baseDomain: domain,
       maxPages: 14,
@@ -2659,6 +2660,7 @@ Deno.serve(async (req) => {
           company_id,
           company_name,
           website,
+          plan_kind: planKind,
           sources_json: {
             note: "no-results",
             queryA,
@@ -2736,6 +2738,7 @@ Deno.serve(async (req) => {
           company_id,
           company_name,
           website,
+          plan_kind: planKind,
           sources_json: {
             note: "filtered-by-policy",
             queryA,
@@ -2815,6 +2818,7 @@ Deno.serve(async (req) => {
           company_id,
           company_name,
           website,
+          plan_kind: planKind,
           sources_json: {
             note: "ambiguous",
             queryA,
@@ -2999,6 +3003,8 @@ Deno.serve(async (req) => {
       fallback_crawl: {
         discovered_origins: discoveredFallbackOrigins,
       },
+      plan_kind: planKind,
+      site_crawl: noPublicSite ? "skipped_no_public_site" : "ran",
       source_type_coverage: baseSourceCoverage.map((entry) => ({
         ...entry,
         extracted_count:
@@ -3009,6 +3015,15 @@ Deno.serve(async (req) => {
       })),
     };
 
+    // SRCH-1 second class (gate B): honest thin REASONS, never a silent "thin" and never a refusal.
+    //   no_results    — every engine answered, every query came back empty (a genuine looked-and-found-nothing)
+    //   fallback_only — nothing search-born survived extraction; every evidence item came from the fallback crawl
+    if (searchDiag.queriesRun > 0 && searchDiag.totalRawResults === 0 && searchDiag.unresponsive.size === 0) {
+      runLedger.thin_reason = "no_results";
+    } else if (evidenceFromSearch.length === 0 && (fallbackSiteEvidence.length + fallbackSocialEvidence.length) > 0 && directEvidence.length === 0) {
+      runLedger.thin_reason = "fallback_only";
+    }
+    if (runLedger.thin_reason) console.log("[baseline] thin reason", { thin_reason: runLedger.thin_reason });
     console.log("[baseline] evidence ready", {
       evidenceCount: evidence.length,
       fromDirect: directEvidenceMerged.length,
@@ -3086,6 +3101,7 @@ Deno.serve(async (req) => {
           company_id,
           company_name,
           website,
+          plan_kind: planKind,
           sources_json: {
             note: "thin-evidence",
             queryA,
@@ -3250,6 +3266,7 @@ Deno.serve(async (req) => {
         company_id,
         company_name,
         website,
+        plan_kind: planKind,
         // Save full annotated sources for later review (includes “wrong company” candidates like CiboGlobal)
         sources_json: {
           queries: { queryA, queryB, queryC, queryD, queryE, queryF, queryG },
@@ -3312,7 +3329,7 @@ Deno.serve(async (req) => {
     // to a paid baseline.
     let siteRead: SiteReadLedger | null = null;
     try {
-      siteRead = await mintSiteCrawlSignals({
+      siteRead = noPublicSite ? null : await mintSiteCrawlSignals({
         supabase,
         companyId: company_id,
         runId: inserted?.id ?? null,

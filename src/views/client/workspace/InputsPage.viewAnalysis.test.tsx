@@ -32,6 +32,7 @@ vi.mock("@/hooks/useInputs", () => ({ useArchiveInputFile: () => ({ mutateAsync:
 vi.mock("@/hooks/useOdiNeeds", () => ({ useOdiNeeds: () => ({ needs: [] }) }));
 vi.mock("@/hooks/useRoutes", () => ({ useRoutes: () => ({ items: [] }) }));
 vi.mock("@/hooks/useSignalLandscape", () => ({ useSignalLandscape: () => ({ landscape: null }) }));
+vi.mock("@/hooks/usePublicBaseline", () => ({ usePublicBaseline: () => ({ run: null, preferredRun: null, loading: false }) })); // gate B: the page reads the latest run's plan_kind
 vi.mock("@/components/FileUploadDialog", () => ({ default: () => null }));
 const PROPOSAL: FileProposalRow = {
   id: "prop-1", company_id: "c1", file_id: "file-1", file_name: FILE.file_name, source_type: "uploaded_file",

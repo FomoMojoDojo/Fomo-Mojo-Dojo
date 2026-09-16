@@ -84,7 +84,7 @@ export function usePublicBaseline(companyId?: string) {
     const { data, error } = await supabase
       .from("public_baseline_runs")
       .select(
-        "id, created_at, company_id, company_name, website, sources_json, result_json"
+        "id, created_at, company_id, company_name, website, sources_json, result_json, plan_kind"
       )
       .eq("company_id", cid)
       .order("created_at", { ascending: false })

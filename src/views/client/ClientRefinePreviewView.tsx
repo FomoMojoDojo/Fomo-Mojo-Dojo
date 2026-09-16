@@ -544,7 +544,13 @@ export default function ClientRefinePreviewView() {
   }, [latestBaselineRun]);
 
   const baselineSelectionReason = useMemo(() => {
-    if (activeCompany?.no_public_site) return WORKSPACE_STRINGS.noPublicSiteState; // 2026-09-16: the declared fact, in place of a "not run" state
+    // 2026-09-16: the declared fact; once a name-only read has run, its plan and thin reason read here.
+    const ledger = (baselineRun?.result_json as { run_ledger?: { plan_kind?: string; site_crawl?: string; thin_reason?: string | null } } | null)?.run_ledger;
+    if (activeCompany?.no_public_site) {
+      if (!baselineRun) return WORKSPACE_STRINGS.noPublicSiteState;
+      const thin = ledger?.thin_reason ? ` · thin: ${ledger.thin_reason}` : "";
+      return `${WORKSPACE_STRINGS.noPublicSiteState} Outside read by name (${String(baselineRun.plan_kind ?? ledger?.plan_kind ?? "name_only")}; site crawl ${ledger?.site_crawl ?? "skipped_no_public_site"})${thin}.`;
+    }
     if (!baselineRun) return "No public baseline selected yet.";
     if (!latestBaselineRun) return "Using the strongest available public baseline.";
     if (baselineRun.id === latestBaselineRun.id) {
