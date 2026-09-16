@@ -44,6 +44,21 @@ export const LOCAL_LANE_PROVENANCE = new Set(
   PROVENANCE_TYPE_ENUM.filter((p) => !EXTERNAL_ADMISSIBLE_PROVENANCE.has(p)),
 );
 
+// ── Need rows (Gate 0, operator ruling 2026-09-16) ────────────────────────────
+// The ONE predicate for an odi_needs row entering an OpenAI payload as CONTEXT
+// (propose-positioning-changes, propose-cascade-changes, council-review — the
+// three collectors that used to send every row on the company). Allowlist
+// polarity: only an explicitly external-admissible provenance passes; NULL, every
+// internal enum value, and any value that does not exist yet are withheld.
+// Consumers filter at the collection point and report the withheld count —
+// omission is visible, never silent.
+export function isExternalAdmissibleNeed(
+  row: { provenance_type?: unknown } | null | undefined,
+): boolean {
+  const p = row?.provenance_type;
+  return typeof p === "string" && EXTERNAL_ADMISSIBLE_PROVENANCE.has(p);
+}
+
 export function isSubjectLocalAdmissible(
   provenance: string | null | undefined,
 ): boolean {

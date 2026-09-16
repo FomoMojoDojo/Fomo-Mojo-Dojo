@@ -26,6 +26,7 @@ import {
 import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
 import { buildFrameworkBrief, getFrameworkRoutingPlan } from "../_shared/frameworkLibrary.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
+import { isExternalAdmissibleNeed } from "../_shared/externalProvenance.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -296,11 +297,19 @@ Deno.serve(async (req: Request) => {
   // don't flow into positioning proposals for B2B-pivoted companies.
   const { data: opportunityRows } = await db
     .from("odi_needs")
-    .select("desired_outcome as outcome, journey_key, step_number, step_label, importance, satisfaction, opportunity_score, tier as priority_tier")
+    .select("desired_outcome as outcome, journey_key, step_number, step_label, importance, satisfaction, opportunity_score, tier as priority_tier, provenance_type")
     .eq("company_id", company_id)
     .neq("strategy_alignment", "off_strategy")
     .order("opportunity_score", { ascending: false })
     .limit(30);
+  // Gate 0 (2026-09-16): only external-admissible needs enter the OpenAI context — the ONE
+  // predicate, at the collection point, before any prompt text exists. Withheld count is
+  // reported on every response so the omission is visible.
+  // (The select aliases with `as`, which supabase-js types as a ParserError — the rows are cast
+  // to the shape the predicate and the brief builder actually read.)
+  const needRows = ((opportunityRows ?? []) as unknown) as Array<{ provenance_type?: unknown } & Record<string, unknown>>;
+  const externalNeeds = needRows.filter(isExternalAdmissibleNeed);
+  const needsWithheldExternal = needRows.length - externalNeeds.length;
 
   // C1.1: changed from .not("source", "like", "manual_%") to .neq("relevance_state", "deprioritized").
   // The source filter excluded manual_ routes (operator-curated active routes) while
@@ -370,7 +379,7 @@ Deno.serve(async (req: Request) => {
     `Current strategy cascade (positioning anchor):\n${cascadeContext}\n\n` +
     `Selected job maps:\n${selectedJobMapBrief || "none"}\n\n` +
     `Generated strategy inputs:\n${buildInputBrief(inputRows ?? [])}\n\n` +
-    `Generated opportunities:\n${buildOpportunityBrief(opportunityRows ?? [])}\n\n` +
+    `Generated opportunities:\n${buildOpportunityBrief(externalNeeds)}\n\n` +
     `Generated routes:\n${routesSummary}\n\n` +
     `Generate a positioning canvas for this exact company. In proposal_reason, explain what changed versus the current snapshot and why.`;
 
@@ -390,7 +399,7 @@ Deno.serve(async (req: Request) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[propose-positioning-changes] LLM error:", message);
-    return jsonResponse({ error: `LLM generation failed: ${message}` }, 500);
+    return jsonResponse({ error: `LLM generation failed: ${message}`, needs_withheld_external: needsWithheldExternal }, 500);
   }
 
   const proposedState = buildSnapshot({}, generated, "proposed");
@@ -401,6 +410,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({
       skipped: true,
       reason: "No meaningful changes from current evidence.",
+      needs_withheld_external: needsWithheldExternal,
     });
   }
 
@@ -438,5 +448,5 @@ Deno.serve(async (req: Request) => {
   }
 
   console.log("[propose-positioning-changes] proposal written", { company_id, proposal_id: (inserted as { id: string }).id });
-  return jsonResponse({ proposal_id: (inserted as { id: string }).id, reason });
+  return jsonResponse({ proposal_id: (inserted as { id: string }).id, reason, needs_withheld_external: needsWithheldExternal });
 });

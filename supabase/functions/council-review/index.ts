@@ -9,6 +9,7 @@ import {
   type EngagementPhase,
 } from "../_shared/phaseFrameworks.ts";
 import { gateStrategyArtifactsForExternal } from "../_shared/strategyArtifactGate.ts";
+import { isExternalAdmissibleNeed } from "../_shared/externalProvenance.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -1602,6 +1603,16 @@ Deno.serve(async (req) => {
       };
     });
 
+    // Gate 0 (2026-09-16): odi_needs rows enter the council context ONLY when their provenance is
+
+    // external-admissible (the ONE predicate); everything else — internal, NULL, unknown — is
+
+    // withheld here, before the payload exists, and counted in meta.needs_withheld_external.
+
+    const externalNeeds = odiNeeds.filter(isExternalAdmissibleNeed);
+
+    const needsWithheldExternal = odiNeeds.length - externalNeeds.length;
+
     const contextPayload = {
       company,
       baseline: buildBaselineSummary(latestBaselineRun as Record<string, unknown> | null, excludedFingerprints),
@@ -1629,7 +1640,7 @@ Deno.serve(async (req) => {
         ...maybeStale(row as Record<string, unknown>),
       })),
       odi_market_definitions: odiMarketDefinitions.map((row) => row as Record<string, unknown>),
-      odi_needs: odiNeeds.map((row) => ({
+      odi_needs: externalNeeds.map((row) => ({
         ...pick(row as Record<string, unknown>, [
           "id", "need_statement", "job_step", "importance", "satisfaction",
           "opportunity_score", "source_tier", "created_at", "updated_at",
@@ -1719,6 +1730,7 @@ Deno.serve(async (req) => {
         job_steps: contextPayload.job_steps.length,
         odi_market_definitions: contextPayload.odi_market_definitions.length,
         odi_needs: contextPayload.odi_needs.length,
+        needs_withheld_external: needsWithheldExternal,
         opportunities: contextPayload.opportunities.length,
         routes: contextPayload.routes.length,
         positioning_canvases: contextPayload.positioning_canvases.length,
