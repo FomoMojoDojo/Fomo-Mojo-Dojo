@@ -75,6 +75,7 @@ export const WORKSPACE_STRINGS = {
   unitStages: "stages",
   unitMapped: "mapped",
   unitRoutes: "routes",
+  /** No longer rendered — the working-page strategy-anchor rail came off 2026-09-16; kept in the register as signed. */
   strategyAnchor: "Strategy anchor",
   /** Existing (firstReadPreview/acts). */
   whereToPlay: "Where to play",

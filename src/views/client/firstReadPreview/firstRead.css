@@ -2331,12 +2331,7 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-working-set-label { display: block; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: hsl(var(--fr-steel)); }
 .fr-ws-working-set-count { display: block; margin-top: 4px; font-size: 1.875rem; font-weight: 700; line-height: 1.1; }
 .fr-ws-working-grid { display: grid; gap: 2.5rem; padding-top: 2.5rem; }
-@media (min-width: 1280px) { .fr-ws-working-grid { grid-template-columns: 15rem minmax(0, 1fr); } .fr-ws-anchor { position: sticky; top: calc(57px + 1.5rem); align-self: start; } }
-.fr-ws-anchor-eyebrow { margin: 0; font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: hsl(var(--fr-lime)); }
-.fr-ws-anchor-statement { margin: 1rem 0 0; font-size: 1.125rem; font-weight: 700; line-height: 1.2; }
-.fr-ws-anchor-choice { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid hsl(var(--fr-line)); }
-.fr-ws-anchor-label { margin: 0; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
-.fr-ws-anchor-text { margin: 0.5rem 0 0; font-size: 0.75rem; line-height: 1.6; color: hsl(var(--fr-steel)); }
+/* The strategy-anchor rail came off (2026-09-16, variant B): the body fills the shell's existing max width. */
 .fr-ws-working-main { min-width: 0; }
 
 /* HERO (S:201-235): paper, hero head with actions slot, hairline, main. */
