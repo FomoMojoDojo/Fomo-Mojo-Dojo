@@ -1,4 +1,5 @@
 import { useState, Fragment, useMemo, useEffect, useCallback, type Dispatch, type SetStateAction } from "react";
+import { WORKSPACE_STRINGS } from "@/views/client/workspace/workspaceNav";
 import mammoth from "mammoth";
 import { useQuery } from "@tanstack/react-query";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
@@ -371,6 +372,7 @@ export default function InputsTab({
   companyId,
   companyName,
   companyWebsite,
+  companyNoPublicSite,
   socialNeeds,
   onAdded,
   hasHierarchy,
@@ -382,6 +384,8 @@ export default function InputsTab({
   companyId:      string | null;
   companyName?:   string;
   companyWebsite?: string;
+  /** companies.no_public_site (2026-09-16): renders the signed state line in place of the outside-signals control. */
+  companyNoPublicSite?: boolean;
   socialNeeds:    OdiNeedRow[];
   onAdded:        () => void;
   hasHierarchy?:  boolean;
@@ -1020,7 +1024,12 @@ export default function InputsTab({
               that had none. Identical handler/capability/toast — no new invocation path.
               Rendered (not hidden) when blocked, with the reason in the title, because a
               hidden control is what caused this gap. DRAFT strings pending signature. */}
-          {isAdmin && (
+          {companyNoPublicSite ? (
+            <p className="fr-mono" data-testid="inputs-no-public-site" data-fr-state="no-public-site" style={{ marginTop: 12, fontSize: 11, letterSpacing: "0.06em", color: D.inkSoft }}>
+              {WORKSPACE_STRINGS.noPublicSiteState}
+            </p>
+          ) : null}
+          {isAdmin && !companyNoPublicSite && (
             <>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
               <button

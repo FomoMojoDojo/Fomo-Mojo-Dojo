@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { WORKSPACE_STRINGS } from "@/views/client/workspace/workspaceNav";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -434,6 +435,10 @@ export default function ClientRefinePreviewView() {
   }, [activeCompany?.id, fileProposals, queryClient]);
 
   const runOutsideSignals = useCallback(async () => {
+    if (activeCompany?.no_public_site) {
+      toast.message(WORKSPACE_STRINGS.noPublicSiteState);
+      return;
+    }
     if (!activeCompany?.id || !activeCompany?.website?.trim()) {
       toast.error("Add a website before running outside signals.");
       return;
@@ -539,6 +544,7 @@ export default function ClientRefinePreviewView() {
   }, [latestBaselineRun]);
 
   const baselineSelectionReason = useMemo(() => {
+    if (activeCompany?.no_public_site) return WORKSPACE_STRINGS.noPublicSiteState; // 2026-09-16: the declared fact, in place of a "not run" state
     if (!baselineRun) return "No public baseline selected yet.";
     if (!latestBaselineRun) return "Using the strongest available public baseline.";
     if (baselineRun.id === latestBaselineRun.id) {
@@ -548,7 +554,7 @@ export default function ClientRefinePreviewView() {
       return "Latest run had no outside voice signals, so the stronger recent baseline is active.";
     }
     return "A stronger recent baseline is active because it carries better evidence quality than the latest run.";
-  }, [baselineRun, latestBaselineRun, latestBaselineSummary.outsideSignals, baselineSummary.outsideSignals]);
+  }, [activeCompany?.no_public_site, baselineRun, latestBaselineRun, latestBaselineSummary.outsideSignals, baselineSummary.outsideSignals]);
 
   const signalPosture = useMemo(() => {
     const outside =

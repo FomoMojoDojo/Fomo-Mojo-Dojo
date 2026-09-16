@@ -8,6 +8,7 @@ import {
 } from "../_shared/adjudication.ts";
 import { companyHasSpine } from "../_shared/spinePredicate.ts";
 import { maybeStartBaselineAfterBirth } from "../_shared/birthBaseline.ts";
+import { birthAdmission, ledgerSkippedBirth, NO_PUBLIC_SITE_MESSAGE } from "../_shared/birthAdmission.ts";
 import { handOffToResumeStepper, isGatewayCut, newResumeState } from "../_shared/gatewayResume.ts";
 
 const corsHeaders = {
@@ -473,7 +474,7 @@ Deno.serve(async (req) => {
 
   const { data: companyRow } = await supabase
     .from("companies")
-    .select("id,name,website")
+    .select("id,name,website,no_public_site")
     .eq("id", companyId)
     .maybeSingle();
   if (!companyRow) return json({ error: "Company not found" }, 404);
@@ -486,6 +487,12 @@ Deno.serve(async (req) => {
       error: "website is required for public_only mode",
       status: "website_required",
     }, 422);
+  }
+  // NO PUBLIC SITE (2026-09-16): refused by name at the door — before a flow row is opened. The skip
+  // is ledgered (long_runner_runs: birth / skipped / no_public_site) and that is the ONLY row written.
+  if ((companyRow as { no_public_site?: unknown }).no_public_site === true) {
+    await ledgerSkippedBirth(supabase, String(companyId), "no_public_site");
+    return json({ status: "skipped_no_public_site", reason: "no_public_site", message: NO_PUBLIC_SITE_MESSAGE }, 200);
   }
 
   const runInput = {
@@ -744,6 +751,19 @@ Deno.serve(async (req) => {
         // in research-company remains the absolute backstop this path never trips.
         if (await companyHasSpine(supabase, String(companyId))) {
           return { status: "skipped_existing", reason: "company_has_spine" };
+        }
+        // BIRTH ADMISSION (2026-09-16) — skip BEFORE the guard, ledgered: a company that declared no
+        // public site is never born; a company with no baseline and no uploads is never born from
+        // its name alone. research-company holds the same rule as a 422 backstop.
+        const admission = await birthAdmission(supabase, String(companyId), {
+          hasUploadedEvidence: async () => {
+            const { data } = await supabase.from("input_files").select("id").eq("company_id", String(companyId)).limit(1).maybeSingle();
+            return Boolean(data);
+          },
+        });
+        if (!admission.ok) {
+          await ledgerSkippedBirth(supabase, String(companyId), admission.reason);
+          return { status: `skipped_${admission.reason}`, reason: admission.reason, message: admission.message };
         }
 
         if (runtimeContract?.strict && runtimeContract.orchestrator_mode === "off" && runtimeContract.framework_modes.length !== 1) {

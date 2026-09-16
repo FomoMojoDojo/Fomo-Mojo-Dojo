@@ -162,6 +162,9 @@ export default function InputsPage() {
     >
       {files.isLoading ? null : (
         <>
+          {activeCompany?.no_public_site ? (
+            <p className="fr-ws-band-eyebrow fr-mono" data-fr-state="no-public-site" data-testid="inputs-no-public-site">{WORKSPACE_STRINGS.noPublicSiteState}</p>
+          ) : null}
           {rows.length > 0 && assigned > 0 && assigned < rows.length ? (
             <div className="fr-ws-integration" data-fr-region="integration" data-testid="inputs-integration">
               <p className="fr-ws-band-eyebrow fr-mono">{WORKSPACE_STRINGS.partiallyIntegrated}</p>

@@ -85,6 +85,7 @@ import {
 } from "@/lib/companyCollision";
 import { useCompanyLenses, fetchLensRouteRefs } from "@/lib/lensResolution";
 import { useDiagnoseReadiness } from "@/lib/phaseReadiness";
+import { WORKSPACE_STRINGS } from "@/views/client/workspace/workspaceNav";
 
 function cleanText(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -415,6 +416,9 @@ export default function ClientRefinePreviewWorkshopView() {
   const [creatingClient, setCreatingClient] = useState(false);
   const [newClientName, setNewClientName] = useState("");
   const [newClientWebsite, setNewClientWebsite] = useState("");
+  // No-public-site (2026-09-16): a known-siteless company is created honestly — the fact is stored
+  // (companies.no_public_site), and no crawl, baseline or birth is attempted; the skip is ledgered.
+  const [newClientNoPublicSite, setNewClientNoPublicSite] = useState(false);
   const [newClientRunBaseline, setNewClientRunBaseline] = useState(true);
   // Gate 2 — create-new-instance: collision dialog state. stage 'confirm' shows the
   // "already exists — create a new instance? OK/Cancel" prompt; stage 'name' is the
@@ -1283,7 +1287,9 @@ export default function ClientRefinePreviewWorkshopView() {
     [filteredNeeds, filteredRoutes, filteredJobSteps, evidenceReadiness, selectedRoute],
   );
 
-  const strategicStateLine = useMemo(() => deriveStrategicStateLine({
+  // No public site (2026-09-16): the header must never claim "outside signals being collected" for a
+  // company that declared none — the signed state line stands in place of the phase narrative.
+  const strategicStateLine = useMemo(() => activeCompany?.no_public_site ? WORKSPACE_STRINGS.noPublicSiteState : deriveStrategicStateLine({
     phase: activeCompany?.engagement_phase ?? "outside_signals",
     underservedHighCount: filteredNeeds.filter((n) => n.service_state === "underserved" && n.importance >= 7).length,
     commitmentBlockerCount: councilTensions.filter((t) => t.is_commitment_blocker).length,
@@ -1292,7 +1298,7 @@ export default function ClientRefinePreviewWorkshopView() {
     selectedRouteCategory: selectedRoute?.category ?? null,
     needsCount: filteredNeeds.length,
     topTensionStatement: councilTensions.find((t) => t.pressure === "critical" || t.pressure === "high")?.statement ?? null,
-  }), [activeCompany?.engagement_phase, filteredNeeds, councilTensions, selectedRoute]);
+  }), [activeCompany?.no_public_site, activeCompany?.engagement_phase, filteredNeeds, councilTensions, selectedRoute]);
 
   const stateRegionStabilizing = useMemo((): string | null => {
     if (selectedRoute) return selectedRoute.title;
@@ -1623,7 +1629,8 @@ export default function ClientRefinePreviewWorkshopView() {
     }
 
     setCreatingClient(true);
-    const sanitizedWebsite = sanitizeWebsite(newClientWebsite);
+    const noPublicSite = newClientNoPublicSite;
+    const sanitizedWebsite = noPublicSite ? "" : sanitizeWebsite(newClientWebsite);
 
     // Gate 2 — create-new-instance front door: if the name or normalized URL already
     // exists, offer a fresh instance instead of silently duplicating. Soft check only.
@@ -1648,6 +1655,7 @@ export default function ClientRefinePreviewWorkshopView() {
         .insert({
           name,
           website: sanitizedWebsite || null,
+          no_public_site: noPublicSite,
           created_by: user.id,
         })
         .select("id,name,website")
@@ -1660,7 +1668,18 @@ export default function ClientRefinePreviewWorkshopView() {
       setActiveCompanyId(data.id);
       await refetchCompany();
 
-      if (newClientRunBaseline && sanitizedWebsite) {
+      if (noPublicSite) {
+        // No crawl, no baseline, no birth. The skip is RECORDED, not silent: run-agent-flow reads the
+        // flag, ledgers a long_runner_runs row (run_kind birth, status skipped, error_text
+        // no_public_site) and returns before research-company or public-baseline is ever called.
+        const { data: skip, error: skipErr } = await supabase.functions.invoke("run-agent-flow", {
+          body: coldStartBody(data.id, data.name, "", "add_client_create_no_public_site"),
+        });
+        if (skipErr) console.warn("[Workshop] no-public-site skip ledger invoke returned:", skipErr);
+        else console.info("[Workshop] no-public-site: birth skipped and ledgered", skip);
+        toast.success(`${data.name}: ${WORKSPACE_STRINGS.noPublicSiteState}`);
+        setActiveTab("inputs");
+      } else if (newClientRunBaseline && sanitizedWebsite) {
         baselineName = data.name;
         // DESIGN A′ (2026-09-02): one create → birth (customer spine) → chained refresh (chain:true),
         // which fires the shipped first_read_fill + market-discovery stepper. Client-orchestrated by
@@ -1710,6 +1729,7 @@ export default function ClientRefinePreviewWorkshopView() {
 
       setNewClientName("");
       setNewClientWebsite("");
+      setNewClientNoPublicSite(false);
       setNewClientRunBaseline(true);
       setShowCreateClient(false);
     } catch (error) {
@@ -1734,6 +1754,7 @@ export default function ClientRefinePreviewWorkshopView() {
     user?.id,
     newClientName,
     newClientWebsite,
+    newClientNoPublicSite,
     newClientRunBaseline,
     refetchCompany,
     runPublicBaseline,
@@ -2260,8 +2281,18 @@ export default function ClientRefinePreviewWorkshopView() {
                 value={newClientWebsite}
                 onChange={(event) => setNewClientWebsite(event.target.value)}
                 placeholder="https://example.com"
-                style={{ width: "100%", marginTop: 6, border: "1px solid #dde6d1", borderRadius: 6, padding: "9px 10px" }}
+                disabled={newClientNoPublicSite}
+                data-testid="add-client-website"
+                style={{ width: "100%", marginTop: 6, border: "1px solid #dde6d1", borderRadius: 6, padding: "9px 10px", opacity: newClientNoPublicSite ? 0.5 : 1 }}
               />
+              <label className="fr-mono" data-fr-operator="no-public-site" data-testid="add-client-no-public-site" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#46606d" }}>
+                <input
+                  type="checkbox"
+                  checked={newClientNoPublicSite}
+                  onChange={(event) => { setNewClientNoPublicSite(event.target.checked); if (event.target.checked) setNewClientWebsite(""); }}
+                />
+                {WORKSPACE_STRINGS.noPublicSiteLabel}
+              </label>
             </div>
             <button
               type="button"
@@ -2270,7 +2301,7 @@ export default function ClientRefinePreviewWorkshopView() {
               title={!canCreateClient ? "Creating a client requires the client-create capability" : undefined}
               onClick={() => void handleCreateClient()}
             >
-              {creatingClient ? "Creating…" : (newClientRunBaseline && newClientWebsite.trim()) ? "Create + baseline" : "Create client"}
+              {creatingClient ? "Creating…" : (!newClientNoPublicSite && newClientRunBaseline && newClientWebsite.trim()) ? "Create + baseline" : "Create client"}
             </button>
           </div>
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, color: "#46606d", fontSize: 13 }}>
@@ -2538,6 +2569,7 @@ export default function ClientRefinePreviewWorkshopView() {
             companyId={companyId ?? null}
             companyName={activeCompany?.name}
             companyWebsite={activeCompany?.website ?? undefined}
+            companyNoPublicSite={Boolean(activeCompany?.no_public_site)}
             socialNeeds={needs.filter((n) => String(n.source_path).startsWith("social_"))}
             onAdded={() => setNeedsRefreshKey((k) => k + 1)}
             hasHierarchy={workshopHasHierarchy}

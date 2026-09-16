@@ -171,6 +171,11 @@ export const WORKSPACE_STRINGS = {
   taglineShift: "Tagline shift",
   whatTheyAreHiringFor: "What they are hiring for",
   customerTensionsMapped: "Customer tensions mapped",
+  // ── No public site (2026-09-16) — DRAFT pending the operator's signature at screenshot ──
+  /** Add-Client checkbox label (given by the operator). */
+  noPublicSiteLabel: "No public site",
+  /** The company-surface state line, in place of any "baseline failed / not run" state. */
+  noPublicSiteState: "No public site — nothing is crawled or searched for this company.",
   // ── Inputs (P:71-106) ──
   signalBasis: "Signal basis",
   /** Existing (HomepageHierarchyFR signal chips: "PUBLIC n" / "TEAM n" / "CUSTOMERS n"). */

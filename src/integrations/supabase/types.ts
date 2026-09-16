@@ -1187,6 +1187,7 @@ export type Database = {
           manual_industry_vocab: string[]
           mojo_score: number | null
           name: string
+          no_public_site: boolean
           potential_score: number | null
           program_phase: string | null
           projected_score: number | null
@@ -1221,6 +1222,7 @@ export type Database = {
           manual_industry_vocab?: string[]
           mojo_score?: number | null
           name: string
+          no_public_site?: boolean
           potential_score?: number | null
           program_phase?: string | null
           projected_score?: number | null
@@ -1255,6 +1257,7 @@ export type Database = {
           manual_industry_vocab?: string[]
           mojo_score?: number | null
           name?: string
+          no_public_site?: boolean
           potential_score?: number | null
           program_phase?: string | null
           projected_score?: number | null
@@ -7056,6 +7059,23 @@ export type Database = {
           p_verdict: string
         }
         Returns: Json
+      }
+      record_interview_finding: {
+        Args: {
+          p_company_id: string
+          p_interview_record_id?: string
+          p_journey_key: string
+          p_record?: Json
+          p_statement: string
+          p_step_label: string
+          p_step_number: number
+          p_user_id: string
+        }
+        Returns: {
+          need_id: string
+          record_id: string
+          reused_record: boolean
+        }[]
       }
       remove_claim: {
         Args: {

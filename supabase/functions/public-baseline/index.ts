@@ -2,6 +2,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestPublicBaselineSignals } from "../_shared/evidencePhase1.ts";
 import { mintSiteCrawlSignals, parseSitemapUrls, type SiteReadLedger } from "../../../src/lib/siteCrawl/mint.ts";
+import { NO_PUBLIC_SITE_MESSAGE } from "../_shared/birthAdmission.ts";
 import { normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 import { extractCitationSourceText, mergeCitationSourceText } from "../../../src/lib/firstRead/citationSource.ts";
 // FREEZE GATE — authoritative server-side frozen set (same source the delta guard uses via
@@ -2160,7 +2161,7 @@ Deno.serve(async (req) => {
 
     const { data: companyRow, error: companyFetchError } = await supabase
       .from("companies")
-      .select("name,website,public_source_filters_json")
+      .select("name,website,public_source_filters_json,no_public_site")
       .eq("id", company_id)
       .maybeSingle();
 
@@ -2246,6 +2247,10 @@ Deno.serve(async (req) => {
       }
     }
 
+    // No-public-site refusal (2026-09-16): the site hunt is refused by NAME, not by a missing field.
+    if ((companyRow as { no_public_site?: unknown } | null)?.no_public_site === true) {
+      return json({ error: "no_public_site", message: NO_PUBLIC_SITE_MESSAGE }, 422);
+    }
     if (!company_name || !website) {
       return json({ error: "company_name and website are required (via request or company record)" }, 400);
     }

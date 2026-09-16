@@ -32,6 +32,7 @@ import { DELETABLE_PROVENANCE_OR_FILTER, isProtectedJourneyKey, protectedJourney
 import { planReconcile } from "../_shared/reconcilePublicSynthesis.ts";
 import { writeReconciledOpportunities, writeReconciledNeeds } from "../_shared/researchSynthesisWrite.ts";
 import { companyHasSpine } from "../_shared/spinePredicate.ts";
+import { NO_PUBLIC_SITE_MESSAGE, readNoPublicSite } from "../_shared/birthAdmission.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import { generateMarketHypothesisForSet } from "../_shared/marketHypothesisSynthesis.ts";
 import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
@@ -5210,6 +5211,10 @@ Deno.serve(async (req) => {
     if (await companyHasSpine(supabase, String(company_id))) {
       return jsonResponse({ error: "company_has_spine" }, 409);
     }
+    // No-public-site refusal (2026-09-16): refused by name, before the lock, nothing written.
+    if (await readNoPublicSite(supabase, String(company_id))) {
+      return jsonResponse({ error: "no_public_site", message: NO_PUBLIC_SITE_MESSAGE }, 422);
+    }
 
     const { data: companyRow, error: companySourceFilterErr } = await supabase
       .from("companies")
@@ -5278,10 +5283,12 @@ Deno.serve(async (req) => {
     type BaselineRunRow = { id?: number | string; created_at?: string; result_json?: unknown };
     const recentBaselineRuns = (Array.isArray(baselineRuns) ? baselineRuns : []) as BaselineRunRow[];
     const latestBaselineRun = recentBaselineRuns[0] ?? null;
+    // ABSENT ≠ OK (2026-09-16): a company with NO baseline run used to read as status "ok" and be
+    // built from its name alone. An absent run is now its own status and counts as weak.
     const isWeakBaselineStatus = (status: string) =>
-      status === "ambiguous_public_evidence" || status === "insufficient_public_evidence" || status === "search_unavailable";
+      status === "ambiguous_public_evidence" || status === "insufficient_public_evidence" || status === "search_unavailable" || status === "absent";
     const baselineStatusFor = (run: BaselineRunRow | null) =>
-      String((run?.result_json as { status?: string } | null)?.status || "ok");
+      run ? String((run?.result_json as { status?: string } | null)?.status || "ok") : "absent";
     const baselineReasonFor = (run: BaselineRunRow | null) =>
       String((run?.result_json as { reason?: string } | null)?.reason || "");
 
@@ -5361,8 +5368,7 @@ Deno.serve(async (req) => {
       supabase,
       companyId: company_id,
     });
-    const hasWeakBaselineStatus =
-      baselineStatus === "ambiguous_public_evidence" || baselineStatus === "insufficient_public_evidence" || baselineStatus === "search_unavailable";
+    const hasWeakBaselineStatus = isWeakBaselineStatus(baselineStatus);
     const hasUploadedEvidence = uploadedEvidenceContext.fileCount > 0;
     let researchContextMode: "public_baseline" | "uploaded_evidence_fallback" = "public_baseline";
     let effectiveBaselineResultJson: unknown = baselineRun?.result_json ?? null;
