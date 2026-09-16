@@ -1790,8 +1790,10 @@ export type Database = {
       }
       doc_voice_verdicts: {
         Row: {
+          authorship: string | null
           basis: string
           classifier_model: string | null
+          classifier_version: number
           company_id: string
           content_sha: string
           created_at: string
@@ -1800,11 +1802,16 @@ export type Database = {
           operator_override: string | null
           override_by: string | null
           override_reason: string | null
+          override_version: number
+          subject: string | null
+          subject_basis: string | null
           verdict: string
         }
         Insert: {
+          authorship?: string | null
           basis: string
           classifier_model?: string | null
+          classifier_version?: number
           company_id: string
           content_sha: string
           created_at?: string
@@ -1813,11 +1820,16 @@ export type Database = {
           operator_override?: string | null
           override_by?: string | null
           override_reason?: string | null
+          override_version?: number
+          subject?: string | null
+          subject_basis?: string | null
           verdict: string
         }
         Update: {
+          authorship?: string | null
           basis?: string
           classifier_model?: string | null
+          classifier_version?: number
           company_id?: string
           content_sha?: string
           created_at?: string
@@ -1826,6 +1838,9 @@ export type Database = {
           operator_override?: string | null
           override_by?: string | null
           override_reason?: string | null
+          override_version?: number
+          subject?: string | null
+          subject_basis?: string | null
           verdict?: string
         }
         Relationships: [
@@ -1845,14 +1860,69 @@ export type Database = {
           },
         ]
       }
+      excerpt_verifications: {
+        Row: {
+          basis_at: string | null
+          basis_kind: string
+          basis_sha: string | null
+          company_id: string
+          excerpt_identity: string
+          guard_version: number
+          id: string
+          no_basis_reason: string | null
+          note: string | null
+          recorded_at: string
+          recorded_by: string
+          signal_id: string | null
+          source_url: string
+          verdict: string
+        }
+        Insert: {
+          basis_at?: string | null
+          basis_kind: string
+          basis_sha?: string | null
+          company_id: string
+          excerpt_identity: string
+          guard_version?: number
+          id?: string
+          no_basis_reason?: string | null
+          note?: string | null
+          recorded_at?: string
+          recorded_by: string
+          signal_id?: string | null
+          source_url: string
+          verdict: string
+        }
+        Update: {
+          basis_at?: string | null
+          basis_kind?: string
+          basis_sha?: string | null
+          company_id?: string
+          excerpt_identity?: string
+          guard_version?: number
+          id?: string
+          no_basis_reason?: string | null
+          note?: string | null
+          recorded_at?: string
+          recorded_by?: string
+          signal_id?: string | null
+          source_url?: string
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "excerpt_verifications_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       file_proposals: {
         Row: {
           analysis_version: number
           analysis_workflow_id: string | null
-          extraction_chars: number | null
-          extraction_images: number | null
-          extraction_pages: number | null
-          extraction_source: string | null
           applied_areas: string[]
           candidate_job_steps: Json
           candidate_needs: Json
@@ -1867,6 +1937,10 @@ export type Database = {
           dify_workflow_run_id: string | null
           evidence: Json
           experiments_to_run: Json
+          extraction_chars: number | null
+          extraction_images: number | null
+          extraction_pages: number | null
+          extraction_source: string | null
           file_id: string | null
           file_name: string
           framework_results: Json
@@ -1888,10 +1962,6 @@ export type Database = {
         Insert: {
           analysis_version?: number
           analysis_workflow_id?: string | null
-          extraction_chars?: number | null
-          extraction_images?: number | null
-          extraction_pages?: number | null
-          extraction_source?: string | null
           applied_areas?: string[]
           candidate_job_steps?: Json
           candidate_needs?: Json
@@ -1906,6 +1976,10 @@ export type Database = {
           dify_workflow_run_id?: string | null
           evidence?: Json
           experiments_to_run?: Json
+          extraction_chars?: number | null
+          extraction_images?: number | null
+          extraction_pages?: number | null
+          extraction_source?: string | null
           file_id?: string | null
           file_name?: string
           framework_results?: Json
@@ -1927,10 +2001,6 @@ export type Database = {
         Update: {
           analysis_version?: number
           analysis_workflow_id?: string | null
-          extraction_chars?: number | null
-          extraction_images?: number | null
-          extraction_pages?: number | null
-          extraction_source?: string | null
           applied_areas?: string[]
           candidate_job_steps?: Json
           candidate_needs?: Json
@@ -1945,6 +2015,10 @@ export type Database = {
           dify_workflow_run_id?: string | null
           evidence?: Json
           experiments_to_run?: Json
+          extraction_chars?: number | null
+          extraction_images?: number | null
+          extraction_pages?: number | null
+          extraction_source?: string | null
           file_id?: string | null
           file_name?: string
           framework_results?: Json
@@ -2945,6 +3019,71 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "integrity_runs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      interview_records: {
+        Row: {
+          company_id: string
+          consent_basis: string
+          content_identity: string
+          created_at: string
+          created_by: string
+          id: string
+          interviewed_at: string
+          interviewer: string
+          journey_key: string | null
+          person_name: string
+          person_role: string | null
+          retracted_at: string | null
+          retracted_by: string | null
+          retracted_reason: string | null
+          speaker_role: string
+          verbatim: string
+        }
+        Insert: {
+          company_id: string
+          consent_basis: string
+          content_identity: string
+          created_at?: string
+          created_by: string
+          id?: string
+          interviewed_at: string
+          interviewer: string
+          journey_key?: string | null
+          person_name: string
+          person_role?: string | null
+          retracted_at?: string | null
+          retracted_by?: string | null
+          retracted_reason?: string | null
+          speaker_role: string
+          verbatim: string
+        }
+        Update: {
+          company_id?: string
+          consent_basis?: string
+          content_identity?: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          interviewed_at?: string
+          interviewer?: string
+          journey_key?: string | null
+          person_name?: string
+          person_role?: string | null
+          retracted_at?: string | null
+          retracted_by?: string | null
+          retracted_reason?: string | null
+          speaker_role?: string
+          verbatim?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "interview_records_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -4229,6 +4368,7 @@ export type Database = {
           frameworks_used: string[]
           id: string
           importance: number
+          interview_record_id: string | null
           journey_key: string
           last_confirmed_run_id: string | null
           last_reviewed_at: string | null
@@ -4271,6 +4411,7 @@ export type Database = {
           frameworks_used?: string[]
           id?: string
           importance?: number
+          interview_record_id?: string | null
           journey_key?: string
           last_confirmed_run_id?: string | null
           last_reviewed_at?: string | null
@@ -4313,6 +4454,7 @@ export type Database = {
           frameworks_used?: string[]
           id?: string
           importance?: number
+          interview_record_id?: string | null
           journey_key?: string
           last_confirmed_run_id?: string | null
           last_reviewed_at?: string | null
@@ -4348,6 +4490,13 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "odi_needs_interview_record_id_fkey"
+            columns: ["interview_record_id"]
+            isOneToOne: false
+            referencedRelation: "interview_records"
             referencedColumns: ["id"]
           },
           {
@@ -4958,6 +5107,86 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      provenance_remints: {
+        Row: {
+          actor: string
+          applied_at: string
+          artifact_id: string | null
+          artifact_table: string | null
+          company_id: string
+          content_sha: string | null
+          dry_run: boolean
+          from_authorship: string | null
+          from_subject: string | null
+          id: string
+          input_file_id: string | null
+          kind: string
+          minted_claim_ids: string[]
+          minted_signal_ids: string[]
+          note: string | null
+          proposal_id: string | null
+          reason: string | null
+          struck_claim_ids: string[]
+          superseded_signal_ids: string[]
+          to_authorship: string | null
+          to_subject: string | null
+        }
+        Insert: {
+          actor: string
+          applied_at?: string
+          artifact_id?: string | null
+          artifact_table?: string | null
+          company_id: string
+          content_sha?: string | null
+          dry_run?: boolean
+          from_authorship?: string | null
+          from_subject?: string | null
+          id?: string
+          input_file_id?: string | null
+          kind: string
+          minted_claim_ids?: string[]
+          minted_signal_ids?: string[]
+          note?: string | null
+          proposal_id?: string | null
+          reason?: string | null
+          struck_claim_ids?: string[]
+          superseded_signal_ids?: string[]
+          to_authorship?: string | null
+          to_subject?: string | null
+        }
+        Update: {
+          actor?: string
+          applied_at?: string
+          artifact_id?: string | null
+          artifact_table?: string | null
+          company_id?: string
+          content_sha?: string | null
+          dry_run?: boolean
+          from_authorship?: string | null
+          from_subject?: string | null
+          id?: string
+          input_file_id?: string | null
+          kind?: string
+          minted_claim_ids?: string[]
+          minted_signal_ids?: string[]
+          note?: string | null
+          proposal_id?: string | null
+          reason?: string | null
+          struck_claim_ids?: string[]
+          superseded_signal_ids?: string[]
+          to_authorship?: string | null
+          to_subject?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provenance_remints_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       public_baseline_runs: {
         Row: {
@@ -6901,6 +7130,7 @@ export type Database = {
         Returns: number
       }
       shares_company_with: { Args: { _other: string }; Returns: boolean }
+      sweep_file_proposal_completion: { Args: never; Returns: undefined }
       sweep_stale_chains: { Args: never; Returns: undefined }
       trigger_scheduled_drift_scan: { Args: never; Returns: undefined }
       trigger_scheduled_mojo_analysis: { Args: never; Returns: undefined }
@@ -6918,6 +7148,8 @@ export type Database = {
         | "manual"
         | "internal_declared"
         | "internal_hypothesis"
+        | "client_attested"
+        | "market_interviewed"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -7057,6 +7289,8 @@ export const Constants = {
         "manual",
         "internal_declared",
         "internal_hypothesis",
+        "client_attested",
+        "market_interviewed",
       ],
     },
   },
