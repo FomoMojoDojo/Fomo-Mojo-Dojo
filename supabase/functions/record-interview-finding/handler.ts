@@ -9,9 +9,17 @@
 //   d. the statement: the LOCAL model (Ollama, the declared-generation model) proposes ONE ODI-form
 //      desired-outcome statement grounded only in the verbatim. Model failure / empty or unusable
 //      output → 502 model_unavailable, nothing written, no template fallback. Never OpenAI (Option B).
-//   e. dry_run: everything above runs live; nothing is written.
+//   d'. gate 4 (2026-09-16): a non-dry-run call may carry the operator's edited `statement`; when present
+//      and non-empty it is used verbatim (trimmed) and the model is NOT called. It must pass the same
+//      direction-verb check as the model's output → 422 statement_not_odi, nothing written.
+//   d''. gate 4 fold 2: a non-dry-run call may carry `expected_definition_id` — the definition the form
+//      last saw on its dry run. When present and ≠ the definition resolved now by (company_id,
+//      journey_key) → 409 placement_changed, nothing written (the market was redefined between the
+//      proposal and the save; the operator re-proposes against the live placement).
+//   e. dry_run: everything above runs live; nothing is written (a supplied statement and
+//      expected_definition_id are ignored here — the dry run is what RETURNS definition_id).
 //   f. the write: record_interview_finding(...) — record + need in one transaction, the only writer.
-// The verbatim is the quote; the statement is a proposal the operator edits afterwards.
+// The verbatim is the quote; the statement is a proposal the operator edits — in the form, before the write.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { readLiveDefinitionByKey } from "../_shared/marketDefinitionByKey.ts";
 
@@ -103,6 +111,11 @@ export async function handleRecordInterviewFinding(req: Request, deps: Deps = { 
     const stepNumber = Number(body.step_number);
     if (!Number.isInteger(stepNumber)) return json({ ok: false, error: "step_number required (integer)" }, 400);
     const dryRun = Boolean(body.dry_run);
+    const suppliedStatement = dryRun ? "" : text(body.statement);
+    if (suppliedStatement && !ODI_DIRECTION.test(suppliedStatement)) {
+      return json({ ok: false, error: "statement_not_odi", message: `The statement must start with a direction verb (Minimize / Reduce / Increase / Improve / Maximize / Avoid) — got "${suppliedStatement.slice(0, 80)}". Nothing was written.` }, 422);
+    }
+    const expectedDefinitionId = dryRun ? "" : text(body.expected_definition_id);
     const existingRecordId = text(body.interview_record_id);
     const newRecord = body.record && typeof body.record === "object" ? (body.record as Record<string, unknown>) : null;
     if (!existingRecordId && !newRecord) return json({ ok: false, error: "either interview_record_id or record {speaker_role, person_name, person_role?, journey_key?, interviewed_at, interviewer, consent_basis, verbatim} required" }, 400);
@@ -147,6 +160,10 @@ export async function handleRecordInterviewFinding(req: Request, deps: Deps = { 
       return json({ ok: false, error: "no_market_definition", journey_key: journeyKey, message: `No live market definition for '${journeyKey}'. Define the market before recording a finding on it — nothing was written.` }, 422);
     }
 
+    if (expectedDefinitionId && expectedDefinitionId !== String(definition.id)) {
+      return json({ ok: false, error: "placement_changed", journey_key: journeyKey, expected_definition_id: expectedDefinitionId, definition_id: definition.id, message: `The market definition for '${journeyKey}' changed since the proposal (expected ${expectedDefinitionId}, now ${definition.id}). Propose again against the live placement — nothing was written.` }, 409);
+    }
+
     // c. the step — live, ≥ 1
     if (stepNumber < 1) return json({ ok: false, error: "no_step", journey_key: journeyKey, step_number: stepNumber, message: "A finding lands only on a live step (step_number ≥ 1) — never step 0. Nothing was written." }, 422);
     const { data: step } = await db.from("job_steps")
@@ -157,14 +174,18 @@ export async function handleRecordInterviewFinding(req: Request, deps: Deps = { 
     }
     const stepLabel = String(step.step_label ?? "");
 
-    // d. the local model proposes the statement — never OpenAI, no template fallback
+    // d. the statement: the operator's edited one when supplied (model NOT called), else the local model
+    //    proposes — never OpenAI, no template fallback
     const callLocalModel = deps.callLocalModel ?? callOllamaJson;
-    const modelRes = await callLocalModel({ ollamaUrl, model, system: PROPOSAL_SYSTEM, user: buildProposalUser({ verbatim, speakerRole, executor: definition.job_executor, stepLabel }) });
-    const proposed = modelRes.ok ? parseStatement(modelRes.content) : "";
+    const modelRes = suppliedStatement
+      ? { ok: true as const, content: "" }
+      : await callLocalModel({ ollamaUrl, model, system: PROPOSAL_SYSTEM, user: buildProposalUser({ verbatim, speakerRole, executor: definition.job_executor, stepLabel }) });
+    const proposed = suppliedStatement || (modelRes.ok ? parseStatement(modelRes.content) : "");
     if (!modelRes.ok || !proposed || !ODI_DIRECTION.test(proposed)) {
       const why = !modelRes.ok ? `local model failed: ${modelRes.err ?? "unknown"}` : !proposed ? "local model returned no statement" : `local model output is not an ODI desired-outcome statement (${proposed.slice(0, 80)})`;
       return json({ ok: false, error: "model_unavailable", model, message: `${why} — nothing was written (no template fallback).` }, 502);
     }
+    const statementSource = suppliedStatement ? "operator" : "model";
 
     // e. dry run — the whole path ran live; nothing persists
     if (dryRun) {
@@ -206,7 +227,7 @@ export async function handleRecordInterviewFinding(req: Request, deps: Deps = { 
     });
     if (rpcError) return json({ ok: false, error: "write_refused", message: String(rpcError.message ?? rpcError) }, 409);
     const row = Array.isArray(written) ? written[0] : written;
-    return json({ ok: true, record_id: row?.record_id ?? null, need_id: row?.need_id ?? null, reused_record: Boolean(row?.reused_record), proposed_statement: proposed, model, journey_key: journeyKey, step_number: stepNumber });
+    return json({ ok: true, record_id: row?.record_id ?? null, need_id: row?.need_id ?? null, reused_record: Boolean(row?.reused_record), proposed_statement: proposed, statement_source: statementSource, model: suppliedStatement ? null : model, journey_key: journeyKey, step_number: stepNumber });
   } catch (err) {
     return json({ ok: false, error: String((err as Error)?.message ?? err) }, 500);
   }

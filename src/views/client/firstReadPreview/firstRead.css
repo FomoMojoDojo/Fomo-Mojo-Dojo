@@ -2795,3 +2795,19 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-origin-quote { margin: 8px 0 0; padding: 8px 12px; border-left: 2px solid hsl(var(--fr-line)); font-family: var(--fr-font-display); font-size: 0.9375rem; line-height: 1.5; color: hsl(var(--fr-ink)); }
 .fr-ws-origin-quote p { margin: 0; font-style: italic; }
 .fr-ws-origin-quote cite { display: block; margin-top: 4px; font-style: normal; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+
+/* ── Interview capture form (gate 4, 2026-09-16) — operator-only, on the Job Map step panel. Tokens only. ── */
+.fr-ws-capture { margin-top: 1.25rem; padding: 1rem 1.25rem; border: 1px solid hsl(var(--fr-line)); background: hsl(var(--fr-paper)); display: flex; flex-direction: column; gap: 0.75rem; }
+.fr-ws-capture-record { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.fr-ws-capture-field { display: flex; flex-direction: column; gap: 4px; }
+.fr-ws-capture-field > .fr-tag { color: hsl(var(--fr-faint)); }
+.fr-ws-capture-radio { display: inline-flex; align-items: center; gap: 6px; margin-right: 1rem; font-family: var(--fr-font-display); font-size: 0.875rem; color: hsl(var(--fr-ink)); }
+.fr-ws-capture-input, .fr-ws-capture-textarea { padding: 6px 10px; border: 1px solid hsl(var(--fr-line)); border-radius: 0; background: hsl(var(--fr-paper)); color: hsl(var(--fr-ink)); font-family: var(--fr-font-display); font-size: 0.875rem; line-height: 1.4; }
+.fr-ws-capture-textarea { resize: vertical; }
+.fr-ws-capture-statement { border-color: hsl(var(--fr-electric-sol) / 0.6); }
+.fr-ws-capture-missing, .fr-ws-capture-model { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+.fr-ws-capture-placement { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
+.fr-ws-capture-placement dt { color: hsl(var(--fr-faint)); }
+.fr-ws-capture-placement dd { margin: 0; color: hsl(var(--fr-steel)); }
+.fr-ws-capture-actions { display: flex; gap: 8px; }
+.fr-ws-capture-saved { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--fr-lime)); }

@@ -111,6 +111,52 @@ Deno.test("the prompt carries the verbatim, the speaker role, the executor and t
   for (const s of ["Minimize / Reduce / Increase / Improve / Maximize / Avoid", "grounded ONLY in the quote", '{"statement":"..."}']) assertStringIncludes(PROPOSAL_SYSTEM, s);
 });
 
+// ── Gate 4: the operator's edited statement (optional `statement` on a non-dry-run call) ────────
+const neverModel: LocalModelCall = () => { throw new Error("the model must not be called when a statement is supplied"); };
+Deno.test("h. statement supplied → used verbatim (trimmed), the model is NOT called, the RPC carries it, model: null", async () => {
+  const r = await run({ company_id: COMPANY, journey_key: "customer", step_number: 1, record: record(), statement: "  Reduce the number of days a family waits for a first call back  " }, neverModel);
+  assertEquals(r.status, 200);
+  assertEquals(r.rpcCalls.length, 1);
+  assertEquals(r.rpcCalls[0].args.p_statement, "Reduce the number of days a family waits for a first call back");
+  assertEquals(r.json.proposed_statement, "Reduce the number of days a family waits for a first call back");
+  assertEquals(r.json.statement_source, "operator"); assertEquals(r.json.model, null);
+});
+Deno.test("h2. statement absent → the model proposes as before (statement_source: model)", async () => {
+  const r = await run({ company_id: COMPANY, journey_key: "customer", step_number: 1, record: record() });
+  assertEquals(r.status, 200); assertEquals(r.json.statement_source, "model"); assertEquals(r.json.model, "qwen2.5:14b-instruct");
+  assertEquals(r.rpcCalls[0].args.p_statement, "Minimize the time before a family hears back after intake");
+});
+Deno.test("h3. a statement without a direction verb → 422 statement_not_odi, nothing written, model not called", async () => {
+  const r = await run({ company_id: COMPANY, journey_key: "customer", step_number: 1, record: record(), statement: "Families want a call back within a day" }, neverModel);
+  assertEquals(r.status, 422); assertEquals(r.json.error, "statement_not_odi"); assertNothingWritten(r);
+});
+Deno.test("h4. dry_run ignores a supplied statement (the proposal path runs; nothing written)", async () => {
+  const r = await run({ company_id: COMPANY, journey_key: "customer", step_number: 1, dry_run: true, record: record(), statement: "Reduce something" });
+  assertEquals(r.status, 200); assertEquals(r.json.proposed_statement, "Minimize the time before a family hears back after intake"); assertNothingWritten(r);
+});
+Deno.test("source guard: the model call sits behind the supplied-statement branch", async () => {
+  const src = await Deno.readTextFile(new URL("./handler.ts", import.meta.url).pathname);
+  const guard = src.indexOf("suppliedStatement\n      ?");
+  const call = src.indexOf("await callLocalModel(");
+  assert(guard > 0 && call > guard, "callLocalModel must be reached only through the `suppliedStatement ? … : await callLocalModel(…)` branch");
+});
+
+// ── Fold 2: expected_definition_id — the placement the form last saw must still be the placement ──
+Deno.test("i. expected_definition_id equal to the resolved definition → the write proceeds", async () => {
+  const r = await run({ company_id: COMPANY, journey_key: "customer", step_number: 1, record: record(), statement: "Reduce the wait for a call back", expected_definition_id: "d-customer" }, neverModel);
+  assertEquals(r.status, 200); assertEquals(r.rpcCalls.length, 1);
+});
+Deno.test("i2. expected_definition_id ≠ the resolved definition → 409 placement_changed, nothing written, model not called", async () => {
+  const r = await run({ company_id: COMPANY, journey_key: "customer", step_number: 1, record: record(), statement: "Reduce the wait for a call back", expected_definition_id: "d-stale" }, neverModel);
+  assertEquals(r.status, 409); assertEquals(r.json.error, "placement_changed");
+  assertEquals(r.json.expected_definition_id, "d-stale"); assertEquals(r.json.definition_id, "d-customer");
+  assertNothingWritten(r);
+});
+Deno.test("i3. dry_run ignores expected_definition_id (it is what a dry run RETURNS)", async () => {
+  const r = await run({ company_id: COMPANY, journey_key: "customer", step_number: 1, dry_run: true, record: record(), expected_definition_id: "d-stale" });
+  assertEquals(r.status, 200); assertEquals(r.json.definition_id, "d-customer"); assertNothingWritten(r);
+});
+
 // ── Option B source guard: the function and everything it imports from _shared ─────────────────
 Deno.test("Option B: no OpenAI client, endpoint or key anywhere in this function or its shared imports", async () => {
   const seen = new Set<string>();

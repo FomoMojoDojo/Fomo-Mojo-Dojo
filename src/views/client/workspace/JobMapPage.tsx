@@ -28,6 +28,13 @@
 // map" (data-fr-operator="generate-jobmap") → useJobMapGeneration (local-jobmap-synthesis, one key,
 // selected_maps_only + require_model). Working… while in flight; the signed failure note on any failure
 // path (R3); the operator alone sees the server's code/message as a mono line under the note.
+//
+// Interview capture (gate 4, signed 2026-09-16): ONE operator-gated control on the step panel,
+// "Record interview finding" (data-fr-operator="record-interview-finding") → InterviewCaptureForm →
+// record-interview-finding (propose = dry_run, save = the operator's statement). After a save the keyed
+// needs read refreshes and the new row renders with its origin chip. On an unmapped market the same
+// control sits in the header row so the function's own no_step refusal renders inline with a link to the
+// "Generate job map" control (id="jobmap-generate"). No client-visible strings.
 import { useState } from "react";
 import { useCompany } from "@/hooks/useCompany";
 import { useChooseJobStepSet } from "@/hooks/useChooseJobStepSet";
@@ -48,6 +55,9 @@ import { EvidenceDrawer, NEEDS_REVIEW_STATES } from "@/views/client/workshop/job
 import { InternalConditions, admissibleStepConditions } from "@/views/client/workshop/tabs/internalConditions";
 import { WorkspaceAbsent } from "./absent";
 import { InterviewOriginChip, marketChipLabel, needShowsBand } from "./InterviewOrigin";
+import { InterviewCaptureForm } from "./InterviewCaptureForm";
+import { INTERVIEW_CAPTURE_STRINGS } from "./interviewCaptureStrings";
+import { useInterviewRecords, useSignedInDisplayName } from "@/hooks/useInterviewRecords";
 import { useViewedSet } from "./viewedSet";
 import { useWorkspaceStage } from "./workspaceContext";
 import { WorkspaceWorkingPage } from "./WorkspaceWorkingPage";
@@ -78,12 +88,16 @@ export default function JobMapPage() {
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [needsRefresh, setNeedsRefresh] = useState(0);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [recordsRefresh, setRecordsRefresh] = useState(0);
   const set = useViewedSet(companyId, viewKey);
   const { needs, marketDefinition, loading: needsLoading } = useOdiNeeds(companyId, needsRefresh, set.viewedKey ?? undefined);
   const { choose, choosing } = useChooseJobStepSet(companyId);
   const conditionsRun = useConditionsGeneration({ companyId, setKey: set.viewedKey, steps: set.viewedSteps, refetch: set.refetchSteps });
   const jobMapRun = useJobMapGeneration({ companyId, journeyKey: set.viewedKey, journeyTitle: set.viewedTitle, refetch: set.refetchSteps });
   const stage = useWorkspaceStage();
+  const { records: interviewRecords } = useInterviewRecords(gated ? companyId : undefined, recordsRefresh);
+  const interviewerDefault = useSignedInDisplayName();
   const steps = set.viewedSteps;
   const n = steps.length;
   const index = Math.min(Math.max(parseInt(stage?.stageKey || "0", 10) || 0, 0), Math.max(n - 1, 0));
@@ -100,12 +114,35 @@ export default function JobMapPage() {
   const hypothesis = marketDefinition?.job_executor?.trim() || null;
   const canRegenerate = gated && Boolean(set.viewedKey) && set.viewedMapped && !isFrozenCompany(companyId);
   const canGenerateJobMap = gated && Boolean(set.viewedKey) && !set.viewedMapped;
+  const canCapture = gated && Boolean(companyId) && Boolean(set.viewedKey) && !isFrozenCompany(companyId);
+  const captureMarketTitle = set.viewedKey ? (set.lensTitles.get(set.viewedKey) ?? set.viewedTitle ?? set.viewedKey) : "";
+  const onFindingSaved = () => { setNeedsRefresh((k) => k + 1); setRecordsRefresh((k) => k + 1); };
+  const captureControl = (
+    <button type="button" className="fr-ws-control fr-mono" aria-expanded={captureOpen} onClick={() => setCaptureOpen((v) => !v)} {...mark("record-interview-finding")} data-testid="jobmap-capture-toggle">
+      {captureOpen ? INTERVIEW_CAPTURE_STRINGS.close : INTERVIEW_CAPTURE_STRINGS.open}
+    </button>
+  );
+  const captureForm = companyId && set.viewedKey ? (
+    <InterviewCaptureForm
+      key={`${set.viewedKey}:${step?.id ?? "none"}`}
+      companyId={companyId}
+      journeyKey={set.viewedKey}
+      marketTitle={captureMarketTitle}
+      step={step ? { step_number: step.step_number ?? index + 1, step_label: step.step_label || checkpointForStepNumber(step.step_number ?? index + 1).canonicalLabel } : null}
+      records={interviewRecords}
+      defaultInterviewer={interviewerDefault}
+      onSaved={onFindingSaved}
+      onDone={() => setCaptureOpen(false)}
+      generateJobMapHref="#jobmap-generate"
+    />
+  ) : null;
 
   const viewSet = (key: string) => {
     setSwitcherOpen(false);
     if (key === set.viewedKey) return;
     setViewKey(key);
     setEvidenceOpen(false);
+    setCaptureOpen(false);
     if (stage && index !== 0) stage.setStage("back", "0");
   };
   const chooseViewed = async () => {
@@ -155,11 +192,13 @@ export default function JobMapPage() {
               </button>
             ) : null}
             {canGenerateJobMap ? (
-              <button type="button" className="fr-ws-control fr-mono" disabled={jobMapRun.running} data-fr-failed={jobMapRun.failed ? "" : undefined} onClick={() => { void jobMapRun.run(); }} {...mark("generate-jobmap")} data-testid="jobmap-generate">
+              <button type="button" id="jobmap-generate" className="fr-ws-control fr-mono" disabled={jobMapRun.running} data-fr-failed={jobMapRun.failed ? "" : undefined} onClick={() => { void jobMapRun.run(); }} {...mark("generate-jobmap")} data-testid="jobmap-generate">
                 {jobMapRun.running ? WORKSPACE_STRINGS.working : WORKSPACE_STRINGS.generateJobMap}
               </button>
             ) : null}
+            {canCapture && n === 0 ? captureControl : null}
           </div>
+          {canCapture && n === 0 && captureOpen ? <div {...mark("record-interview-finding-form")} data-testid="jobmap-capture">{captureForm}</div> : null}
           {canGenerateJobMap && jobMapRun.failed ? (
             <div className="fr-ws-generate-failed" data-testid="jobmap-generate-failed" {...mark("generate-jobmap-failed")}>
               <p className="fr-ws-generate-failed-note">{WORKSPACE_STRINGS.jobMapGenerationFailed}</p>
@@ -214,8 +253,10 @@ export default function JobMapPage() {
                           {evidenceOpen ? WORKSPACE_STRINGS.hideEvidence : WORKSPACE_STRINGS.showEvidence}
                         </button>
                       ) : null}
+                      {canCapture ? captureControl : null}
                     </div>
                   </header>
+                  {canCapture && captureOpen ? <div {...mark("record-interview-finding-form")} data-testid="jobmap-capture">{captureForm}</div> : null}
                   {gated && evidenceOpen ? (
                     <div className="fr-ws-evidence" {...mark("evidence-drawer")} data-testid="jobmap-evidence">
                       <EvidenceDrawer step={step} />
