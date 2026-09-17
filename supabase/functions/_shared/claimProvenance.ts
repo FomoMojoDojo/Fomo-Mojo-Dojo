@@ -45,9 +45,13 @@ function urlHost(url: string): string {
 // is reliable in NEITHER direction — a self-claim can hide under a free-text bucket, and
 // a company page can masquerade as an independent item.
 function isCompanySource(
-  entry: { bucket?: string; source_type?: string; url?: string },
+  entry: { bucket?: string; source_type?: string; url?: string; evidence_class?: string | null },
   companyHost: string,
 ): boolean {
+  // C1 (2026-09-17): a FILING-class row (registry classifier — Form 990 data / self-reported profile
+  // sections) is the company speaking through a registry: company-source, excluded like own-domain.
+  // Same predicate shape as the client mirror (src/hooks/useSignalLandscape.ts isCompanySource).
+  if (String(entry?.evidence_class || "") === "filing") return true;
   if (String(entry?.bucket || "") === "company_claim") return true;
   if (String(entry?.source_type || "") === "profile_or_company_page") return true;
   const host = urlHost(String(entry?.url || ""));
@@ -84,7 +88,7 @@ const VOICE_CLASSES: ReadonlySet<string> = new Set([
 ]);
 
 function classifyVoice(
-  entry: { voice_class?: string; bucket?: string; source_type?: string; url?: string },
+  entry: { voice_class?: string; bucket?: string; source_type?: string; url?: string; evidence_class?: string | null },
   companyHost: string,
 ): VoiceClass {
   if (isCompanySource(entry, companyHost)) return "client_voice";

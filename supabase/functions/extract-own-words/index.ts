@@ -24,6 +24,7 @@ import {
 import { JUDGE_SYSTEM, callModel, parseJudgeVerdicts, takeLastJudgeUsage } from "../_shared/ownWordsJudge.ts";
 import type { Survivor } from "../_shared/ownWordsExtract.ts";
 import { parseOwnWordsKind } from "../_shared/ownWordsKinds.ts";
+import { excludeRegistryFromOwnWords } from "../_shared/registryClassifier.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const nowIso = () => new Date().toISOString();
@@ -186,8 +187,13 @@ Deno.serve(async (req) => {
       .select("id, source_url, source_title, voice_class, source_type")
       .eq("company_id", company_id)
       .eq("voice_class", "client_voice");
-    const sigs = ((sigRows ?? []) as Array<{ id: string; source_url: string | null; source_title: string | null; voice_class: string | null; source_type: string | null }>)
+    const sigsAll = ((sigRows ?? []) as Array<{ id: string; source_url: string | null; source_title: string | null; voice_class: string | null; source_type: string | null }>)
       .filter((s) => !!s.source_url);
+    // C1 (2026-09-17): registry hosts (ProPublica / GuideStar / Charity Navigator / CauseIQ) are OUT of the own-words
+    // corpus regardless of voice_class — a filing-class row is the company speaking, but through a registry's
+    // sections; own-words minting from those sections needs a section boundary (C2). Fail closed.
+    const { kept: sigs, excluded: registryExcluded } = excludeRegistryFromOwnWords(sigsAll);
+    if (registryExcluded.length) console.log(`[own-words] registry hosts excluded from corpus: ${registryExcluded.length}`);
 
     // Privacy gate (Option B) — refuse if ANY selected signal is not public client-voice.
     assertPublicClientVoice(sigs as SignalGate[]);

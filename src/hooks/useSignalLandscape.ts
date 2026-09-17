@@ -58,6 +58,8 @@ type SignalRow = {
   source_url?: string | null;
   claim_text?: string | null;
   evidence_excerpt?: string | null;
+  /** C1 (2026-09-17): prose | listing | filing — a filing row is the company speaking through a registry. */
+  evidence_class?: string | null;
   raw_payload?: { bucket?: string; source_type?: string } | null;
 };
 
@@ -80,6 +82,9 @@ const urlHost = (url: string): string => sourceHostLower(url);
 function isCompanySource(row: SignalRow, companyHost: string): boolean {
   const host = urlHost(String(row.source_url || ""));
   return (
+    // C1: filing-class (registry filing data / self-reported sections) is company-source — same shape as
+    // the server predicate (_shared/claimProvenance.ts isCompanySource).
+    String(row.evidence_class || "") === "filing" ||
     (!!host && !!companyHost && (host === companyHost || host.endsWith(`.${companyHost}`))) ||
     String(row.raw_payload?.source_type || "") === "profile_or_company_page" ||
     String(row.raw_payload?.bucket || "") === "company_claim"
@@ -240,7 +245,7 @@ export function useSignalLandscape(companyId: string | undefined) {
         supabase.from("companies").select("website").eq("id", companyId).maybeSingle(),
         supabase
           .from("signals")
-          .select("signal_band, framing_fit, directness, voice_class, syndicated_from_client, source_url, claim_text, evidence_excerpt, raw_payload, superseded_at")
+          .select("signal_band, framing_fit, directness, voice_class, syndicated_from_client, source_url, claim_text, evidence_excerpt, raw_payload, superseded_at, evidence_class")
           .eq("company_id", companyId)
           .eq("relevance_state", "active")
           .limit(2000),

@@ -1,5 +1,8 @@
 // (g) /preview/client-refine/home DOM text is byte-identical to the pre-change capture
-// (backups/home-dom-before_<date>.txt, taken with the first-read-capture discipline before any edit).
+// (HOME_DOM_BASELINE, taken with the first-read-capture discipline before any edit).
+// Re-pinned 2026-09-17 after C0+C1 audited data acts (integrity_runs 1220–1226): 7 public rows
+// superseded/held/restamped — PUBLIC 137 → 130 on Edgewood; the baseline now lives at
+// tests/workspace/fixtures/home-dom-before_20260917.txt.
 import fs from "node:fs";
 import { expect, test } from "playwright/test";
 import { HOME_DOM_BASELINE } from "../../playwright.config";

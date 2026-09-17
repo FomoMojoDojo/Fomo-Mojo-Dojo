@@ -1,0 +1,39 @@
+{
+ "ld_json": [
+  {
+   "url": "https://WWW.EDGEWOOD.ORG",
+   "name": "Edgewood Center for Children and Families",
+   "@type": "Organization",
+   "taxID": "941186168",
+   "review": [
+    {
+     "name": "Charity Navigator Rating",
+     "@type": "Review",
+     "author": {
+      "url": "https://www.charitynavigator.org",
+      "logo": {
+       "url": "https://publish-p61203-e558128.adobeaemcloud.com/content/dam/cn/cn/og-images/homepage-og.png",
+       "@type": "ImageObject",
+       "width": 250,
+       "height": 83
+      },
+      "name": "Charity Navigator",
+      "@type": "Organization",
+      "description": "Charity Navigator is the world’s largest and most-utilized independent charity evaluator. The organization guides informed giving by evaluating the efficiency and effectiveness of nonprofits and by providing data to millions of donors of all sizes."
+     },
+     "reviewRating": {
+      "url": "https://www.charitynavigator.org/ein/941186168?schemaorg",
+      "@type": "Rating",
+      "bestRating": "4",
+      "description": "Edgewood Center for Children and Families has earned a 3/4 Star rating on Charity Navigator. This Charitable Organization is headquartered in SAN FRANCISCO, CA.",
+      "ratingValue": 3,
+      "worstRating": "0"
+     },
+     "datePublished": "2026-09-13T22:44:17.981Z"
+    }
+   ],
+   "@context": "https://schema.org",
+   "nonprofitStatus": "Nonprofit501c3"
+  }
+ ]
+}

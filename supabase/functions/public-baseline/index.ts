@@ -15,6 +15,7 @@ import { shouldChainDeltas, NO_DECLARED_SIDE_LEDGER_TEXT } from "../_shared/delt
 import { selectFinalText, parseJsonObjectDefensive, persistSynthesisParseFailure, runSynthesisWithParseRetry } from "../_shared/synthesisJsonExtract.ts";
 // AUTHORSHIP GATE (operator ruling 2026-09-03, A) — CHANNEL ≠ VOICE on aggregator company-profile URLs.
 import { demoteAggregatorSelfVoiceInResult, judgeAggregatorAuthorship, resolveLocalOllamaUrl } from "../_shared/aggregatorAuthorship.ts";
+import { loadRegistrySnapshots, registryUrlsInResult, stampRegistryInResult } from "../_shared/registryIngest.ts";
 import { INTERNAL_CALL_HEADER, isInternalServiceCall } from "../_shared/internalCall.ts";
 
 const corsHeaders = {
@@ -1075,6 +1076,10 @@ async function crawlWebsiteEvidence(args: {
   };
 }
 
+function pathOf(url: string): string {
+  try { return new URL(url).pathname; } catch { return ""; }
+}
+
 function inferSourceType(url: string, title = "", snippet = ""): string {
   const host = getDomain(url);
   const text = `${title} ${snippet}`.toLowerCase();
@@ -1084,7 +1089,10 @@ function inferSourceType(url: string, title = "", snippet = ""): string {
   if (hostMatchesAnyDomain(host, ["reddit.com", "quora.com"])) return "community_discussion";
   if (hostMatchesAnyDomain(host, ["linkedin.com"])) return "profile_or_company_page";
   if (hostMatchesAnyDomain(host, ["x.com", "twitter.com", "facebook.com", "instagram.com", "youtube.com", "youtu.be", "tiktok.com", "threads.net"])) return "profile_or_company_page";
-  if (hostMatchesAnyDomain(host, ["crunchbase.com", "pitchbook.com", "zoominfo.com", "guidestar.org", "charitynavigator.org"])) return "third_party_profile";
+  // C1 (2026-09-17): a newsroom's own article path is journalism, never a profile — propublica.org/article/…
+  // stays news_signal; the Nonprofit Explorer host (projects.propublica.org) and the other registries are profiles.
+  if (hostMatchesAnyDomain(host, ["propublica.org"]) && /^\/article\//i.test(pathOf(url))) return "news_signal";
+  if (hostMatchesAnyDomain(host, ["crunchbase.com", "pitchbook.com", "zoominfo.com", "guidestar.org", "charitynavigator.org", "propublica.org", "candid.org", "causeiq.com", "grantmakers.io"])) return "third_party_profile";
   if (text.includes("review") || text.includes("rating")) return "review_signal";
   if (text.includes("news") || text.includes("press")) return "news_signal";
   return "public_web";
@@ -3215,6 +3223,29 @@ Deno.serve(async (req) => {
     // failure leaves the label untouched (logged). Runs on BOTH engines, BEFORE result_json is
     // persisted and minted, so signals.voice_class is born from authorship — forward-only; stored
     // rows are handled by restamp-aggregator-self-voice (audited, reversible, operator-reviewed).
+    // REGISTRY CLASSIFIER (C1, operator ruling 2026-09-17) — runs AFTER the voice overlay and BEFORE the
+    // authorship judge. A registry URL (ProPublica Nonprofit Explorer, GuideStar/Candid, Charity Navigator,
+    // CauseIQ) is decided deterministically from host × path × the STORED page's section markers: filing data
+    // and self-reported sections ⇒ evidence_class 'filing' + client_voice (the company speaking through a
+    // registry — corroboration/recurrence as own voice, never a record surface); ratings, derived metrics and
+    // index facts ⇒ prose + outside_voice_about_client; journalism untouched. The decision rides on the item as
+    // `registry` (→ signals.raw_payload.registry) and the judge below skips classified items. Basis = the
+    // stored snapshot for the URL, else this crawl's retained text for it; neither ⇒ page default (fail closed).
+    if (typeof result === "object" && result !== null) {
+      const regUrls = registryUrlsInResult(result as Record<string, unknown>);
+      if (regUrls.length > 0) {
+        const crawlTextByUrl = new Map<string, string>();
+        for (const e of evidence) {
+          const u = String((e as { url?: unknown })?.url || "").trim();
+          const t = String((e as { extracted?: unknown })?.extracted || "");
+          if (u && t.trim()) crawlTextByUrl.set(u, t);
+        }
+        const snaps = await loadRegistrySnapshots(supabase, company_id, regUrls, crawlTextByUrl);
+        const stamped = stampRegistryInResult(result as Record<string, unknown>, (u) => snaps.get(u) ?? null);
+        result = stamped.result;
+        console.log(`[baseline] registry classifier: ${JSON.stringify({ ...stamped.stats, snapshots: snaps.size })}`);
+      }
+    }
     if (typeof result === "object" && result !== null) {
       const authorshipOllamaUrl = resolveLocalOllamaUrl();
       const authorshipSubjectHost = (() => {

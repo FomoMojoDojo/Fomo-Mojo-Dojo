@@ -14,8 +14,10 @@ export const BASE_URL = process.env.FR_BASE_URL || "http://localhost:8080";
 export const STORAGE_STATE = path.resolve(process.env.FR_STORAGE_STATE || "backups/fr-state.json");
 /** The Edgewood fixture — the company the specs read. Overridable. */
 export const COMPANY_ID = process.env.FR_COMPANY_ID || "3dd2cfbb-0792-4bf1-9cd4-15db9646874b";
-/** Pre-change DOM-text capture of /preview/client-refine/home (spec g). */
-export const HOME_DOM_BASELINE = path.resolve(process.env.FR_HOME_DOM_BASELINE || "backups/home-dom-before_20260914e.txt");
+/** Pre-change DOM-text capture of /preview/client-refine/home (spec g). Re-pinned 2026-09-17 after the C0+C1
+ *  audited data acts (integrity_runs 1220–1226): 7 public rows superseded/held/restamped (PUBLIC 137 → 130).
+ *  Tracked under tests/workspace/fixtures so the baseline travels with the spec (backups/ is gitignored). */
+export const HOME_DOM_BASELINE = path.resolve(process.env.FR_HOME_DOM_BASELINE || "tests/workspace/fixtures/home-dom-before_20260917.txt");
 
 export default defineConfig({
   testDir: "tests/workspace",

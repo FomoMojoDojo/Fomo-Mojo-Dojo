@@ -262,6 +262,8 @@ export type AuthorshipStats = {
   judge_failed: number;
   /** Gated entries left unjudged after the judge was declared unavailable (consecutive failures) or the cap hit. */
   unavailable: number;
+  /** C1: registry items already decided by the deterministic classifier — never judged here. */
+  registry_skipped: number;
 };
 
 export type AuthorshipStamp = AuthorshipJudgment & { applied: "client_voice" | "competitor_voice" | "unchanged"; url_rule: string; judged_at: string };
@@ -273,13 +275,21 @@ export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_
   entries: T[],
   ctx: { subjectName: string; subjectHost: string; getText: (e: T) => string; judge: AuthorshipJudge; maxJudged?: number; log?: (s: string) => void },
 ): Promise<{ entries: T[]; stats: AuthorshipStats }> {
-  const stats: AuthorshipStats = { considered: entries.length, gated: 0, judged: 0, changed: 0, judge_failed: 0, unavailable: 0 };
+  const stats: AuthorshipStats = { considered: entries.length, gated: 0, judged: 0, changed: 0, judge_failed: 0, unavailable: 0, registry_skipped: 0 };
   const maxJudged = ctx.maxJudged ?? DEFAULT_MAX_JUDGED;
   const log = ctx.log ?? (() => {});
   let consecutiveFailures = 0;
   const out: T[] = [];
   for (const e of entries) {
     const url = String(e.url ?? "").trim();
+    // C1 (2026-09-17): a REGISTRY item already carries its deterministic decision (`registry`, from
+    // _shared/registryClassifier.ts) — the model gate never re-judges a classified row. This is the
+    // seam that produced two different verdicts on identical GuideStar text; closed here.
+    if ((e as { registry?: unknown }).registry) {
+      stats.registry_skipped++;
+      out.push(e);
+      continue;
+    }
     // URL PATTERN GATES THE JUDGE. Own-domain URLs are never aggregators (the host guard owns them).
     const m = url ? matchAggregatorProfileUrl(url) : null;
     if (!m || isOwnDomainUrl(url, ctx.subjectHost)) {

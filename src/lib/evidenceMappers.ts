@@ -741,6 +741,9 @@ export function mapPublicBaselineOutputToSignals(args: {
       // B1: discovery-time voice class rides into signals.voice_class; signal_band
       // stamping above is deliberately unchanged (claim-state gates depend on it).
       voice_class: asString(record.voice_class) || null,
+      // C1 (2026-09-17): a registry item stamped 'filing' by _shared/registryClassifier.ts is born filing-class
+      // (client voice, off the record surfaces); every other item is prose (the column default).
+      evidence_class: asString(record.evidence_class) === "filing" ? "filing" : undefined,
       evidence_type: "market_signal",
       claim_text: claimText,
       evidence_excerpt: claimText,
@@ -768,6 +771,7 @@ export function mapPublicBaselineOutputToSignals(args: {
       source_url: asString(record.url) || sourceUrl || null,
       signal_band: "outside",
       voice_class: asString(record.voice_class) || null,
+      evidence_class: asString(record.evidence_class) === "filing" ? "filing" : undefined, // C1 registry stamp
       evidence_type: "market_signal",
       claim_text: claimText,
       // EXCERPT LAW (2026-09-14): the document's words or absent — a bucket label is never a quote.

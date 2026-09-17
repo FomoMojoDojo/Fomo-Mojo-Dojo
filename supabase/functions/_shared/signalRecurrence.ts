@@ -24,6 +24,7 @@
 //                INCLUDING computed_at).
 
 import { recurrenceEligibleRow } from "./listingClass.ts";
+import { isFilingClassRow } from "./registryClassifier.ts";
 export { recurrenceEligibleRow };
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
@@ -297,6 +298,7 @@ async function loadEligibleSignals(
     const domain = registrableDomain(row.source_url);
     if (!domain) continue;
     if (ownDomain && domain === ownDomain) continue; // own-domain excluded
+    if (isFilingClassRow(row)) continue; // C1: filing-class registry rows are own voice through a registry — excluded like own-domain
     if (!String(row.claim_text ?? "").trim()) continue;
     signals.push({
       id: row.id,

@@ -123,6 +123,9 @@ function normalizeSignalInsert(signal: SignalDraft) {
     validation_status: signal.validation_status,
     confidence_to_use: signal.confidence_to_use,
     voice_class: signal.voice_class ?? null,
+    // C1 (2026-09-17): a filing-class draft (registry classifier) is written as such; prose is the column
+    // default and listing rows are minted by their own path (listingRegen), never through here.
+    ...(signal.evidence_class === "filing" ? { evidence_class: "filing" } : {}),
     syndicated_from_client: signal.syndicated_from_client ?? null,
     syndication_score: signal.syndication_score ?? null,
     raw_payload: signal.raw_payload ?? {},

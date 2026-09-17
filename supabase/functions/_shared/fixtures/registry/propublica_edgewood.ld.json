@@ -1,0 +1,297 @@
+{
+ "ld_json": [
+  {
+   "name": "Edgewood Center For Children And Families, fiscal year ending June 2025",
+   "@type": "Dataset",
+   "@context": [
+    "http://schema.org",
+    {
+     "csvw": "http://www.w3.org/ns/csvw#"
+    }
+   ],
+   "publisher": {
+    "name": "ProPublica",
+    "@type": "Organization"
+   },
+   "mainEntity": {
+    "@type": "csvw:Table",
+    "csvw:tableSchema": {
+     "csvw:columns": [
+      {
+       "csvw:name": "Organization name",
+       "csvw:cells": [
+        {
+         "csvw:value": "Edgewood Center For Children And Families"
+        }
+       ],
+       "csvw:datatype": "string"
+      },
+      {
+       "csvw:name": "Organization address",
+       "csvw:cells": [
+        {
+         "csvw:value": "1801 VICENTE ST"
+        }
+       ],
+       "csvw:datatype": "string"
+      },
+      {
+       "csvw:name": "Organization city",
+       "csvw:cells": [
+        {
+         "csvw:value": "San Francisco"
+        }
+       ],
+       "csvw:datatype": "string"
+      },
+      {
+       "csvw:name": "Organization state",
+       "csvw:cells": [
+        {
+         "csvw:value": "CA"
+        }
+       ],
+       "csvw:datatype": "string"
+      },
+      {
+       "csvw:name": "Organization zip code",
+       "csvw:cells": [
+        {
+         "csvw:value": "94116-2923"
+        }
+       ],
+       "csvw:datatype": "string"
+      },
+      {
+       "csvw:name": "Ruling date of organization's tax exempt status",
+       "csvw:cells": [
+        {
+         "csvw:value": "1945-01-01"
+        }
+       ],
+       "csvw:datatype": "date"
+      },
+      {
+       "csvw:name": "Organization NTEE Code",
+       "csvw:cells": [
+        {
+         "csvw:notes": "Group Home, Residential Treatment Facility - Mental Health Related",
+         "csvw:value": "F33Z"
+        }
+       ],
+       "csvw:datatype": "string"
+      },
+      {
+       "csvw:name": "Tax code designation",
+       "csvw:cells": [
+        {
+         "csvw:notes": "Organizations for any of the following purposes: religious, educational, charitable, scientific, literary, testing for public safety, fostering national or international amateur sports competition (as long as it doesn&#39;t provide athletic facilities or equipment), or the prevention of cruelty to children or animals",
+         "csvw:value": "501(c)(3)"
+        }
+       ],
+       "csvw:datatype": "string"
+      },
+      {
+       "csvw:name": "Tax deductibility of donations to organization",
+       "csvw:cells": [
+        {
+         "csvw:value": "tax deductible"
+        }
+       ],
+       "csvw:datatype": "string"
+      },
+      {
+       "csvw:name": "Total functional expenses ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "35088516"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Net income ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "-2918879"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Revenue from program services ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "5182643"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Investment income ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "1204344"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Net fundraising revenue ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "-147591"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Net inventory sales ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "0"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Net assets at end of fiscal year ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "27326581"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Bond proceeds ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "0"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Revenue from royalties ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "0"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Rental property income ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "0"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Executive Compensation ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "1137301"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Professional fundraising fees ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "98913"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Other salaries and wages ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "20777507"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "End of fiscal year for most recent extracted data",
+       "csvw:cells": [
+        {
+         "csvw:value": "2025-06 "
+        }
+       ],
+       "csvw:datatype": "gYearMonth"
+      },
+      {
+       "csvw:name": "Form type of source document",
+       "csvw:cells": [
+        {
+         "csvw:value": "Form 990"
+        }
+       ],
+       "csvw:datatype": "string"
+      },
+      {
+       "csvw:name": "Total revenue ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "32169637"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Contributions ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "25924011"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Sales of assets ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "4000"
+        }
+       ],
+       "csvw:datatype": "integer"
+      },
+      {
+       "csvw:name": "Other income ($)",
+       "csvw:cells": [
+        {
+         "csvw:value": "2230"
+        }
+       ],
+       "csvw:datatype": "integer"
+      }
+     ]
+    }
+   },
+   "description": "ProPublica's Nonprofit Explorer lets you view summaries of 2.2 million tax returns from tax-exempt organizations and see financial details such as their executive compensation and revenue and expenses. You can browse raw IRS data released since 2013 and access over 9.4 million tax filing documents going back as far as 2001."
+  },
+  {
+   "url": "https://projects.propublica.org/nonprofits/organizations/941186168/",
+   "@type": "WebPage",
+   "creator": [
+    "Andrea Suozzo",
+    "Alec Glassford",
+    "Ash Ngu",
+    "Brandon Roberts"
+   ],
+   "@context": "http://schema.org",
+   "headline": "Edgewood Center For Children And Families - Nonprofit Explorer",
+   "keywords": [
+    "newsApp:Nonprofit Explorer"
+   ],
+   "thumbnailUrl": "https://assets-d.propublica.org/v5/2023-nonprofit-explorer-og-image-990.jpeg",
+   "datePublished": "2013-05-09T12:00:00Z"
+  }
+ ]
+}
