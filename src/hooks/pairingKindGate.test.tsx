@@ -41,6 +41,7 @@ function fakeDb(seed: Record<string, Row[]>) {
       is: (c: string, v: unknown) => chain((r) => r.filter((x) => (x[c] ?? null) === v)),
       like: () => b, not: () => b, gte: () => b, order: () => b,
       limit: (n: number) => chain((r) => r.slice(0, n)),
+      range: (a: number, b: number) => chain((r) => r.slice(a, b + 1)), // 2026-09-17: paged reads (fetchAllRows)
       abortSignal: () => b,
       maybeSingle: () => Promise.resolve({ data: rows[0] ?? null, error: null }),
       then: (res: (v: { data: Row[]; error: null }) => unknown) =>

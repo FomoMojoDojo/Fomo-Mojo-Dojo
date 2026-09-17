@@ -14,6 +14,7 @@
 // claims are structurally excluded via the shared predicate.
 
 import { selectUnstatedRows } from "./unstatedSelect";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -196,6 +197,23 @@ async function loadProvableVerbatimSignalIds(companyId: string): Promise<Set<str
   );
 }
 
+/** The set of signal ids that appear in ANY accepted recurrence verdict for the company — the beat-2 "strong"
+ *  membership. Reads every row (paged, stable order by id); pure over the client so the rail can plant pages. */
+export async function loadAcceptedSignalIds(client: { from: (t: string) => any }, companyId: string): Promise<Set<string>> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const rows = await fetchAllRows<{ signal_a_id: string; signal_b_id: string }>((from, to) =>
+    client
+      .from("signal_recurrence_verdicts")
+      .select("signal_a_id, signal_b_id, verdict")
+      .eq("company_id", companyId)
+      .eq("verdict", "accepted")
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
+  const confirmed = new Set<string>();
+  for (const r of rows) { confirmed.add(r.signal_a_id); confirmed.add(r.signal_b_id); }
+  return confirmed;
+}
+
 async function loadSignals(
   companyId: string,
   runDates: Map<string, string>,
@@ -213,17 +231,10 @@ async function loadSignals(
     .is("held_at", null);
   const rows = (sigRows ?? []) as Array<SignalRow & { created_at?: string | null }>;
 
-  // R4: strong = recurrence-confirmed across independent sources.
-  const { data: recRows } = await loose()
-    .from("signal_recurrence_verdicts")
-    .select("signal_a_id, signal_b_id, verdict")
-    .eq("company_id", companyId)
-    .eq("verdict", "accepted");
-  const confirmed = new Set<string>();
-  for (const r of (recRows ?? []) as Array<{ signal_a_id: string; signal_b_id: string }>) {
-    confirmed.add(r.signal_a_id);
-    confirmed.add(r.signal_b_id);
-  }
+  // R4: strong = recurrence-confirmed across independent sources. EVERY accepted verdict, paged past
+  // max_rows (2026-09-17) — a first-page-only membership set would render a fabricated "strong" figure once a
+  // company banks more than 1,000 accepted verdicts.
+  const confirmed = await loadAcceptedSignalIds(loose(), companyId);
 
   const items: Beat2Sortable[] = rows
     .filter((r) => (r.evidence_excerpt ?? "").trim())

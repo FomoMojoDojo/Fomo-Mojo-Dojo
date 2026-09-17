@@ -38,6 +38,7 @@ function fakeSupabase(tables: Record<string, Row[]>) {
       gte: () => builder,
       order: () => builder,
       limit: (n: number) => chain((r) => r.slice(0, n)),
+      range: (a: number, b: number) => chain((r) => r.slice(a, b + 1)), // 2026-09-17: paged reads (fetchAllRows)
       abortSignal: () => builder,
       maybeSingle: () => Promise.resolve({ data: rows[0] ?? null, error: null }),
       then: (resolve: (v: { data: Row[]; error: null }) => unknown) =>
