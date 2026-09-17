@@ -70,7 +70,10 @@ import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClient
 import { detectStrategicThemes, normalizeAuthorityPhase } from "@/lib/signalAuthority";
 import { inferStrategicCenter } from "@/lib/strategicCenter";
 import { deriveStrategicTensions } from "@/lib/tensionDerivation";
-import { buildReadinessFromCompanySignals } from "@/lib/mojoScoreFromAnatomy";
+import { liveReadiness } from "@/lib/mojoScore/liveReadiness";
+import { useLiveMojoScore } from "@/views/client/workspace/useLiveMojoScore";
+import { useEvidencePresence } from "@/hooks/useEvidencePresence";
+import { NOT_ENOUGH_SIGNAL_NOTE } from "@/views/client/firstReadPreview/signedNotes";
 import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
 import type { ClaimState } from "@/lib/claimState";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
@@ -1091,13 +1094,16 @@ export default function ClientRefinePreviewWorkshopView() {
     [routes, needs, positioning, strategy, sourceSignals],
   );
 
-  const readiness = useMemo(
-    () => buildReadinessFromCompanySignals({
-      mojoScore:      activeCompany?.mojo_score,
-      evidenceStatus: activeCompany?.evidence_status,
-    }),
-    [activeCompany?.mojo_score, activeCompany?.evidence_status],
-  );
+  // Header readiness (2026-09-16): the LIVE score — the same hook and projections the home compass and
+  // the workspace Routes strip bind to — replaces the stored-score anatomy path (which minted 48/64 on a
+  // null mojo_score). Needs are the unscoped set, as on the home. Posture word via the existing
+  // score→tier mapping; the live path has no ceiling governor, so no ceiling line.
+  const { needs: unscopedNeeds } = useOdiNeeds(companyId);
+  const liveScore = useLiveMojoScore(companyId, workshopClaimsMap, routes, unscopedNeeds);
+  const readiness = useMemo(() => liveReadiness(liveScore), [liveScore]);
+  // Evidence presence — the persisted record. "none" → no score bar, no posture word; the signed note
+  // sits where the bar sat. null (unknown) renders as today.
+  const evidencePresence = useEvidencePresence(companyId);
 
   const fieldCondition = deriveFieldCondition({
     mojoScore: Number(activeCompany?.mojo_score ?? 0),
@@ -2394,14 +2400,18 @@ export default function ClientRefinePreviewWorkshopView() {
       )}
 
       {!routes.some((r) => r.level === "route") && (
-        <ScoreContextBar
-          currentScore={readiness.currentReadiness}
-          reachableScore={readiness.nearTermPotential}
-          unlockableScore={readiness.structuralUpside}
-          routesCount={routes.length}
-          confidenceLabel={readiness.postureLabel}
-          ceilingReason={readiness.ceilingReason}
-        />
+        evidencePresence === "none" ? (
+          <p className="crpv-muted" data-testid="workshop-no-evidence-note" data-evidence-presence="none">{NOT_ENOUGH_SIGNAL_NOTE}</p>
+        ) : readiness ? (
+          <ScoreContextBar
+            currentScore={readiness.currentReadiness}
+            reachableScore={readiness.nearTermPotential}
+            unlockableScore={readiness.structuralUpside}
+            routesCount={routes.length}
+            confidenceLabel={readiness.postureLabel}
+            ceilingReason={readiness.ceilingReason}
+          />
+        ) : null
       )}
 
       {/* ── Strategic State Region — hidden for hierarchy clients ── */}

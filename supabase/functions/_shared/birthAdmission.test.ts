@@ -46,13 +46,14 @@ Deno.test("research-company: absent baseline is weak, and no_public_site refuses
   assertStringIncludes(src, 'if (await readNoPublicSite(supabase, String(company_id))) {\n      return jsonResponse({ error: "no_public_site", message: NO_PUBLIC_SITE_MESSAGE }, 422);');
   assert(src.indexOf('error: "no_public_site"') < src.indexOf("acquireCompanyRunLock({"), "the refusal precedes the run lock");
 });
-Deno.test("public-baseline: no_public_site refuses with 422 by name, before the website 400", async () => {
+Deno.test("public-baseline: a no_public_site company is read BY NAME (gate B) — no 422, website not required for it", async () => {
   const src = await read("../public-baseline/index.ts");
-  const refuse = src.indexOf('return json({ error: "no_public_site", message: NO_PUBLIC_SITE_MESSAGE }, 422);');
-  const door = src.indexOf('company_name and website are required');
-  assert(refuse > 0 && door > 0 && refuse < door, "422 no_public_site precedes the 400 door");
+  assertStringIncludes(src, 'const planKind: PlanKind = noPublicSite ? "name_only" : "domain";');
+  assertStringIncludes(src, "if (!company_name || (!website && !noPublicSite)) {");
+  assert(!src.includes('error: "no_public_site"'), "the gate-0 422 by name is gone (gate B replaced it with the name-only plan)");
   assertStringIncludes(src, 'select("name,website,public_source_filters_json,no_public_site")');
 });
+
 Deno.test("run-agent-flow: skips before the guard and ledgers the skip", async () => {
   const src = await read("../run-agent-flow/index.ts");
   const skip = src.indexOf("const admission = await birthAdmission(supabase, String(companyId), {");

@@ -7,6 +7,8 @@ import { useHashAnchorScroll } from "@/hooks/useHashAnchorScroll";
 import type { ClientActionSummary } from "@/lib/clientViewModel";
 import { StateBadge } from "@/components/ui/semantic-badges";
 import { buildReadinessFromCompanySignals } from "@/lib/mojoScoreFromAnatomy";
+import { useEvidencePresence } from "@/hooks/useEvidencePresence";
+import { NOT_ENOUGH_SIGNAL_NOTE } from "@/views/client/firstReadPreview/signedNotes";
 
 function scoreState(score: number) {
   if (score >= 75) return { label: "Strong readiness", tone: "served" as const };
@@ -76,6 +78,9 @@ export default function ClientScoreView() {
     }),
     [activeCompany?.mojo_score, activeCompany?.evidence_status],
   );
+  // Evidence presence — the persisted record. "none" → the whole score section (number, label, badge,
+  // projected lifts) gives way to the signed note.
+  const evidencePresence = useEvidencePresence(activeCompany?.id);
   const mojoScore      = readiness.currentReadiness;
   const scoreTone = scoreState(mojoScore);
   const scoreCeiling = readiness.structuralUpside;
@@ -163,6 +168,10 @@ export default function ClientScoreView() {
           {!hasCompany ? (
             <div className="rounded-xl border border-[#d8e1de] bg-white p-5">
               <p className="font-sans text-[14px] text-t-secondary">Select a company to view score.</p>
+            </div>
+          ) : evidencePresence === "none" ? (
+            <div className="rounded-xl border border-[#d8e1de] bg-white p-5">
+              <p className="font-sans text-[14px] text-t-secondary" data-testid="scoreview-no-evidence-note" data-evidence-presence="none">{NOT_ENOUGH_SIGNAL_NOTE}</p>
             </div>
           ) : (
             <section id="client-what-this-means" className="scroll-mt-20 space-y-5">

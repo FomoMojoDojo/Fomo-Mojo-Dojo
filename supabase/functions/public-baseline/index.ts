@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestPublicBaselineSignals } from "../_shared/evidencePhase1.ts";
 import { mintSiteCrawlSignals, parseSitemapUrls, type SiteReadLedger } from "../../../src/lib/siteCrawl/mint.ts";
 import { buildBaselineQueryPlan, QUERY_COUNTS, QUERY_KEYS, type PlanKind } from "../_shared/baselineQueryPlan.ts";
+import { recordEvidencePresence } from "../_shared/evidencePresence.ts";
 import { normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 import { extractCitationSourceText, mergeCitationSourceText } from "../../../src/lib/firstRead/citationSource.ts";
 // FREEZE GATE — authoritative server-side frozen set (same source the delta guard uses via
@@ -3441,6 +3442,14 @@ Deno.serve(async (req) => {
     } finally {
       stopLockHeartbeat();
       await releaseCompanyRunLock(supabase, company_id);
+      // EVIDENCE PRESENCE (2026-09-16): every terminal — success, thin, search_unavailable, refusal,
+      // throw — persists the one predicate so nothing-to-report surfaces read a record, not a guess.
+      try {
+        const ep = await recordEvidencePresence(supabase, String(company_id), `public-baseline:${ledgerOutcome}`);
+        console.log("[baseline] evidence_presence", ep);
+      } catch (epErr) {
+        console.log("[baseline] evidence_presence record error", String((epErr as Error)?.message ?? epErr));
+      }
       if (ledgerRowId) {
         const { error: ledgerFinErr } = await supabase
           .from("long_runner_runs")

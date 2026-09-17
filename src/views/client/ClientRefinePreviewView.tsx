@@ -38,6 +38,7 @@ import { buildReconciliationNarrative } from "@/lib/reconciliationNarrative";
 import { phaseConfidenceEmphasis, phaseNarrativePriority, phaseSectionVisibility, sortRoutesForPhase } from "@/lib/refinePreviewPhaseOrchestration";
 import { useFlooredEngagementPhase } from "@/views/client/workspace/useFlooredEngagementPhase";
 import { useLiveMojoScore } from "@/views/client/workspace/useLiveMojoScore";
+import { useEvidencePresence } from "@/hooks/useEvidencePresence";
 import { selectRecommendedRoute } from "@/lib/routeScoring";
 import { inferStrategicCenter } from "@/lib/strategicCenter";
 import { buildStrategicCenterSurface } from "@/lib/strategicCenterSurface";
@@ -118,6 +119,7 @@ export default function ClientRefinePreviewView() {
   // Read-only derivation (single authority: src/lib/phaseReadiness.ts).
   const phaseIsSet = activeCompany?.engagement_phase_set === true;
   const { ready: diagnoseReady } = useDiagnoseReadiness(activeCompany?.id, !phaseIsSet);
+  const evidencePresence = useEvidencePresence(activeCompany?.id); // persisted record; null = unknown → render as today
   const autoReadDiagnose = !phaseIsSet && diagnoseReady;
   const { totalUnresolved: inboxCount, newCount: inboxNewCount } = useDriftInboxCount(activeCompany?.id);
 
@@ -3520,6 +3522,7 @@ export default function ClientRefinePreviewView() {
                             onGoToOpportunities={() => navigate("/legacy/opportunities")}
                             onGoToWorkshop={goToWorkshopInputs}
                             navSlot={null}
+                            evidencePresence={evidencePresence}
                           />
                         ) : null}
                       </div>

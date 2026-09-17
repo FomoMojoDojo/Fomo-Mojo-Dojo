@@ -25,6 +25,9 @@ import {
   computeUnlockableScore,
 } from "../../../src/lib/mojoScore/projections.ts";
 import type { ClaimInput, RouteInput, NeedInput } from "../../../src/lib/mojoScore/types.ts";
+import { noEvidenceYet, EVIDENCE_PRESENCE_COMPONENT } from "./evidencePresence.ts";
+
+export const MOJO_SCORE_SNAPSHOT_COMPONENT = "mojo_score_snapshot" as const;
 
 // Structural client type (matches the sibling _shared modules): the generated
 // DB types don't cover mojo_scores/companies mutations from this path, and the
@@ -60,6 +63,21 @@ export async function snapshotMojoScore(
     const claims = (claimsResult.data ?? []) as ClaimInput[];
     const routes = (routesResult.data ?? []) as RouteInput[];
     const needs  = (needsResult.data  ?? []) as NeedInput[];
+
+    // Evidence presence: a company with no evidence gets no mojo_scores row and no companies
+    // write-back — a score on zero evidence is a fabricated verdict. The skip is ledgered so the
+    // absence is a record, not a silence.
+    if (await noEvidenceYet(supabase, companyId)) {
+      const { error: skipErr } = await supabase.from("integrity_runs").insert({
+        company_id: companyId, component: MOJO_SCORE_SNAPSHOT_COMPONENT, status: "skipped_empty_input",
+        ran_at: new Date().toISOString(), examined: 0, admitted: 0,
+        excluded_by_rule: { reason: "no_evidence_yet", rule: EVIDENCE_PRESENCE_COMPONENT },
+        run_ref: "snapshotMojoScore",
+      });
+      if (skipErr) console.error("[snapshotMojoScore] skip ledger failed:", skipErr.message);
+      console.log(`[snapshotMojoScore] company: ${companyId} | skipped: no evidence yet`);
+      return;
+    }
 
     const result = computeMojoScore({ companyId, claims, routes, needs, computedAt: new Date().toISOString() });
 

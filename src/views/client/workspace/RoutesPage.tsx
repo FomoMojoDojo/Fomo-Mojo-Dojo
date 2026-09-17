@@ -45,6 +45,8 @@ import { OPERATOR_MARK } from "@/views/client/firstReadPreview/operatorStrings";
 import { WorkspaceAbsent } from "./absent";
 import { WorkspaceWorkingPage } from "./WorkspaceWorkingPage";
 import { useLiveMojoScore } from "./useLiveMojoScore";
+import { useEvidencePresence } from "@/hooks/useEvidencePresence";
+import { NOT_ENOUGH_SIGNAL_NOTE } from "@/views/client/firstReadPreview/signedNotes";
 import { WORKSPACE_STRINGS } from "./workspaceNav";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -62,6 +64,10 @@ export default function RoutesPage() {
   const { needs } = useOdiNeeds(companyId);
   const { claims: claimsMap } = useCompanyClaims(companyId);
   const score = useLiveMojoScore(companyId, claimsMap, items, needs);
+  // Evidence presence — the persisted record. "none" → the score band is not rendered; the signed note
+  // sits in its place. null (unknown) renders as today.
+  const evidencePresence = useEvidencePresence(companyId);
+  const noEvidence = evidencePresence === "none";
   const operator = useOperatorControls();
   const gated = Boolean(operator);
   const { isAdmin } = useAuth();
@@ -133,7 +139,9 @@ export default function RoutesPage() {
     <WorkspaceWorkingPage eyebrow={WORKSPACE_STRINGS.routePlan} title={WORKSPACE_STRINGS.titleRoutes} count={loading ? null : routes.length} unit={WORKSPACE_STRINGS.unitRoutes}>
       {loading ? null : (
         <>
-          {strip.length > 0 ? (
+          {noEvidence ? (
+            <p className="fr-lede" data-testid="routes-no-evidence-note" data-evidence-presence="none">{NOT_ENOUGH_SIGNAL_NOTE}</p>
+          ) : strip.length > 0 ? (
             <div className="fr-ws-scorestrip" data-testid="routes-scorestrip" data-fr-region="score-strip">
               {strip.map((c) => (
                 <div key={c.key} className="fr-ws-scorecell" data-fr-tone={c.tone}>

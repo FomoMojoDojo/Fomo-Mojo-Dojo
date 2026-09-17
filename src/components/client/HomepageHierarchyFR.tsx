@@ -20,6 +20,8 @@ import { Link } from "react-router-dom";
 import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
 import { CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE } from "@/lib/clientRefinePreview";
 import { Chip, Eyebrow, TwoWeightHeadline } from "@/views/client/firstReadPreview/primitives";
+import { NOT_ENOUGH_SIGNAL_NOTE } from "@/views/client/firstReadPreview/signedNotes";
+import type { EvidencePresenceState } from "@/hooks/useEvidencePresence";
 import { HangingItem, HorizontalScale, Spread, withStop } from "@/views/client/firstReadPreview/primitives-editorial";
 import {
   adaptTeamLanguage,
@@ -55,6 +57,10 @@ export type HomepageHierarchyFRProps = HomepageHierarchyProps & {
   railTitle?: string | null;
   railDay?: number | null;
   railState?: string | null;
+  /** The persisted evidence_presence record (useEvidencePresence). "none" suppresses every score,
+   *  projection and progress narrative on this surface (compass, SCORE meta, NEXT label, foundation
+   *  sentence + label, +n PTS) behind the signed note; "present" and null (unknown) render as today. */
+  evidencePresence?: EvidencePresenceState | null;
 };
 
 export function HomepageHierarchyFR({
@@ -76,7 +82,9 @@ export function HomepageHierarchyFR({
   memberCount = 1,
   onGoToRoutes,
   navSlot,
+  evidencePresence = null,
 }: HomepageHierarchyFRProps) {
+  const noEvidence = evidencePresence === "none";
   const reachable  = computeReachableScore(score);
   const unlockable = computeUnlockableScore(reachable, score);
   const current    = Math.round(score.total_score);
@@ -85,7 +93,8 @@ export function HomepageHierarchyFR({
   const state = dominantClaimState
     ? claimStateToHomepageState(dominantClaimState)
     : engagementPhaseToHomepageState(engagementPhase);
-  const raiser         = score.projected_raisers[0] ?? null;
+  // A projected raiser is a projection: on a no-evidence record there is none to show.
+  const raiser         = noEvidence ? null : (score.projected_raisers[0] ?? null);
   const scoreLift      = raiser?.estimated_points ?? 0;
   const nextTurnAction = nextTurnOverride ?? raiser?.action_description ?? null;
 
@@ -137,28 +146,41 @@ export function HomepageHierarchyFR({
       aside={
         <div className="fr-home-context" data-testid="home-context">
           <Eyebrow>01 · CONTEXT</Eyebrow>
-          <p className="fr-why-line fr-home-context-text">
-            {narrativeParts
-              ? <>{narrativeParts[0]}<strong className={groundedCount === 4 ? "fr-home-accent" : undefined}>{narrativeParts[1]}</strong>{narrativeParts[2]}</>
-              : narrativePlain}
-          </p>
-          <p className="fr-tag fr-mono fr-home-context-meta">DAY {dayCount ?? "—"} · SCORE {current} → {unlockable} · FOUNDATION {foundationLabel}</p>
+          {noEvidence ? (
+            <>
+              <p className="fr-why-line fr-home-context-text" data-testid="home-no-evidence-note">{NOT_ENOUGH_SIGNAL_NOTE}</p>
+              <p className="fr-tag fr-mono fr-home-context-meta">DAY {dayCount ?? "—"}</p>
+            </>
+          ) : (
+            <>
+              <p className="fr-why-line fr-home-context-text">
+                {narrativeParts
+                  ? <>{narrativeParts[0]}<strong className={groundedCount === 4 ? "fr-home-accent" : undefined}>{narrativeParts[1]}</strong>{narrativeParts[2]}</>
+                  : narrativePlain}
+              </p>
+              <p className="fr-tag fr-mono fr-home-context-meta">DAY {dayCount ?? "—"} · SCORE {current} → {unlockable} · FOUNDATION {foundationLabel}</p>
+            </>
+          )}
         </div>
       }
     >
-      <div className="fr-home" data-testid="home-fr">
-        <HorizontalScale
-          marks={[
-            { label: "CURRENT", value: current, pct: filledPct },
-            { label: "REACHABLE", value: reachable, pct: reachPct },
-            { label: "DESTINATION", value: unlockable, pct: unlockPct, tone: "accent" },
-          ]}
-          filledPct={filledPct}
-          reachablePct={reachPct}
-          unlockablePct={unlockPct}
-          badge={<>NEXT: {detour}</>}
-          badgePct={detourPct}
-        />
+      <div className="fr-home" data-testid="home-fr" data-evidence-presence={noEvidence ? "none" : undefined}>
+        {noEvidence ? (
+          <p className="fr-lede" data-testid="home-compass-note">{NOT_ENOUGH_SIGNAL_NOTE}</p>
+        ) : (
+          <HorizontalScale
+            marks={[
+              { label: "CURRENT", value: current, pct: filledPct },
+              { label: "REACHABLE", value: reachable, pct: reachPct },
+              { label: "DESTINATION", value: unlockable, pct: unlockPct, tone: "accent" },
+            ]}
+            filledPct={filledPct}
+            reachablePct={reachPct}
+            unlockablePct={unlockPct}
+            badge={<>NEXT: {detour}</>}
+            badgePct={detourPct}
+          />
+        )}
 
         {/* Hero scale = the First Read's statement headline (beat 3 "Winning aspiration"): the same
             classes — fr-display fr-h-statement fr-h-statement--wide, mt-4 under its eyebrow — on paper

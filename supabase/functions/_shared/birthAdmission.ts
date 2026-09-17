@@ -16,6 +16,8 @@ export type BirthAdmission =
 export const NO_PUBLIC_SITE_MESSAGE = "This company has no public site — nothing is crawled, searched for, or born from its name.";
 export const NO_BASELINE_MESSAGE = "No public baseline exists for this company and no uploaded evidence is present — a birth would be built from the name alone. Run the outside read or upload evidence first; nothing was written.";
 
+import { recordEvidencePresence } from "./evidencePresence.ts";
+
 type Db = { from: (t: string) => any };
 
 export async function readNoPublicSite(supabase: Db, companyId: string): Promise<boolean> {
@@ -42,4 +44,6 @@ export async function ledgerSkippedBirth(supabase: Db, companyId: string, reason
     run_kind: "birth", company_id: companyId, status: "skipped", target_count: 0, done_count: 0,
     error_text: reason, started_at: now, finished_at: now, updated_at: now,
   });
+  // EVIDENCE PRESENCE (2026-09-16): a refused birth is a terminal — persist the predicate's answer.
+  try { await recordEvidencePresence(supabase, companyId, `birth:skipped_${reason}`); } catch (e) { console.log("[birth-admission] evidence_presence record error", String((e as Error)?.message ?? e)); }
 }

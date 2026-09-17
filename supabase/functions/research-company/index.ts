@@ -33,6 +33,7 @@ import { planReconcile } from "../_shared/reconcilePublicSynthesis.ts";
 import { writeReconciledOpportunities, writeReconciledNeeds } from "../_shared/researchSynthesisWrite.ts";
 import { companyHasSpine } from "../_shared/spinePredicate.ts";
 import { NO_PUBLIC_SITE_MESSAGE, readNoPublicSite } from "../_shared/birthAdmission.ts";
+import { recordEvidencePresence } from "../_shared/evidencePresence.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import { generateMarketHypothesisForSet } from "../_shared/marketHypothesisSynthesis.ts";
 import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
@@ -8111,6 +8112,8 @@ Deno.serve(async (req) => {
     if (!dry_run) {
       await snapshotMojoScore(supabase, String(company_id));
     }
+    // EVIDENCE PRESENCE (2026-09-16): a successful birth is a terminal — the spine now exists → present.
+    try { await recordEvidencePresence(supabase, String(company_id), "research-company:completed"); } catch (epErr) { console.log("[research-company] evidence_presence record error", String((epErr as Error)?.message ?? epErr)); }
 
     return jsonResponse({
       message: "Research complete",

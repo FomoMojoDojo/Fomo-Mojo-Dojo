@@ -21,6 +21,8 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import CanonicalRouteInspectPanel, { type RouteInspectDetail as CanonicalRouteInspectDetail } from "@/components/routes/RouteInspectPanel";
 import ScoreContextBar from "@/components/score/ScoreContextBar";
 import { buildReadinessFromCompanySignals } from "@/lib/mojoScoreFromAnatomy";
+import { useEvidencePresence } from "@/hooks/useEvidencePresence";
+import { NOT_ENOUGH_SIGNAL_NOTE } from "@/views/client/firstReadPreview/signedNotes";
 import type { RouteRow } from "@/hooks/useRoutes";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
@@ -212,6 +214,8 @@ export default function ClientRefinePreviewRoutesView() {
   const readinessLabel  = readiness.postureLabel;
   const ceilingReason   = readiness.ceilingReason;
   const hasHierarchy    = routes.some((r) => r.level === "route");
+  // Evidence presence — the persisted record. "none" → no score bar; the signed note in its place.
+  const evidencePresence = useEvidencePresence(activeCompany?.id);
   const { claims: pageClaimsMap } = useCompanyClaims(activeCompany?.id);
   // DEF-2: this header rendered a literal "DAY 52" for every company on every day.
   // Same computation the workshop and home headers use, from engagement_started_at.
@@ -310,14 +314,18 @@ export default function ClientRefinePreviewRoutesView() {
       </header>
 
       {!hasHierarchy && (
-        <ScoreContextBar
-          currentScore={currentScore}
-          reachableScore={reachableScore}
-          unlockableScore={unlockableScore}
-          routesCount={routes.length}
-          confidenceLabel={readinessLabel}
-          ceilingReason={ceilingReason}
-        />
+        evidencePresence === "none" ? (
+          <p className="crpv-muted" data-testid="routesview-no-evidence-note" data-evidence-presence="none">{NOT_ENOUGH_SIGNAL_NOTE}</p>
+        ) : (
+          <ScoreContextBar
+            currentScore={currentScore}
+            reachableScore={reachableScore}
+            unlockableScore={unlockableScore}
+            routesCount={routes.length}
+            confidenceLabel={readinessLabel}
+            ceilingReason={ceilingReason}
+          />
+        )
       )}
 
       {!hasHierarchy && (

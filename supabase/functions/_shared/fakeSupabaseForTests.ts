@@ -21,7 +21,8 @@ export function fakeDb(tables: Record<string, Row[]>) {
     let payload: Row | Row[] | null = null;
     const q: Record<string, unknown> = {};
     const chain = (fn: () => void) => { fn(); return q; };
-    q.select = () => q;
+    let head = false;
+    q.select = (_cols?: string, opts?: { head?: boolean; count?: string }) => { head = Boolean(opts?.head); return q; };
     q.eq = (col: string, val: unknown) => chain(() => filters.push((r) => r[col] === val));
     q.neq = (col: string, val: unknown) => chain(() => filters.push((r) => r[col] !== val));
     q.is = (col: string, val: unknown) => chain(() => filters.push((r) => (val === null ? r[col] == null : r[col] === val)));
@@ -44,8 +45,8 @@ export function fakeDb(tables: Record<string, Row[]>) {
             rows.sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : 1) * (asc ? 1 : -1));
           }
           if (limitN != null) rows = rows.slice(0, limitN);
-          const data = single ? (rows[0] ?? null) : rows;
-          return Promise.resolve({ data, error: null }).then(resolve, reject);
+          const data = head ? null : single ? (rows[0] ?? null) : rows;
+          return Promise.resolve({ data, error: null, count: matching.length }).then(resolve, reject);
         }
         writes.push({ table, op });
         if (op === "insert" || op === "upsert") {
