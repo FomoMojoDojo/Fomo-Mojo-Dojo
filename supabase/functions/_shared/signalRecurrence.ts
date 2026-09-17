@@ -24,6 +24,7 @@
 //                INCLUDING computed_at).
 
 import { recurrenceEligibleRow } from "./listingClass.ts";
+import { fetchAllRows } from "./fetchAllRows.ts";
 import { isFilingClassRow } from "./registryClassifier.ts";
 export { recurrenceEligibleRow };
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
@@ -334,12 +335,21 @@ async function loadVerdicts(
   supabase: RecurrenceComputeArgs["supabase"],
   companyId: string,
 ): Promise<Array<{ id: string; pair_identity: string; statement_a_identity: string; statement_b_identity: string; verdict: string }>> {
-  const { data, error } = await supabase
-    .from("signal_recurrence_verdicts")
-    .select("id, pair_identity, statement_a_identity, statement_b_identity, verdict")
-    .eq("company_id", companyId);
-  if (error) throw new Error(`verdicts load failed: ${error.message}`);
-  return (data ?? []) as Array<{ id: string; pair_identity: string; statement_a_identity: string; statement_b_identity: string; verdict: string }>;
+  // EVERY banked verdict, paged past max_rows (2026-09-17): the plan's frozen lookup and the finalize's
+  // prune / union-find both read this — a first-page-only read re-judged banked pairs and pruned over a subset.
+  // Stable order by id so pages never overlap.
+  try {
+    return await fetchAllRows<{ id: string; pair_identity: string; statement_a_identity: string; statement_b_identity: string; verdict: string }>((from, to) =>
+      supabase
+        .from("signal_recurrence_verdicts")
+        .select("id, pair_identity, statement_a_identity, statement_b_identity, verdict")
+        .eq("company_id", companyId)
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
+  } catch (e) {
+    throw new Error(`verdicts load failed: ${(e as Error).message}`);
+  }
 }
 
 // ── Gate 5a derivation (single authority, shared by finalize + recompute) ───────

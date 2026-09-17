@@ -6,7 +6,7 @@ export type Row = Record<string, unknown>;
 
 // ── In-memory supabase fake ────────────────────────────────────────────────────────────
 // Supports the query surface the handler uses up to (and including) the refusal:
-// select/eq/is/in/order/limit/maybeSingle/single, and insert/update/delete/upsert which
+// select/eq/is/in/order/limit/range/maybeSingle/single, and insert/update/delete/upsert which
 // mutate `tables` and are logged in `writes`.
 export function fakeDb(tables: Record<string, Row[]>) {
   const writes: Array<{ table: string; op: string }> = [];
@@ -16,6 +16,7 @@ export function fakeDb(tables: Record<string, Row[]>) {
     const filters: Array<(r: Row) => boolean> = [];
     let orderBy: { col: string; asc: boolean } | null = null;
     let limitN: number | null = null;
+    let rangeWin: { from: number; to: number } | null = null; // .range(from, to) — inclusive, like PostgREST
     let single = false;
     let op: "select" | "insert" | "update" | "delete" | "upsert" = "select";
     let payload: Row | Row[] | null = null;
@@ -29,6 +30,7 @@ export function fakeDb(tables: Record<string, Row[]>) {
     q.in = (col: string, vals: unknown[]) => chain(() => filters.push((r) => vals.includes(r[col])));
     q.order = (col: string, o?: { ascending?: boolean }) => chain(() => { orderBy = { col, asc: o?.ascending !== false }; });
     q.limit = (n: number) => chain(() => { limitN = n; });
+    q.range = (from: number, to: number) => chain(() => { rangeWin = { from, to }; });
     q.maybeSingle = () => chain(() => { single = true; });
     q.single = () => chain(() => { single = true; });
     q.insert = (p: Row | Row[]) => chain(() => { op = "insert"; payload = p; });
@@ -44,6 +46,7 @@ export function fakeDb(tables: Record<string, Row[]>) {
             const { col, asc } = orderBy;
             rows.sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : 1) * (asc ? 1 : -1));
           }
+          if (rangeWin) rows = rows.slice(rangeWin.from, rangeWin.to + 1);
           if (limitN != null) rows = rows.slice(0, limitN);
           const data = head ? null : single ? (rows[0] ?? null) : rows;
           return Promise.resolve({ data, error: null, count: matching.length }).then(resolve, reject);
