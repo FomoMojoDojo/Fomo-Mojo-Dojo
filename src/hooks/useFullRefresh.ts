@@ -10,8 +10,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { isFrozenCompany } from "@/lib/frozenCompanies";
+import { searchUnavailableLine } from "@/views/client/workspace/workspaceNav";
 
-export type FullRefreshStage = "idle" | "baseline" | "deltas" | "done" | "done_empty" | "baseline_failed" | "deltas_failed" | "invoke_failed" | "frozen";
+export type FullRefreshStage = "idle" | "baseline" | "deltas" | "done" | "done_empty" | "baseline_failed" | "deltas_failed" | "invoke_failed" | "frozen" | "search_unavailable";
 
 // OPERATOR-SIGNED strings (2026-08-08). The chain-error is the stale-sweep's ledger text (G3).
 export const FR_BUTTON_IDLE = "Full refresh";
@@ -30,6 +31,11 @@ export const FR_EMPTY_BODY_2 = "The comparison — how that lines up against you
 // either side never silently drop the earned-empty read).
 const EMPTY_LEDGER_MATCH = /no declared side/i;
 export const FR_HALT = "Outside-signal refresh failed — deltas were not run.";
+// SRCH-1 (2026-09-17): the baseline's ledger row closes `failed` on a search OUTAGE too, carrying the refusal's
+// own text ("Search backend unavailable — … not a finding about the company"). That is a couldn't-check, not a
+// run that failed — it renders the signed outage line (workspaceNav searchUnavailableState), never FR_HALT.
+// Matched loosely on the refusal text so a wording tweak server-side never silently regresses to "failed".
+export const SEARCH_UNAVAILABLE_LEDGER_MATCH = /search backend unavailable/i;
 export const FR_DELTAS_FAILED = "Outside signals updated; delta compute failed.";
 export const FR_RESUME = "Outside signals are fresh; deltas pending — run it again to finish.";
 // The refresh never STARTED — the invoke didn't reach/run the server, so no ledger row exists.
@@ -42,6 +48,15 @@ export const FR_INVOKE_FAILED = "The refresh couldn't start — nothing was run 
 export const FR_FROZEN = "This is a frozen reference company — outside signals aren't refreshed for it.";
 
 export type FullRefreshState = { stage: FullRefreshStage; message: string; running: boolean };
+
+/** A `failed` baseline ledger row: a search outage (SRCH-1 refusal text) is the signed couldn't-check line; any other
+ *  failure is the halt. Pure — the vitest rail pins it. */
+export function fullRefreshFailedState(baseline: { error_text: string | null; finished_at?: string | null }): FullRefreshState {
+  if (SEARCH_UNAVAILABLE_LEDGER_MATCH.test(baseline.error_text ?? "")) {
+    return { stage: "search_unavailable", message: searchUnavailableLine(baseline.finished_at ?? null), running: false };
+  }
+  return { stage: "baseline_failed", message: FR_HALT, running: false };
+}
 
 const IDLE: FullRefreshState = { stage: "idle", message: "", running: false };
 const WINDOW_MS = 35 * 60_000; // covers a full baseline (~4-5min) + delta loop with headroom.
@@ -78,9 +93,9 @@ export function useFullRefresh(companyId?: string, companyName?: string, website
     parentRef.current = pid;
     const { data: rows } = await supabase
       .from("long_runner_runs")
-      .select("id, run_kind, status, error_text")
+      .select("id, run_kind, status, error_text, finished_at")
       .or(`id.eq.${pid},parent_run_id.eq.${pid}`);
-    const list = (rows ?? []) as Array<{ id: string; run_kind: string; status: string; error_text: string | null }>;
+    const list = (rows ?? []) as Array<{ id: string; run_kind: string; status: string; error_text: string | null; finished_at?: string | null }>;
     const parent = list.find((r) => r.id === pid);
     const baseline = list.find((r) => r.run_kind === "public_baseline");
     const deltas = list.find((r) => r.run_kind === "claim_deltas");
@@ -96,7 +111,7 @@ export function useFullRefresh(companyId?: string, companyName?: string, website
       return { stage: "done", message: FR_DONE, running: false };
     }
     if (deltas?.status === "failed") return { stage: "deltas_failed", message: FR_DELTAS_FAILED, running: false };
-    if (baseline?.status === "failed") return { stage: "baseline_failed", message: FR_HALT, running: false };
+    if (baseline?.status === "failed") return fullRefreshFailedState(baseline);
     if (baseline?.status === "completed") {
       // baseline done; deltas running or not yet started (pending is still a live chain).
       return { stage: "deltas", message: deltas ? FR_STEP_DELTAS : FR_RESUME, running: true };

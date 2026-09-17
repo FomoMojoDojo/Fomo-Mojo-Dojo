@@ -5,6 +5,8 @@
 // (no compass, no SCORE meta, no NEXT badge, no foundation sentence), the workshop header (no
 // ScoreContextBar, no posture word) and the workspace Routes band — the signed note in their place.
 // SELECT proves the record; a write-guard proves the reads write nothing; the company is deleted after.
+// 2026-09-17: extended — the workshop header shows the field-condition band ALONE on none, and the Inputs tab under
+// a stubbed search_unavailable run shows the signed outage line and a disabled spine control.
 import { expect, test, type Page } from "playwright/test";
 import { open } from "./helpers";
 
@@ -82,7 +84,9 @@ test("flagged throwaway → evidence_presence none recorded by the server; home 
   // the workshop header — no ScoreContextBar, no posture word; the note
   await pin(page, co.id);
   await page.goto("/preview/client-refine/workshop", { waitUntil: "networkidle", timeout: 120_000 });
-  await expect(page.getByTestId("workshop-no-evidence-note")).toHaveText(NOTE, { timeout: 60_000 });
+  // 2026-09-17: the header shows the field-condition band ALONE on none — no note line above it, no bar.
+  await expect(page.getByTestId("workshop-field-condition")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId("workshop-no-evidence-note")).toHaveCount(0);
   await expect(page.locator(".crpv-r-stat-bar")).toHaveCount(0);
   // the posture word lives only in the bar's Readiness cell (.crpv-r-stat-val over "Readiness"); the
   // field-condition band ("OUTSIDE VIEW · DIRECTIONAL READ ONLY …") is honest and stays — not asserted against.
@@ -99,6 +103,52 @@ test("flagged throwaway → evidence_presence none recorded by the server; home 
   await shot(page, "42-workspace-routes-no-evidence");
   expect(writes).toEqual([]); // the three reads wrote nothing
   await page.unroute(/\/(rest|storage|functions)\/v1\//);
+
+  // ── SRCH-1 on the Inputs tab (2026-09-17): a search OUTAGE is not a failed run and not evidence. The outage run
+  // is STUBBED at the network layer (these tables are SELECT-only under RLS; nothing is written): the latest
+  // public_baseline_runs row carries result_json.status = search_unavailable and its ledger pair is `failed`
+  // with the refusal text. From that: header band only, lineage line = the signed string, spine control disabled.
+  const nowIso = new Date().toISOString();
+  const PID = "11111111-1111-4111-8111-111111111111";
+  const outageText = "Search backend unavailable — no engine returned results for any of 6 queries (brave: too many requests). No public evidence could be checked; this is not a finding about the company.";
+  const writes2 = await guardNoWrites(page); // registered FIRST so the read-stubs below take precedence (last route wins)
+  await page.route(/\/rest\/v1\/public_baseline_runs\?/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([
+    { id: 999999, created_at: nowIso, company_id: co.id, company_name: NAME, website: null, sources_json: null, plan_kind: "name_only",
+      result_json: { status: "search_unavailable", data_quality_flag: { type: "search_unavailable" } } },
+  ]) }));
+  await page.route(/\/rest\/v1\/long_runner_runs\?/, (route) => {
+    const url = route.request().url();
+    const rows = /run_kind=eq\.full_refresh/.test(url)
+      ? [{ id: PID }]
+      : /or=/.test(url)
+        ? [
+          { id: PID, run_kind: "full_refresh", status: "failed", error_text: outageText, finished_at: nowIso },
+          { id: "22222222-2222-4222-8222-222222222222", run_kind: "public_baseline", status: "failed", error_text: outageText, finished_at: nowIso },
+        ]
+        : [];
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(rows) });
+  });
+  await pin(page, co.id);
+  await page.goto("/preview/client-refine/workshop?tab=inputs", { waitUntil: "networkidle", timeout: 120_000 });
+  await expect(page.getByTestId("workshop-field-condition")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId("workshop-no-evidence-note")).toHaveCount(0);
+  const dateLabel = new Date(nowIso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const SIGNED = `Search couldn't be reached — nothing was checked · ${dateLabel}`;
+  await expect(page.getByTestId("inputs-lineage-run")).toHaveText(SIGNED, { timeout: 60_000 });
+  await expect(page.getByTestId("inputs-lineage-run")).toHaveAttribute("data-fr-state", "search-unavailable");
+  await expect(page.getByTestId("inputs-refresh-state")).toHaveText(SIGNED, { timeout: 60_000 });
+  await expect(page.getByTestId("inputs-refresh-state")).toHaveAttribute("data-fr-stage", "search_unavailable");
+  expect(await page.locator("body").innerText()).not.toContain("Outside-signal refresh failed");
+  const spine = page.getByTestId("inputs-build-spine");
+  await expect(spine).toBeVisible({ timeout: 60_000 });
+  await expect(spine).toBeDisabled();
+  await expect(spine).toHaveAttribute("data-fr-evidence", "none");
+  await expect(spine).toHaveAttribute("title", "Run outside signals first — the spine is built from that evidence.");
+  await shot(page, "43-workshop-inputs-search-unavailable");
+  expect(writes2).toEqual([]);
+  await page.unroute(/\/(rest|storage|functions)\/v1\//);
+  await page.unroute(/\/rest\/v1\/public_baseline_runs\?/);
+  await page.unroute(/\/rest\/v1\/long_runner_runs\?/);
 
   // cleanup: delete the throwaway (integrity_runs cascades); long_runner_runs has no FK (pre-existing)
   if (process.env.NE_KEEP) return;

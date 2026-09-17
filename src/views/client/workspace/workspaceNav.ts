@@ -178,6 +178,9 @@ export const WORKSPACE_STRINGS = {
   noPublicSiteState: "No public site — the outside read runs on the name only.",
   /** Operator-facing plan tag on the signal basis when the last outside read was by name (gate B). Not a client string. */
   readByName: "read by name",
+  /** SRCH-1 (signed 2026-09-17): the latest outside read could not reach search — nothing was checked, not a
+   *  finding about the company and not a "failed" run. {date} = the run's date, same format as "Last run". */
+  searchUnavailableState: "Search couldn't be reached — nothing was checked · {date}",
   // ── Inputs (P:71-106) ──
   signalBasis: "Signal basis",
   /** Existing (HomepageHierarchyFR signal chips: "PUBLIC n" / "TEAM n" / "CUSTOMERS n"). */
@@ -293,4 +296,12 @@ export function arrowNeighbour(page: WorkspacePage, dir: "prev" | "next"): Works
   if (i < 0) return null;
   const n = siblings.length;
   return siblings[(i + (dir === "next" ? 1 : n - 1)) % n];
+}
+
+/** The SRCH-1 lineage line for a run dated `iso` — the signed template with its date filled (en-US short date,
+ *  the same format the "Last run" line uses). */
+export function searchUnavailableLine(iso: string | null | undefined): string {
+  const d = iso ? new Date(iso) : null;
+  const date = d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+  return WORKSPACE_STRINGS.searchUnavailableState.replace("{date}", date).replace(/\s·\s$/, "");
 }

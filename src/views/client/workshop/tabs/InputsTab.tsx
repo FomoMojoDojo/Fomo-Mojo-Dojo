@@ -44,6 +44,8 @@ import { toast } from "sonner";
 import OpenFirstReadControl from "../OpenFirstReadControl";
 import ReopenFirstReadControl from "../ReopenFirstReadControl";
 import ImportIntakeControl from "../ImportIntakeControl";
+import type { EvidencePresenceState } from "@/hooks/useEvidencePresence";
+import { searchUnavailableLine } from "@/views/client/workspace/workspaceNav";
 
 // ── Proposal accept payload types ────────────────────────────────────────────
 
@@ -162,6 +164,20 @@ function socialSourceLabel(sp: string): string {
 
 // Maps internal FoundationArea values to user-facing display labels.
 // "Model" is the internal key (maps to __area:strategy); users see "Strategy".
+
+// ── Evidence honesty rails (2026-09-17) — pure, exported for the vitest rails ─────────────────
+/** Spine control: present → enabled (subject to spine/website); none → blocked; null (no record) → the pre-record
+ *  rule (a baseline run exists). */
+export function spineEvidenceGate(presence: EvidencePresenceState | null, hasBaselineRun: boolean): boolean {
+  if (presence === "present") return true;
+  if (presence === "none") return false;
+  return hasBaselineRun;
+}
+/** SRCH-1: the latest public_baseline run recorded a search outage (result_json.status = search_unavailable). */
+export function latestRunIsSearchUnavailable(run: { result_json?: unknown } | null | undefined): boolean {
+  const rj = run?.result_json;
+  return !!rj && typeof rj === "object" && (rj as { status?: unknown }).status === "search_unavailable";
+}
 
 // Derives processing status purely from tags — no DB column needed.
 // __area:* tags are written by FileUploadDialog after AI routing; their presence
@@ -380,12 +396,16 @@ export default function InputsTab({
   companyHasSpine,
   birthRunning,
   onBirthSpine,
+  evidencePresence = null,
 }: {
   companyId:      string | null;
   companyName?:   string;
   companyWebsite?: string;
   /** companies.no_public_site (2026-09-16): renders the signed state line in place of the outside-signals control. */
   companyNoPublicSite?: boolean;
+  /** The persisted evidence_presence record (read once by the workshop view; 2026-09-17): gates the spine control.
+   *  null = no record / unknown → the pre-record rule. */
+  evidencePresence?: EvidencePresenceState | null;
   socialNeeds:    OdiNeedRow[];
   onAdded:        () => void;
   hasHierarchy?:  boolean;
@@ -459,6 +479,9 @@ export default function InputsTab({
   // ── Auth + public baseline ─────────────────────────────────────────────────
   const { isAdmin } = useAuth();
   const { run: baselineRun, loading: baselineLoading, refetch: refetchBaseline } = usePublicBaseline(companyId ?? undefined);
+  // SRCH-1 (2026-09-17): the latest outside read reached no search engine — nothing was checked. The lineage line
+  // says so (signed string) instead of "Last run <date>", which reads as if something ran.
+  const latestRunSearchUnavailable = latestRunIsSearchUnavailable(baselineRun);
 
   const { data: runLock } = useQuery({
     queryKey: ['company-run-lock', companyId],
@@ -881,12 +904,16 @@ export default function InputsTab({
   // Blocked states RENDER disabled with the reason rather than hiding — a hidden
   // control is the defect class this whole thread keeps rediscovering.
   const spineKnown = companyHasSpine !== null && companyHasSpine !== undefined;
-  const canBirthSpine = spineKnown && companyHasSpine === false && hasBaselineRun && hasWebsiteForBaseline && !!onBirthSpine;
+  // Evidence honesty (2026-09-17): the control keys on the persisted evidence_presence RECORD, not on a run row
+  // existing — a search_unavailable / refused run leaves a row and no evidence. present → the outside read is
+  // banked; none → blocked with the existing reason; null (no record yet) → as before (run existence).
+  const spineEvidence = spineEvidenceGate(evidencePresence, hasBaselineRun);
+  const canBirthSpine = spineKnown && companyHasSpine === false && spineEvidence && hasWebsiteForBaseline && !!onBirthSpine;
   const birthBlockedReason = !spineKnown
     ? "Checking what this company already has…"
     : companyHasSpine
       ? "This company already has a spine — cold start only ever runs once, on an empty company."
-      : !hasBaselineRun
+      : !spineEvidence
         ? "Run outside signals first — the spine is built from that evidence."
         : !hasWebsiteForBaseline
           ? "Add a website for this company first"
@@ -944,8 +971,10 @@ export default function InputsTab({
                 Outside signals
               </span>
               {baselineRun?.created_at && (
-                <span style={{ fontFamily: D.mono, fontSize: 9, color: D.inkFaint }}>
-                  Last run {new Date(baselineRun.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                <span data-testid="inputs-lineage-run" data-fr-state={latestRunSearchUnavailable ? "search-unavailable" : "last-run"} style={{ fontFamily: D.mono, fontSize: 9, color: D.inkFaint }}>
+                  {latestRunSearchUnavailable
+                    ? searchUnavailableLine(baselineRun.created_at)
+                    : `Last run ${new Date(baselineRun.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
                 </span>
               )}
               <button
@@ -966,7 +995,7 @@ export default function InputsTab({
                 {fullRefreshBusy ? "Refreshing…" : `${FR_BUTTON_IDLE} — ${companyName} →`}
               </button>
               {fullRefresh.state.message && fullRefresh.state.stage !== "done_empty" && (
-                <span style={{ fontFamily: D.mono, fontSize: 9, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : D.inkSoft }}>
+                <span data-testid="inputs-refresh-state" data-fr-stage={fullRefresh.state.stage} style={{ fontFamily: D.mono, fontSize: 9, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : D.inkSoft }}>
                   {fullRefresh.state.message}
                 </span>
               )}
@@ -1049,7 +1078,7 @@ export default function InputsTab({
                 {fullRefreshBusy ? "Refreshing…" : outsideSignalsLabel}
               </button>
               {fullRefresh.state.message && fullRefresh.state.stage !== "done_empty" && (
-                <span style={{ fontFamily: "monospace", fontSize: 10, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : D.inkSoft }}>
+                <span data-testid="inputs-refresh-state" data-fr-stage={fullRefresh.state.stage} style={{ fontFamily: "monospace", fontSize: 10, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : D.inkSoft }}>
                   {fullRefresh.state.message}
                 </span>
               )}
@@ -1059,8 +1088,10 @@ export default function InputsTab({
                 </span>
               )}
               {hasBaselineRun && baselineRun?.created_at && (
-                <span style={{ fontFamily: "monospace", fontSize: 10, color: "#aaa" }}>
-                  Last run {new Date(baselineRun.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                <span data-testid="inputs-lineage-run" data-fr-state={latestRunSearchUnavailable ? "search-unavailable" : "last-run"} style={{ fontFamily: "monospace", fontSize: 10, color: "#aaa" }}>
+                  {latestRunSearchUnavailable
+                    ? searchUnavailableLine(baselineRun.created_at)
+                    : `Last run ${new Date(baselineRun.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
                 </span>
               )}
             </div>
@@ -1078,6 +1109,8 @@ export default function InputsTab({
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
               <button
                 type="button"
+                data-testid="inputs-build-spine"
+                data-fr-evidence={evidencePresence ?? "null"}
                 disabled={!canBirthSpine || birthRunning}
                 title={birthBlockedReason}
                 onClick={() => onBirthSpine?.()}

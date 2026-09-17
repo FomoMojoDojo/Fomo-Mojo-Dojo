@@ -44,7 +44,10 @@ describe("evidence-presence suppression — source guards", () => {
     expect(s).not.toContain("buildReadinessFromCompanySignals");
     expect(s).toContain("useLiveMojoScore(companyId, workshopClaimsMap, routes, unscopedNeeds)");
     expect(s).toContain("liveReadiness(liveScore)");
-    expect(s).toMatch(/evidencePresence === "none" \? \(\s*<p[^>]*data-testid="workshop-no-evidence-note"[^>]*>\{NOT_ENOUGH_SIGNAL_NOTE\}<\/p>\s*\) : readiness \? \(\s*<ScoreContextBar/);
+    // 2026-09-17: on a none record the slot renders NOTHING — the field-condition band is the whole header state
+    // (the signed note stays on the home compass and the Routes strip; in the header it was a bare, redundant line).
+    expect(s).toMatch(/evidencePresence === "none" \? null : readiness \? \(\s*<ScoreContextBar/);
+    expect(s).not.toContain('data-testid="workshop-no-evidence-note"');
   });
   it("preview routes view: ScoreContextBar is withheld on a none record", () => {
     const s = src("src/views/client/ClientRefinePreviewRoutesView.tsx");
@@ -57,11 +60,13 @@ describe("evidence-presence suppression — source guards", () => {
     expect(s).toMatch(/evidencePresence === "none" \? \([\s\S]*?data-testid="scoreview-no-evidence-note"[^>]*>\{NOT_ENOUGH_SIGNAL_NOTE\}<\/p>[\s\S]*?\) : \(\s*<section id="client-what-this-means"/);
   });
   it("the note is the First Read's signed string, imported — never re-typed", () => {
-    for (const p of ["src/components/client/HomepageHierarchyFR.tsx", "src/views/client/workspace/RoutesPage.tsx", "src/views/client/ClientRefinePreviewWorkshopView.tsx", "src/views/client/ClientRefinePreviewRoutesView.tsx", "src/views/client/ClientScoreView.tsx"]) {
+    for (const p of ["src/components/client/HomepageHierarchyFR.tsx", "src/views/client/workspace/RoutesPage.tsx", "src/views/client/ClientRefinePreviewRoutesView.tsx", "src/views/client/ClientScoreView.tsx"]) {
       const s = src(p);
       expect(s, p).toContain('from "@/views/client/firstReadPreview/signedNotes"');
       expect(s, p).not.toContain("Not enough public signal to score yet.");
     }
     expect(src("src/views/client/firstReadPreview/acts.tsx")).toContain('import { NOT_ENOUGH_SIGNAL_NOTE } from "./signedNotes"');
+    // the workshop header no longer renders the note at all (2026-09-17)
+    expect(src("src/views/client/ClientRefinePreviewWorkshopView.tsx")).not.toContain("Not enough public signal to score yet.");
   });
 });

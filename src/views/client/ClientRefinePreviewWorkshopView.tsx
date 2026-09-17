@@ -73,7 +73,6 @@ import { deriveStrategicTensions } from "@/lib/tensionDerivation";
 import { liveReadiness } from "@/lib/mojoScore/liveReadiness";
 import { useLiveMojoScore } from "@/views/client/workspace/useLiveMojoScore";
 import { useEvidencePresence } from "@/hooks/useEvidencePresence";
-import { NOT_ENOUGH_SIGNAL_NOTE } from "@/views/client/firstReadPreview/signedNotes";
 import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
 import type { ClaimState } from "@/lib/claimState";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
@@ -2399,10 +2398,12 @@ export default function ClientRefinePreviewWorkshopView() {
         </section>
       )}
 
+      {/* Evidence presence (2026-09-16 / refined 2026-09-17): on a persisted "none" record ScoreContextBar's
+          slot renders NOTHING — the field-condition band below is the whole header state (the signed note
+          stays on the home compass and the Routes strip, where a score would otherwise sit; here it was a bare,
+          redundant line above the band). null (unknown) and present render as today. */}
       {!routes.some((r) => r.level === "route") && (
-        evidencePresence === "none" ? (
-          <p className="crpv-muted" data-testid="workshop-no-evidence-note" data-evidence-presence="none">{NOT_ENOUGH_SIGNAL_NOTE}</p>
-        ) : readiness ? (
+        evidencePresence === "none" ? null : readiness ? (
           <ScoreContextBar
             currentScore={readiness.currentReadiness}
             reachableScore={readiness.nearTermPotential}
@@ -2420,7 +2421,7 @@ export default function ClientRefinePreviewWorkshopView() {
         background: "#f2f6f4",
         borderBottom: "2px solid #d8e8e1",
       }}>
-        <p style={{
+        <p data-testid="workshop-field-condition" style={{
           fontFamily: "monospace",
           fontSize: 9,
           letterSpacing: "0.12em",
@@ -2580,6 +2581,7 @@ export default function ClientRefinePreviewWorkshopView() {
             companyName={activeCompany?.name}
             companyWebsite={activeCompany?.website ?? undefined}
             companyNoPublicSite={Boolean(activeCompany?.no_public_site)}
+            evidencePresence={evidencePresence}
             socialNeeds={needs.filter((n) => String(n.source_path).startsWith("social_"))}
             onAdded={() => setNeedsRefreshKey((k) => k + 1)}
             hasHierarchy={workshopHasHierarchy}
