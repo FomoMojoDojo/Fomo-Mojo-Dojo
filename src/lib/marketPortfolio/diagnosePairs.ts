@@ -33,7 +33,14 @@ export type DiagnoseModel = {
   fanOut: FanOutFinding[]; // N-to-1 granularity findings, both directions
 };
 
-const isInternalDeclared = (m: ResolvedMarket) => m.register === "internal_declared";
+// C2 (2026-09-17): register by ORIGIN, not channel. publicly_declared is the company's own words arriving through a
+// registry — the SAY side of say/see, framed as declared — even though it is a public register for corpus purposes
+// (registerGuard.PUBLIC_REGISTERS). Only public_inferred is the SEE side here.
+export { isDeclaredRegister } from "@/lib/registerGuard";
+import { isDeclaredRegister } from "@/lib/registerGuard";
+export const isSaySideRegister = (r: string | null | undefined) => !isPublicRegister(r) || r === "publicly_declared";
+export const isSeeSideRegister = (r: string | null | undefined) => isPublicRegister(r) && r !== "publicly_declared";
+const isInternalDeclared = (m: ResolvedMarket) => isDeclaredRegister(m.register);
 
 export function deriveDiagnoseModel(active: ResolvedMarket[], deferred: ResolvedMarket[]): DiagnoseModel {
   // Deferred is a capacity concept for Act A; for say/see we treat every
@@ -41,8 +48,8 @@ export function deriveDiagnoseModel(active: ResolvedMarket[], deferred: Resolved
   const all = [...active, ...deferred];
   const byKey = new Map(all.map((m) => [m.journey_key, m]));
 
-  const internals = all.filter((m) => !isPublicRegister(m.register));
-  const publics = all.filter((m) => isPublicRegister(m.register));
+  const internals = all.filter((m) => isSaySideRegister(m.register));
+  const publics = all.filter((m) => isSeeSideRegister(m.register));
 
   // Enumerate every internal→public twin exactly once from the internal side.
   // (A public market's own cross_register_pairs mirror these; iterating one side
@@ -51,7 +58,7 @@ export function deriveDiagnoseModel(active: ResolvedMarket[], deferred: Resolved
   for (const m of internals) {
     for (const link of m.cross_register_pairs) {
       const publicSide = byKey.get(link.journey_key);
-      if (publicSide && isPublicRegister(publicSide.register)) pairs.push({ internal: m, publicSide });
+      if (publicSide && isSeeSideRegister(publicSide.register)) pairs.push({ internal: m, publicSide });
     }
   }
 

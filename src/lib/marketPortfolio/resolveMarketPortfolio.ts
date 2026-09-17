@@ -59,7 +59,7 @@ export type MarketDefRow = {
 // no second copy. resolveMarketPortfolio consumes it; it does not define it.
 export type MarketSurface = "outside" | "diagnose";
 export { isPublicRegister } from "@/lib/registerGuard";
-import { isPublicRegister } from "@/lib/registerGuard";
+import { isOutsideAdmissibleRegister, isPublicRegister } from "@/lib/registerGuard";
 // Register CLASS bounds collapse semantics: within-class twin groups collapse
 // (the 1f-2 behavior — e.g. CB2's declared↔generated corroboration, both
 // internal-class); ACROSS the public↔internal boundary there is NO union-find
@@ -152,7 +152,7 @@ export async function resolveMarketPortfolio(input: {
   for (const d of input.defs) {
     if (NON_MARKET_KEYS.has(d.journey_key)) continue;
     if (d.retracted === true) {
-      if (surface === "diagnose" || isPublicRegister(d.market_register)) {
+      if (surface === "diagnose" || isOutsideAdmissibleRegister(d.market_register)) { // C2: outside = public_inferred only
         retracted.push({
           journey_key: d.journey_key,
           display_statement: d.declared_verbatim?.trim() || `${d.job_executor}${d.jtbd ? ` — ${d.jtbd}` : ""}`,
@@ -342,8 +342,9 @@ export async function resolveMarketPortfolio(input: {
   }
   for (const e of entries) e.resolved.cross_register_pairs.sort((a, b) => a.journey_key.localeCompare(b.journey_key));
 
-  // Per-surface filter (OOD-3): Act A ('outside') = public registers only.
-  const visible = entries.filter((e) => surface === "diagnose" || isPublicRegister(e.resolved.register));
+  // Per-surface filter (OOD-3): Act A ('outside') = public_inferred only (C2: publicly_declared is say-side —
+  // public corpus for collapse semantics above, never outside-admissible).
+  const visible = entries.filter((e) => surface === "diagnose" || isOutsideAdmissibleRegister(e.resolved.register));
 
   const active: ResolvedMarket[] = [];
   const deferred: ResolvedMarket[] = [];

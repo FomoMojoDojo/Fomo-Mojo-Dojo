@@ -3426,7 +3426,7 @@ Deno.serve(async (req) => {
         .from("claims")
         .select("id", { count: "exact", head: true })
         .eq("company_id", company_id)
-        .in("provenance", ["internal_declared", "client_attested"]);
+        .in("provenance", ["internal_declared", "client_attested", "publicly_declared"]); // C2: registry-declared counts as a declared side
       if (shouldChainDeltas({ chain, declaredClaimCount: declaredCount ?? 0 })) {
         waitUntil(triggerRefreshDeltas(
           company_id,

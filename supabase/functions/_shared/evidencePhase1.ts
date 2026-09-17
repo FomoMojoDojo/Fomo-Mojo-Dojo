@@ -232,8 +232,12 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   // minting_version 3 (the analysis re-mint, ruling 4 2026-09-14) keeps the DEFAULT segment on purpose: its
   // provenance is unchanged (analytic → analytic), so the same stable id lets the rebuild re-link the existing
   // claim to the re-minted signals instead of striking it.
+  // C2 (2026-09-17): a publicly_declared candidate (every backing signal filing-class) takes its OWN segment
+  // ('publicly_declared'), so a registry-declared claim of identical text to a public_observed one is a distinct
+  // id — the two coexist (same-text, different provenance never merge) and neither inherits the other's birth.
   const stableIds = await Promise.all(
     candidates.map((c) => {
+      if (c.claim.provenance === "publicly_declared") return deterministicSignalClaimId(companyId, c.claim.statement, "publicly_declared");
       const remint = c.sourceSignals.some((ref) => mintingVersionOf(signals[ref.signalIndex]) === 2);
       return deterministicSignalClaimId(companyId, c.claim.statement, remint ? "signal_derived:remint2" : "signal_derived");
     }),

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { FilingOriginChip } from "@/views/client/workspace/InterviewOrigin";
 import { useStrategicDelta, type ClaimDeltaRow, type DeltaSignal, type PublicTheme, type DispositionValue, type PublicVoiceDelta, type StruckClaim } from "@/hooks/useStrategicDelta";
 import { useDeltaStepRun } from "@/hooks/useDeltaStepRun";
 import OpenQuestionRecomputeControl from "@/components/strategy/OpenQuestionRecomputeControl";
@@ -763,6 +764,10 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus, 
                 </span>
               )}
               {d.declared_claim_provenance === "client_attested" && <AttestedChip date={d.declared_attested_date} />}
+              {/* C2: a registry-declared say side wears its signed frame (In your filing / In your profile) */}
+              {d.declared_claim_provenance === "publicly_declared" && (
+                <FilingOriginChip claim={{ provenance: d.declared_claim_provenance, raw_payload: d.declared_registry_origin ?? undefined, statement: d.declared_statement }} />
+              )}
             </div>
             <p style={{ fontFamily: D.sans, fontSize: 12, color: D.ink, margin: "0 0 4px", lineHeight: 1.5 }}>
               <span style={{ fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase", color: D.inkFaint }}>You declare · </span>
@@ -822,6 +827,9 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus, 
             <div key={d.id} style={{ paddingLeft: 8, borderLeft: `2px solid ${D.hairlineFaint}`, marginBottom: 8 }}>
               {d.declared_claim_provenance === "client_attested" && (
                 <div style={{ marginBottom: 4 }}><AttestedChip date={d.declared_attested_date} /></div>
+              )}
+              {d.declared_claim_provenance === "publicly_declared" && (
+                <div style={{ marginBottom: 4 }}><FilingOriginChip claim={{ provenance: d.declared_claim_provenance, raw_payload: d.declared_registry_origin ?? undefined, statement: d.declared_statement }} /></div>
               )}
               <p style={{ fontFamily: D.sans, fontSize: 11.5, color: D.inkSoft, margin: 0, lineHeight: 1.5 }}>
                 <span style={statementStatusStyle(d.declared_claim_status)}

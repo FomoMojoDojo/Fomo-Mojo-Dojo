@@ -84,7 +84,7 @@ export type DeltaClaim = {
   id: string;
   statement: string;
   topic: string | null;
-  provenance: "internal_declared" | "public_observed" | "client_attested";
+  provenance: "internal_declared" | "public_observed" | "client_attested" | "publicly_declared";
   // PROOF GUARD (ruling 2026-08-19): proof-ladder class, orthogonal to provenance.
   // 'research_required' ⇒ excluded from pairing (only research-grade evidence can
   // answer it); NULL/absent ⇒ untyped, flows exactly as before (fail-direction law).
@@ -607,8 +607,9 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       : clientVoicePublics.filter((c) => c.claim_type !== "own_words" && c.declared_eligible !== false);
     publicVoiceDeclaredIds = new Set(declared.map((c) => c.id));
   } else {
+    // C2 (2026-09-17): publicly_declared (the company's words through a registry) is a DECLARED side too.
     declared = claims.filter(
-      (c) => c.provenance === "internal_declared" || c.provenance === "client_attested",
+      (c) => c.provenance === "internal_declared" || c.provenance === "client_attested" || c.provenance === "publicly_declared",
     );
   }
   if (declared.length === 0) return { ok: false, skipped: "no_declared_claims" };

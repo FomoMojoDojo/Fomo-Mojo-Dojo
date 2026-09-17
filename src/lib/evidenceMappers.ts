@@ -1035,9 +1035,14 @@ export function mapDifyFileOutputToSignals(args: {
 // This function is the ONLY place provenance is assigned (conflation guard layer 2);
 // the DB trigger makes it immutable after birth (layer 1).
 export function deriveClaimProvenance(
-  backing: Array<{ sourceType: string; band: SignalBand; authorship?: UploadAuthorship | null }>,
+  backing: Array<{ sourceType: string; band: SignalBand; authorship?: UploadAuthorship | null; evidenceClass?: string | null }>,
 ): ClaimProvenance {
   if (backing.length === 0) return "public_observed";
+  // C2 (2026-09-17): every backing signal FILING-CLASS (registry filing data / self-reported profile sections —
+  // _shared/registryClassifier.ts) ⇒ the company's own words through a registry: publicly_declared. Deterministic
+  // from evidence_class, no model. A mixed group (filing + anything else) falls through to the rules below — but
+  // filing signals group on their own key in mapSignalsToClaimCandidates, so a mixed group never forms there.
+  if (backing.every((b) => b.evidenceClass === "filing")) return "publicly_declared";
   // Import provenance (rulings 2, 3, 11 — 2026-09-13): an uploaded document speaks as the client ONLY
   // when its authorship is 'client'. 'us' (our analysis) backs an ANALYTIC claim like mojo_analysis;
   // 'third_party' and 'uncertain' are outside-band and can only ever back public_observed.
@@ -1094,9 +1099,34 @@ export function signalMatchesAnchor(signal: { claim_text?: string | null; eviden
   return signalAnchorBasis(signal, anchors) !== null;
 }
 
+/** C2: the origin a publicly_declared claim carries — read off the signal's classifier stamp (raw_payload.registry) and
+ *  its snapshot read date; the say-side frame renders from this and nothing else. */
+export type RegistryFilingOrigin = {
+  origin: "registry_filing";
+  host: string | null;
+  page_type: string | null;
+  section: string | null;
+  fiscal_year?: string | null;
+  snapshot_read_at: string | null;
+};
+export function registryFilingOrigin(signal: { source_url?: string | null; raw_payload?: unknown }): RegistryFilingOrigin {
+  const rp = (signal.raw_payload && typeof signal.raw_payload === "object" ? signal.raw_payload : {}) as { registry?: { page_type?: unknown; section?: unknown; fiscal_year?: unknown; basis?: { fiscal_year?: unknown } }; registry_snapshot_read_at?: unknown };
+  const reg = rp.registry ?? {};
+  const host = (() => { try { return new URL(String(signal.source_url ?? "")).hostname.replace(/^www\d*\./i, "").toLowerCase(); } catch { return null; } })();
+  const fy = typeof reg.fiscal_year === "string" ? reg.fiscal_year : typeof reg.basis?.fiscal_year === "string" ? reg.basis.fiscal_year : null;
+  return {
+    origin: "registry_filing",
+    host,
+    page_type: typeof reg.page_type === "string" ? reg.page_type : null,
+    section: typeof reg.section === "string" ? reg.section : null,
+    ...(fy ? { fiscal_year: fy } : {}),
+    snapshot_read_at: typeof rp.registry_snapshot_read_at === "string" ? rp.registry_snapshot_read_at : null,
+  };
+}
+
 /** companyHost: the company's own host (www-stripped) — grants anchor basis 'host' to own-site sentences via isOwnDomainUrl. */
 export function mapSignalsToClaimCandidates(companyId: string, signals: Array<SignalDraft & { id?: string }>, anchors: string[] = [], companyHost: string | null = null): ClaimCandidate[] {
-  const grouped = new Map<string, { claim: ClaimDraft; sourceSignals: ClaimCandidate["sourceSignals"]; qualities: Array<{ band: SignalBand; directness: Directness; confidence: ConfidenceLevel; validation: ValidationStatus; sourceType: string; authorship: UploadAuthorship | null }> }>();
+  const grouped = new Map<string, { claim: ClaimDraft; sourceSignals: ClaimCandidate["sourceSignals"]; qualities: Array<{ band: SignalBand; directness: Directness; confidence: ConfidenceLevel; validation: ValidationStatus; sourceType: string; authorship: UploadAuthorship | null; evidenceClass: string | null }> }>();
 
   signals.forEach((signal, index) => {
     if (!isSignalProvenanceWorthy(signal)) return;
@@ -1135,7 +1165,10 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
     // Ruling 2 (2026-09-14): an analysis-voice signal (ours) may mint an ANALYTIC claim but never a declared
     // one — it groups on its own key, so it can neither make a group internal_declared nor join (and demote)
     // a group of the client's own material. Same statement, two provenances ⇒ two candidates.
-    const key = String(signal.voice_class ?? "") === "analysis" ? `analysis::${baseKey}` : baseKey;
+    // C2 (2026-09-17): a FILING-CLASS signal (the company's words through a registry) groups on its own key too —
+    // same statement, publicly_declared vs public_observed ⇒ two candidates that coexist and never merge.
+    const isFiling = signal.evidence_class === "filing";
+    const key = String(signal.voice_class ?? "") === "analysis" ? `analysis::${baseKey}` : isFiling ? `declared-public::${baseKey}` : baseKey;
     if (!grouped.has(key)) {
       grouped.set(key, {
         claim: {
@@ -1150,7 +1183,7 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
           confidence: "low",
           provenance: "public_observed", // finalized below from the FULL group
           revalidation_flag: signal.framing_fit === "weak" || signal.framing_fit === "unknown",
-          raw_payload: { sample_signal: signal.raw_payload, ...(isListing ? { evidence_class: "listing", listing: signal.listing } : {}), ...(anchorBasis ? { anchor_basis: anchorBasis } : {}) },
+          raw_payload: { sample_signal: signal.raw_payload, ...(isListing ? { evidence_class: "listing", listing: signal.listing } : {}), ...(anchorBasis ? { anchor_basis: anchorBasis } : {}), ...(isFiling ? registryFilingOrigin(signal) : {}) },
         },
         sourceSignals: [],
         qualities: [],
@@ -1179,13 +1212,14 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
       validation: signal.validation_status,
       sourceType: signal.source_type,
       authorship: uploadOrigin?.authorship ?? null,
+      evidenceClass: signal.evidence_class ?? null,
     });
   });
 
   return [...grouped.values()].map((entry) => {
     // INT-2: provenance from the FULL backing group (sole authority).
     entry.claim.provenance = deriveClaimProvenance(
-      entry.qualities.map((q) => ({ sourceType: q.sourceType, band: q.band, authorship: q.authorship })),
+      entry.qualities.map((q) => ({ sourceType: q.sourceType, band: q.band, authorship: q.authorship, evidenceClass: q.evidenceClass })),
     );
     const bands = new Set<SignalBand>();
     let hasContradiction = false;

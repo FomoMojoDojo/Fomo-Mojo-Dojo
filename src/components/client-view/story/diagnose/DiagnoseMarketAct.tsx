@@ -1,4 +1,5 @@
 import { useCompany } from "@/hooks/useCompany";
+import { isDeclaredRegister } from "@/lib/marketPortfolio/diagnosePairs";
 import { useMarketPortfolio } from "@/hooks/useMarketPortfolio";
 import { useReadState } from "@/hooks/useAsyncRead";
 import { ActData } from "../ActData";
@@ -121,7 +122,7 @@ function GapCard({ m, kind }: { m: ResolvedMarket; kind: "said" | "shown" }) {
   const body =
     kind === "shown"
       ? SHOWN_NOT_SAID_BODY
-      : m.register === "internal_declared"
+      : isDeclaredRegister(m.register) // C2: publicly_declared frames as declared, beside internal_declared
         ? SAID_NOT_SHOWN_DECLARED
         : SAID_NOT_SHOWN_INFERRED;
   return (

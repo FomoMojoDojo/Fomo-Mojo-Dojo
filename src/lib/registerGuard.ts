@@ -29,11 +29,20 @@
 const PUBLIC_REGISTERS = new Set(["public_inferred", "publicly_declared"]);
 
 /**
- * Is this register a PUBLIC one? The single predicate; resolveMarketPortfolio's
- * OOD-3 Act-A filter now reads through here.
+ * Is this register PUBLIC CORPUS? (the corpus / taint meaning: both public registers). Used for register-class
+ * collapse semantics and the RG-2b taint rule — NOT for outside admission (see isOutsideAdmissibleRegister).
  */
 export const isPublicRegister = (r: string | null | undefined): boolean =>
   typeof r === "string" && PUBLIC_REGISTERS.has(r);
+
+// C2 fold (operator ruling 2026-09-17): PUBLIC CORPUS ≠ OUTSIDE-ADMISSIBLE. publicly_declared is the company's
+// own words arriving through a registry — public corpus for taint purposes, but the SAY side of say/see (with
+// internal_declared), never the outside story. Only public_inferred may render on an outside/decision surface.
+const OUTSIDE_ADMISSIBLE_REGISTERS = new Set(["public_inferred"]);
+export const isOutsideAdmissibleRegister = (r: string | null | undefined): boolean =>
+  typeof r === "string" && OUTSIDE_ADMISSIBLE_REGISTERS.has(r);
+/** The say side of say/see by register: the declared registers plus internal_inferred. */
+export const isDeclaredRegister = (r: string | null | undefined): boolean => r === "internal_declared" || r === "publicly_declared";
 
 // V2-5 / V2-5c — claims carry `provenance` on a SEPARATE axis from the register
 // vocabulary above: public_observed | internal_declared | client_attested | analytic.
@@ -53,9 +62,9 @@ export const isPublicProvenance = (p: string | null | undefined): boolean =>
 export const isAnalyticProvenance = (p: string | null | undefined): boolean => p === "analytic";
 
 // Client-view surface classes and the registers each admits.
-//   outside  — Act A / the outside story: public register only (OOD-3).
+//   outside  — Act A / the outside story: public_inferred only (OOD-3; C2: publicly_declared is say-side).
 //   decision — the Decision Command Screen (deriveAudienceShort audience copy):
-//              same public-only bound; a client reads it as their outside face.
+//              same bound; a client reads it as their outside face.
 //   diagnose — the Diagnose act: ALL registers, EXPLICITLY PERMISSIVE. This
 //              surface's whole job is to show the say/see split across registers,
 //              so internal-register text is admitted BY DESIGN here and nowhere
@@ -63,8 +72,8 @@ export const isAnalyticProvenance = (p: string | null | undefined): boolean => p
 export type RegisterSurface = "outside" | "decision" | "diagnose";
 
 const SURFACE_ALLOWS: Record<RegisterSurface, (r: string | null | undefined) => boolean> = {
-  outside: isPublicRegister,
-  decision: isPublicRegister,
+  outside: isOutsideAdmissibleRegister,
+  decision: isOutsideAdmissibleRegister,
   diagnose: () => true, // permissive BY DESIGN — see note above
 };
 

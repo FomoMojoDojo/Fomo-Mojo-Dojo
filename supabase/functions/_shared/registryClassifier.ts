@@ -28,7 +28,7 @@ export type RegistryClass = "filing" | "self_reported" | "rating" | "derived_met
 export type RegistrySection =
   | "filing_data"      // ProPublica "Fiscal Year Ending …" blocks (Form 990 extracted data)
   | "org_summary"      // ProPublica "Organization summary" + page boilerplate (EIN, 501(c), NTEE)
-  | "self_reported"    // GuideStar "SOURCE: Self-reported by organization" blocks; CN Mission/Vision/Goals block
+  | "self_reported"    // GuideStar "SOURCE: Self-reported by organization" blocks + its Mission block; CN Mission/Vision/Goals block
   | "profile_meta"     // GuideStar index facts (EIN, NTEE code, ruling year, addresses, filing requirement)
   | "rating"           // CN star rating / beacons
   | "derived_metric"   // CN Financial Health / Revenue & Expenses metrics (ratios, board independence)
@@ -95,6 +95,9 @@ export const PROPUBLICA_MARKERS = {
 // The self-reported marker opens a block; the block ends at the NEXT section heading in
 // GUIDESTAR_SECTION_HEADINGS (the heading immediately BEFORE the marker names the block).
 export const GUIDESTAR_SELF_REPORTED_MARKER = "SOURCE: Self-reported by organization";
+/** C2 (ruling 2026-09-17): the profile's "Mission" heading block is the organization's own words — self_reported,
+ *  not registry meta — on GuideStar and on Charity Navigator alike (CN_SELF_REPORTED_OPEN carries the same heading). */
+export const GUIDESTAR_MISSION_HEADING = "Mission";
 export const GUIDESTAR_SECTION_HEADINGS: ReadonlyArray<string> = [
   "Summary", "Programs + Results", "Financials", "Operations", "Mission", "Ruling year", "Main address",
   "Contact Information", "Formerly known as", "EIN", "NTEE code", "IRS filing requirement", "Communication",
@@ -199,7 +202,7 @@ export function sectionSpans(pageType: RegistryPageType, cleanText: string | nul
     let cur: RegistrySection = "profile_meta";
     let buf: string[] = [];
     for (const l of ls) {
-      if (headings.has(l)) { push(cur, buf); cur = "profile_meta"; buf = [l]; continue; }
+      if (headings.has(l)) { push(cur, buf); cur = l === GUIDESTAR_MISSION_HEADING ? "self_reported" : "profile_meta"; buf = [l]; continue; }
       if (l === GUIDESTAR_SELF_REPORTED_MARKER) { cur = "self_reported"; buf.push(l); continue; }
       buf.push(l);
     }
@@ -293,7 +296,7 @@ export type RegistryClassification = {
   };
 };
 
-export const REGISTRY_CLASSIFIER_VERSION = "c1-2026-09-17";
+export const REGISTRY_CLASSIFIER_VERSION = "c2-2026-09-17"; // c1 + Mission block = self_reported
 
 /** Classify one row. Returns null when the URL is not a registry URL (the row is none of this module's business). */
 export function classifyRegistryRow(args: {

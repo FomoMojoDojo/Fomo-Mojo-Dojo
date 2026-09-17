@@ -111,12 +111,15 @@ export async function marketCandidateDecided(args: {
   //     retracted by the operator) is history and does not decide. `retracted` is a stored generated
   //     boolean (= retracted_at IS NOT NULL) that exists so this equality-only probe can ask the
   //     question without learning IS NULL.
-  if (await args.exists("odi_market_definitions", {
-    company_id: args.companyId,
-    job_executor: executor,
-    market_register: "public_inferred",
-    retracted: false,
-  })) return true;
+  // C2 (2026-09-17): a def in EITHER public register accounts for the candidate (publicly_declared is public corpus).
+  for (const market_register of ["public_inferred", "publicly_declared"]) {
+    if (await args.exists("odi_market_definitions", {
+      company_id: args.companyId,
+      job_executor: executor,
+      market_register,
+      retracted: false,
+    })) return true;
+  }
 
   const identity = await marketIdentity(executor, jtbd);
 

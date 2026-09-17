@@ -44,7 +44,10 @@ describe("Gate 8b — retracted defs excluded on every enumerator (checklist gua
     expect(read("supabase/functions/_shared/spinePredicate.ts")).toMatch(/"odi_market_definitions", companyId, \["retracted", false\]/);
   });
   it("marketCandidateDecided clause (1)", () => {
-    expect(read("supabase/functions/_shared/marketCandidateAccounted.ts")).toMatch(/market_register: "public_inferred",\s*retracted: false,/);
+    // C2 (2026-09-17): the probe loops over BOTH public registers; the Gate 8b `retracted: false` clause stays on it.
+    const m = read("supabase/functions/_shared/marketCandidateAccounted.ts");
+    expect(m).toMatch(/for \(const market_register of \["public_inferred", "publicly_declared"\]\)/);
+    expect(m).toMatch(/market_register,\s*retracted: false,/);
   });
   it("admin client-shaped lists: ClientRefinePreviewView query; WorkshopView hasRow gate + list filter", () => {
     expect(eqFilters(read("src/views/client/ClientRefinePreviewView.tsx"))).toBe(1);

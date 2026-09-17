@@ -97,17 +97,25 @@ Deno.test("GuideStar: text under 'SOURCE: Self-reported by organization' is self
   const spans = sectionSpans("profile", s.clean_text);
   const self = spans.filter((x) => x.section === "self_reported");
   assert(self.length >= 5, `six marker blocks expected on the page, got ${self.length}`);
-  assert(self.every((x) => x.text.includes(GUIDESTAR_SELF_REPORTED_MARKER)));
+  // every self_reported block carries the marker — except the Mission block (C2: heading-bound, no marker)
+  assert(self.every((x) => x.text.includes(GUIDESTAR_SELF_REPORTED_MARKER) || x.text.startsWith("Mission\n")));
   assert(self.some((x) => x.text.startsWith("Our programs")), "the heading before the marker names the block");
-  assert(spans.some((x) => x.section === "profile_meta" && x.text.startsWith("Mission")), "the unmarked Mission line is profile_meta (fail closed — no marker)");
+  // C2: the Mission heading block is the organization's own words → self_reported (ruling 2026-09-17)
+  assert(spans.some((x) => x.section === "self_reported" && x.text.startsWith("Mission\nWe provide the people, place, and path")), "the Mission block is self_reported");
+  assert(!spans.some((x) => x.section === "profile_meta" && x.text.startsWith("Mission")));
+  const mission = classifyRegistryRow({ url: GS, text: "Mission: we provide the people, place, and path for exceptional youth mental healthcare.", snapshot: s })!;
+  assertEquals([mission.section, mission.class], ["self_reported", "self_reported"]);
   for (const k of ["gs_self_e756386d", "gs_self_8ed60855", "gs_self_34405b08", "gs_self_a94f1427"] as const) {
     const c = classifyRegistryRow({ url: GS, text: ROWS[k], snapshot: s })!;
     assertEquals([c.section, c.class, c.basis.mixed], ["self_reported", "self_reported", false], k);
     assertEquals(registryStamp(c), { evidence_class: "filing", voice_class: "client_voice" });
   }
+  // ba7ee838 (EIN / IRS-category tokens beside the CSU sentence): self_reported 14 vs profile_meta 6 — under C1 the
+  // runner-up scored 7 (the Mission line's "mental health" tokens sat in profile_meta) and the row was flagged mixed;
+  // with the Mission block self_reported (C2) it is 6, under the half-of-winner threshold. Class unchanged either way.
   const mixed = classifyRegistryRow({ url: GS, text: ROWS.gs_mixed_ba7ee838, snapshot: s })!;
-  assertEquals([mixed.section, mixed.class, mixed.basis.mixed], ["self_reported", "self_reported", true]);
-  assertEquals(mixed.basis.scores[1].section, "profile_meta");
+  assertEquals([mixed.section, mixed.class, mixed.basis.mixed], ["self_reported", "self_reported", false]);
+  assertEquals(mixed.basis.scores.map((x) => `${x.section}:${x.score}`), ["self_reported:14", "profile_meta:6"]);
 });
 
 // ── Charity Navigator ───────────────────────────────────────────────────────────────────────────

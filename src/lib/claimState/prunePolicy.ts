@@ -59,7 +59,9 @@ export function selectPruneVictims(
 ): string[] {
   return rows
     .filter((r) =>
-      r.provenance === "public_observed" &&
+      // C2 (2026-09-17): publicly_declared claims are ALSO signal-derived from public (filing-class) signals — the
+      // rebuild re-mints them, so it may prune them. Declared / attested / analytic stay out of reach.
+      (r.provenance === "public_observed" || r.provenance === "publicly_declared") &&
       // OWN-WORDS CARVE-OUT (R1, 2026-08-26): own_words claims are provenance='public_observed'
       // but are NOT signal-derived — mapSignalsToClaimCandidates never emits them (they are written
       // by extract-own-words from own_words_page_snapshots). So they are NEVER in candidateIds and a

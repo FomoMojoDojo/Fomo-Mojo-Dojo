@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { sourceHost } from "@/lib/sourceHost";
+import { registryOriginOf, type RegistryFilingOriginView } from "@/views/client/workspace/InterviewOrigin";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -82,7 +83,9 @@ export type ClaimDeltaRow = {
   // attested date is the attesting First Read session's started_at (raw_payload
   // session_id -> session), or null when unresolvable (honest degrade: chip
   // without a date rather than a wrong one).
-  declared_claim_provenance: "internal_declared" | "public_observed" | "client_attested" | "analytic" | null;
+  declared_claim_provenance: "internal_declared" | "public_observed" | "client_attested" | "analytic" | "publicly_declared" | null;
+  /** C2: the registry origin a publicly_declared declared side carries (raw_payload.origin = registry_filing). */
+  declared_registry_origin?: RegistryFilingOriginView | null;
   declared_attested_date: string | null;
 };
 
@@ -92,7 +95,7 @@ export type ClaimDeltaRow = {
 export type StruckClaim = {
   id: string;
   statement: string;
-  provenance: "internal_declared" | "public_observed" | "client_attested" | "analytic";
+  provenance: "internal_declared" | "public_observed" | "client_attested" | "analytic" | "publicly_declared";
   struck_reason: string | null;
   struck_at: string | null;
   struck_by: string | null;
@@ -271,6 +274,8 @@ export function useStrategicDelta(companyId?: string) {
       const claimStatementById = new Map<string, string>(claimRows.map((c) => [c.id, c.statement]));
       const claimStatusById = new Map<string, ClaimRow["status"]>(claimRows.map((c) => [c.id, c.status]));
       const claimProvenanceById = new Map<string, ClaimRow["provenance"]>(claimRows.map((c) => [c.id, c.provenance]));
+      // C2: the registry origin of a publicly_declared claim (its say-side frame); null for every other provenance.
+      const claimRegistryOriginById = new Map<string, RegistryFilingOriginView | null>(claimRows.map((c) => [c.id, c.provenance === "publicly_declared" ? registryOriginOf(c.raw_payload) : null]));
 
       // FR-D3: resolve the attesting First Read date for client_attested claims.
       // raw_payload.session_id -> first_read_sessions.started_at. One extra read,
@@ -332,6 +337,7 @@ export function useStrategicDelta(companyId?: string) {
         public_claim_status: r.public_claim_id ? claimStatusById.get(r.public_claim_id) ?? null : null,
         declared_claim_provenance: r.declared_claim_id ? claimProvenanceById.get(r.declared_claim_id) ?? null : null,
         declared_attested_date: r.declared_claim_id ? claimAttestedDateById.get(r.declared_claim_id) ?? null : null,
+        declared_registry_origin: r.declared_claim_id ? claimRegistryOriginById.get(r.declared_claim_id) ?? null : null,
       }));
 
       const toDeltaSignal = (r: {
@@ -459,7 +465,7 @@ export function useStrategicDelta(companyId?: string) {
       // of a full run on this corpus.
       const proofGuardHeldOut = claimRows.filter(
         (c) => c.status !== "struck" &&
-          (c.provenance === "internal_declared" || c.provenance === "client_attested") &&
+          (c.provenance === "internal_declared" || c.provenance === "client_attested" || c.provenance === "publicly_declared") &&
           c.proof_category === "research_required",
       ).length;
 

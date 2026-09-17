@@ -140,7 +140,9 @@ export type SignalDraft = Omit<Signal, "id" | "created_at" | "updated_at">;
 // V2-5c — 'analytic': a claim born entirely from analysis (mojo_analysis). Neither the
 // client's declared words nor the outside record; renders NOWHERE client-facing by
 // default (workshop/operator territory only). See deriveClaimProvenance + isPublicProvenance.
-export type ClaimProvenance = "public_observed" | "internal_declared" | "client_attested" | "analytic";
+/** publicly_declared (C2, 2026-09-17): the company's own words arriving through a registry (filing-class signals) —
+ *  say side, declared for say-vs-see, never a record surface. */
+export type ClaimProvenance = "public_observed" | "internal_declared" | "client_attested" | "analytic" | "publicly_declared";
 
 export type Claim = {
   id: string;

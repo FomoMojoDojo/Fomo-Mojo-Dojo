@@ -1140,21 +1140,14 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
     // prove which findings a given option drew on). No corpus at all → null,
     // which fails loud at the NOT-NULL insert (the no_evidence guard makes this
     // unreachable in practice — a NULL here is a code bug, surfaced not hidden).
-    const { data: nonPublicFinding } = await args.supabase
+    // C2 (2026-09-17): publicly_declared is PUBLIC corpus (the company's words through a registry) — it never
+    // taints a run internal. A corpus that is entirely publicly_declared earns publicly_declared; a public mix
+    // (public_inferred + publicly_declared) stays public_inferred; any internal / NULL finding taints as before.
+    const { data: registerRows } = await args.supabase
       .from("findings")
-      .select("id")
-      .eq("company_id", args.companyId)
-      .or("register.is.null,register.neq.public_inferred")
-      .limit(1);
-    const { data: anyFinding } = await args.supabase
-      .from("findings")
-      .select("id")
-      .eq("company_id", args.companyId)
-      .limit(1);
-    const corpusRegister: string | null =
-      (anyFinding?.length ?? 0) === 0 ? null
-        : (nonPublicFinding?.length ?? 0) > 0 ? "internal_inferred"
-          : "public_inferred";
+      .select("register")
+      .eq("company_id", args.companyId);
+    const corpusRegister = corpusRegisterFromFindings((registerRows ?? []) as Array<{ register: string | null }>);
 
     for (const cand of args.candidates) {
       totals.considered++;
@@ -1343,4 +1336,13 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
     },
     results: rows,
   };
+}
+
+/** RG-2b corpus register, C2 rule: null corpus → null; any internal / NULL finding → internal_inferred; all
+ *  publicly_declared → publicly_declared; otherwise (public_inferred, possibly mixed with publicly_declared) → public_inferred. */
+export function corpusRegisterFromFindings(rows: Array<{ register: string | null }>): string | null {
+  if (rows.length === 0) return null;
+  const isPublic = (r: string | null) => r === "public_inferred" || r === "publicly_declared";
+  if (rows.some((r) => !isPublic(r.register))) return "internal_inferred";
+  return rows.every((r) => r.register === "publicly_declared") ? "publicly_declared" : "public_inferred";
 }

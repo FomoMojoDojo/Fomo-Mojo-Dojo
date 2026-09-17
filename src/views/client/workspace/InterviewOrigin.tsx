@@ -14,8 +14,16 @@
 // short month + day, formatted in UTC so an interview date never shifts by timezone.
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 
+//   filing (C2, signed 2026-09-17) → the company's own words arriving through a REGISTRY (a publicly_declared claim):
+//                          "In your filing · {host} · {fiscal year}"   when raw_payload.registry page_type = filing_data
+//                          "In your profile · {host} · {date}"         when the section is self_reported (date = the
+//                          snapshot read date, same UTC formatter). Expand shows the statement's excerpt attributed to
+//                          the host. No value band, no verdict word. The fiscal year comes from the classifier basis
+//                          when it carries one; without it the filing frame renders without the trailing segment
+//                          rather than inventing a year.
+
 export type InterviewOrigin = {
-  kind: "client_attested" | "market_interviewed";
+  kind: "client_attested" | "market_interviewed" | "filing";
   chip: string;
   /** Who the quote is attributed to: the person (stakeholder) or the market label (market participant). */
   attribution: string;
@@ -69,6 +77,57 @@ export function InterviewOriginChip({ need, marketLabel }: { need: OdiNeedRow; m
       {quote ? (
         <blockquote className="fr-ws-origin-quote" data-testid="need-origin-quote">
           <p>{quote}</p>
+          {origin.attribution ? <cite className="fr-mono">{origin.attribution}</cite> : null}
+        </blockquote>
+      ) : null}
+    </details>
+  );
+}
+
+// ── C2: the registry-declared frame (publicly_declared claims) ────────────────────────────────────
+export const FILING_FRAME_HEAD = "In your filing" as const;
+export const PROFILE_FRAME_HEAD = "In your profile" as const;
+
+export type RegistryFilingOriginView = {
+  origin?: string | null;
+  host?: string | null;
+  page_type?: string | null;
+  section?: string | null;
+  fiscal_year?: string | null;
+  snapshot_read_at?: string | null;
+};
+
+/** Read the registry origin off a claim's raw_payload (written at mint by evidenceMappers.registryFilingOrigin). */
+export function registryOriginOf(rawPayload: unknown): RegistryFilingOriginView | null {
+  const rp = rawPayload && typeof rawPayload === "object" ? (rawPayload as Record<string, unknown>) : null;
+  if (!rp || rp.origin !== "registry_filing") return null;
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  return { origin: "registry_filing", host: str(rp.host), page_type: str(rp.page_type), section: str(rp.section), fiscal_year: str(rp.fiscal_year), snapshot_read_at: str(rp.snapshot_read_at) };
+}
+
+/** The frame for a publicly_declared claim; null for any other provenance (the caller renders what it rendered before). */
+export function filingOrigin(
+  claim: { provenance?: string | null; raw_payload?: unknown; statement?: string | null } | null | undefined,
+): InterviewOrigin | null {
+  if (claim?.provenance !== "publicly_declared") return null;
+  const o = registryOriginOf(claim.raw_payload) ?? {};
+  const host = o.host ?? "";
+  const withHost = (head: string) => (host ? `${head} · ${host}` : head);
+  const chip = o.page_type === "filing_data"
+    ? (o.fiscal_year ? `${withHost(FILING_FRAME_HEAD)} · ${o.fiscal_year}` : withHost(FILING_FRAME_HEAD))
+    : (() => { const d = formatInterviewDate(o.snapshot_read_at); return d ? `${withHost(PROFILE_FRAME_HEAD)} · ${d}` : withHost(PROFILE_FRAME_HEAD); })();
+  return { kind: "filing", chip, attribution: host, verbatim: String(claim.statement ?? "").trim() };
+}
+
+export function FilingOriginChip({ claim }: { claim: { provenance?: string | null; raw_payload?: unknown; statement?: string | null } }) {
+  const origin = filingOrigin(claim);
+  if (!origin) return null;
+  return (
+    <details className="fr-ws-origin" data-fr-origin={origin.kind} data-testid="claim-origin">
+      <summary className="fr-ws-origin-chip fr-mono" data-testid="claim-origin-chip">{origin.chip}</summary>
+      {origin.verbatim ? (
+        <blockquote className="fr-ws-origin-quote" data-testid="claim-origin-quote">
+          <p>{origin.verbatim}</p>
           {origin.attribution ? <cite className="fr-mono">{origin.attribution}</cite> : null}
         </blockquote>
       ) : null}
