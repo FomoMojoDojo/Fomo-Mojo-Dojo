@@ -70,6 +70,30 @@ export function isProductDescription(quote: string): boolean {
   return false;
 }
 
+// ── Company channels only (operator ruling 1, signed 2026-09-18) ─────────────
+/** A personal LinkedIn profile (linkedin.com/in/…) is a person's page, not a company channel: what is posted or
+ *  reposted there is the person's or a third party's words. Own words never mint from it (FomoMojoDojo's four
+ *  Brand.ai rows, Lumio's three Harvey rows). Excluded from the corpus under reason PERSONAL_PROFILE_REASON. */
+export const PERSONAL_PROFILE_REASON = "personal_profile" as const;
+export function isPersonalProfileUrl(url: string | null | undefined): boolean {
+  try {
+    const u = new URL(String(url ?? "").trim());
+    const host = u.hostname.toLowerCase();
+    return (host === "linkedin.com" || host.endsWith(".linkedin.com")) && /^\/in\//i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+// ── Punctuation-blind dedup key (operator ruling 4, signed 2026-09-18) ───────
+/** Two quotes that differ only by trailing sentence punctuation are one quote ("…system" / "…system."). The
+ *  key is normalizeForHash with trailing . ! ? … stripped; normalizeForHash and content_identity are unchanged —
+ *  this key is compared, never stored as the identity. Used at the page site (assembleOwnWords) and the
+ *  cross-page / stored-claims site (extract-own-words writeFromFrozen). */
+export function ownWordsDedupKey(quote: string): string {
+  return normalizeForHash(quote).replace(/[.!?\u2026]+$/u, "").trim();
+}
+
 // ── DETERMINISTIC verbatim guard ─────────────────────────────────────────────
 /** normalizeForHash(quote) must be a substring of normalizeForHash(cleanText). Offset-
  *  independent (robust to a model miscounting offsets); the single hash authority normalizes
@@ -181,16 +205,23 @@ export async function assembleOwnWords(
     if (!v) { rejections.push({ quote: c.quote, reason: "no_verdict" }); continue; }
     if (!v.selfAssertion) { rejections.push({ quote: c.quote, reason: "not_self_assertion" }); continue; }
     if (!v.keep) { rejections.push({ quote: c.quote, reason: v.reason || "judge_reject" }); continue; }
-    if (!verbatimProvable(c.quote, cleanText)) { rejections.push({ quote: c.quote, reason: "not_verbatim_provable" }); continue; }
+    // Ruling 2 (2026-09-18): fidelity is the deterministic check's verdict, never the judge's grade — the judge's
+    // grade survives only as judge_fidelity on the candidate row. (A non-provable quote is rejected above the
+    // fidelity decision, so a survivor's fidelity is verbatim by construction.)
+    const provable = verbatimProvable(c.quote, cleanText);
+    if (!provable) { rejections.push({ quote: c.quote, reason: "not_verbatim_provable" }); continue; }
+    const fidelity: "verbatim" | "paraphrased" = provable ? "verbatim" : "paraphrased";
     const id = await contentIdentity(c.quote);
-    if (seen.has(id)) { rejections.push({ quote: c.quote, reason: "duplicate" }); continue; }
-    seen.add(id);
+    // Ruling 4: duplicates are decided punctuation-blind (ownWordsDedupKey); the identity stays as it was.
+    const key = ownWordsDedupKey(c.quote);
+    if (seen.has(key)) { rejections.push({ quote: c.quote, reason: "duplicate" }); continue; }
+    seen.add(key);
     // ADMISSION CRITERION: admit/decline by kind, never rewrite. FAIL-TOWARD-ELIGIBLE on a missing kind.
     const kind = v.kind ?? null;
     const kindMissing = kind === null;
     if (kindMissing) console.warn(`[own-words] judge returned no valid kind for "${c.quote.slice(0, 60)}" — kept declared-eligible (fail-toward-eligible)`);
     survivors.push({
-      quote: c.quote, offset: c.offset, length: c.length, fidelity: v.fidelity, contentIdentity: id,
+      quote: c.quote, offset: c.offset, length: c.length, fidelity, contentIdentity: id,
       kind, kindReason: v.kindReason ?? null, declaredEligible: declaredEligibleFor(kind), kindMissing,
     });
   }

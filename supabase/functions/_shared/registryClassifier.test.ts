@@ -266,7 +266,8 @@ Deno.test("source guard: the classifier module calls no model and no network; th
   const ow = await read("../extract-own-words/index.ts");
   // C3b (2026-09-18): the blanket exclusion became the partition — site pages untouched, a registry URL admitted only by
   // the self_reported-span rule (registryOwnWords.ts); everything else on a registry host still fails closed.
-  assertStringIncludes(ow, "partitionOwnWordsCorpus(sigsAll.filter((s) => !isRegistryUrl(s.source_url) || !s.superseded_at), isRegistryUrl)");
+  // ruling 1 (2026-09-18): personal profiles leave the corpus BEFORE the registry partition; the registry rule is unchanged
+  assertStringIncludes(ow, "sigsAll.filter((s) => !isPersonalProfileUrl(s.source_url) && (!isRegistryUrl(s.source_url) || !s.superseded_at))");
   const prov = await read("./claimProvenance.ts");
   assertStringIncludes(prov, 'if (String(entry?.evidence_class || "") === "filing") return true;');
   const phase1 = await read("./evidencePhase1.ts");

@@ -25,7 +25,7 @@ import { recomputeValidationStateQuietly } from "../_shared/validationState.ts";
 import { fetchAndExtract } from "../_shared/fetchAndExtract.ts";
 import { sha256Hex, contentIdentity } from "../_shared/contentIdentity.ts";
 import {
-  assembleOwnWords, assertPublicClientVoice, pickPageSignals,
+  assembleOwnWords, assertPublicClientVoice, isPersonalProfileUrl, ownWordsDedupKey, PERSONAL_PROFILE_REASON, pickPageSignals,
   type Candidate, type JudgeVerdict, type SignalGate,
 } from "../_shared/ownWordsExtract.ts";
 import { JUDGE_SYSTEM, callModel, parseJudgeVerdicts, takeLastJudgeUsage } from "../_shared/ownWordsJudge.ts";
@@ -155,24 +155,29 @@ async function writeFromFrozen(supabase: any, company_id: string, nowStr: string
     perPage.push({ url: unit, candidates: list.length, survivors: admitted, ...(origin ? { registry_span: { start: origin.start, end: origin.end, signal_ids: origin.signal_ids } } : {}) });
   }
 
-  // Cross-page dedup by content identity (write-time collapse of repeats).
+  // Cross-page dedup (write-time collapse of repeats) — ruling 4 (2026-09-18): punctuation-blind
+  // (ownWordsDedupKey), so "…system" and "…system." collapse to one; content_identity is unchanged.
   const seen = new Set<string>();
-  const finalSurv = survivorsAll.filter((s) => (seen.has(s.contentIdentity) ? false : (seen.add(s.contentIdentity), true)));
+  const finalSurv = survivorsAll.filter((s) => { const k = ownWordsDedupKey(s.quote); return seen.has(k) ? false : (seen.add(k), true); });
 
-  // Preserve-on-upsert: existing own_words claims keep birth provenance.
+  // Preserve-on-upsert: existing own_words claims keep birth provenance. Matched by content identity AND by
+  // the punctuation-blind key of the stored statement (ruling 4) — a stored "…system." claim preserves a new
+  // "…system" survivor instead of minting a twin.
   const { data: existing } = await supabase.from("claims")
-    .select("id, raw_payload").eq("company_id", company_id).eq("claim_type", "own_words");
+    .select("id, statement, raw_payload").eq("company_id", company_id).eq("claim_type", "own_words");
   const existingByCI = new Map<string, string>();
-  for (const e of (existing ?? []) as Array<{ id: string; raw_payload?: { content_identity?: string } }>) {
+  const existingByKey = new Map<string, string>();
+  for (const e of (existing ?? []) as Array<{ id: string; statement?: string | null; raw_payload?: { content_identity?: string } }>) {
     const ci = e.raw_payload?.content_identity;
     if (ci) existingByCI.set(ci, e.id);
+    if (e.statement) existingByKey.set(ownWordsDedupKey(e.statement), e.id);
   }
 
   let inserted = 0, preserved = 0, refs = 0, registry_inserted = 0;
   const retired: RetiredTwin[] = [];
   const mintedRegistry: Array<{ claim_id: string; quote: string; origin: RegistryOrigin }> = [];
   for (const s of finalSurv) {
-    if (existingByCI.has(s.contentIdentity)) { preserved++; continue; }
+    if (existingByCI.has(s.contentIdentity) || existingByKey.has(ownWordsDedupKey(s.quote))) { preserved++; continue; }
     const ro = s.registry_origin;
     const { data: ins, error: cErr } = await supabase.from("claims").insert({
       company_id, statement: s.quote, claim_type: "own_words", provenance: "public_observed",
@@ -276,9 +281,15 @@ Deno.serve(async (req) => {
     // registry page (outside_page_snapshots), never from a fetch and never through own_words_page_snapshots.
     // (site pages: every client_voice signal exactly as before; registry entries: live rows only — a superseded
     // registry row neither names a snapshot nor receives a ref)
-    const corpus = partitionOwnWordsCorpus(sigsAll.filter((s) => !isRegistryUrl(s.source_url) || !s.superseded_at), isRegistryUrl);
+    // Ruling 1 (2026-09-18): a personal LinkedIn profile is not a company channel — out of the corpus, listed.
+    const personalUrls = [...new Set(sigsAll.filter((s) => isPersonalProfileUrl(s.source_url)).map((s) => String(s.source_url)))];
+    const corpus = partitionOwnWordsCorpus(
+      sigsAll.filter((s) => !isPersonalProfileUrl(s.source_url) && (!isRegistryUrl(s.source_url) || !s.superseded_at)),
+      isRegistryUrl,
+    );
+    for (const url of personalUrls) corpus.excluded.push({ url, reason: PERSONAL_PROFILE_REASON });
     const sigs = corpus.site;
-    if (corpus.excluded.length) console.log(`[own-words] registry URLs excluded from corpus: ${corpus.excluded.map((e) => `${e.url} (${e.reason})`).join(", ")}`);
+    if (corpus.excluded.length) console.log(`[own-words] URLs excluded from corpus: ${corpus.excluded.map((e) => `${e.url} (${e.reason})`).join(", ")}`);
     if (corpus.registry.length) console.log(`[own-words] registry URLs admitted (self_reported spans): ${corpus.registry.map((e) => `${e.url} ×${e.spans.length}`).join(", ")}`);
 
     // Privacy gate (Option B) — refuse if ANY selected signal is not public client-voice.

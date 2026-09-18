@@ -52,7 +52,7 @@ async function world() {
       { id: "F-other-run", company_id: CO, origin_run_id: 11, body: "an older run's finding", status: "open" },
     ],
     claim_deltas: [{ company_id: CO, pairing_kind: "public_vs_public", delta_type: "publicly_silent", content_identity: "delta-live", declared_claim_id: "c1" }],
-    claims: [{ id: "c1", statement: DECLARED }],
+    claims: [{ id: "c1", statement: DECLARED, status: "active" }], // ruling 7 (2026-09-18): an anchor needs an ACTIVE claim
     claim_signal_refs: [{ claim_id: "c1", signal_id: "s1" }],
     signals: [{ id: "s1", source_type: "public_baseline_run" }],
     first_read_open_questions: [
@@ -85,7 +85,8 @@ Deno.test("finalize: the resolved finding's question and the gone-delta question
 
 Deno.test("source guard: the handler loads anchors through the shared loader and finalizes with orphanQuestionIds; no second anchor loader exists", async () => {
   const src = await read("../generate-open-questions/index.ts");
-  assert(src.includes("const anchors = await loadQuestionAnchors(supabase, company_id, runId);"));
+  // ruling 7 (2026-09-18): the handler reads the detailed loader (anchors + named exclusions) and audits the finalize
+  assert(src.includes("const { anchors, excluded: anchorExclusions } = await loadQuestionAnchorsDetailed(supabase, company_id, runId);"));
   assert(src.includes("const orphanIds = orphanQuestionIds((liveRows ?? []) as Array<{ id: string; anchor_identity: string | null }>, anchors);"));
   assert(!src.includes("async function loadAnchors("), "the local loader is gone");
   const mod = await read("./openQuestionAnchors.ts");

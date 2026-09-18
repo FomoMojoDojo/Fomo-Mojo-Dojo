@@ -175,7 +175,8 @@ Deno.test("source guard: the extractor mints registry units from the stored span
   assert(unit.includes("registry_origin: unit.registry_origin,"), "the frozen candidate names its span");
   assert(unit.includes("assembleOwnWords(candidates, verdicts, text, unit.source_title)"), "rails run over the unit text (the span)");
   // corpus: the C1 exclusion is now the partition (site untouched; registry admitted by the rule)
-  assert(src.includes("partitionOwnWordsCorpus(sigsAll.filter((s) => !isRegistryUrl(s.source_url) || !s.superseded_at), isRegistryUrl)"));
+  // ruling 1 (2026-09-18): personal profiles leave the corpus BEFORE the registry partition; the registry rule is unchanged
+  assert(src.includes("sigsAll.filter((s) => !isPersonalProfileUrl(s.source_url) && (!isRegistryUrl(s.source_url) || !s.superseded_at))"));
   assert(!src.includes("excludeRegistryFromOwnWords("), "the blanket exclusion is replaced by the rule");
   // write: span re-verified, mismatch marks the candidate and skips; refs to the span's signals; twins retire
   const w = src.slice(src.indexOf("async function writeFromFrozen"), src.indexOf("Deno.serve("));
