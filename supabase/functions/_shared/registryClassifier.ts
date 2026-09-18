@@ -124,9 +124,17 @@ export type RegistrySnapshot = {
   clean_text?: string | null;
   /** outside_page_snapshots.structured — { ld_json?: unknown[] } */
   structured?: unknown;
+  /** outside_page_snapshots.text_sha256 — the snapshot ROW's identity (sha256 of normalizeForHash(clean_text), NOT of the
+   *  raw bytes). The span table is keyed by it; offsets are into that row's raw clean_text. */
+  text_sha256?: string | null;
 };
 
-export type SectionSpan = { section: RegistrySection; class: RegistryClass; text: string };
+/** A labelled section of the stored page. `text` is the trimmed-lines join the scorers read; `start`/`end` are
+ *  offsets into the raw clean_text such that clean_text.slice(start, end) === text when the page is byte-exact
+ *  (C3a: verified on write; a drifting page fails closed — see RegistryClassification.basis.spans_exact). */
+export type SectionSpan = { section: RegistrySection; class: RegistryClass; text: string; start: number; end: number };
+/** One row of the persisted span table (basis.snapshot_sections): the span minus its text. */
+export type SectionSpanRow = { section: RegistrySection; class: RegistryClass; start: number; end: number };
 
 function ldTypes(structured: unknown): string[] {
   const out: string[] = [];
@@ -157,6 +165,21 @@ export function ldPageHint(structured: unknown): RegistryPageType | null {
 
 const lines = (t: string) => t.split(/\r?\n/).map((s) => s.trim());
 
+/** The page as trimmed lines WITH the raw offsets of each trimmed line (start/end into clean_text). */
+type OffsetLine = { t: string; s: number; e: number };
+function offsetLines(text: string): OffsetLine[] {
+  const out: OffsetLine[] = [];
+  let pos = 0;
+  for (const raw of text.split(/(\r?\n)/)) {
+    if (raw === "\n" || raw === "\r\n") { pos += raw.length; continue; }
+    const lead = raw.length - raw.trimStart().length;
+    const t = raw.trim();
+    out.push({ t, s: pos + lead, e: pos + lead + t.length });
+    pos += raw.length;
+  }
+  return out;
+}
+
 function classOf(section: RegistrySection): RegistryClass {
   switch (section) {
     case "filing_data": return "filing";
@@ -173,22 +196,29 @@ function classOf(section: RegistrySection): RegistryClass {
 export function sectionSpans(pageType: RegistryPageType, cleanText: string | null | undefined): SectionSpan[] {
   const text = String(cleanText ?? "");
   if (!text.trim()) return [];
-  const ls = lines(text);
+  const ls = offsetLines(text);
   const spans: SectionSpan[] = [];
-  const push = (section: RegistrySection, buf: string[]) => {
-    const t = buf.join("\n").trim();
-    if (t) spans.push({ section, class: classOf(section), text: t });
+  // A span's text is the trimmed lines joined by "\n" and trimmed (unchanged since C1); its offsets are the raw
+  // bounds of its first and last NON-EMPTY lines, so on a page whose lines carry no edge whitespace and use "\n"
+  // endings clean_text.slice(start, end) === text. Any other page fails the exactness check downstream.
+  const push = (section: RegistrySection, buf: OffsetLine[]) => {
+    const t = buf.map((l) => l.t).join("\n").trim();
+    if (!t) return;
+    const first = buf.find((l) => l.t)!;
+    let last = first;
+    for (const l of buf) if (l.t) last = l;
+    spans.push({ section, class: classOf(section), text: t, start: first.s, end: last.e });
   };
 
-  if (pageType === "journalism") return [{ section: "article", class: "journalism", text }];
+  if (pageType === "journalism") return [{ section: "article", class: "journalism", text, start: 0, end: text.length }];
 
   if (pageType === "filing_data") {
     // ProPublica: everything before the first "Fiscal Year Ending" is registry text (summary + boilerplate);
     // each "Fiscal Year Ending" block is filing data until the next one.
     let cur: RegistrySection = "org_summary";
-    let buf: string[] = [];
+    let buf: OffsetLine[] = [];
     for (const l of ls) {
-      if (PROPUBLICA_MARKERS.filing_block.some((m) => l.startsWith(m))) { push(cur, buf); cur = "filing_data"; buf = [l]; continue; }
+      if (PROPUBLICA_MARKERS.filing_block.some((m) => l.t.startsWith(m))) { push(cur, buf); cur = "filing_data"; buf = [l]; continue; }
       buf.push(l);
     }
     push(cur, buf);
@@ -200,10 +230,10 @@ export function sectionSpans(pageType: RegistryPageType, cleanText: string | nul
     // section (from its heading) into a self_reported block until the next heading.
     const headings = new Set(GUIDESTAR_SECTION_HEADINGS);
     let cur: RegistrySection = "profile_meta";
-    let buf: string[] = [];
+    let buf: OffsetLine[] = [];
     for (const l of ls) {
-      if (headings.has(l)) { push(cur, buf); cur = l === GUIDESTAR_MISSION_HEADING ? "self_reported" : "profile_meta"; buf = [l]; continue; }
-      if (l === GUIDESTAR_SELF_REPORTED_MARKER) { cur = "self_reported"; buf.push(l); continue; }
+      if (headings.has(l.t)) { push(cur, buf); cur = l.t === GUIDESTAR_MISSION_HEADING ? "self_reported" : "profile_meta"; buf = [l]; continue; }
+      if (l.t === GUIDESTAR_SELF_REPORTED_MARKER) { cur = "self_reported"; buf.push(l); continue; }
       buf.push(l);
     }
     push(cur, buf);
@@ -213,15 +243,75 @@ export function sectionSpans(pageType: RegistryPageType, cleanText: string | nul
   // rating (Charity Navigator): Mission opens the organization-supplied block; a rating heading or a
   // derived-metric heading closes it and opens its own section; everything else is registry text.
   let cur: RegistrySection = "profile_meta";
-  let buf: string[] = [];
+  let buf: OffsetLine[] = [];
   for (const l of ls) {
-    if (CN_SELF_REPORTED_OPEN.includes(l)) { push(cur, buf); cur = "self_reported"; buf = [l]; continue; }
-    if (CN_DERIVED_METRIC_MARKERS.some((m) => l === m || l.startsWith(m))) { push(cur, buf); cur = "derived_metric"; buf = [l]; continue; }
-    if (CN_RATING_MARKERS.some((m) => l === m || l.endsWith(m) || l.startsWith(m))) { push(cur, buf); cur = "rating"; buf = [l]; continue; }
+    if (CN_SELF_REPORTED_OPEN.includes(l.t)) { push(cur, buf); cur = "self_reported"; buf = [l]; continue; }
+    if (CN_DERIVED_METRIC_MARKERS.some((m) => l.t === m || l.t.startsWith(m))) { push(cur, buf); cur = "derived_metric"; buf = [l]; continue; }
+    if (CN_RATING_MARKERS.some((m) => l.t === m || l.t.endsWith(m) || l.t.startsWith(m))) { push(cur, buf); cur = "rating"; buf = [l]; continue; }
     buf.push(l);
   }
   push(cur, buf);
   return spans;
+}
+
+/** C3a: every span's offsets reproduce its text from the raw page — the write-time check behind basis.spans_exact. */
+export function spansAreExact(cleanText: string | null | undefined, spans: SectionSpan[]): boolean {
+  const text = String(cleanText ?? "");
+  return spans.every((sp) => text.slice(sp.start, sp.end) === sp.text);
+}
+
+/** The persisted span table: the spans minus their text (the text is reproducible from the sha'd snapshot). */
+export function spanTable(spans: SectionSpan[]): SectionSpanRow[] {
+  return spans.map((sp) => ({ section: sp.section, class: sp.class, start: sp.start, end: sp.end }));
+}
+
+// ── Fiscal year (C3a, ruling 2026-09-18) — filing_data pages only ─────────────────────────────────
+// A ProPublica "Fiscal Year Ending <Month>" block names its year on the NEXT line. A row's year is the block whose
+// EXACT FIGURES it carries — money / percent / comma-grouped numbers, never a bare year (the block's own header
+// would match) and never words (the same labels sit in every block). Blocks are scored one at a time (scoreSections
+// merges same-section spans for the class decision, which is why the year was invisible before C3a).
+//   best block alone         → "FYE <Month> <year>"
+//   exactly two tied blocks  → "FYE <Month> <y1>–<y2>" (page order, newest first)
+//   no exact figure / 3+ tie → null (a rounded "-$1.87M" row names no year — the frame renders none)
+const FYE_HEAD = /^Fiscal Year Ending\s+([A-Za-z]+)\s*$/;
+const FIGURE_RE = /\$[\d,]+(?:\.\d+)?|\d+(?:\.\d+)?%|\d{1,3}(?:,\d{3})+/g;
+
+export function fiscalYearOfBlock(blockText: string): { month: string; year: string } | null {
+  const ls = blockText.split("\n");
+  const m = FYE_HEAD.exec(ls[0] ?? "");
+  const y = /^(\d{4})$/.exec((ls[1] ?? "").trim());
+  return m && y ? { month: m[1], year: y[1] } : null;
+}
+
+export function figureTokens(text: string): Set<string> {
+  return new Set([...String(text ?? "").matchAll(FIGURE_RE)].map((m) => m[0]));
+}
+
+export type FiscalBlockScore = { fiscal_year: string; score: number };
+export function attributeFiscalYear(rowText: string, spans: SectionSpan[]): { fiscal_year: string | null; fiscal_blocks: FiscalBlockScore[] } {
+  const rowFigs = figureTokens(rowText);
+  const blocks: FiscalBlockScore[] = [];
+  for (const sp of spans) {
+    if (sp.section !== "filing_data") continue;
+    const fy = fiscalYearOfBlock(sp.text);
+    if (!fy) continue;
+    const body = sp.text.split("\n").slice(2).join("\n"); // the block minus its own two header lines
+    const figs = figureTokens(body);
+    let score = 0;
+    for (const f of rowFigs) if (figs.has(f)) score++;
+    blocks.push({ fiscal_year: `FYE ${fy.month} ${fy.year}`, score });
+  }
+  const best = Math.max(0, ...blocks.map((b) => b.score));
+  if (best === 0) return { fiscal_year: null, fiscal_blocks: blocks };
+  const top = blocks.filter((b) => b.score === best);
+  if (top.length === 1) return { fiscal_year: top[0].fiscal_year, fiscal_blocks: blocks };
+  if (top.length === 2) {
+    const [a, b] = top; // page order — newest first on ProPublica
+    const ya = a.fiscal_year.split(" "), yb = b.fiscal_year.split(" ");
+    const range = ya[1] === yb[1] ? `FYE ${ya[1]} ${ya[2]}–${yb[2]}` : `${a.fiscal_year}–${b.fiscal_year}`;
+    return { fiscal_year: range, fiscal_blocks: blocks };
+  }
+  return { fiscal_year: null, fiscal_blocks: blocks };
 }
 
 // ── Row attribution: which section does a minted row's text come from? ──────────────────────────
@@ -288,8 +378,20 @@ export type RegistryClassification = {
   basis: {
     /** ld_json page confirmation from the stored snapshot (null when absent or unrecognized) */
     ld_hint: RegistryPageType | null;
-    /** whether any readable section was found in the stored snapshot */
-    snapshot_sections: number;
+    /** C3a: the snapshot row the span table is keyed by (outside_page_snapshots.text_sha256); null ⇒ no table */
+    snapshot_sha: string | null;
+    /** C3a: the span table — every section of the stored page with offsets into that snapshot's raw clean_text.
+     *  Empty when the page is not byte-exact (spans_exact=false) or the snapshot carries no sha. Pre-C3a rows
+     *  carried an integer count here (now section_count). */
+    snapshot_sections: SectionSpanRow[];
+    /** how many sections the stored page split into (the pre-C3a snapshot_sections count) */
+    section_count: number;
+    /** C3a: clean_text.slice(start, end) === text held for every span on write; false ⇒ the table was omitted */
+    spans_exact: boolean;
+    /** C3a (filing_data pages): the year of the block whose exact figures the row carries; null when none */
+    fiscal_year: string | null;
+    /** C3a: per-block exact-figure scores behind fiscal_year (filing_data pages; [] elsewhere) */
+    fiscal_blocks: FiscalBlockScore[];
     /** per-section overlap scores, best first */
     scores: SectionScore[];
     /** the runner-up section scored ≥ half the winner (and ≥ 3): the row mixes sections — reported, not split */
@@ -298,7 +400,21 @@ export type RegistryClassification = {
   };
 };
 
-export const REGISTRY_CLASSIFIER_VERSION = "c2b-2026-09-18"; // c2 + markerless snapshots default to registry_meta
+export const REGISTRY_CLASSIFIER_VERSION = "c3a-2026-09-18.1"; // c3a + markerless pages default by ld_json hint, else registry_meta
+
+/** C3a fold (ruling 2026-09-18): a MARKERLESS page whose stored snapshot carries an ld_json hint defaults to the
+ *  hint's class — Review → rating; Dataset → the filing_data page default (registry_meta); Article → journalism.
+ *  No hint → registry_meta (c2b). filing / self_reported are still never assumed (a hint is the page's own word
+ *  about what it is, never about which section a row came from). */
+export const HINT_DEFAULT_CLASS: Record<RegistryPageType, RegistryClass> = {
+  rating: "rating",
+  filing_data: PAGE_DEFAULT_CLASS.filing_data,
+  profile: PAGE_DEFAULT_CLASS.profile,
+  journalism: "journalism",
+};
+export function markerlessClass(ldHint: RegistryPageType | null): RegistryClass {
+  return ldHint ? HINT_DEFAULT_CLASS[ldHint] : "registry_meta";
+}
 
 /** Classify one row. Returns null when the URL is not a registry URL (the row is none of this module's business). */
 export function classifyRegistryRow(args: {
@@ -310,10 +426,19 @@ export function classifyRegistryRow(args: {
   const m = matchRegistryUrl(args.url);
   if (!m) return null;
   const ld_hint = ldPageHint(args.snapshot?.structured);
+  const snapshot_sha = typeof args.snapshot?.text_sha256 === "string" && args.snapshot.text_sha256 ? args.snapshot.text_sha256 : null;
+  const noSpans = { snapshot_sha, snapshot_sections: [] as SectionSpanRow[], section_count: 0, spans_exact: true, fiscal_year: null, fiscal_blocks: [] as FiscalBlockScore[] };
   if (m.page_type === "journalism") {
-    return { host_rule: m.host_rule, page_type: "journalism", section: "article", class: "journalism", basis: { ld_hint, snapshot_sections: 0, scores: [], mixed: false, classifier_version: REGISTRY_CLASSIFIER_VERSION } };
+    return { host_rule: m.host_rule, page_type: "journalism", section: "article", class: "journalism", basis: { ld_hint, ...noSpans, scores: [], mixed: false, classifier_version: REGISTRY_CLASSIFIER_VERSION } };
   }
   const spans = sectionSpans(m.page_type, args.snapshot?.clean_text);
+  // C3a: the span table rides the row ONLY when every offset reproduces its text from the raw page AND the snapshot
+  // is named by its sha — otherwise the table is omitted (fail closed) and the classification proceeds on the text
+  // spans exactly as before. The count stays as section_count.
+  const spans_exact = spansAreExact(args.snapshot?.clean_text, spans);
+  const table = spans_exact && snapshot_sha ? spanTable(spans) : [];
+  const fy = m.page_type === "filing_data" ? attributeFiscalYear(String(args.text ?? ""), spans) : { fiscal_year: null, fiscal_blocks: [] };
+  const spanBasis = { snapshot_sha, snapshot_sections: table, section_count: spans.length, spans_exact, fiscal_year: fy.fiscal_year, fiscal_blocks: fy.fiscal_blocks };
   // A snapshot whose only span is the catch-all (no marker matched — e.g. a page whose text cap was
   // consumed by layout JSON) has NO readable sections: attribution would be noise.
   const readable = spans.some((s) => s.section !== "profile_meta" && s.section !== "org_summary");
@@ -322,18 +447,20 @@ export function classifyRegistryRow(args: {
   const second = scores[1];
   if (!top || top.score < MIN_SECTION_SCORE) {
     // NO MATCHED MARKER (fold, ruling 2026-09-18): a snapshot whose only span is the catch-all — or a row that
-    // overlaps no section — is REGISTRY META / outside voice on every page type. A filing or self_reported class is
-    // earned only from a matched section; it is never assumed from the page type (Mithun's CauseIQ row, run 78,
-    // was born filing from a 207-char markerless snapshot under the previous default).
+    // overlaps no section — takes the ld_json hint's class when the page names itself (CN's stored Elementor page
+    // carries ld Review → rating), else REGISTRY META / outside voice (Mithun's CauseIQ row, run 78, was born filing
+    // from a 207-char markerless snapshot under the pre-c2b default). A filing or self_reported class is earned
+    // only from a matched section; it is never assumed from the page type or the hint.
     return {
-      host_rule: m.host_rule, page_type: m.page_type, section: "page_default", class: "registry_meta",
-      basis: { ld_hint, snapshot_sections: spans.length, scores, mixed: false, classifier_version: REGISTRY_CLASSIFIER_VERSION },
+      host_rule: m.host_rule, page_type: m.page_type, section: "page_default", class: markerlessClass(ld_hint),
+      basis: { ld_hint, ...spanBasis, fiscal_year: null, scores, mixed: false, classifier_version: REGISTRY_CLASSIFIER_VERSION },
     };
   }
   const mixed = !!second && second.score >= 3 && second.score * 2 >= top.score && second.class !== top.class;
   return {
     host_rule: m.host_rule, page_type: m.page_type, section: top.section, class: top.class,
-    basis: { ld_hint, snapshot_sections: spans.length, scores, mixed, classifier_version: REGISTRY_CLASSIFIER_VERSION },
+    // the fiscal year is a FILING row's attribute: a registry_meta row on a filing page carries none
+    basis: { ld_hint, ...spanBasis, fiscal_year: top.class === "filing" ? fy.fiscal_year : null, scores, mixed, classifier_version: REGISTRY_CLASSIFIER_VERSION },
   };
 }
 

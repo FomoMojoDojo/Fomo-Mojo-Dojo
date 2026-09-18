@@ -8,7 +8,7 @@
 import { assert, assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   CN_DERIVED_METRIC_MARKERS, CN_RATING_MARKERS, CN_SELF_REPORTED_OPEN, GUIDESTAR_SELF_REPORTED_MARKER,
-  MIN_SECTION_SCORE, PAGE_DEFAULT_CLASS, PROPUBLICA_MARKERS, REGISTRY_PATTERNS,
+  MIN_SECTION_SCORE, PAGE_DEFAULT_CLASS, PROPUBLICA_MARKERS, REGISTRY_PATTERNS, markerlessClass,
   classifyRegistryRow, excludeRegistryFromOwnWords, isFilingClassRow, isRegistryUrl, ldPageHint, matchRegistryUrl,
   registryStamp, sectionSpans,
 } from "./registryClassifier.ts";
@@ -124,10 +124,10 @@ Deno.test("CN stored snapshot (Elementor JSON, no readable sections): ld_json Re
   assertEquals(ldPageHint(s.structured), "rating");
   const spans = sectionSpans("rating", s.clean_text);
   assert(spans.every((x) => x.section === "profile_meta"), "no marker matched in the stored text");
-  // fold 2026-09-18: a markerless snapshot is registry_meta on every page type (the ld_json hint is recorded, not decisive)
+  // C3a fold 2026-09-18: a markerless snapshot that names itself (ld_json Review) takes the hint's class — rating
   for (const k of ["cn_rating_8eeaf11f", "cn_rating_c57ba124", "cn_mixed_913ff9a5"] as const) {
     const c = classifyRegistryRow({ url: CN, text: ROWS[k], snapshot: s })!;
-    assertEquals([c.section, c.class, c.basis.ld_hint], ["page_default", "registry_meta", "rating"], k);
+    assertEquals([c.section, c.class, c.basis.ld_hint], ["page_default", "rating", "rating"], k);
     assertEquals(registryStamp(c), { evidence_class: "prose", voice_class: "outside_voice_about_client" });
   }
 });
@@ -155,12 +155,24 @@ Deno.test("journalism: propublica.org/article/… is journalism (stamp null — 
   assertEquals([c.page_type, c.section, c.class], ["journalism", "article", "journalism"]);
   assertEquals(registryStamp(c), null);
 });
-Deno.test("no matched marker → registry_meta / outside voice on EVERY page type (never filing or self_reported by page type); one incidental token never places a row", async () => {
+Deno.test("no matched marker, NO hint → registry_meta / outside voice on EVERY page type (never filing or self_reported by page type); one incidental token never places a row", async () => {
   assertEquals(classifyRegistryRow({ url: PP, text: ROWS.pp_meta_49bd7bd7, snapshot: null })!.class, "registry_meta");
   assertEquals(classifyRegistryRow({ url: GS, text: "anything", snapshot: null })!.class, "registry_meta");
   assertEquals(classifyRegistryRow({ url: CN, text: "anything", snapshot: null })!.class, "registry_meta");
-  assertEquals(classifyRegistryRow({ url: "https://www.causeiq.com/organizations/the-john-c-mithun-foundation,454228213/", text: "The John C Mithun Foundation. Santa Barbara, CA. EIN 45-4228213. Listed in Cause IQ nonprofit directory.", snapshot: { clean_text: "The John C Mithun Foundation | Cause IQ\nSanta Barbara, CA\nEIN 45-4228213" } })!.class, "registry_meta");
+  // Mithun's CauseIQ row: the 207-char lane text, structured null → no hint → registry_meta
+  const mithun = classifyRegistryRow({ url: "https://www.causeiq.com/organizations/the-john-c-mithun-foundation,454228213/", text: "The John C Mithun Foundation. Santa Barbara, CA. EIN 45-4228213. Listed in Cause IQ nonprofit directory.", snapshot: { clean_text: "The John C Mithun Foundation | Cause IQ\nSanta Barbara, CA\nEIN 45-4228213", structured: null } })!;
+  assertEquals([mithun.section, mithun.class, mithun.basis.ld_hint], ["page_default", "registry_meta", null]);
   assertEquals(PAGE_DEFAULT_CLASS, { filing_data: "registry_meta", profile: "registry_meta", rating: "registry_meta", journalism: "journalism" });
+  // C3a fold: with a hint the markerless default is the hint's class — Review → rating; Dataset → filing_data's page
+  // default (registry_meta); never filing / self_reported
+  assertEquals(markerlessClass(null), "registry_meta");
+  assertEquals(markerlessClass("rating"), "rating");
+  assertEquals(markerlessClass("filing_data"), "registry_meta");
+  const ds = classifyRegistryRow({ url: PP, text: "anything", snapshot: { clean_text: "nothing readable here", structured: { ld_json: [{ "@type": "Dataset" }] } } })!;
+  assertEquals([ds.section, ds.class, ds.basis.ld_hint], ["page_default", "registry_meta", "filing_data"]);
+  const rv = classifyRegistryRow({ url: CN, text: "anything", snapshot: { clean_text: "nothing readable here", structured: { ld_json: [{ "@type": "Review" }] } } })!;
+  assertEquals([rv.section, rv.class], ["page_default", "rating"]);
+  assertEquals(registryStamp(rv), { evidence_class: "prose", voice_class: "outside_voice_about_client" });
   for (const url of [PP, GS, CN]) assertEquals(registryStamp(classifyRegistryRow({ url, text: "x", snapshot: null })!), { evidence_class: "prose", voice_class: "outside_voice_about_client" });
   const s = await snap("propublica_edgewood");
   const one = classifyRegistryRow({ url: PP, text: "audits", snapshot: s })!; // a single word present in the boilerplate

@@ -13,6 +13,7 @@
 // when no snapshot is stored for a URL yet, the crawl's own retained page text for that URL is the
 // basis (the same text retainPublicPages stores). Neither ⇒ the classifier fails closed to the page default.
 import { classifyRegistryRow, matchRegistryUrl, registryStamp, type RegistryClassification, type RegistrySnapshot } from "./registryClassifier.ts";
+import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 
 export type RegistryStampStats = { considered: number; registry: number; stamped_filing: number; stamped_outside: number; journalism: number; page_default: number; mixed: number };
 
@@ -92,20 +93,22 @@ export async function loadRegistrySnapshots(
   try {
     const { data } = await supabase
       .from("outside_page_snapshots")
-      .select("source_url, clean_text, structured, crawled_at")
+      .select("source_url, clean_text, structured, crawled_at, text_sha256")
       .eq("company_id", companyId)
       .in("source_url", [...wanted.keys()])
       .order("crawled_at", { ascending: false });
-    for (const r of (data ?? []) as Array<{ source_url: string; clean_text: string | null; structured: unknown; crawled_at?: string | null }>) {
+    for (const r of (data ?? []) as Array<{ source_url: string; clean_text: string | null; structured: unknown; crawled_at?: string | null; text_sha256?: string | null }>) {
       const key = wanted.get(r.source_url);
       if (!key || out.has(key) || !r.clean_text) continue; // newest first; the largest text is not preferred over the newest
-      out.set(key, { clean_text: r.clean_text, structured: r.structured, read_at: r.crawled_at ?? null });
+      out.set(key, { clean_text: r.clean_text, structured: r.structured, read_at: r.crawled_at ?? null, text_sha256: r.text_sha256 ?? null });
     }
   } catch { /* SELECT failure ⇒ no stored basis; the crawl text (if any) or the page default decides */ }
   for (const u of urls) {
     if (out.has(u)) continue;
     const t = crawlTextByUrl?.get(u);
-    if (t && t.trim()) out.set(u, { clean_text: t, structured: null, read_at: new Date().toISOString() }); // this crawl's read
+    // C3a: the crawl's text is named by the same identity the store uses (sha256 of normalizeForHash) so the span
+    // table written at mint keys the row retainPublicPages stores for it.
+    if (t && t.trim()) out.set(u, { clean_text: t, structured: null, read_at: new Date().toISOString(), text_sha256: await sha256Hex(normalizeForHash(t)) }); // this crawl's read
   }
   return out;
 }
