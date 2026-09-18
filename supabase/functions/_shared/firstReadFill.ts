@@ -350,6 +350,62 @@ export function handoffTerminal(outcome: unknown): ChainKindTerminal {
   return "handed_off";
 }
 
+/**
+ * OWN-WORDS-WRITE RE-ENTRY GATE (2026-09-18, causeway 09-17). The fill re-enters itself when own-words
+ * reaches a WRITE terminal (note "… wrote N") so gap pairs re-evaluates its freshness against the new
+ * declared side. That re-entry exists for the OUT-OF-BAND write paths (a gateway-resume write landing
+ * after the chain moved on; a manual write). On the in-chain path the same chain runs gap pairs NEXT,
+ * so the re-entry was a second fill at the same instant: both saw "no deltas yet", both called
+ * generate-claim-deltas, the trailing run 500'd on the unique key (2/2 write terminals since e817cefc).
+ * Rule: re-enter ONLY when this chain does NOT itself schedule public_gap_pairs — gated on the chain's
+ * scheduled kinds, never on the note text alone.
+ */
+export const OWN_WORDS_WRITE_NOTE = "wrote ";
+export function ownWordsWriteReentry(a: { kind: string; note: string | null | undefined; chainKinds: readonly string[] }): boolean {
+  if (a.kind !== "own_words") return false;
+  if (!(a.note ?? "").includes(OWN_WORDS_WRITE_NOTE)) return false;
+  return !a.chainKinds.includes("public_gap_pairs");
+}
+
+/**
+ * RELEVANCE STEP TERMINAL (2026-09-18, causeway 09-17). The fill AWAITS refresh-relevance-step, which
+ * drains a company of ≤ MAX_JUDGE rows in ONE isolate and answers `drained: true` — yet the fill
+ * recorded `handed_off` (ledger 'running', no finished_at) AFTER the work was done, and nothing closed
+ * it: the sweeper buried it 20 min later as "stalled" (3/3 on this path). An awaited terminal is
+ * recorded as the terminal it is; `handed_off` is reserved for a chain the stepper carries on
+ * (`stepped` / `retry`), and then the note carries `run=<stepper ledger id>` so the stepper's own
+ * writeback (closeFillMarker) can close the marker when it finishes — the sweeper hides, a writeback closes.
+ */
+export type RelevanceStepResponse = { ok?: unknown; error?: unknown; skipped?: unknown; stepped?: unknown; drained?: unknown; retry?: unknown; remaining?: unknown; attempt?: unknown; run?: unknown };
+export function relevanceStepTerminal(d: RelevanceStepResponse | null): { status: ChainKindTerminal; note: string } {
+  const run = d && typeof d.run === "string" && d.run ? ` · run=${d.run}` : "";
+  if (d?.skipped === "nothing_to_stamp") return { status: "completed_empty", note: "nothing to stamp" };
+  // The stepper's deterministic terminals (frozen / 400 / retries exhausted) answer 200 { ok:false, error }
+  // and have ALREADY closed their own row — the fill records the observed terminal (its marker does not
+  // exist yet, so the stepper's writeback could not have closed it: the same race handoffTerminal covers).
+  if (d?.ok === false) return { status: "failed", note: `refresh-relevance-step failed: ${String(d.error ?? "unknown")}${run}`.slice(0, 300) };
+  if (d?.drained === true) return { status: "completed", note: `relevance backstop drained${run}` };
+  if (d?.stepped === true) return { status: "handed_off", note: `handed off to refresh-relevance-step · remaining=${d.remaining ?? "?"}${run}` };
+  if (d?.retry === true) return { status: "handed_off", note: `handed off to refresh-relevance-step · retry attempt=${d.attempt ?? "?"}${run}` };
+  return { status: "handed_off", note: `handed off to refresh-relevance-step · unrecognised response${run}` };
+}
+
+export const FILL_MARKER_RUN_REF = (runId: string) => `run=${runId}`;
+/**
+ * WRITEBACK: close the fill's `fr_<kind>` hand-off marker by run reference on the stepper's terminal —
+ * the shape recurrence-step and open-questions-step already use. Matches ONLY a running marker whose
+ * note names this stepper run, so a marker for another run (or an already-terminal one) is untouched.
+ */
+export async function closeFillMarker(
+  supabase: { from: (t: string) => any },
+  a: { companyId: string; markerKind: string; runId: string; status: "completed" | "failed"; label: string },
+): Promise<void> {
+  const now = new Date().toISOString();
+  await supabase.from("long_runner_runs")
+    .update({ status: a.status, error_text: `${a.label} ${a.status} · ${FILL_MARKER_RUN_REF(a.runId)}`, finished_at: now, updated_at: now })
+    .eq("company_id", a.companyId).eq("run_kind", a.markerKind).eq("status", "running").like("error_text", `%${FILL_MARKER_RUN_REF(a.runId)}%`);
+}
+
 /** One chain kind: a first-fill-only gate + the producer call(s) it guards. */
 export type ChainKindStep = {
   kind: string; // ledger run_kind suffix → fr_<kind>

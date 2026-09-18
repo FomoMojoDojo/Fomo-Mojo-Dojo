@@ -127,6 +127,10 @@ export type DeltaRunResult =
         pairs_confirmed: number; pairs_inferred: number; pairs_rejected: number;
         publicly_silent: number; internally_silent: number;
         rows_new: number; rows_kept: number; rows_deleted: number; tombstones_respected: number;
+        // SIBLING-SAFE BANKING (2026-09-18): identities this run computed but found ALREADY banked by a
+        // concurrent sibling run at insert time (unique-key collision, not a throw). Counted apart from
+        // rows_new so the ledger never claims an insert it did not make.
+        banked_by_sibling: number;
         // NEG-CACHE: candidates skipped via a banked rejection (no model call),
         // and orphaned rejection rows deleted by this finalize (0 when scoped).
         rejections_cached: number; rejections_pruned: number;
@@ -859,6 +863,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     pairs_confirmed: 0, pairs_inferred: 0, pairs_rejected: 0,
     publicly_silent: 0, internally_silent: 0,
     rows_new: 0, rows_kept: 0, rows_deleted: 0, tombstones_respected: 0,
+    banked_by_sibling: 0,
     rejections_cached: 0, rejections_pruned: 0,
     spans_unjudged: 0,
     looks_banked: 0, looks_cached: 0,
@@ -948,6 +953,26 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   // statement text — identity hashes statements, not ids) must not double-insert.
   const insertedThisRun = new Set<string>();
 
+  // SIBLING-SAFE BANKING (2026-09-18, causeway 09-17 diagnosis). The identity cache `existing` is read
+  // ONCE at run start. Two runs of the same kind started within the same instant (the fill's in-chain
+  // gap-pairs step and its own-words-write re-entry both fired generate-claim-deltas at 17:40:22) each
+  // see an empty cache, compute the same identities, and the trailing run's plain insert tripped the
+  // UNIQUE (company_id, content_identity, pairing_kind) key → throw → 500 → the fill marked gap pairs
+  // FAILED while the sibling completed. Frozen wins: a banked delta is never recomputed, so a unique-key
+  // collision (SQLSTATE 23505) means the sibling already banked THIS identity — the run continues and
+  // counts it as banked_by_sibling, never as an insert of its own. Any other insert error still throws.
+  // Every claim_deltas insert in this run (listing pair, judged pair, silence) goes through here.
+  const bankDeltaRow = async (row: Record<string, unknown>, label: string): Promise<"inserted" | "banked_by_sibling"> => {
+    const { error: insErr } = await args.supabase.from("claim_deltas").insert(row);
+    if (!insErr) { totals.rows_new++; return "inserted"; }
+    const e = insErr as { code?: string; message: string };
+    if (e.code === "23505" || /duplicate key value violates unique constraint/i.test(e.message)) {
+      totals.banked_by_sibling++;
+      return "banked_by_sibling";
+    }
+    throw new Error(`claim-delta ${label} insert failed: ${e.message}`);
+  };
+
   for (const d of declaredScope) {
     for (const p of publics) {
       // LISTING PAIRS BY CONSTRUCTION (operator ruling 2026-09-04): a listing-backed observed claim admitted by
@@ -973,7 +998,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         };
         deltas.push(pairRow);
         if (args.write && !existing.has(identity) && !insertedThisRun.has(identity)) {
-          const { error: insErr } = await args.supabase.from("claim_deltas").insert({
+          await bankDeltaRow({
             company_id: args.companyId, declared_claim_id: d.id, public_claim_id: p.id,
             delta_type: "echoed", pairing_basis: "listing", judge_reason: reason, content_identity: identity,
             computed_at: args.nowIso, pairing_kind: pairingKind,
@@ -982,10 +1007,8 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
             relevance_verdict: "relevant", relevance_provider: LISTING_PREDICATE_PROVIDER, relevance_model: LISTING_PREDICATE_PROVIDER,
             relevance_reason: reason, relevance_span: "", relevance_judged_at: args.nowIso,
             ...overrideColumnsFor(identity, relevanceOverrides),
-          });
-          if (insErr) throw new Error(`claim-delta listing-pair insert failed: ${insErr.message}`);
+          }, "listing-pair");
           insertedThisRun.add(identity);
-          totals.rows_new++;
         }
         continue;
       }
@@ -1114,7 +1137,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       // valid table: some pairs present, no silences yet, no sweep yet — the
       // next run's identity cache skips the banked pairs and finishes the rest.
       if (args.write && !existing.has(identity) && !insertedThisRun.has(identity)) {
-        const { error: insErr } = await args.supabase.from("claim_deltas").insert({
+        await bankDeltaRow({
           company_id: args.companyId,
           declared_claim_id: pairRow.declared_claim_id,
           public_claim_id: pairRow.public_claim_id,
@@ -1130,10 +1153,8 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
           observed_own_host: observedOwnHost(pairRow.public_claim_id),
           // OPERATOR OVERRIDE: born with the operator's relevance columns when a live decision exists.
           ...overrideColumnsFor(identity, relevanceOverrides),
-        });
-        if (insErr) throw new Error(`claim-delta inline insert failed: ${insErr.message}`);
+        }, "inline");
         insertedThisRun.add(identity);
-        totals.rows_new++;
       }
     }
   }
@@ -1186,7 +1207,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     for (const row of fresh) {
       if (seenFresh.has(row.content_identity)) continue;
       seenFresh.add(row.content_identity);
-      const { error: insErr } = await args.supabase.from("claim_deltas").insert({
+      await bankDeltaRow({
         company_id: args.companyId,
         declared_claim_id: row.declared_claim_id,
         public_claim_id: row.public_claim_id,
@@ -1200,9 +1221,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         model_provider: "none",
         model_name: "deterministic",
         observed_own_host: observedOwnHost(row.public_claim_id),
-      });
-      if (insErr) throw new Error(`claim-delta insert failed: ${insErr.message}`);
-      totals.rows_new++;
+      }, "silence");
     }
     // Delete stale non-tombstone rows (their claims changed/pruned/got paired).
     const stale = [...existing.values()].filter(
@@ -1262,6 +1281,9 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
           unbacked: totals.unbacked_excluded,
           own_words_ineligible: totals.own_words_ineligible,
           proof_guard: totals.proof_guard_excluded,
+          // SIBLING-SAFE BANKING: rows this run inserted vs found already banked by a concurrent sibling.
+          rows_new: totals.rows_new,
+          banked_by_sibling: totals.banked_by_sibling,
         },
       });
     }

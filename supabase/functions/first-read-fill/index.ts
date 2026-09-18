@@ -19,6 +19,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   runFirstReadFill, runChainKinds, classifyGapPairsAfterTimeout,
   chainKindLedgerStatus, chainKindIsTerminal, openQuestionsAlreadyPresent, handoffTerminal, missingPublicReadKinds, marketReadIsEmpty, marketDiscoveryNeedsFire,
+  ownWordsWriteReentry, relevanceStepTerminal,
   marketDiscoveryFireDecision, DISCOVERY_DEFERRED_OFFERING,
   publicReadsDepsTerminal, depTerminalForScore,
   type PublicReadKind, type GenPerKind, type KindStatus,
@@ -283,6 +284,9 @@ Deno.serve(async (req) => {
     return { ok: res.ok, status: res.status, data };
   };
 
+  // The kinds THIS chain schedules (filled where the chain is launched, before any terminal is recorded) —
+  // the own-words-write re-entry below is gated on it, never on the note text alone.
+  const scheduledChainKinds: string[] = [];
   const recordChainLedger = async (kind: string, status: ChainKindTerminal, note?: string) => {
     // STANDING LAW — an unearned status is not a status. The ledger CHECK allows only running/completed/
     // failed today, so 'unconfirmed' is written as the non-terminal 'running' (never completed, never
@@ -304,13 +308,18 @@ Deno.serve(async (req) => {
     // 2026-09-10 — RE-ENTER ON AN OWN-WORDS **WRITE**. The declared side just changed, so gap pairs
     // must re-evaluate its freshness predicate. This covers the out-of-band paths the in-chain
     // ordering does not: a gateway-resume write that lands long after the chain moved on, and a
-    // manual write. On the normal path the re-entry is redundant (gap pairs runs next in this very
-    // chain) and idempotent — it finds the deltas fresh and skips.
+    // manual write.
+    //
+    // 2026-09-18 — NOT on the in-chain path. "Redundant and idempotent" was false: the re-entered fill
+    // ran at the same instant as this chain's own gap-pairs step, both saw "no deltas yet", both called
+    // generate-claim-deltas, and the trailing run 500'd on the unique key (causeway 09-17, 2/2 write
+    // terminals since e817cefc). The gate is the chain's scheduled kinds (ownWordsWriteReentry): a chain
+    // that schedules public_gap_pairs itself never re-enters.
     //
     // LOOP GUARD: fire ONLY on a note carrying "wrote " — i.e. an actual write terminal. A re-entry's
     // own-words is always the already-present skip path, whose note is "already present …", so the
     // chain is exactly one hop deep and cannot recur.
-    if (kind === "own_words" && (note ?? "").includes("wrote ")) {
+    if (ownWordsWriteReentry({ kind, note, chainKinds: scheduledChainKinds })) {
       waitUntil(fetch(`${url}/functions/v1/first-read-fill`, {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
         body: JSON.stringify({ company_id, parent_run_id }),
@@ -511,9 +520,9 @@ Deno.serve(async (req) => {
       const res = await postFn("refresh-relevance-step", { company_id, parent_run_id });
       if (res.status === 403 || (res.data as { frozen?: unknown } | null)?.frozen === true) return { status: "failed" as const, note: "refused: company frozen" };
       if (!res.ok) return { status: "failed" as const, note: `refresh-relevance-step dispatch failed (${res.status})` };
-      const d = res.data as { skipped?: unknown; stepped?: unknown; drained?: unknown; remaining?: unknown } | null;
-      if (d?.skipped === "nothing_to_stamp") return { status: "completed_empty" as const, note: "nothing to stamp" };
-      return { status: "handed_off" as const, note: `handed off to refresh-relevance-step · ${d?.drained ? "drained" : `remaining=${d?.remaining ?? "?"}`}` };
+      // 2026-09-18: an AWAITED `drained` is completed (the stepper finished inside this call); handed_off
+      // only when the stepper carries on (stepped / retry), with run=<id> so its writeback closes this marker.
+      return relevanceStepTerminal(res.data as Parameters<typeof relevanceStepTerminal>[0]);
     },
   };
 
@@ -608,7 +617,9 @@ Deno.serve(async (req) => {
     method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
     body: JSON.stringify({ company_id }),
   }).catch(() => {});
-  waitUntil(runChainKinds([ownWordsStep, gapPairsStep, relevanceStep, openQuestionsStep, findingBeatsStep, recurrenceStep], { recordChainLedger })
+  const chainSteps: ChainKindStep[] = [ownWordsStep, gapPairsStep, relevanceStep, openQuestionsStep, findingBeatsStep, recurrenceStep];
+  scheduledChainKinds.push(...chainSteps.map((s) => s.kind)); // the re-entry gate reads this (recordChainLedger)
+  waitUntil(runChainKinds(chainSteps, { recordChainLedger })
     .then(fireOutsideScore)
     .then(firePublicReadsStage));
 

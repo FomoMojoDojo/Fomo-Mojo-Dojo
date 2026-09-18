@@ -19,7 +19,7 @@
 // failed with the last error — never left running.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { relevanceBackstopNeedsFire } from "../_shared/firstReadFill.ts";
+import { closeFillMarker, relevanceBackstopNeedsFire } from "../_shared/firstReadFill.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -123,6 +123,10 @@ Deno.serve(async (req) => {
     const patch = { status, error_text: errorText ?? null, finished_at: new Date().toISOString(), updated_at: new Date().toISOString() };
     await supabase.from("long_runner_runs").update(patch).eq("id", childId);
     if (parent_run_id) await supabase.from("long_runner_runs").update(patch).eq("id", parent_run_id);
+    // WRITEBACK (2026-09-18): close the fill's fr_relevance_backstop hand-off marker by run reference —
+    // mirrors recurrence-step's closeDispatch. Before this, the marker had no closer and the sweeper
+    // buried it as "stalled" 20 min after the work had finished.
+    await closeFillMarker(supabase, { companyId: company_id, markerKind: "fr_relevance_backstop", runId: String(childId), status, label: "relevance backstop" });
   };
 
   const selfFire = (nextAttempt: number) => {
@@ -137,22 +141,23 @@ Deno.serve(async (req) => {
   if (!res.ok) {
     // 403 frozen / 400 bad request are deterministic terminals; anything else re-fires (idempotent),
     // bounded by MAX_TRANSIENT_RETRIES — exhaustion closes the chain failed with the last error.
-    if (res.status === 403 || res.status === 400) { await finish("failed", res.reason); return json({ ok: false, error: res.reason }, 200); }
+    if (res.status === 403 || res.status === 400) { await finish("failed", res.reason); return json({ ok: false, error: res.reason, run: childId }, 200); }
     if (attempt >= MAX_TRANSIENT_RETRIES) {
       const msg = `transient retries exhausted (${MAX_TRANSIENT_RETRIES}): ${res.reason ?? "unknown"}`;
       await finish("failed", msg);
-      return json({ ok: false, error: msg }, 200);
+      return json({ ok: false, error: msg, run: childId }, 200);
     }
     selfFire(attempt + 1);
-    return json({ ok: true, retry: true, attempt: attempt + 1, reason: res.reason });
+    return json({ ok: true, retry: true, attempt: attempt + 1, reason: res.reason, run: childId });
   }
 
   const totals = ((res.data ?? {}) as { totals?: { remaining?: number } }).totals ?? {};
   const remaining = Number(totals.remaining ?? 0);
   if (remaining > 0) {
     selfFire(0); // a successful step resets the transient-retry budget
-    return json({ ok: true, stepped: true, remaining });
+    return json({ ok: true, stepped: true, remaining, run: childId });
   }
   await finish("completed");
-  return json({ ok: true, drained: true, totals });
+  // `run` (the stepper's ledger id) rides every response so the fill's marker note can name it.
+  return json({ ok: true, drained: true, totals, run: childId });
 });
