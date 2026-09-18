@@ -25,7 +25,7 @@ import { recomputeValidationStateQuietly } from "../_shared/validationState.ts";
 import { fetchAndExtract } from "../_shared/fetchAndExtract.ts";
 import { sha256Hex, contentIdentity } from "../_shared/contentIdentity.ts";
 import {
-  assembleOwnWords, assertPublicClientVoice,
+  assembleOwnWords, assertPublicClientVoice, pickPageSignals,
   type Candidate, type JudgeVerdict, type SignalGate,
 } from "../_shared/ownWordsExtract.ts";
 import { JUDGE_SYSTEM, callModel, parseJudgeVerdicts, takeLastJudgeUsage } from "../_shared/ownWordsJudge.ts";
@@ -285,10 +285,8 @@ Deno.serve(async (req) => {
     assertPublicClientVoice(sigs as SignalGate[]);
     assertPublicClientVoice(corpus.registry.flatMap((e) => e.signals as unknown as SignalGate[]));
 
-    const byUrl = new Map<string, { id: string; source_title: string | null }>();
-    for (const s of sigs) {
-      if (!byUrl.has(s.source_url!)) byUrl.set(s.source_url!, { id: s.id, source_title: s.source_title });
-    }
+    // S1 (2026-09-18): the page signal is never a synthesis row, whatever its stamp (pickPageSignals).
+    const byUrl = pickPageSignals(sigs);
     let urls = [...byUrl.keys()];
     if (urlFilter) urls = urls.filter((u) => urlFilter.includes(u));
     let registryEntries = corpus.registry;

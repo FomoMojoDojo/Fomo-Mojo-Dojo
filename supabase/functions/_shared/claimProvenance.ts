@@ -8,6 +8,7 @@
 // `callJson` so each caller keeps its own client: research-company passes its local
 // callOpenAIJSON (budget-ladder retry); leaves pass _shared/openaiClient's.
 
+import { ANALYSIS_VOICE, isAnalysisLabelled } from "./voiceLabel.ts";
 import { callOpenAIJSON as sharedCallOpenAIJSON } from "./openaiClient.ts";
 import { buildClientCorpus, resolveSyndication, resolveSyndicationDurable, type ClientCorpus } from "./syndication.ts";
 import { buildStoreSupplementBrief, type StoreSupplement } from "./storeSupplement.ts";
@@ -91,6 +92,9 @@ function classifyVoice(
   entry: { voice_class?: string; bucket?: string; source_type?: string; url?: string; evidence_class?: string | null },
   companyHost: string,
 ): VoiceClass {
+  // S1 (signed 2026-09-18): the analysis label wins over the own-host test — a synthesis row carries the company's
+  // URL by construction and must never be read as the company speaking (voiceLabel.ts, shared with the mirror).
+  if (isAnalysisLabelled(entry)) return ANALYSIS_VOICE;
   if (isCompanySource(entry, companyHost)) return "client_voice";
   const labeled = String(entry?.voice_class || "").trim();
   if (VOICE_CLASSES.has(labeled)) return labeled as VoiceClass;

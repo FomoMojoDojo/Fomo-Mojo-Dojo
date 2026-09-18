@@ -1,3 +1,4 @@
+import { ANALYSIS_VOICE, isAnalysisLabelled } from "../../supabase/functions/_shared/voiceLabel.ts";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { sourceHostLower } from "@/lib/sourceHost";
@@ -99,7 +100,9 @@ function classifyOutsideRow(
   row: SignalRow,
   companyHost: string,
 ): "client_voice" | "outside_voice_about_client" | "competitor_voice" | "market_context" | "analysis" {
-  // The deterministic company-source guard overrides any label, mirroring the judges.
+  // S1 (signed 2026-09-18): the analysis label wins over the own-host test — same predicate as the edge judges.
+  if (isAnalysisLabelled(row)) return ANALYSIS_VOICE;
+  // The deterministic company-source guard overrides any OTHER label, mirroring the judges.
   if (isCompanySource(row, companyHost)) return "client_voice";
   const labeled = String(row.voice_class || "").trim();
   // 'analysis' = OUR reading, not an external voice — recognized so it is NOT swept into the

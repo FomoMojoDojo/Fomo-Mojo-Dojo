@@ -1,4 +1,5 @@
 // supabase/functions/public-baseline/index.ts
+import { ANALYSIS_VOICE, isAnalysisLabelled } from "../_shared/voiceLabel.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestPublicBaselineSignals } from "../_shared/evidencePhase1.ts";
 import { mintSiteCrawlSignals, parseSitemapUrls, type SiteReadLedger } from "../../../src/lib/siteCrawl/mint.ts";
@@ -1825,7 +1826,10 @@ async function callClaudeWebSearch(opts: {
       const claudeLabel = String(e?.source_type || "").trim();
       const source_type = inferred !== "public_web" ? inferred : (claudeLabel || "public_web");
       const labeledClass = String(e?.voice_class || "").trim();
-      const voice_class = isCompanyHostUrl(url)
+      // S1 (signed 2026-09-18): an 'analysis' label wins over the own-host test (voiceLabel.ts — one predicate)
+      const voice_class = isAnalysisLabelled(e)
+        ? ANALYSIS_VOICE
+        : isCompanyHostUrl(url)
         ? "client_voice"
         : (VOICE_CLASSES.has(labeledClass) ? labeledClass : null);
       return { ...e, source_type, voice_class };

@@ -1,3 +1,4 @@
+import { isAnalysisRow } from "./voiceLabel.ts";
 import { isListingDraft } from "./listingClass.ts";
 import { recomputeValidationStateQuietly } from "./validationState.ts";
 export { isListingDraft };
@@ -160,6 +161,33 @@ function normalizeTopic(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+export type ClaimCandidateSignalRow = { voice_class?: string | null; source_type?: string | null; raw_payload?: unknown; held_at?: string | null; superseded_at?: string | null; superseded_reason?: string | null };
+/** Which signals may back a claim candidate at rebuild — ONE predicate, exported so the rule is testable. */
+export function isClaimCandidateSignal(row: ClaimCandidateSignalRow): boolean {
+  const vc = row?.voice_class;
+  // Receipts-only (design gate 2026-08-18, ruling 2): site_crawl-minted rows
+  // are retained page text + receipts, never claim candidates — read the
+  // structural raw_payload flag, not a naming convention.
+  if (isSiteCrawlReceiptRow(row as { raw_payload?: unknown })) return false;
+  // R3b-2 (2026-08-27): a TERMINAL supersession (source_gone / own_site_redesign_* /
+  // e4_fabricated_append / legacy-null) stops backing candidates so its claims retire via the
+  // R2 prune below. PROVISIONAL evidence (held_at / …recrawl_pending) STILL backs candidates —
+  // awaiting-evidence is not the-world-moved, and dropping it would erase the reverifying /
+  // held-echo state a future re-crawl restores. See isTerminalSupersession.
+  if (isTerminalSupersession(row)) return false;
+  if (vc === "competitor_voice") return false;
+  // Ruling 2 (2026-09-14): OUR analysis (authorship 'us' by the one authority — mojo_analysis, or an
+  // uploaded document judged 'us') stays a candidate and mints ANALYTIC claims only (the mapper groups
+  // analysis-voice on its own key). Analysis-voice rows that are NOT ours by that authority (the public
+  // baseline's hypotheses, D1) stay excluded exactly as before.
+  // S1 (2026-09-18): a synthesis row is recognised by EITHER mark (label or raw_payload.source_type='analysis')
+  // — the 100 pre-D1 rows carried the marker under a client_voice stamp and minted 10 claims of analysis text.
+  if (isAnalysisRow(row)) {
+    return authorshipForSource(String(row.source_type ?? ""), uploadOriginOf(row as { raw_payload?: unknown })) === "us";
+  }
+  return true;
+}
+
 async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: string) {
   // Load signals oldest-first: the first signal that maps to a given normalized key
   // always sets the candidate statement. New signals (newest created_at) always come
@@ -177,29 +205,7 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   // become claim candidates in the CLIENT's claim layer. D1 (generator root-cause) extends
   // this to 'analysis' — OUR reading of the record is not the client's claim either.
   // market_context keeps its pre-existing rebuild behavior.
-  const signals = allSignals.filter((row) => {
-    const vc = (row as { voice_class?: string | null })?.voice_class;
-    // Receipts-only (design gate 2026-08-18, ruling 2): site_crawl-minted rows
-    // are retained page text + receipts, never claim candidates — read the
-    // structural raw_payload flag, not a naming convention.
-    if (isSiteCrawlReceiptRow(row as { raw_payload?: unknown })) return false;
-    // R3b-2 (2026-08-27): a TERMINAL supersession (source_gone / own_site_redesign_* /
-    // e4_fabricated_append / legacy-null) stops backing candidates so its claims retire via the
-    // R2 prune below. PROVISIONAL evidence (held_at / …recrawl_pending) STILL backs candidates —
-    // awaiting-evidence is not the-world-moved, and dropping it would erase the reverifying /
-    // held-echo state a future re-crawl restores. See isTerminalSupersession.
-    if (isTerminalSupersession(row as { held_at?: string | null; superseded_at?: string | null; superseded_reason?: string | null })) return false;
-    if (vc === "competitor_voice") return false;
-    // Ruling 2 (2026-09-14): OUR analysis (authorship 'us' by the one authority — mojo_analysis, or an
-    // uploaded document judged 'us') stays a candidate and mints ANALYTIC claims only (the mapper groups
-    // analysis-voice on its own key). Analysis-voice rows that are NOT ours by that authority (the public
-    // baseline's hypotheses, D1) stay excluded exactly as before.
-    if (vc === "analysis") {
-      const r = row as { source_type?: string | null; raw_payload?: unknown };
-      return authorshipForSource(String(r.source_type ?? ""), uploadOriginOf(r as { raw_payload?: unknown })) === "us";
-    }
-    return true;
-  });
+  const signals = allSignals.filter((row) => isClaimCandidateSignal(row as ClaimCandidateSignalRow));
 
   // D3 anchor gate — load the company's operator-editable entity anchors (name / domain /
   // partner / address). Outside-band signals mint a client claim only if they reference one.

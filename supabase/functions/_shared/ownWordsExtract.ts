@@ -6,6 +6,7 @@
 // verbatim-or-nothing: the final gate is a DETERMINISTIC substring proof against the stored
 // page text — a model can never talk a fabricated quote past it.
 
+import { isAnalysisRow } from "./voiceLabel.ts";
 import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
 import { declaredEligibleFor, type OwnWordsKind } from "./ownWordsKinds.ts";
 
@@ -97,6 +98,21 @@ export function assertPublicClientVoice(signals: SignalGate[]): void {
       throw new Error(`own-words refused: signal source_type='${s.source_type}' is not public`);
     }
   }
+}
+
+// ── The page signal (S1, 2026-09-18) ────────────────────────────────────────
+/** The URL → "page signal" pick the extractor keys its snapshots, candidates and supports refs on: the first
+ *  client_voice signal per URL that is NOT a synthesis row (either mark — voiceLabel.isAnalysisRow). Before S1 the
+ *  pick trusted the stamp alone, and 36 own-words claims / 77 candidates ended up referencing an analysis row. */
+export function pickPageSignals<T extends { id: string; source_url: string | null; source_title?: string | null; voice_class?: string | null; raw_payload?: unknown }>(
+  signals: T[],
+): Map<string, { id: string; source_title: string | null }> {
+  const byUrl = new Map<string, { id: string; source_title: string | null }>();
+  for (const s of signals) {
+    if (!s.source_url || isAnalysisRow(s)) continue;
+    if (!byUrl.has(s.source_url)) byUrl.set(s.source_url, { id: s.id, source_title: s.source_title ?? null });
+  }
+  return byUrl;
 }
 
 // ── Assembly ─────────────────────────────────────────────────────────────────
