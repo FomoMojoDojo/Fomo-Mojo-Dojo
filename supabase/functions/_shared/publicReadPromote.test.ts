@@ -132,7 +132,10 @@ Deno.test("source guard: the generator stages cascade_source on a strategy row, 
   assert(gen.includes("if (e instanceof PromoteRefused) return json({ ok: false, error: e.message, refused: { kind: e.kind, read_id: e.readId } }, 409);"), "a refused promote is a 409 naming the read");
   const prm = await read("./publicReadPromote.ts");
   assert(prm.includes('if (kind === "strategy" && !hasCascadeSource(stagedRow!)) {') && !prm.includes("?? payload) as StrategyPayload"), "fail closed: refusal before any write, no payload fallback");
-  assert(gen.includes("[CASCADE_SOURCE_KEY]: cascadeSourceOf(translateCitations(payload, uuidByRef) as Record<string, unknown>)"), "stage stores the raw rungs");
+  // Part F (2026-09-18): the stage row's cascade_source is built by buildStoredPayloads (publicReadStorage.ts); the generator inserts `built.staged`
+  assert(gen.includes("company_id, kind, payload: built.staged, input_ledger: ledger,"), "stage inserts the built staged payload");
+  const sto = await read("./publicReadStorage.ts");
+  assert(sto.includes("[CASCADE_SOURCE_KEY]: cascadeSourceOf(translateCitations(payload, uuidByRef) as Record<string, unknown>)"), "the staged strategy payload carries the raw rungs");
   assert(gen.includes('if (kind === "strategy") {\n        cascadeRouting = await writeCascadeGaps('), "direct write unchanged");
   assert(!gen.includes("async function writeCascadeGaps("), "one writeCascadeGaps, in _shared");
   const per = await read("./publicReadPerKind.ts");

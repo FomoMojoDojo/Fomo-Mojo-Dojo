@@ -30,9 +30,10 @@ import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
-import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, type StrategyPayload } from "../_shared/cascadeRouting.ts";
+import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
-import { CASCADE_SOURCE_KEY, cascadeSourceOf, PromoteRefused, promoteStagedReads, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
+import { PromoteRefused, promoteStagedReads, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
+import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type OfferingSeenOn } from "../_shared/publicReadStorage.ts";
 import { SELECTION_VERSION, selectDeltas, selectFindings, selectOwnWords, selectSignals, signalText, type Dropped, type SelClaim, type SelDelta, type SelFinding, type SelOwnWord, type SelSignal } from "../_shared/publicReadSelection.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
@@ -225,57 +226,8 @@ function citedRefs(payload: unknown): string[] {
 
 // Deep-copy a payload, replacing every citation ref token with its real ledger uuid (unknown refs are
 // already rejected upstream, so every ref resolves here).
-function translateCitations(payload: unknown, uuidByRef: Map<string, string>): unknown {
-  if (Array.isArray(payload)) return payload.map((x) => translateCitations(x, uuidByRef));
-  if (payload && typeof payload === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(payload)) {
-      if (/citation|cite|refs?$|ids$/i.test(k) && Array.isArray(v)) out[k] = v.map((x) => (typeof x === "string" ? (uuidByRef.get(x.trim()) ?? x) : x));
-      else out[k] = translateCitations(v, uuidByRef);
-    }
-    return out;
-  }
-  return payload;
-}
-
-// bare host of a URL (www. stripped, lowercased). null when unparseable — a synthesis row has no URL.
-function hostOf(url: string | null | undefined): string | null {
-  if (!url) return null;
-  try { return new URL(url).hostname.replace(/^www\./, "").toLowerCase() || null; }
-  catch { return null; }
-}
-
-// ── OFFERING seen_on derivation (STRUCTURAL — the model never emits seen_on) ────────────────────────
-// For each offering item, resolve its cited ref tokens → ledger uuids → the per-id source metadata
-// gathered above, then decide seen_on by the honesty axis WHERE it was seen: any own-site ref (own-words,
-// or a signal whose domain matches the company's own host) → "own_site"; otherwise "outside". Also
-// record source_count (distinct cited refs), the distinct source domains, and the earliest/latest source
-// date. This is a breadth/strength measure, never a verdict.
-type OfferingSeenOn = {
-  index: number; label: string; seen_on: "own_site" | "outside";
-  source_count: number; domains: string[]; earliest: string | null; latest: string | null;
-};
-function deriveOfferingSeenOn(
-  payload: Record<string, unknown>,
-  uuidByRef: Map<string, string>,
-  refMeta: Map<string, { domain: string | null; date: string | null; own_site: boolean }>,
-  ownHosts: Set<string>,
-): OfferingSeenOn[] {
-  const items = Array.isArray(payload.items) ? (payload.items as Array<Record<string, unknown>>) : [];
-  return items.map((it, index) => {
-    const refTokens = [...new Set((Array.isArray(it.refs) ? it.refs : []).filter((r): r is string => typeof r === "string").map((r) => r.trim()))];
-    const metas = refTokens.map((t) => refMeta.get(uuidByRef.get(t) ?? "")).filter((m): m is { domain: string | null; date: string | null; own_site: boolean } => !!m);
-    const domains = [...new Set(metas.map((m) => m.domain).filter((d): d is string => !!d))];
-    const dates = metas.map((m) => m.date).filter((d): d is string => !!d).sort();
-    const ownSite = metas.some((m) => m.own_site) || domains.some((d) => ownHosts.has(d));
-    return {
-      index, label: typeof it.label === "string" ? it.label : "",
-      seen_on: ownSite ? "own_site" : "outside",
-      source_count: refTokens.length, domains,
-      earliest: dates[0] ?? null, latest: dates[dates.length - 1] ?? null,
-    };
-  });
-}
+// translateCitations / hostOf / OfferingSeenOn / deriveOfferingSeenOn MOVED to ../_shared/publicReadStorage.ts (Part F, 2026-09-18):
+// the ONE builder of what a read row stores (buildStoredPayloads) — stage and direct write insert the same enriched payload.
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -512,14 +464,7 @@ Respond with ONLY JSON:
     const { data: coRow } = await supabase.from("companies").select("website").eq("id", company_id).maybeSingle();
     const ownHost = hostOf((coRow as { website?: string | null } | null)?.website ?? null);
     const ownHosts = new Set<string>(ownHost ? [ownHost] : []);
-    const refMeta = new Map<string, { domain: string | null; date: string | null; own_site: boolean }>();
-    for (const r of inputs) {
-      refMeta.set(r.id, {
-        domain: hostOf(r.source_url) ?? (r.own_site && ownHost ? ownHost : null),
-        date: r.event_date ?? null,
-        own_site: r.own_site === true || (hostOf(r.source_url) !== null && ownHosts.has(hostOf(r.source_url)!)),
-      });
-    }
+    const refMeta = buildRefMeta(inputs, ownHost);
 
     const payloads: Partial<Record<Kind, Record<string, unknown>>> = {};
     const storagePayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
@@ -531,31 +476,14 @@ Respond with ONLY JSON:
     let cascadeItems: CascadeGapItem[] = [];
     let cascadeRouting: { superseded: number; inserted: number; run_id: string | null } = { superseded: 0, inserted: 0, run_id: null };
 
-    // Build the STORAGE payload for a kind (strategy → the coherent spine; others → raw) and, for the
-    // offering kind, derive seen_on/source_count/date range from the ledger's per-id source metadata.
-    const prepareStorage = (kind: Kind, payload: Record<string, unknown>, verdict: Record<string, unknown>): Record<string, unknown> => {
-      if (kind === "strategy") {
-        const coherence = (verdict.cascade_coherence ?? null) as CascadeCoherence | null;
-        const derived = deriveCascadeSpineAndGaps(payload as StrategyPayload, coherence);
-        cascadeItems = derived.items;
-        return derived.spine as Record<string, unknown>;
-      }
-      if (kind === "offering") {
-        derivedSeenOn = deriveOfferingSeenOn(payload, uuidByRef, refMeta, ownHosts);
-        const offItems = Array.isArray(payload.items) ? (payload.items as Array<Record<string, unknown>>) : [];
-        return {
-          ...payload,
-          items: offItems.map((it, i) => ({
-            ...it,
-            seen_on: derivedSeenOn![i]?.seen_on ?? null,
-            source_count: derivedSeenOn![i]?.source_count ?? 0,
-            source_domains: derivedSeenOn![i]?.domains ?? [],
-            earliest_source: derivedSeenOn![i]?.earliest ?? null,
-            latest_source: derivedSeenOn![i]?.latest ?? null,
-          })),
-        };
-      }
-      return payload;
+    // Part F (2026-09-18): the stored payload is built ONCE (publicReadStorage.buildStoredPayloads) — the direct write
+    // inserts `stored`, stage inserts `staged` (= stored + cascade_source on a strategy row). The derived artifacts the
+    // response reports (cascade items, offering seen_on) come from the same call.
+    const prepareStorage = (kind: Kind, payload: Record<string, unknown>, verdict: Record<string, unknown>) => {
+      const built = buildStoredPayloads({ kind, payload, verdict, uuidByRef, refMeta, ownHosts });
+      if (kind === "strategy") cascadeItems = built.cascadeItems;
+      if (kind === "offering") derivedSeenOn = built.derivedSeenOn;
+      return built;
     };
 
     // ── ONE integrity row per kind: component first_read_public_read_<kind>. Observability only —
@@ -587,18 +515,16 @@ Respond with ONLY JSON:
     // and a dry-run persists nothing.
     const finalize = async (rawKind: string, payload: Record<string, unknown>, verdict: Record<string, unknown>): Promise<void> => {
       const kind = rawKind as Kind;
-      const storage = prepareStorage(kind, payload, verdict);
+      const built = prepareStorage(kind, payload, verdict);
+      const storage = built.storage;
       storagePayloads[kind] = storage;
-      resolvedPayloads[kind] = translateCitations(kind === "strategy" ? storage : payload, uuidByRef) as Record<string, unknown>;
+      resolvedPayloads[kind] = built.stored;
 
       if (doStage) {
-        // ruling 6: a staged STRATEGY carries its raw rungs (cascade_source) so promote can re-derive the gap/tension
-        // set exactly as the direct write derives it from the raw payload here; the rendered payload stays the spine.
-        const stagedPayload = kind === "strategy"
-          ? { ...resolvedPayloads[kind], [CASCADE_SOURCE_KEY]: cascadeSourceOf(translateCitations(payload, uuidByRef) as Record<string, unknown>) }
-          : resolvedPayloads[kind];
+        // Part F: stage stores exactly what direct write stores (`stored`), plus cascade_source on a strategy row
+        // (ruling 6) so promote re-derives the gap/tension set from the raw rungs; only is_current/superseded_by differ.
         const { data: ins, error: insErr } = await supabase.from("public_reads").insert({
-          company_id, kind, payload: stagedPayload, input_ledger: ledger,
+          company_id, kind, payload: built.staged, input_ledger: ledger,
           model_provider: genChoice.provider, model_name: genChoice.model,
           judge_verdict: verdict, judge_model: judgeChoice.model,
           is_current: false, supersedes_legacy_row: legacyFor(kind),
@@ -617,7 +543,7 @@ Respond with ONLY JSON:
         if (upErr) throw new Error(`supersede-prior failed (${kind}): ${upErr.message}`);
       }
       const { data: ins, error: insErr } = await supabase.from("public_reads").insert({
-        company_id, kind, payload: translateCitations(storage, uuidByRef), input_ledger: ledger,
+        company_id, kind, payload: built.stored, input_ledger: ledger,
         model_provider: genChoice.provider, model_name: genChoice.model,
         judge_verdict: verdict, judge_model: judgeChoice.model,
         is_current: true, supersedes_legacy_row: legacyFor(kind),
