@@ -14,10 +14,9 @@
 // identity — never delete+insert. Discipline: gen qwen2.5:14b-instruct, judge llama3:70b,
 // hard-pinned, local-only, require_model (loud fail, judge-reject persists nothing).
 
-import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { contentIdentity } from "../_shared/contentIdentity.ts";
-import { documentDerivedClaimIds } from "../_shared/firstReadProvenance.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { deriveAnchoredRows, type QuestionAnchor } from "../../../src/lib/firstRead/openQuestionLinks.ts";
+import { loadQuestionAnchors, orphanQuestionIds } from "../_shared/openQuestionAnchors.ts";
 import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
@@ -40,51 +39,6 @@ function json(body: unknown, status = 200) {
 }
 
 // ── load the run's anchors: persisted findings + publicly_silent claim-deltas ────────
-async function loadAnchors(supabase: SupabaseClient, companyId: string, runId: string): Promise<QuestionAnchor[]> {
-  const anchors: QuestionAnchor[] = [];
-
-  const { data: findingRows } = await supabase
-    .from("findings").select("body").eq("company_id", companyId).eq("origin_run_id", Number(runId));
-  for (const f of (findingRows ?? []) as Array<{ body?: string | null }>) {
-    const text = (f.body ?? "").trim();
-    if (text) anchors.push({ kind: "finding", text, identity: await contentIdentity(text) });
-  }
-
-  const { data: deltaRows } = await supabase
-    .from("claim_deltas").select("content_identity, declared_claim_id")
-    .eq("company_id", companyId).eq("pairing_kind", "public_vs_public") // GATE B-1: First Read questions anchor the public pairing
-    .eq("delta_type", "publicly_silent");
-  const deltas = (deltaRows ?? []) as Array<{ content_identity: string; declared_claim_id: string | null }>;
-  const claimIds = deltas.map((d) => d.declared_claim_id).filter((x): x is string => !!x);
-  const claimById = new Map<string, string>();
-  if (claimIds.length) {
-    const { data: claimRows } = await supabase.from("claims").select("id, statement").in("id", claimIds);
-    for (const c of (claimRows ?? []) as Array<{ id: string; statement: string | null }>) {
-      if (c.statement) claimById.set(c.id, c.statement.trim());
-    }
-  }
-  // PROVENANCE GATE — First Read is OUTSIDE-ONLY. Skip any publicly_silent anchor whose declared
-  // claim is uploaded-document-derived (a backing signal with source_type='uploaded_file'). Uploaded
-  // docs power the deeper engagement only; a doc-derived open question must never be BORN. Same
-  // shared predicate the rail read and the auto-selectors use — one authority, no second impl.
-  let excludedDecl = new Set<string>();
-  if (claimIds.length) {
-    const { data: refs } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", claimIds);
-    const refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
-    const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
-    const { data: sigs } = sigIds.length ? await supabase.from("signals").select("id, source_type").in("id", sigIds) : { data: [] };
-    const srcBySig = new Map(((sigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
-    excludedDecl = documentDerivedClaimIds(refRows, srcBySig);
-  }
-  for (const d of deltas) {
-    if (d.declared_claim_id && excludedDecl.has(d.declared_claim_id)) continue; // outside-only: doc-derived never born
-    const text = (d.declared_claim_id && claimById.get(d.declared_claim_id)) || "";
-    // anchor identity = the delta's own content identity (stable provenance link)
-    if (text.trim() && d.content_identity) anchors.push({ kind: "silent_delta", text: text.trim(), identity: d.content_identity });
-  }
-  return anchors;
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
@@ -118,7 +72,8 @@ Deno.serve(async (req) => {
     }
     if (!runId) return json({ status: "empty", empty_reason: "No findings run for this company.", trace });
 
-    const anchors = await loadAnchors(supabase, company_id, runId);
+    // gate 0 (ruling 4): the ONE anchor loader — OPEN findings + publicly_silent deltas (openQuestionAnchors.ts)
+    const anchors = await loadQuestionAnchors(supabase, company_id, runId);
     const findingIdentities = new Set(anchors.filter((a) => a.kind === "finding").map((a) => a.identity));
 
     // ── PLAN: manifest only (zero model, zero writes, NO ledger row). ─────────────────
@@ -147,11 +102,10 @@ Deno.serve(async (req) => {
 
     // ── FINALIZE (unscoped write): mark ledger complete + supersede orphaned anchors. ─
     if (doWrite && !scopeIds) {
-      const identSet = new Set(anchors.map((a) => a.identity));
       const { data: liveRows } = await supabase.from("first_read_open_questions")
         .select("id, anchor_identity").eq("company_id", company_id).eq("run_id", runId).eq("status", "live");
-      const orphanIds = (liveRows ?? [])
-        .filter((r) => !r.anchor_identity || !identSet.has(r.anchor_identity)).map((r) => r.id as string);
+      // a live question whose anchor is gone — including one on a finding that is no longer OPEN (ruling 4)
+      const orphanIds = orphanQuestionIds((liveRows ?? []) as Array<{ id: string; anchor_identity: string | null }>, anchors);
       if (orphanIds.length) {
         await supabase.from("first_read_open_questions").update({ status: "superseded" }).in("id", orphanIds);
       }
