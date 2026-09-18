@@ -148,3 +148,21 @@ served until the stack is recreated (`source supabase/functions/.env.local` → 
 - generate-step-opportunities · generate-step-conditions · generate-market-hypothesis
 - feed-first-read-corrections · record-check-outcome
 - record-interview-finding (gate 2, 2026-09-16 — the one write path for interview findings)
+
+### Search-health check (2026-09-18)
+
+Before any outside read, one control query against the SearXNG the runner uses:
+
+```bash
+curl -s -m 40 "http://localhost:8888/search?q=<active company name>&format=json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);console.log(JSON.stringify({results:(j.results||[]).length,unresponsive_engines:j.unresponsive_engines}))})'
+```
+
+- **Pass:** `results ≥ 1`.
+- **Fail:** `results = 0` and every `unresponsive_engines` entry is a captcha / too-many-requests / access-denied
+  (the egress is T-Mobile CGNAT; brave, duckduckgo, startpage and google captcha or 403 it — a per-engine cooldown
+  that re-triggers on the first request after expiry, i.e. IP reputation, not self-healing). Print the engine table and
+  the line **"SearXNG dead this session — name-only plans run on the web_search lane; domain plans unaffected"**.
+  No per-company retries that session. Name-only plans (`no_public_site`) run the Anthropic web_search lane as
+  discovery before the thin gate (ruling 2026-09-18; `_shared/nameOnlyLane.ts`); the run ledger carries
+  `search: { searx, lane }` and `search_status: lane_only` when the lane carried it. Domain plans never depended on
+  SearXNG for the lane (own-site crawl bootstraps the gate).

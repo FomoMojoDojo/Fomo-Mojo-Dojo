@@ -19,9 +19,9 @@
 //   registry_meta    outside_voice_about_client counts                       yes
 //   journalism       untouched (the model's label stands)                    yes
 //
-// FAIL CLOSED: a row on a registry host whose section cannot be read from the stored snapshot takes
-// the PAGE DEFAULT — filing for a filing-data page, self_reported for a profile page, rating for a
-// rating page — so an unreadable registry row is never born as the outside speaking.
+// NO MATCHED MARKER (ruling 2026-09-18): a row on a registry host whose section cannot be read from the
+// stored snapshot is REGISTRY META / outside voice on every page type — filing and self_reported are earned
+// only from a matched section, never assumed from the page type.
 
 export type RegistryPageType = "filing_data" | "profile" | "rating" | "journalism";
 export type RegistryClass = "filing" | "self_reported" | "rating" | "derived_metric" | "registry_meta" | "journalism";
@@ -271,10 +271,12 @@ export function scoreSections(rowText: string, spans: SectionSpan[]): SectionSco
 /** one incidental word never places a row; two distinctive tokens (or one figure) do */
 export const MIN_SECTION_SCORE = 2;
 
+/** The class a markerless snapshot takes on each page type — registry_meta everywhere (ruling 2026-09-18); journalism
+ *  never reaches the section step. Kept as a table so the rule reads at one glance. */
 export const PAGE_DEFAULT_CLASS: Record<RegistryPageType, RegistryClass> = {
-  filing_data: "filing",
-  profile: "self_reported",
-  rating: "rating",
+  filing_data: "registry_meta",
+  profile: "registry_meta",
+  rating: "registry_meta",
   journalism: "journalism",
 };
 
@@ -296,7 +298,7 @@ export type RegistryClassification = {
   };
 };
 
-export const REGISTRY_CLASSIFIER_VERSION = "c2-2026-09-17"; // c1 + Mission block = self_reported
+export const REGISTRY_CLASSIFIER_VERSION = "c2b-2026-09-18"; // c2 + markerless snapshots default to registry_meta
 
 /** Classify one row. Returns null when the URL is not a registry URL (the row is none of this module's business). */
 export function classifyRegistryRow(args: {
@@ -319,10 +321,12 @@ export function classifyRegistryRow(args: {
   const top = scores[0];
   const second = scores[1];
   if (!top || top.score < MIN_SECTION_SCORE) {
-    // FAIL CLOSED — no readable section (or no real overlap): the page default decides — never the
-    // outside speaking on a filing / profile page.
+    // NO MATCHED MARKER (fold, ruling 2026-09-18): a snapshot whose only span is the catch-all — or a row that
+    // overlaps no section — is REGISTRY META / outside voice on every page type. A filing or self_reported class is
+    // earned only from a matched section; it is never assumed from the page type (Mithun's CauseIQ row, run 78,
+    // was born filing from a 207-char markerless snapshot under the previous default).
     return {
-      host_rule: m.host_rule, page_type: m.page_type, section: "page_default", class: PAGE_DEFAULT_CLASS[m.page_type],
+      host_rule: m.host_rule, page_type: m.page_type, section: "page_default", class: "registry_meta",
       basis: { ld_hint, snapshot_sections: spans.length, scores, mixed: false, classifier_version: REGISTRY_CLASSIFIER_VERSION },
     };
   }

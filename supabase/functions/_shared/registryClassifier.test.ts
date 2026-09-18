@@ -124,9 +124,10 @@ Deno.test("CN stored snapshot (Elementor JSON, no readable sections): ld_json Re
   assertEquals(ldPageHint(s.structured), "rating");
   const spans = sectionSpans("rating", s.clean_text);
   assert(spans.every((x) => x.section === "profile_meta"), "no marker matched in the stored text");
+  // fold 2026-09-18: a markerless snapshot is registry_meta on every page type (the ld_json hint is recorded, not decisive)
   for (const k of ["cn_rating_8eeaf11f", "cn_rating_c57ba124", "cn_mixed_913ff9a5"] as const) {
     const c = classifyRegistryRow({ url: CN, text: ROWS[k], snapshot: s })!;
-    assertEquals([c.section, c.class, c.basis.ld_hint], ["page_default", "rating", "rating"], k);
+    assertEquals([c.section, c.class, c.basis.ld_hint], ["page_default", "registry_meta", "rating"], k);
     assertEquals(registryStamp(c), { evidence_class: "prose", voice_class: "outside_voice_about_client" });
   }
 });
@@ -154,14 +155,16 @@ Deno.test("journalism: propublica.org/article/… is journalism (stamp null — 
   assertEquals([c.page_type, c.section, c.class], ["journalism", "article", "journalism"]);
   assertEquals(registryStamp(c), null);
 });
-Deno.test("fail closed: no snapshot → page default (filing / self_reported / rating); one incidental token never places a row", async () => {
-  assertEquals(classifyRegistryRow({ url: PP, text: ROWS.pp_meta_49bd7bd7, snapshot: null })!.class, PAGE_DEFAULT_CLASS.filing_data);
-  assertEquals(classifyRegistryRow({ url: GS, text: "anything", snapshot: null })!.class, "self_reported");
-  assertEquals(classifyRegistryRow({ url: CN, text: "anything", snapshot: null })!.class, "rating");
-  assertEquals(PAGE_DEFAULT_CLASS, { filing_data: "filing", profile: "self_reported", rating: "rating", journalism: "journalism" });
+Deno.test("no matched marker → registry_meta / outside voice on EVERY page type (never filing or self_reported by page type); one incidental token never places a row", async () => {
+  assertEquals(classifyRegistryRow({ url: PP, text: ROWS.pp_meta_49bd7bd7, snapshot: null })!.class, "registry_meta");
+  assertEquals(classifyRegistryRow({ url: GS, text: "anything", snapshot: null })!.class, "registry_meta");
+  assertEquals(classifyRegistryRow({ url: CN, text: "anything", snapshot: null })!.class, "registry_meta");
+  assertEquals(classifyRegistryRow({ url: "https://www.causeiq.com/organizations/the-john-c-mithun-foundation,454228213/", text: "The John C Mithun Foundation. Santa Barbara, CA. EIN 45-4228213. Listed in Cause IQ nonprofit directory.", snapshot: { clean_text: "The John C Mithun Foundation | Cause IQ\nSanta Barbara, CA\nEIN 45-4228213" } })!.class, "registry_meta");
+  assertEquals(PAGE_DEFAULT_CLASS, { filing_data: "registry_meta", profile: "registry_meta", rating: "registry_meta", journalism: "journalism" });
+  for (const url of [PP, GS, CN]) assertEquals(registryStamp(classifyRegistryRow({ url, text: "x", snapshot: null })!), { evidence_class: "prose", voice_class: "outside_voice_about_client" });
   const s = await snap("propublica_edgewood");
   const one = classifyRegistryRow({ url: PP, text: "audits", snapshot: s })!; // a single word present in the boilerplate
-  assert(one.basis.scores[0].score < MIN_SECTION_SCORE && one.section === "page_default" && one.class === "filing");
+  assert(one.basis.scores[0].score < MIN_SECTION_SCORE && one.section === "page_default" && one.class === "registry_meta");
   assertEquals(classifyRegistryRow({ url: "https://edgewood.org/", text: "x", snapshot: null }), null);
 });
 
@@ -253,7 +256,7 @@ Deno.test("source guard: the classifier module calls no model and no network; th
   const prov = await read("./claimProvenance.ts");
   assertStringIncludes(prov, 'if (String(entry?.evidence_class || "") === "filing") return true;');
   const phase1 = await read("./evidencePhase1.ts");
-  assertStringIncludes(phase1, 'signal.evidence_class === "filing" ? { evidence_class: "filing" }');
+  assertStringIncludes(phase1, 'evidence_class: signal.evidence_class === "filing" ? "filing" : "prose",'); // explicit on EVERY row (bulk-insert NULL trap)
 });
 
 // ── Real-path bypass proofs (the function, not the predicate) ───────────────────────────────────

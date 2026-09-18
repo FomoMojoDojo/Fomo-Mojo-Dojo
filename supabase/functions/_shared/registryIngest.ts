@@ -83,15 +83,23 @@ export async function loadRegistrySnapshots(
 ): Promise<Map<string, RegistrySnapshotWithDate>> {
   const out = new Map<string, RegistrySnapshotWithDate>();
   if (urls.length === 0) return out;
+  // outside_page_snapshots.source_url is stored in BOTH conventions (full URL by the older writers, scheme-less
+  // www-less by the crawl pass) — match either (fold 2026-09-18: Mithun's stored snapshots never served the
+  // classifier on re-class because only the exact full URL was asked for). Keys of `out` are the caller's URLs.
+  const bare = (u: string) => u.replace(/^https?:\/\/(www\d*\.)?/i, "").replace(/\/+$/, "");
+  const wanted = new Map<string, string>(); // stored form → caller's URL
+  for (const u of urls) { wanted.set(u, u); wanted.set(bare(u), u); wanted.set(`${bare(u)}/`, u); }
   try {
     const { data } = await supabase
       .from("outside_page_snapshots")
       .select("source_url, clean_text, structured, crawled_at")
       .eq("company_id", companyId)
-      .in("source_url", urls)
+      .in("source_url", [...wanted.keys()])
       .order("crawled_at", { ascending: false });
     for (const r of (data ?? []) as Array<{ source_url: string; clean_text: string | null; structured: unknown; crawled_at?: string | null }>) {
-      if (!out.has(r.source_url) && r.clean_text) out.set(r.source_url, { clean_text: r.clean_text, structured: r.structured, read_at: r.crawled_at ?? null });
+      const key = wanted.get(r.source_url);
+      if (!key || out.has(key) || !r.clean_text) continue; // newest first; the largest text is not preferred over the newest
+      out.set(key, { clean_text: r.clean_text, structured: r.structured, read_at: r.crawled_at ?? null });
     }
   } catch { /* SELECT failure ⇒ no stored basis; the crawl text (if any) or the page default decides */ }
   for (const u of urls) {

@@ -16,6 +16,7 @@ import { selectFinalText, parseJsonObjectDefensive, persistSynthesisParseFailure
 // AUTHORSHIP GATE (operator ruling 2026-09-03, A) — CHANNEL ≠ VOICE on aggregator company-profile URLs.
 import { demoteAggregatorSelfVoiceInResult, judgeAggregatorAuthorship, resolveLocalOllamaUrl } from "../_shared/aggregatorAuthorship.ts";
 import { loadRegistrySnapshots, registryUrlsInResult, stampRegistryInResult } from "../_shared/registryIngest.ts";
+import { buildNameOnlyBrief, claudeWebSearchPrompt, laneSourcesFromResult, laneStatusFromSources, resolveNameOnlyOutcome, searxVerdict, type LaneStatus, type SearchLedger } from "../_shared/nameOnlyLane.ts";
 import { INTERNAL_CALL_HEADER, isInternalServiceCall } from "../_shared/internalCall.ts";
 
 const corsHeaders = {
@@ -1718,6 +1719,8 @@ async function callClaudeWebSearch(opts: {
   supabase: { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
   companyId: string;
   ledgerRunId: string | null;
+  /** Name-only lane (ruling 2026-09-18): the six passes as search intents; absent ⇒ the domain prompt, byte-identical. */
+  nameOnlyBrief?: string | null;
 }): Promise<{ parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string> }> {
   const schemaHint =
     `{\n` +
@@ -1732,37 +1735,9 @@ async function callClaudeWebSearch(opts: {
     `  "outside_voice_signals": [ { "perspective":"<string>","source_type":"<type>","voice_class":"<class>","signal":"<string>","sentiment":"<string>","alignment":"<string>","url":"<real url>","confidence":<0-100 int> } ]\n` +
     `}`;
 
-  const prompt =
-    `You are an outside-in strategy analyst. Research the company "${opts.companyName}" ` +
-    `(website: ${opts.website || opts.domain}) comprehensively using web search.\n` +
-    (opts.resolvedCategory ? `Likely category: ${opts.resolvedCategory}.\n` : "") +
-    `First, establish from the company's own site what kind of business this is — category, ` +
-    `offering, geography. Then discover its REAL PUBLIC FOOTPRINT: the places where outside ` +
-    `voices actually talk about THIS kind of business. Cover each footprint class below, ` +
-    `choosing the platforms that genuinely serve this company's category and locale — the ` +
-    `named sites are illustrations, not a checklist; skip any that don't fit and find the ` +
-    `ones that do:\n` +
-    `1. Customer reviews — wherever this category is actually reviewed (e.g. Google/Yelp for local service and retail; G2/Capterra/Trustpilot for software; HomeAdvisor/Angi for home services; TripAdvisor for hospitality).\n` +
-    `2. Employee reviews, where the company is large enough to have them (e.g. Glassdoor, Indeed).\n` +
-    `3. Local and trade press — local news outlets and the category's trade publications.\n` +
-    `4. Social presence — the company's actual profiles, with audience-size and engagement signals.\n` +
-    `5. Marketplace, retail, and ordering listings — wherever its products or services are sold or listed.\n` +
-    `6. Partner and customer mentions — other businesses' sites that reference this company.\n` +
-    `7. Directories and registries — BBB, chambers of commerce, licensing bodies, as applicable.\n` +
-    `Prioritise genuine third-party sentiment over the company's own claims.\n\n` +
-    `DISAMBIGUATION LAW (precision over coverage):\n` +
-    `- Anchor every search to the exact entity: the name, the domain (${opts.domain}), and the location and category you established from its own site.\n` +
-    `- If you cannot be confident a result refers to THIS company, EXCLUDE it. Same-named or similarly-named organizations elsewhere are contamination, not coverage.\n\n` +
-    `Then output a SINGLE JSON object — and NOTHING else — matching exactly this shape:\n${schemaHint}\n\n` +
-    `Rules:\n` +
-    `- Use ONLY facts found via your web searches. Do NOT fabricate reviews, quotes, ratings, or URLs.\n` +
-    `- Every outside_voice_signals[].url and evidence_ledger[].url MUST be a real URL returned by a search.\n` +
-    `- source_type ∈ {employee_review, customer_review, community_discussion, third_party_profile, profile_or_company_page, news_signal, review_signal, public_web}.\n` +
-    `- voice_class ∈ {client_voice, outside_voice_about_client, market_context}: client_voice = the company speaking about itself (its site, its profiles, its posts); outside_voice_about_client = a genuine third party speaking ABOUT this company (reviews, press about them, partner/customer mentions, registries attesting them); market_context = category/market information not about this company specifically (industry stats, category coverage). When unsure between outside_voice_about_client and market_context, ask: does this source attest something about THIS company? If not, it is market_context.\n` +
-    `- For genuine third-party voices set bucket="outside_voice_signal".\n` +
-    `- Include ≥1 employee_review, ≥1 customer_review, and ≥1 community_discussion IF such public sources exist; ` +
-    `if a type genuinely has no public source, omit it rather than inventing one.\n` +
-    `- confidence is 0-100. Emit the JSON object only — no markdown fences, no prose before or after.`;
+  // ONE prompt builder for both plans (_shared/nameOnlyLane.ts): the domain form is byte-identical to the former inline
+  // text (fixtures/lane/domain_prompt_HEAD_*.txt pin it); the name-only form swaps the two domain-anchored sentences.
+  const prompt = claudeWebSearchPrompt({ companyName: opts.companyName, website: opts.website, domain: opts.domain, resolvedCategory: opts.resolvedCategory, schemaHint, nameOnlyBrief: opts.nameOnlyBrief ?? null });
 
   // Honor the company's exclude_domains: tell web_search not to search those hosts.
   // OE-2: 12 = one search per footprint class plus disambiguation/follow-up headroom.
@@ -2101,6 +2076,10 @@ Deno.serve(async (req) => {
       plan_kind: PlanKind;
       site_crawl: "ran" | "skipped_no_public_site";
       thin_reason?: "no_results" | "fallback_only" | null;
+      /** Name-only lane (2026-09-18): searx's SRCH-1 verdict and the lane's status, ledgered separately. */
+      search?: SearchLedger;
+      /** Name-only completed runs: which discovery carried it. */
+      search_status?: "lane_only" | "searx_and_lane" | null;
     } = {
       provider: "openai_public",
       model: openaiModel,
@@ -2417,6 +2396,43 @@ Deno.serve(async (req) => {
       ),
       mergeUnique(sourcesG, sourcesH),
     );
+    // ── NAME-ONLY LANE (operator ruling 2026-09-18) — discovery for a company with no public site ────
+    // searx ran above and is RECORDED (runLedger.search.searx); it no longer decides the run. The web_search
+    // lane runs HERE — after searx, before scoring / fetch / the thin gate — with the six name-only passes as
+    // its brief (Option B: the name and its intents only). Its cited URLs merge into the sources like search
+    // results, the fallback crawl runs over their hosts, and the gate is taken afterwards (resolveNameOnlyOutcome).
+    // The lane's parsed result is REUSED as the synthesis (one call, not two). Domain plans: byte-identical path.
+    const searxOutageForLedger = isUnambiguousSearchOutage(searchDiag);
+    let nameOnlyLaneOut: { parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string> } | null = null;
+    let nameOnlyLane: LaneStatus | null = null;
+    let laneSources: ReturnType<typeof laneSourcesFromResult> = [];
+    if (planKind === "name_only" && synthesis_engine === "claude_websearch") {
+      // B1 category revival for the lane (same read the synthesis path makes further down; name-only only).
+      let laneCategory: string | undefined;
+      {
+        const { data: priorRun } = await supabase
+          .from("public_baseline_runs").select("id, result_json").eq("company_id", company_id)
+          .order("created_at", { ascending: false }).limit(1).maybeSingle();
+        const archetype = String((priorRun as any)?.result_json?.category_archetype || "").trim();
+        if (archetype && archetype !== "unknown") laneCategory = archetype;
+      }
+      const nameOnlyBrief = buildNameOnlyBrief(plan);
+      try {
+        nameOnlyLaneOut = await callClaudeWebSearch({
+          apiKey: anthropicKey ?? "", model: anthropicModel, companyName: company_name, website, domain,
+          resolvedCategory: laneCategory, excludeDomains: sourceFilters.exclude_domains,
+          supabase, companyId: company_id, ledgerRunId: ledgerRowId, nameOnlyBrief,
+        });
+        laneSources = laneSourcesFromResult(nameOnlyLaneOut.parsed, nameOnlyLaneOut.citationSourceTextByUrl, inferSourceType);
+        nameOnlyLane = laneStatusFromSources(laneSources, null);
+      } catch (laneErr) {
+        nameOnlyLane = laneStatusFromSources([], String((laneErr as Error)?.message ?? laneErr).slice(0, 300));
+      }
+      console.log("[baseline] name-only lane", { fired: nameOnlyLane.fired, results: nameOnlyLane.results, hosts: nameOnlyLane.hosts.length, error: nameOnlyLane.error });
+    }
+    const searchLedger: SearchLedger = { searx: searxVerdict(searchDiag, searxOutageForLedger), lane: nameOnlyLane };
+    runLedger.search = searchLedger;
+
     // Same-domain website crawl (helps tiny footprints / thin homepages) — SKIPPED for a company with
     // no public site (gate B): there is no own domain to read, and nothing may be minted as its voice.
     const directUrl = website.startsWith("http") ? website : `https://${website}`;
@@ -2445,7 +2461,7 @@ Deno.serve(async (req) => {
     }));
 
     const rawSources = mergeUnique(
-      mergeUnique(mergeUnique(rawSearchSources, socialCandidatesFromSite), manualSeedSources),
+      mergeUnique(mergeUnique(mergeUnique(rawSearchSources, laneSources), socialCandidatesFromSite), manualSeedSources),
       inferredLinkedInSources,
     );
     const queryRuns = [
@@ -2500,6 +2516,11 @@ Deno.serve(async (req) => {
                 ? Math.max(68, m.score)
               : r?.engine === "site_social_link"
                 ? Math.max(70, m.score)
+              // NAME-ONLY LANE (2026-09-18): a URL the web_search lane cited for THIS entity under its disambiguation law
+              // is a candidate — the name-token scorer alone caps it at 45 on a name-only plan (no domain term), which
+              // left only the LinkedIn slug guesses as candidates (Mithun run 76). Medium floor; never strong by fiat.
+              : r?.engine === "claude_web_search_lane"
+                ? Math.max(60, m.score)
                 : m.score,
           match_reason:
             r?.engine === "manual_seed_url"
@@ -2508,6 +2529,8 @@ Deno.serve(async (req) => {
                 ? Array.from(new Set([...(Array.isArray(m.reasons) ? m.reasons : []), "linkedin_slug_guess"]))
               : r?.engine === "site_social_link"
                 ? Array.from(new Set([...(Array.isArray(m.reasons) ? m.reasons : []), "linked_from_company_site"]))
+              : r?.engine === "claude_web_search_lane"
+                ? Array.from(new Set([...(Array.isArray(m.reasons) ? m.reasons : []), "claude_web_search_lane"]))
                 : m.reasons,
         };
       })
@@ -2982,8 +3005,17 @@ Deno.serve(async (req) => {
 
     const directEvidenceMerged = mergeEvidenceByUrl([...directEvidence, ...fallbackSiteEvidence]).slice(0, 12);
     const socialEvidenceMerged = mergeEvidenceByUrl([...socialLinkEvidence, ...fallbackSocialEvidence]).slice(0, 8);
+    // NAME-ONLY LANE (2026-09-18): the lane's cited text is evidence for the gate exactly as the domain plan's
+    // citations are (ingest reads the parsed result + citations, never a re-fetch) — a paywalled or 403'd host
+    // still counts as a cited source; its fetch_status is recorded by the fetch above, never fabricated.
+    // Empty on domain plans (laneSources is []).
+    const laneEvidence = laneSources
+      .filter((s) => (s.snippet ?? "").trim().length >= 40)
+      .filter((s) => !evidenceFromSearch.some((e) => e.url === s.url))
+      .slice(0, 16)
+      .map((s) => ({ url: s.url, title: s.title, snippet: s.snippet, source_type: s.source_type, extracted: `Cited by the web_search lane: ${s.snippet}` }));
     // Combine (direct + website/social/manual evidence first so they are represented)
-    const evidence = [...directEvidenceMerged, ...socialEvidenceMerged, ...manualSeedEvidence, ...evidenceFromSearch]
+    const evidence = [...directEvidenceMerged, ...socialEvidenceMerged, ...manualSeedEvidence, ...evidenceFromSearch, ...laneEvidence]
       .filter((entry) =>
         isSourceAllowedByPolicy({
           url: String(entry?.url || ""),
@@ -3062,11 +3094,17 @@ Deno.serve(async (req) => {
       // SRCH-1 — classify the refusal before recording it. If the search backend was
       // unusable for this entire run, "not enough extractable evidence" is a lie: we
       // never got to look. Distinct status, distinct reason naming the engines.
-      const searchOutage = isUnambiguousSearchOutage(searchDiag);
+      // NAME-ONLY (ruling 2026-09-18): searx's verdict alone never says search_unavailable — only "searx dead AND
+      // the lane did not fire / errored" does; a run where something looked and found nothing is thin / no_results.
+      const nameOnlyOutcome = planKind === "name_only"
+        ? resolveNameOnlyOutcome({ searx: searchLedger.searx, lane: searchLedger.lane, evidenceCount: evidence.length })
+        : null;
+      const searchOutage = nameOnlyOutcome ? nameOnlyOutcome.status === "search_unavailable" : isUnambiguousSearchOutage(searchDiag);
       const outageDetail = describeUnresponsive(searchDiag);
       if (searchOutage) {
         ledgerRefusalText = `Search backend unavailable — no engine returned results for any of ${searchDiag.queriesRun} queries (${outageDetail}). No public evidence could be checked; this is not a finding about the company.`;
       }
+      if (nameOnlyOutcome && nameOnlyOutcome.status === "insufficient_public_evidence") runLedger.thin_reason = nameOnlyOutcome.thin_reason;
 
       const resultJson = buildInsufficientResult({
         companyName: company_name,
@@ -3186,7 +3224,13 @@ Deno.serve(async (req) => {
     // on the OpenAI path (that producer already lifts from the crawl map).
     let claudeCitationSourceText = new Map<string, string>();
     let result: unknown;
-    if (synthesis_engine === "claude_websearch") {
+    if (synthesis_engine === "claude_websearch" && nameOnlyLaneOut) {
+      // NAME-ONLY: the lane already ran (before the gate) — reuse its result; never a second web_search.
+      result = nameOnlyLaneOut.parsed;
+      claudeCitationSourceText = nameOnlyLaneOut.citationSourceTextByUrl;
+      // past the gate ⇒ the run completes; which discovery carried it is the ledgered search_status
+      runLedger.search_status = searchLedger.searx === "ok" ? "searx_and_lane" : "lane_only";
+    } else if (synthesis_engine === "claude_websearch") {
       const claudeOut = await callClaudeWebSearch({
         apiKey: anthropicKey ?? "",
         model: anthropicModel,
