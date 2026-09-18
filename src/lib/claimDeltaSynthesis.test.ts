@@ -1081,7 +1081,10 @@ describe("self-echo gate — own-host observed claims never reach the echo side"
   const pub = (over: Row = {}): Row => ({ id: "p-x", company_id: CO, statement: DECL, topic: null, provenance: "public_observed", claim_type: "own_words", ...over });
   const publicArgs = (db: ReturnType<typeof fakeDb>, write = true) => ({ ...baseArgs(db, CO, write), pairingKind: "public_vs_public" as const });
 
-  it("(b1) RED→GREEN: own-words observed claim on the company host with its refs WIPED (page_url only) ⇒ zero echoed/divergent pairs; counted own_host_excluded", async () => {
+  // 2026-09-18 (observed-pool admission): an own_words-typed observed claim is now refused by the CLAIM-keyed rule
+  // (isObservedAdmissible) before the host rule sees it — same outcome (never observed), ledgered as
+  // own_words_observed_excluded instead of own_host_excluded. (b4) keeps the host rule on an inference claim.
+  it("(b1) RED→GREEN: own-words observed claim on the company host with its refs WIPED (page_url only) ⇒ zero echoed/divergent pairs; refused by claim_type before the host rule", async () => {
     alwaysEcho();
     const d = ownWordsDeclared();
     // p-self: identical own-words text from another page of the SAME site; refs gone; raw_payload.page_url survives.
@@ -1090,14 +1093,16 @@ describe("self-echo gate — own-host observed claims never reach the echo side"
     const r = await computeDeltasForCompany(publicArgs(db));
     if (!r.ok) throw new Error("expected ok: " + JSON.stringify(r));
     expect(r.deltas.some((x) => (x.delta_type === "echoed" || x.delta_type === "divergent") && x.public_claim_id === "p-self")).toBe(false);
-    expect(r.totals.own_host_excluded).toBe(1);
+    expect(r.totals.own_words_observed_excluded).toBe(2); // p-self AND the declared own-words claim itself (both own_words-typed)
+    expect(r.totals.own_host_excluded).toBe(0);
     expect(r.totals.public).toBe(0);
     // the declared statement lands publicly_silent — the honest state: nobody outside has repeated it
     expect(r.deltas.some((x) => x.delta_type === "publicly_silent" && x.declared_claim_id === "d-own")).toBe(true);
     expect(db.tables.claim_deltas.some((row) => row.public_claim_id === "p-self")).toBe(false);
     // the run's integrity row ledgers the refusal per rule
     const integ = db.tables.integrity_runs.find((x) => x.component === "first_read_gap_pairs");
-    expect((integ?.excluded_by_rule as Row)?.own_host).toBe(1);
+    expect((integ?.excluded_by_rule as Row)?.own_words_observed).toBe(2);
+    expect((integ?.excluded_by_rule as Row)?.own_host).toBe(0);
   });
 
   it("(b2) a no-ref observed claim with NO page_url is unresolvable ⇒ not admitted, counted unbacked_excluded", async () => {

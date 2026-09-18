@@ -146,6 +146,8 @@ export type DeltaRunResult =
         // SELF-ECHO GATE (2026-09-03): observed candidates refused at admission — own-host backed, and
         // (public kind) unresolvable (no refs, no page_url). Neither can corroborate; both are ledgered.
         own_host_excluded?: number; unbacked_excluded?: number;
+        /** 2026-09-18: public_observed claims refused from the observed pool by claim_type own_words (claim-keyed, before refs) */
+        own_words_observed_excluded?: number;
         // ADMISSION CRITERION: own-words claims left off the declared side by kind.
         own_words_ineligible?: number;
         // SELF-VOICE EXCLUSION: public_observed claims dropped from the observed side because
@@ -240,6 +242,20 @@ export type DeltaComputeArgs = {
     user: string;
   }) => Promise<{ content: string; provider: string; model: string }>;
 };
+
+// ── OBSERVED-POOL ADMISSION (operator ruling 2026-09-18) ─────────────────────────────────────────
+// The observed side of EITHER pairing kind is outside voice. The ref-keyed voice test below cannot see a claim whose
+// refs are absent (two C3b registry quotes — ebf3680d, 87860a8c — carried no refs and were paired as observed voice
+// against four internal_declared claims on 2026-09-18 04:39; 40 more rows on the public kind). This predicate is
+// keyed on the CLAIM, not its refs, and runs FIRST: an own_words claim is the company's words by claim_type; a
+// declared / attested / registry-declared provenance is the company's side by definition. Allowlist polarity:
+// only public_observed, non-own-words claims may go on to the ref-based checks. One predicate, both kinds.
+export const DECLARED_PROVENANCES: ReadonlySet<string> = new Set(["internal_declared", "client_attested", "publicly_declared"]);
+export function isObservedAdmissible(claim: { provenance?: string | null; claim_type?: string | null }): boolean {
+  if (claim.claim_type === "own_words") return false;
+  if (DECLARED_PROVENANCES.has(String(claim.provenance ?? ""))) return false;
+  return claim.provenance === "public_observed";
+}
 
 // ── Identity keys (evidence law) ──────────────────────────────────────────────
 
@@ -547,6 +563,11 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     }));
   const pairingKind: PairingKind = args.pairingKind ?? "internal_vs_public";
   const publicsAll = claims.filter((c) => c.provenance === "public_observed");
+  // OBSERVED POOL (2026-09-18): the claim-keyed admission runs BEFORE any ref-based check — own_words and every
+  // declared provenance are out of the observed side in both kinds, refs or not. publicsAll (public_observed) is
+  // still what the public kind derives its DECLARED side from (own words are that side's whole point).
+  const observedPool = publicsAll.filter((c) => isObservedAdmissible(c));
+  const ownWordsObservedExcluded = publicsAll.length - observedPool.length;
 
   // Declared side by kind (GATE B-1):
   //   internal_vs_public — the client-side corpus: operator-uploaded (internal_declared)
@@ -676,7 +697,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   }
   const ownHostClaimIds = new Set<string>();
   const unbackedClaimIds = new Set<string>();
-  for (const c of publicsAll) {
+  for (const c of observedPool) {
     let urls = urlsByClaim.get(c.id) ?? [];
     if (urls.length === 0 && c.page_url) urls = [c.page_url];
     if (urls.length === 0) {
@@ -699,13 +720,14 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     return listingMayCorroborate(d).ok ? p.listing : "refused";
   };
   const voiceOrDeclared = (c: { id: string }) => selfVoiceClaimIds.has(c.id) || (publicVoiceDeclaredIds?.has(c.id) ?? false);
-  const publics = publicsAll.filter(
+  const publics = observedPool.filter(
     (c) => !voiceOrDeclared(c) && !ownHostClaimIds.has(c.id) && !unbackedClaimIds.has(c.id),
   );
-  // Ledger each admission rule separately (a claim is counted under the FIRST rule that refused it).
-  const selfVoiceExcluded = publicsAll.filter((c) => voiceOrDeclared(c)).length;
-  const ownHostExcluded = publicsAll.filter((c) => !voiceOrDeclared(c) && ownHostClaimIds.has(c.id)).length;
-  const unbackedExcluded = publicsAll.filter((c) => !voiceOrDeclared(c) && !ownHostClaimIds.has(c.id) && unbackedClaimIds.has(c.id)).length;
+  // Ledger each admission rule separately (a claim is counted under the FIRST rule that refused it; the claim-keyed
+  // rule above — own_words / declared provenance — is counted in ownWordsObservedExcluded).
+  const selfVoiceExcluded = observedPool.filter((c) => voiceOrDeclared(c)).length;
+  const ownHostExcluded = observedPool.filter((c) => !voiceOrDeclared(c) && ownHostClaimIds.has(c.id)).length;
+  const unbackedExcluded = observedPool.filter((c) => !voiceOrDeclared(c) && !ownHostClaimIds.has(c.id) && unbackedClaimIds.has(c.id)).length;
 
   // Existing rows: identity → row. Tombstones ('rejected_pairing') are never
   // re-proposed; all other existing identities are kept verbatim (no re-roll).
@@ -870,6 +892,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     self_voice_excluded: selfVoiceExcluded,
     own_host_excluded: ownHostExcluded,
     unbacked_excluded: unbackedExcluded,
+    own_words_observed_excluded: ownWordsObservedExcluded,
     own_words_ineligible: ownWordsIneligible,
     proof_guard_excluded: proofGuardExcludedIds.length,
     listing_corroboration_refused: 0,
@@ -1279,6 +1302,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
           self_voice: totals.self_voice_excluded,
           own_host: totals.own_host_excluded,
           unbacked: totals.unbacked_excluded,
+          own_words_observed: totals.own_words_observed_excluded,
           own_words_ineligible: totals.own_words_ineligible,
           proof_guard: totals.proof_guard_excluded,
           // SIBLING-SAFE BANKING: rows this run inserted vs found already banked by a concurrent sibling.
