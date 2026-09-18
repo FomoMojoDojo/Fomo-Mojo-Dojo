@@ -32,6 +32,7 @@ import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
 import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, type StrategyPayload } from "../_shared/cascadeRouting.ts";
 import { detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
+import { SELECTION_VERSION, selectDeltas, selectFindings, selectOwnWords, selectSignals, signalText, type Dropped, type SelClaim, type SelDelta, type SelFinding, type SelOwnWord, type SelSignal } from "../_shared/publicReadSelection.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
@@ -74,49 +75,68 @@ type InputRow = {
 const READ_CAP: Record<string, number> = { finding: 25, own_word: 25, signal: 20, delta: 15 };
 
 // ── gather PUBLIC inputs — each query's predicate selects public provenance ONLY ──────────────────
-async function gatherPublicInputs(supabase: SupabaseClient, companyId: string): Promise<InputRow[]> {
+// Ruling 5 (signed 2026-09-18): the queries below are unchanged in WHAT they may read; the SELECTION of which
+// rows enter (admission, dedupe, order, breadth, caps) is the ONE helper selectPublicInputs, built on the
+// preview's own authorities (publicReadSelection.ts). The ledger records the selection version.
+type Gathered = { inputs: InputRow[]; dropped: Dropped[] };
+
+async function selectPublicInputs(supabase: SupabaseClient, companyId: string): Promise<Gathered> {
   const rows: InputRow[] = [];
+  const dropped: Dropped[] = [];
 
   // 1. outside signals — outside band AND a PUBLIC web voice (analysis/NULL voice = our own read, excluded).
   //    LIVE-ONLY (Gate 6a, 2026-08-26): superseded_at IS NULL AND held_at IS NULL — a hypothesis must not
   //    rest on evidence that is terminally gone (fabricated / redesigned-away / source_gone) OR merely
   //    held/recrawl-pending (unverified). Generation is STRICTER than the render overlay by design: the
   //    render marks provisional citations, but the "Our read" seeds posits ONLY from live public evidence.
+  //    Ruling 5: then page-shaped ∧ not junk ∧ not listing; dedupe; the preview's beat-2 order; breadth per host.
   const { data: sig } = await supabase
     .from("signals")
-    .select("id, claim_text, evidence_excerpt, source_title, source_url, event_date, topic")
+    .select("id, claim_text, evidence_excerpt, source_title, source_url, event_date, topic, created_at, confidence_to_use, evidence_class, voice_class, raw_payload")
     .eq("company_id", companyId).eq("signal_band", "outside")
-    .in("voice_class", PUBLIC_SIGNAL_VOICES).is("superseded_at", null).is("held_at", null);
-  for (const s of (sig ?? []) as Array<{ id: string; claim_text: string | null; evidence_excerpt: string | null; source_title: string | null; source_url: string | null; event_date: string | null; topic: string | null }>) {
-    const text = (s.claim_text ?? s.evidence_excerpt ?? "").trim();
-    if (text) rows.push({ id: s.id, kind: "signal", provenance: "public_observed", text: `${text}${s.source_title ? ` (${s.source_title})` : ""}`, source_url: s.source_url, event_date: s.event_date });
+    .in("voice_class", PUBLIC_SIGNAL_VOICES).is("superseded_at", null).is("held_at", null)
+    .order("created_at", { ascending: true }).order("id", { ascending: true });
+  // R4 strength — recurrence-confirmed signal ids, the SAME query the preview's beat 2 runs (accepted verdicts).
+  const confirmed = new Set<string>();
+  for (let from = 0;; from += 1000) {
+    const { data: rv } = await supabase.from("signal_recurrence_verdicts").select("signal_a_id, signal_b_id").eq("company_id", companyId).eq("verdict", "accepted").order("id", { ascending: true }).range(from, from + 999);
+    for (const r of (rv ?? []) as Array<{ signal_a_id: string; signal_b_id: string }>) { confirmed.add(r.signal_a_id); confirmed.add(r.signal_b_id); }
+    if (!rv || rv.length < 1000) break;
+  }
+  const sigSel = selectSignals((sig ?? []) as SelSignal[], READ_CAP.signal, confirmed);
+  dropped.push(...sigSel.dropped);
+  for (const s of sigSel.kept) {
+    const text = signalText(s);
+    rows.push({ id: s.id, kind: "signal", provenance: "public_observed", text: `${text}${s.source_title ? ` (${s.source_title})` : ""}`, source_url: s.source_url, event_date: s.event_date });
   }
 
   // 2. own-words — the company's OWN public-site voice, judge-kept only. own_site=true by construction
   //    (own-words ARE judge-kept quotes from the company's own public site — the seen_on "own site" set).
+  //    Ruling 5: only identities with an ACTIVE own_words claim, one per identity, ORDER BY created_at, id.
   const { data: ow } = await supabase
-    .from("own_words_candidates").select("id, quote, judge_kind").eq("company_id", companyId).eq("judge_keep", true);
-  for (const w of (ow ?? []) as Array<{ id: string; quote: string | null; judge_kind?: string | null }>) {
-    // ADMISSION CRITERION (2026-09-03): only declared-eligible kinds seed posits (a missing kind is eligible).
-    if (!declaredEligibleFor(parseOwnWordsKind(w.judge_kind))) continue;
-    const text = (w.quote ?? "").trim();
-    if (text) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", text, own_site: true });
-  }
+    .from("own_words_candidates").select("id, quote, judge_kind, content_identity, created_at").eq("company_id", companyId).eq("judge_keep", true)
+    .order("created_at", { ascending: true }).order("id", { ascending: true });
+  const { data: owClaims } = await supabase.from("claims").select("raw_payload").eq("company_id", companyId).eq("claim_type", "own_words").eq("status", "active");
+  const activeIdentities = new Set(((owClaims ?? []) as Array<{ raw_payload?: { content_identity?: string } }>).map((c) => c.raw_payload?.content_identity).filter((x): x is string => !!x));
+  // ADMISSION CRITERION (2026-09-03): only declared-eligible kinds seed posits (a missing kind is eligible).
+  const owSel = selectOwnWords((ow ?? []) as SelOwnWord[], READ_CAP.own_word, activeIdentities, (w) => declaredEligibleFor(parseOwnWordsKind(w.judge_kind)));
+  dropped.push(...owSel.dropped);
+  for (const w of owSel.kept) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", text: (w.quote ?? "").trim(), own_site: true });
 
   // 3. findings — the public_inferred register, open, AND RECURRENCE-BACKED (Gate 6a, 2026-08-26):
   //    only findings with a Gate-5c finding_recurrence row (entity-anchored, IDF-coherent, judge-anchored,
   //    corroborated across ≥2 independent public sources) seed posits. Single-source open findings are
   //    unverified across the record and do NOT seed a hypothesis — the 5c coherence work IS this gate.
+  //    Ruling 5: ORDER BY created_at, id.
   const { data: recRows } = await supabase
     .from("finding_recurrence").select("finding_id").eq("company_id", companyId);
   const recurrenceBacked = new Set(((recRows ?? []) as Array<{ finding_id: string }>).map((r) => r.finding_id));
   const { data: fnd } = await supabase
-    .from("findings").select("id, body").eq("company_id", companyId).eq("register", "public_inferred").eq("status", "open");
-  for (const f of (fnd ?? []) as Array<{ id: string; body: string | null }>) {
-    if (!recurrenceBacked.has(f.id)) continue; // recurrence-backed only
-    const text = (f.body ?? "").trim();
-    if (text) rows.push({ id: f.id, kind: "finding", provenance: "public_inferred", text });
-  }
+    .from("findings").select("id, body, created_at").eq("company_id", companyId).eq("register", "public_inferred").eq("status", "open")
+    .order("created_at", { ascending: true }).order("id", { ascending: true });
+  const fSel = selectFindings((fnd ?? []) as SelFinding[], READ_CAP.finding, recurrenceBacked);
+  dropped.push(...fSel.dropped);
+  for (const f of fSel.kept) rows.push({ id: f.id, kind: "finding", provenance: "public_inferred", text: (f.body ?? "").trim() });
 
   // 4. (REMOVED — Stage B Option-B, 2026-08-28) odi_market_definitions is a STRUCTURALLY FORBIDDEN
   //    input for this generator. Stage A proved the table holds ZERO public_research rows across the
@@ -127,29 +147,27 @@ async function gatherPublicInputs(supabase: SupabaseClient, companyId: string): 
   //    generator now queries NO forbidden table (proven by the source-level forbidden-input test).
 
   // 5. deltas — the public_vs_public pairing; echoed/divergent (public confirms or contests a public claim)
+  //    Ruling 5: isPairAdmissible ∧ every claim active ∧ not rejected_pairing; the gap beat's order, then id.
   const { data: dl } = await supabase
-    .from("claim_deltas").select("id, delta_type, declared_claim_id, public_claim_id")
-    .eq("company_id", companyId).eq("pairing_kind", "public_vs_public").in("delta_type", ["echoed", "divergent"]);
-  const deltas = (dl ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null }>;
+    .from("claim_deltas").select("id, delta_type, declared_claim_id, public_claim_id, relevance_verdict, observed_own_host, operator_disposition")
+    .eq("company_id", companyId).eq("pairing_kind", "public_vs_public").in("delta_type", ["echoed", "divergent"])
+    .order("id", { ascending: true });
+  const deltas = (dl ?? []) as SelDelta[];
   const claimIds = [...new Set(deltas.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x))];
-  const claimText = new Map<string, string>();
+  const claimById = new Map<string, SelClaim>();
   if (claimIds.length) {
-    const { data: cl } = await supabase.from("claims").select("id, statement").in("id", claimIds);
-    for (const c of (cl ?? []) as Array<{ id: string; statement: string | null }>) if (c.statement) claimText.set(c.id, c.statement.trim());
+    const { data: cl } = await supabase.from("claims").select("id, statement, status, confidence").in("id", claimIds);
+    for (const c of (cl ?? []) as SelClaim[]) claimById.set(c.id, { ...c, statement: c.statement?.trim() ?? null });
   }
-  for (const d of deltas) {
-    const decl = d.declared_claim_id ? claimText.get(d.declared_claim_id) : "";
-    const pub = d.public_claim_id ? claimText.get(d.public_claim_id) : "";
-    const text = decl || pub ? `[${d.delta_type}] declared: "${decl ?? ""}" · public: "${pub ?? ""}"` : "";
-    if (text.trim()) rows.push({ id: d.id, kind: "delta", provenance: "public_observed", text });
+  const dSel = selectDeltas(deltas, READ_CAP.delta, claimById);
+  dropped.push(...dSel.dropped);
+  for (const d of dSel.kept) {
+    const decl = d.declared_claim_id ? claimById.get(d.declared_claim_id)?.statement : "";
+    const pub = d.public_claim_id ? claimById.get(d.public_claim_id)?.statement : "";
+    rows.push({ id: d.id, kind: "delta", provenance: "public_observed", text: `[${d.delta_type}] declared: "${decl ?? ""}" · public: "${pub ?? ""}"` });
   }
 
-  // Apply per-kind caps (order preserved within kind) — the ledger records exactly what's kept.
-  const seen: Record<string, number> = {};
-  return rows.filter((r) => {
-    const n = (seen[r.kind] = (seen[r.kind] ?? 0) + 1);
-    return n <= (READ_CAP[r.kind] ?? 9999);
-  });
+  return { inputs: rows, dropped };
 }
 
 // The INPUT LEDGER — the anti-provenance-lie record: EXACTLY what was read, its provenance, its
@@ -166,6 +184,8 @@ async function ledgerOf(inputs: InputRow[]) {
     liveness: inputs.reduce((acc, r) => { acc[r.id] = "live"; return acc; }, {} as Record<string, string>),
     corpus_md5,
     count: inputs.length,
+    // ruling 5: which selection built this read (absent on rows written before 2026-09-18 = physical-order selection)
+    selection_version: SELECTION_VERSION,
   };
 }
 const KINDS_INPUT = ["signal", "own_word", "finding", "delta"] as const;
@@ -315,7 +335,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, promoted });
     }
 
-    const inputs = await gatherPublicInputs(supabase, company_id);
+    const { inputs, dropped } = await selectPublicInputs(supabase, company_id);
     const ledger = await ledgerOf(inputs);
     const ledgerIds = new Set(ledger.ids);
 
@@ -344,6 +364,8 @@ Deno.serve(async (req) => {
     if (doPlan) {
       return json({
         ok: true, plan: true, input_ledger: ledger,
+        // ruling 5: what the selection refused and why (ids only; plan is read-only)
+        selection: { version: SELECTION_VERSION, dropped_by_kind: KINDS_INPUT.reduce((acc, k) => { acc[k] = dropped.filter((d) => d.kind === k).map((d) => ({ id: d.id, reason: d.reason })); return acc; }, {} as Record<string, Array<{ id: string; reason: string }>>) },
         model: { generator: genChoice, judge: judgeChoice },
         catalogue_preview: inputs.slice(0, 8).map((r) => ({ id: r.id, kind: r.kind, preview: r.text.slice(0, 100) })),
       });

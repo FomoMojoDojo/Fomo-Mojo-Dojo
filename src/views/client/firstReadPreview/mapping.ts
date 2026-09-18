@@ -5,6 +5,8 @@ import type { FRColdOpen, FRGapPair, FRGapStatement, FRGapVerdict, FRSignal, FRS
 import { formatFullDate } from "./deriveSourceTag";
 import { plural } from "./plural";
 import { isPairAdmissible } from "@/lib/firstRead/relevanceActive";
+import { gapVerdictForDeltaType, GAP_VERDICT_ORDER, orderBeat2Signals, orderGapPairs, strengthForSignal } from "../../../../supabase/functions/_shared/previewOrder.ts";
+export { GAP_VERDICT_ORDER, orderBeat2Signals, orderGapPairs, strengthForSignal };
 import { isTerminalSupersession } from "@/lib/claimState/prunePolicy";
 
 // ── Derived contradiction "why" (2026-08-22, SIGNED softened wording) ────────────────────────────
@@ -146,16 +148,8 @@ export function coldOpenLadder(input: ColdOpenLadderInput): FRColdOpen | null {
 // the honest general lead: a freshly-verified crawl surfaces above stale rows. Strength then event
 // date break the remaining ties for a deterministic order. Applied to EVERY company (no exceptions).
 export type Beat2Sortable = { signal: FRSignal; readDate: string; host: string };
-export function orderBeat2Signals(items: Beat2Sortable[]): FRSignal[] {
-  const strengthOrder = { strong: 0, moderate: 1, thin: 2 } as const;
-  return [...items]
-    .sort((a, b) =>
-      b.readDate.localeCompare(a.readDate)                                        // fresh read-date first
-      || a.host.localeCompare(b.host)                                             // then host
-      || strengthOrder[a.signal.strength] - strengthOrder[b.signal.strength]     // then strength
-      || (b.signal.eventDate ?? "").localeCompare(a.signal.eventDate ?? ""))      // then event date (recent first)
-    .map((x) => x.signal);
-}
+// orderBeat2Signals MOVED to supabase/functions/_shared/previewOrder.ts (ruling 5, 2026-09-18): the generator orders its
+// inputs by the same keys and the edge runtime cannot load this file's "@/" imports. Re-exported below, unchanged.
 
 // R4 (2026-08-27) — DISPLAY GROUPING for beat 2: identical statement + HOST collapses to ONE row
 // carrying a mention count (the number of underlying signals it stands for). DE-EMPHASIZE, NEVER
@@ -189,14 +183,7 @@ export function foldIdenticalSignals(items: Beat2Sortable[]): Beat2Sortable[] {
   return [...byKey.values()];
 }
 
-export function strengthForSignal(
-  confidence: string | null | undefined,
-  recurrenceConfirmed: boolean,
-): SignalStrength {
-  if (recurrenceConfirmed) return "strong";
-  if ((confidence ?? "").toLowerCase() === "low") return "thin";
-  return "moderate";
-}
+// strengthForSignal MOVED to supabase/functions/_shared/previewOrder.ts (ruling 5, 2026-09-18) — re-exported below, unchanged.
 
 // FIX 2 (2026-08-25) — negative-valence cue lexicon for "What the world says". Render-layer only:
 // a deterministic keyword test on the outside excerpt, used ONLY to hoist the strongest negative
@@ -238,13 +225,8 @@ export function hoistStrongestNegative<T extends { id: string; text: string; str
   return out;
 }
 
-// A1: beat-4 order by discussability — contradicted → unechoed → confirmed (unspoken last,
-// though it is off-surface). Ties break by evidence strength desc.
-export const GAP_VERDICT_ORDER: Record<string, number> = { contradicted: 0, reverifying: 1, unechoed: 2, confirmed: 3, unspoken: 4 };
-export function orderGapPairs<T extends { verdict: string; evidenceRank: number }>(pairs: T[]): T[] {
-  return [...pairs].sort((a, b) =>
-    (GAP_VERDICT_ORDER[a.verdict] ?? 9) - (GAP_VERDICT_ORDER[b.verdict] ?? 9) || b.evidenceRank - a.evidenceRank);
-}
+// A1: beat-4 order by discussability — GAP_VERDICT_ORDER / orderGapPairs MOVED to supabase/functions/_shared/previewOrder.ts
+// (ruling 5, 2026-09-18); re-exported below, unchanged.
 
 /**
  * 2026-08-21: the unit of echo is the STATEMENT, not the pair row. Group the beat-4 pairs by
@@ -335,16 +317,8 @@ export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
  * cold open, not the gap. (Prior R5 kept publicly_silent off and internally_silent on; reversed.)
  */
 export function verdictForDeltaType(deltaType: string): FRGapVerdict | null {
-  switch (deltaType) {
-    case "echoed":
-      return "confirmed";
-    case "divergent":
-      return "contradicted";
-    case "publicly_silent":
-      return "unechoed";
-    default:
-      return null;
-  }
+  // the ONE delta_type → verdict mapping lives in previewOrder (shared with the generator's D ordering)
+  return gapVerdictForDeltaType(deltaType);
 }
 
 /** A folded status-conflict source: one host+date, with how many raw signal rows share it. */
