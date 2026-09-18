@@ -32,6 +32,7 @@ import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
 import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, type StrategyPayload } from "../_shared/cascadeRouting.ts";
 import { detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
+import { CASCADE_SOURCE_KEY, cascadeSourceOf, PromoteRefused, promoteStagedReads, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
 import { SELECTION_VERSION, selectDeltas, selectFindings, selectOwnWords, selectSignals, signalText, type Dropped, type SelClaim, type SelDelta, type SelFinding, type SelOwnWord, type SelSignal } from "../_shared/publicReadSelection.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
@@ -314,25 +315,16 @@ Deno.serve(async (req) => {
     //    false→true) and supersede the prior current row (is_current true→false, superseded_by=staged).
     //    The staged row is the unique is_current=false row with superseded_by NULL (staging created it).
     if (doPromote) {
-      const promoted: Array<{ kind: Kind; staged: string; superseded: string | null }> = [];
-      for (const kind of activeKinds) {
-        const { data: staged } = await supabase.from("public_reads")
-          .select("id").eq("company_id", company_id).eq("kind", kind).eq("is_current", false).is("superseded_by", null)
-          .order("created_at", { ascending: false }).limit(1).maybeSingle();
-        const stagedId = (staged as { id?: string } | null)?.id ?? null;
-        if (!stagedId) { promoted.push({ kind, staged: "", superseded: null }); continue; }
-        const { data: prior } = await supabase.from("public_reads")
-          .select("id").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
-        const priorId = (prior as { id?: string } | null)?.id ?? null;
-        if (priorId) {
-          const { error: e1 } = await supabase.from("public_reads").update({ is_current: false, superseded_by: stagedId }).eq("id", priorId);
-          if (e1) throw new Error(`supersede-prior failed (${kind}): ${e1.message}`);
-        }
-        const { error: e2 } = await supabase.from("public_reads").update({ is_current: true }).eq("id", stagedId);
-        if (e2) throw new Error(`promote-staged failed (${kind}): ${e2.message}`);
-        promoted.push({ kind, staged: stagedId, superseded: priorId });
+      // ruling 6 (2026-09-18): the ONE promote path (publicReadPromote.ts) — flips rows AND, for a promoted strategy,
+      // re-routes the cascade gaps from the staged row's cascade_source + judge coherence via writeCascadeGaps.
+      try {
+        const { promoted, cascade_routing } = await promoteStagedReads(supabase, company_id, activeKinds);
+        return json({ ok: true, promoted, cascade_routing });
+      } catch (e) {
+        // FAIL CLOSED (amendment 2026-09-18): a refused promote names the read; nothing was flipped or routed for it.
+        if (e instanceof PromoteRefused) return json({ ok: false, error: e.message, refused: { kind: e.kind, read_id: e.readId } }, 409);
+        throw e;
       }
-      return json({ ok: true, promoted });
     }
 
     const { inputs, dropped } = await selectPublicInputs(supabase, company_id);
@@ -600,8 +592,13 @@ Respond with ONLY JSON:
       resolvedPayloads[kind] = translateCitations(kind === "strategy" ? storage : payload, uuidByRef) as Record<string, unknown>;
 
       if (doStage) {
+        // ruling 6: a staged STRATEGY carries its raw rungs (cascade_source) so promote can re-derive the gap/tension
+        // set exactly as the direct write derives it from the raw payload here; the rendered payload stays the spine.
+        const stagedPayload = kind === "strategy"
+          ? { ...resolvedPayloads[kind], [CASCADE_SOURCE_KEY]: cascadeSourceOf(translateCitations(payload, uuidByRef) as Record<string, unknown>) }
+          : resolvedPayloads[kind];
         const { data: ins, error: insErr } = await supabase.from("public_reads").insert({
-          company_id, kind, payload: resolvedPayloads[kind], input_ledger: ledger,
+          company_id, kind, payload: stagedPayload, input_ledger: ledger,
           model_provider: genChoice.provider, model_name: genChoice.model,
           judge_verdict: verdict, judge_model: judgeChoice.model,
           is_current: false, supersedes_legacy_row: legacyFor(kind),
@@ -748,28 +745,4 @@ async function writeOfferingIntegrity(
 // (company, current read): each regeneration supersedes this company's prior LIVE cascade_gap rows,
 // then inserts the fresh set under a new run_id — never duplicates a live row. Reversible (superseded
 // rows are kept as history, never deleted).
-async function writeCascadeGaps(
-  supabase: SupabaseClient,
-  companyId: string,
-  items: CascadeGapItem[],
-  model: { provider: string; model: string },
-): Promise<{ superseded: number; inserted: number; run_id: string | null }> {
-  const { data: prior } = await supabase.from("first_read_open_questions")
-    .select("id").eq("company_id", companyId).eq("source_kind", "cascade_gap").eq("status", "live");
-  const priorIds = ((prior ?? []) as Array<{ id: string }>).map((r) => r.id);
-  if (priorIds.length) {
-    const { error } = await supabase.from("first_read_open_questions").update({ status: "superseded" }).in("id", priorIds);
-    if (error) throw new Error(`cascade_gap supersede failed: ${error.message}`);
-  }
-  if (!items.length) return { superseded: priorIds.length, inserted: 0, run_id: null };
-  const runId = `cascade:${crypto.randomUUID()}`;
-  const rows = items.map((it) => ({
-    company_id: companyId, run_id: runId, source_kind: "cascade_gap",
-    question_text: it.question_text, question_identity: it.question_identity,
-    anchor_identity: it.rung, status: "live",
-    model_provider: model.provider, model_name: model.model,
-  }));
-  const { error } = await supabase.from("first_read_open_questions").insert(rows);
-  if (error) throw new Error(`cascade_gap insert failed: ${error.message}`);
-  return { superseded: priorIds.length, inserted: rows.length, run_id: runId };
-}
+// writeCascadeGaps MOVED to ../_shared/publicReadPromote.ts (ruling 6, 2026-09-18) — the direct write and promote call the same function.
