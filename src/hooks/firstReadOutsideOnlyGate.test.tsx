@@ -97,6 +97,8 @@ describe("R1 site: useFirstReadPreviewData", () => {
       ],
       claim_signal_refs: ownVoiceRefs,
       signals: ownVoiceSignals,
+      // S2 §6(b) (2026-09-18): a channel row renders only when its own-host signal ties to a SAVED page.
+      own_words_page_snapshots: [{ company_id: CO, source_url: "https://co-1.com/about" }],
       public_baseline_runs: [],
       signal_recurrence_verdicts: [],
       market_options: [],

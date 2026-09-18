@@ -398,6 +398,12 @@ export type FirstReadPreviewData = {
   /** RF ADMISSION (2026-09-04): own-voice inference claims dropped from the channel block because the
    *  admission criterion FAILED them (declared_eligible=false) — reported, never silent. */
   channelIneligibleIds: string[];
+  /** S2 §6(a) (2026-09-18): channel rows whose own-host signal is a synthesis row (label, marker or shape) —
+   *  never our channel read; excluded in the shared load path, reported, never silent. */
+  channelSynthesisIds: string[];
+  /** S2 §6(b) (2026-09-18): channel rows whose own-host signal ties to NO saved page (neither snapshot store
+   *  holds its URL, exact or canonical) — dropped, reported by id, never silent. */
+  channelNoPageIds: string[];
   observedMarkets: FRMarketDef[];
   positioning: FRPositioning;
   promise: FRPromise;
@@ -465,6 +471,8 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   channelJunkIds: [],
   channelOffHostIds: [],
   channelIneligibleIds: [],
+  channelSynthesisIds: [],
+  channelNoPageIds: [],
   observedMarkets: [],
   positioning: null,
   promise: null,

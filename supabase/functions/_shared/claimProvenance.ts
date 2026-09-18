@@ -8,7 +8,7 @@
 // `callJson` so each caller keeps its own client: research-company passes its local
 // callOpenAIJSON (budget-ladder retry); leaves pass _shared/openaiClient's.
 
-import { ANALYSIS_VOICE, isAnalysisLabelled } from "./voiceLabel.ts";
+import { ANALYSIS_VOICE, isAnalysisRow } from "./voiceLabel.ts";
 import { callOpenAIJSON as sharedCallOpenAIJSON } from "./openaiClient.ts";
 import { buildClientCorpus, resolveSyndication, resolveSyndicationDurable, type ClientCorpus } from "./syndication.ts";
 import { buildStoreSupplementBrief, type StoreSupplement } from "./storeSupplement.ts";
@@ -89,12 +89,15 @@ const VOICE_CLASSES: ReadonlySet<string> = new Set([
 ]);
 
 function classifyVoice(
-  entry: { voice_class?: string; bucket?: string; source_type?: string; url?: string; evidence_class?: string | null },
+  entry: { voice_class?: string; bucket?: string; source_type?: string; url?: string; evidence_class?: string | null; raw_payload?: unknown },
   companyHost: string,
 ): VoiceClass {
   // S1 (signed 2026-09-18): the analysis label wins over the own-host test — a synthesis row carries the company's
   // URL by construction and must never be read as the company speaking (voiceLabel.ts, shared with the mirror).
-  if (isAnalysisLabelled(entry)) return ANALYSIS_VOICE;
+  // S2 (signed 2026-09-18): the row's SHAPE and marker count too (isAnalysisRow reads raw_payload) — an unmarked,
+  // unlabelled top_hypotheses row on the company's own URL is analysis, not the company speaking. Callers that
+  // classify a stored row pass its raw_payload; a flat item (no raw_payload) is judged by its label as before.
+  if (isAnalysisRow(entry)) return ANALYSIS_VOICE;
   if (isCompanySource(entry, companyHost)) return "client_voice";
   const labeled = String(entry?.voice_class || "").trim();
   if (VOICE_CLASSES.has(labeled)) return labeled as VoiceClass;

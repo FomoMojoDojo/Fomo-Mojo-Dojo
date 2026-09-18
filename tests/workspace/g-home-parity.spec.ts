@@ -1,8 +1,11 @@
 // (g) /preview/client-refine/home DOM text is byte-identical to the pre-change capture
 // (HOME_DOM_BASELINE, taken with the first-read-capture discipline before any edit).
 // Re-pinned 2026-09-17 after C0+C1 audited data acts (integrity_runs 1220–1226): 7 public rows
-// superseded/held/restamped — PUBLIC 137 → 130 on Edgewood; the baseline now lives at
-// tests/workspace/fixtures/home-dom-before_20260917.txt.
+// superseded/held/restamped — PUBLIC 137 → 130 on Edgewood.
+// Re-pinned 2026-09-18 after S2 (integrity_runs 1448–1452): Edgewood's NULL-voice synthesis row 6bc22c8b
+// (raw_payload.hypothesis, no URL) restamped 'analysis' — the legacy null→outside fallback had counted it as
+// outside voice — PUBLIC 130 → 129; every other line byte-identical. The baseline now lives at
+// tests/workspace/fixtures/home-dom-before_20260918.txt.
 import fs from "node:fs";
 import { expect, test } from "playwright/test";
 import { HOME_DOM_BASELINE } from "../../playwright.config";

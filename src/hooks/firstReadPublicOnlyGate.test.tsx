@@ -92,6 +92,10 @@ function previewFixture() {
     claims,
     claim_signal_refs: refs,
     signals,
+    // S2 §6(b) (2026-09-18): a channel row renders only when its own-host signal ties to a SAVED page —
+    // the own-voice page and the legacy own-domain page are saved (the canonical key matches www / slash variants).
+    own_words_page_snapshots: [{ company_id: CO, source_url: "https://co-1.com/about" }],
+    outside_page_snapshots: [{ company_id: CO, source_url: "https://shop.co-1.com/page", fetch_status: "ok" }],
     claim_deltas: [
       { id: "d-int", company_id: CO, delta_type: "echoed", declared_claim_id: INTERNAL, public_claim_id: PUB, content_identity: "ci-int", pairing_kind: "public_vs_public" },
       { id: "d-pub", company_id: CO, delta_type: "echoed", declared_claim_id: PUBVOICE, public_claim_id: PUB, content_identity: "ci-pub", pairing_kind: "public_vs_public" },

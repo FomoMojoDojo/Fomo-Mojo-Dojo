@@ -50,7 +50,8 @@ Deno.test("(c) the own-words page-signal pick never selects a synthesis row", ()
   const rows = [
     { id: "S-analysis", source_url: url, source_title: "Edgewood public baseline", voice_class: "client_voice", raw_payload: { hypothesis: "x", source_type: "analysis" } },
     { id: "S-page", source_url: url, source_title: "Edgewood public baseline", voice_class: "client_voice", raw_payload: { page_url: url } },
-    { id: "S-about", source_url: "https://edgewood.org/about/", source_title: null, voice_class: "client_voice", raw_payload: {} },
+    // S2: the pick admits PAGE-shaped rows only — the about row carries its page address
+    { id: "S-about", source_url: "https://edgewood.org/about/", source_title: null, voice_class: "client_voice", raw_payload: { page_url: "https://edgewood.org/about/" } },
     { id: "S-only-analysis", source_url: "https://edgewood.org/programs/", source_title: null, voice_class: "analysis", raw_payload: { source_type: "analysis" } },
   ];
   const picked = pickPageSignals(rows);
@@ -62,11 +63,12 @@ Deno.test("(c) the own-words page-signal pick never selects a synthesis row", ()
 
 Deno.test("source guard: the three deciders read the shared predicate BEFORE any URL / bucket test; the extractor uses the pick", async () => {
   const prov = await read("./claimProvenance.ts");
-  const fn = prov.slice(prov.indexOf("function classifyVoice("), prov.indexOf("function classifyVoice(") + 700);
-  assert(fn.indexOf("isAnalysisLabelled(entry)") < fn.indexOf("isCompanySource(entry, companyHost)"), "server: label first");
+  const fn = prov.slice(prov.indexOf("function classifyVoice("), prov.indexOf("function classifyVoice(") + 1200);
+  // S2 (2026-09-18): the deciders now read isAnalysisRow (label, marker OR shape) — still before the host test.
+  assert(fn.indexOf("isAnalysisRow(entry)") > 0 && fn.indexOf("isAnalysisRow(entry)") < fn.indexOf("isCompanySource(entry, companyHost)"), "server: analysis first");
   const mirror = await read("../../../src/hooks/useSignalLandscape.ts");
   const mf = mirror.slice(mirror.indexOf("function classifyOutsideRow("), mirror.indexOf("function classifyOutsideRow(") + 700);
-  assert(mf.indexOf("isAnalysisLabelled(row)") < mf.indexOf("isCompanySource(row, companyHost)"), "mirror: label first");
+  assert(mf.indexOf("isAnalysisRow(row)") > 0 && mf.indexOf("isAnalysisRow(row)") < mf.indexOf("isCompanySource(row, companyHost)"), "mirror: analysis first");
   const pb = await read("../public-baseline/index.ts");
   assert(pb.includes("const voice_class = isAnalysisLabelled(e)\n        ? ANALYSIS_VOICE\n        : isCompanyHostUrl(url)"), "ingest overlay: label first");
   const ow = await read("../extract-own-words/index.ts");

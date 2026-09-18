@@ -6,7 +6,7 @@
 // verbatim-or-nothing: the final gate is a DETERMINISTIC substring proof against the stored
 // page text — a model can never talk a fabricated quote past it.
 
-import { isAnalysisRow } from "./voiceLabel.ts";
+import { isPageShapedRow } from "./voiceLabel.ts";
 import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
 import { declaredEligibleFor, type OwnWordsKind } from "./ownWordsKinds.ts";
 
@@ -100,19 +100,28 @@ export function assertPublicClientVoice(signals: SignalGate[]): void {
   }
 }
 
-// ── The page signal (S1, 2026-09-18) ────────────────────────────────────────
-/** The URL → "page signal" pick the extractor keys its snapshots, candidates and supports refs on: the first
- *  client_voice signal per URL that is NOT a synthesis row (either mark — voiceLabel.isAnalysisRow). Before S1 the
- *  pick trusted the stamp alone, and 36 own-words claims / 77 candidates ended up referencing an analysis row. */
-export function pickPageSignals<T extends { id: string; source_url: string | null; source_title?: string | null; voice_class?: string | null; raw_payload?: unknown }>(
+// ── The page signal (S1 / S2, 2026-09-18) ────────────────────────────────────
+/** The URL → "page signal" pick the extractor keys its snapshots, candidates and supports refs on. S2 (signed
+ *  2026-09-18): only a PAGE-shaped row is admissible (voiceLabel.isPageShapedRow — a page address in raw_payload,
+ *  never a synthesis row by label, marker or shape), and the pick does not depend on the order rows arrive in:
+ *  per URL the earliest row wins (created_at, then id), so the same corpus yields the same pick however it was
+ *  queried. Before S1 the pick trusted the stamp alone (36 own-words claims / 77 candidates on analysis rows);
+ *  before S2 it took the first non-analysis row in query order, which handed Edgewood's 4 re-pointed refs an
+ *  unmarked synthesis row (b577722a) although a true page row (fdad5d88) sat on the same URL. */
+export function pickPageSignals<T extends { id: string; source_url: string | null; source_title?: string | null; voice_class?: string | null; raw_payload?: unknown; created_at?: string | null }>(
   signals: T[],
 ): Map<string, { id: string; source_title: string | null }> {
-  const byUrl = new Map<string, { id: string; source_title: string | null }>();
+  const byUrl = new Map<string, T>();
+  const earlier = (a: T, b: T) => {
+    const ka = `${a.created_at ?? ""}|${a.id}`, kb = `${b.created_at ?? ""}|${b.id}`;
+    return ka < kb;
+  };
   for (const s of signals) {
-    if (!s.source_url || isAnalysisRow(s)) continue;
-    if (!byUrl.has(s.source_url)) byUrl.set(s.source_url, { id: s.id, source_title: s.source_title ?? null });
+    if (!s.source_url || !isPageShapedRow(s)) continue;
+    const prior = byUrl.get(s.source_url);
+    if (!prior || earlier(s, prior)) byUrl.set(s.source_url, s);
   }
-  return byUrl;
+  return new Map([...byUrl].map(([u, s]) => [u, { id: s.id, source_title: s.source_title ?? null }]));
 }
 
 // ── Assembly ─────────────────────────────────────────────────────────────────

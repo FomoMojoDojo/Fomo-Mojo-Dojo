@@ -82,7 +82,7 @@ export async function buildStoreSupplement(opts: {
   // The current run's items as (url, text) pairs — dedup is by content identity.
   currentRunItems: Array<{ url: string; text: string }>;
   // classifyVoice from claimProvenance.ts, passed in to avoid a module cycle.
-  classify: (entry: { voice_class?: string; bucket?: string; source_type?: string; url?: string }) => string;
+  classify: (entry: { voice_class?: string; bucket?: string; source_type?: string; url?: string; raw_payload?: unknown }) => string;
   label: string;
 }): Promise<StoreSupplement> {
   const { data: pinnedRow } = await opts.supabase
@@ -134,11 +134,15 @@ export async function buildStoreSupplement(opts: {
     if (!url || !text) { excludedClass++; continue; }
     // Rule 1 — class. NULL legacy rows are classified on read; the computed class is
     // lazily stamped back (supplement candidates only — no bulk re-judge).
+    // S2 (signed 2026-09-18): the row's raw_payload rides along so classifyVoice reads its shape/marker
+    // (isAnalysisRow) BEFORE the own-host test — a synthesis row on the company URL stamps 'analysis', never
+    // client_voice (the 45 rows this stamper mis-stamped in June carried only { hypothesis }).
     const voiceClass = opts.classify({
       voice_class: row.voice_class ?? undefined,
       bucket: row.raw_payload?.bucket,
       source_type: row.raw_payload?.source_type,
       url,
+      raw_payload: row.raw_payload,
     });
     if (row.voice_class == null && row.id) lazyStamps.push({ id: String(row.id), voice_class: voiceClass });
     if (voiceClass !== "outside_voice_about_client") { excludedClass++; continue; }

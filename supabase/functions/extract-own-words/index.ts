@@ -265,7 +265,7 @@ Deno.serve(async (req) => {
     // ── Corpus: client_voice public signals, dedup by URL (first signal per URL). ──
     const { data: sigRows } = await supabase
       .from("signals")
-      .select("id, source_url, source_title, voice_class, source_type, claim_text, evidence_excerpt, raw_payload, superseded_at")
+      .select("id, source_url, source_title, voice_class, source_type, claim_text, evidence_excerpt, raw_payload, superseded_at, created_at")
       .eq("company_id", company_id)
       .eq("voice_class", "client_voice");
     type CorpusSignal = { id: string; source_url: string | null; source_title: string | null; voice_class: string | null; source_type: string | null; claim_text: string | null; evidence_excerpt: string | null; raw_payload: unknown; superseded_at: string | null };

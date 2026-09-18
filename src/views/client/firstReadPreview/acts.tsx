@@ -869,7 +869,10 @@ export function ActWhatYouSay({ read, eyebrow }: { read: FirstReadPreviewData; e
         {/* ADMISSION CRITERION: own words kept as record only — operator view (context-gated, null for the client). */}
         <OwnWordsRecordBlock words={read.ownWordsRecordOnly} />
         {/* Demoted: our inference read of the channels, below the company's own words.
-            R2 (2026-09-04): renders ONLY when an own-words run exists for the company. */}
+            R2 (2026-09-04): renders ONLY when an own-words run exists for the company.
+            S2 §6(c) (2026-09-18): a paraphrase block — OUR READ rows carry no quotation-mark glyph
+            (quoted={false}); the glyph stays on "In your words" rows above. Admission (synthesis never;
+            saved-page tie required) is applied once in the hook, not here. */}
         {read.ownWordsRun && read.declared.length > 0 ? (
           <div data-fr-block="channels" className="mt-16 border-t pt-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
             <div className="mb-8"><Eyebrow>{CHANNELS_AS_READ_LABEL}</Eyebrow></div>
@@ -878,6 +881,7 @@ export function ActWhatYouSay({ read, eyebrow }: { read: FirstReadPreviewData; e
                 key={claim.id}
                 variant="hanging"
                 muted
+                quoted={false}
                 leftLabel="Our read"
                 leftBody={claim.statement}
                 meta={<>{claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}<OperatorKindTag kind={claim.kind ?? null} reason={claim.reason ?? null} /></>}

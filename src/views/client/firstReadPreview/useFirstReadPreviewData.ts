@@ -30,6 +30,7 @@ import {
   uploadDerivedClaimIds,
 } from "../../../../supabase/functions/_shared/firstReadProvenance";
 import { normalizeForHash } from "../../../../supabase/functions/_shared/contentIdentity.ts";
+import { channelRowAdmission, savedPageIndex } from "@/lib/firstRead/channelAdmission";
 import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
 import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
@@ -446,11 +447,11 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         const { data: dSigs } = dSigIds.length
           ? await supabase
               .from("signals")
-              .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, voice_class, claim_text, structure_level")
+              .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, voice_class, claim_text, structure_level, raw_payload")
               .in("id", dSigIds)
           : { data: [] };
         const dSigById = new Map(
-          ((dSigs ?? []) as Array<SignalRow & { voice_class: string | null }>).map((s) => [s.id, s]),
+          ((dSigs ?? []) as Array<SignalRow & { voice_class: string | null; raw_payload?: unknown }>).map((s) => [s.id, s]),
         );
         const ownVoiceIds = clientVoiceClaimIds(dRefRows, dSigById, companyHost);
         // Beat-3 (b) ruling (2026-09-03): the channel block renders ONLY sources on the company's
@@ -458,7 +459,16 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         // on-host; a claim whose own-voice backing is entirely aggregator-hosted (Glassdoor About,
         // press wire, ZoomInfo — client_voice by authorship, never echoes) gets no entry and is
         // excluded below, its id REPORTED in channelOffHostIds (never silent).
-        const ownSigByClaim: Map<string, SignalRow> = ownHostSignalByClaim(dRefRows, dSigById, companyHost);
+        const ownSigByClaim: Map<string, SignalRow & { raw_payload?: unknown }> = ownHostSignalByClaim(dRefRows, dSigById, companyHost);
+        // S2 §6(b) (signed 2026-09-18): the saved pages this company has — both stores, outside only where the
+        // fetch succeeded — indexed exact + canonical for the admission predicate below.
+        const [{ data: owPageRows }, { data: outPageRows }] = await Promise.all([
+          loose().from("own_words_page_snapshots").select("source_url").eq("company_id", companyId),
+          loose().from("outside_page_snapshots").select("source_url").eq("company_id", companyId).eq("fetch_status", "ok"),
+        ]);
+        const savedPages = savedPageIndex(
+          [...((owPageRows ?? []) as Array<{ source_url: string | null }>), ...((outPageRows ?? []) as Array<{ source_url: string | null }>)].map((r) => r.source_url),
+        );
 
         // Channel-read membership — the single structural predicate (own-voice qualified, own_words
         // and upload-derived excluded). own_words render once, in the OW-3 own-words block above; they
@@ -497,8 +507,14 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           });
         // R3: junk rows (page titles / no-content notes) are hidden but their ids reported.
         const channelJunkIds = channelRowsAll.filter((c) => c.junk).map((c) => c.id);
+        // S2 §6(a)–(b) (signed 2026-09-18), applied ONCE here for every reader of the row set: a synthesis row
+        // (label, marker or shape) is never our channel read; a row renders only when its own-host signal ties
+        // to a saved page. Both exclusions are reported by id, never silent.
+        const channelAdmissionById = new Map(channelRowsAll.map((c) => [c.id, channelRowAdmission(ownSigByClaim.get(c.id)!, savedPages)]));
+        const channelSynthesisIds = channelRowsAll.filter((c) => channelAdmissionById.get(c.id) === "synthesis").map((c) => c.id);
+        const channelNoPageIds = channelRowsAll.filter((c) => channelAdmissionById.get(c.id) === "no_saved_page").map((c) => c.id);
         const declared = channelRowsAll
-          .filter((c) => !c.junk)
+          .filter((c) => !c.junk && channelAdmissionById.get(c.id) === "admitted")
           .map(({ junk: _junk, ...row }) => row);
 
         // ── OW-3: own words (beat 3 lead) — the company's own verbatim self-assertions,
@@ -1289,6 +1305,8 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             channelJunkIds,
             channelOffHostIds,
             channelIneligibleIds,
+            channelSynthesisIds,
+            channelNoPageIds,
             markets,
             observedMarkets,
             unstatedGroups,

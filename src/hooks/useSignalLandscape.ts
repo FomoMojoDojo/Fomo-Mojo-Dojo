@@ -1,4 +1,4 @@
-import { ANALYSIS_VOICE, isAnalysisLabelled } from "../../supabase/functions/_shared/voiceLabel.ts";
+import { ANALYSIS_VOICE, isAnalysisRow } from "../../supabase/functions/_shared/voiceLabel.ts";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { sourceHostLower } from "@/lib/sourceHost";
@@ -61,7 +61,7 @@ type SignalRow = {
   evidence_excerpt?: string | null;
   /** C1 (2026-09-17): prose | listing | filing — a filing row is the company speaking through a registry. */
   evidence_class?: string | null;
-  raw_payload?: { bucket?: string; source_type?: string } | null;
+  raw_payload?: { bucket?: string; source_type?: string; hypothesis?: string } | null;
 };
 
 const BANDS: SignalBand[] = ["outside", "organization", "customer"];
@@ -101,7 +101,8 @@ function classifyOutsideRow(
   companyHost: string,
 ): "client_voice" | "outside_voice_about_client" | "competitor_voice" | "market_context" | "analysis" {
   // S1 (signed 2026-09-18): the analysis label wins over the own-host test — same predicate as the edge judges.
-  if (isAnalysisLabelled(row)) return ANALYSIS_VOICE;
+  // S2: label, marker or SHAPE (raw_payload.hypothesis) — isAnalysisRow, the one predicate the judges read.
+  if (isAnalysisRow(row)) return ANALYSIS_VOICE;
   // The deterministic company-source guard overrides any OTHER label, mirroring the judges.
   if (isCompanySource(row, companyHost)) return "client_voice";
   const labeled = String(row.voice_class || "").trim();
