@@ -7,6 +7,7 @@ import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { judgeStepPerspectives } from "../_shared/stepPerspectiveJudge.ts";
 import { generateConditionsForSet, setHasConditions } from "../_shared/stepConditionsSynthesis.ts";
 import { type JourneyDefinition, renderOdiGrounding, resolveJourneyDefinitions } from "../_shared/marketDefinitionByKey.ts";
+import { isCustomerJourneyKey, resolveRunPerformer } from "../_shared/jobmapRunPerformer.ts";
 import { generateMarketHypothesisForSet } from "../_shared/marketHypothesisSynthesis.ts";
 import { generateOpportunitiesForSet, setHasOpportunities } from "../_shared/opportunitySynthesis.ts";
 import {
@@ -133,9 +134,7 @@ function normalizeJourneyKey(value: unknown) {
     .slice(0, 80);
 }
 
-function isCustomerJourneyKey(key: string) {
-  return key === "customer" || key.startsWith("customer-");
-}
+// isCustomerJourneyKey: imported from ../_shared/jobmapRunPerformer.ts (ruling 1, 2026-09-18) — one definition.
 
 function defaultJourneyTitle(key: string) {
   if (key === "customer") return "Job Map: Customer Progress";
@@ -994,13 +993,11 @@ export async function handleLocalJobmapSynthesis(
     const journeyDefinitions: JourneyDefinition[] = requestedMaps
       .map((map) => definitionsByKey.get(map.journey_key))
       .filter((d): d is JourneyDefinition => Boolean(d));
-    // The spine's definition anchors the single-performer fields of the context; it is
-    // the customer definition when the run carries one, else the first requested set's.
-    const spineDefinition =
-      journeyDefinitions.find((d) => isCustomerJourneyKey(d.journey_key)) ??
-      definitionsByKey.get("customer") ??
-      journeyDefinitions[0] ??
-      null;
+    // Ruling 1 (2026-09-18): the run's job performer. A customer run keeps the customer spine and the
+    // company's ODI extras; a MARKET run's performer is the requested market's own definition, and the
+    // customer's performer / outcome / leading indicator / recurring challenge are NOT sent.
+    // (the company extras are attached below, once the outcome / problem rows are loaded)
+    const spineDefinition = resolveRunPerformer(journeyDefinitions, definitionsByKey, { desired_outcome: "", outcome_leading_indicator: "", recurring_progress_challenge: "" }).spineDefinition;
 
     const [
       { data: baselineRow },
@@ -1055,6 +1052,16 @@ export async function handleLocalJobmapSynthesis(
     const inputs = Array.isArray(inputRows) ? inputRows : [];
     const files = Array.isArray(inputFiles) ? inputFiles : [];
     const primaryOutcome = asRecord(primaryOutcomeRow as Record<string, unknown> | null);
+    // Ruling 1: the customer's extras only on a customer run — a market run carries none.
+    const performer = resolveRunPerformer(journeyDefinitions, definitionsByKey, {
+      desired_outcome: safeText(primaryOutcome?.outcome_statement),
+      outcome_leading_indicator: safeText(primaryOutcome?.leading_indicator),
+      recurring_progress_challenge: safeText(
+        strategicProblems[0]
+          ? (strategicProblems[0] as Record<string, unknown>)?.statement
+          : undefined
+      ),
+    });
 
     // VOICE GATE (CHANNEL ≠ VOICE) — the uploaded-doc sidecars join the synthesis
     // context through the ONE shared corpus loader (deterministic, B2B_-core first,
@@ -1103,13 +1110,8 @@ export async function handleLocalJobmapSynthesis(
         job_performer: spineDefinition?.job_executor ?? "",
         primary_job: spineDefinition?.jtbd ?? "",
         chooser: spineDefinition?.chooser ?? "",
-        desired_outcome: safeText(primaryOutcome?.outcome_statement),
-        outcome_leading_indicator: safeText(primaryOutcome?.leading_indicator),
-        recurring_progress_challenge: safeText(
-          strategicProblems[0]
-            ? (strategicProblems[0] as Record<string, unknown>)?.statement
-            : undefined
-        ),
+        // ruling 1: the customer's extras only on a customer run (empty strings on a market run)
+        ...performer.odiExtras,
       },
       strategic_problems: strategicProblems.map((row) => ({
         statement: safeText((row as Record<string, unknown>)?.statement),
