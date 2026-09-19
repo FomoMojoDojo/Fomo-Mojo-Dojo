@@ -137,7 +137,10 @@ Deno.test("(g) the ledger carries selection_version; the generator selects throu
   assert(gen.includes("selection_version: SELECTION_VERSION,"), "ledgerOf stamps the version");
   assert(gen.includes("const { inputs, dropped } = await selectPublicInputs(supabase, company_id);"), "the ONE selection helper feeds the ledger");
   assert(!gen.includes("async function gatherPublicInputs("), "the physical-order gather is gone");
-  for (const fn of ["selectSignals(", "selectOwnWords(", "selectFindings(", "selectDeltas("]) assert(gen.includes(fn), `${fn} used`);
+  // wall brief (2026-09-18): the gather MOVED to publicReadInputs.ts so the bet writer reads the same pool; the generator imports it
+  assert(gen.includes('import { selectPublicInputs, type InputRow } from "../_shared/publicReadInputs.ts";'), "the generator imports the shared pool");
+  const pool = await read("./publicReadInputs.ts");
+  for (const fn of ["selectSignals(", "selectOwnWords(", "selectFindings(", "selectDeltas("]) assert(pool.includes(fn), `${fn} used by the shared pool`);
   const sel = await read("./publicReadSelection.ts");
   for (const imp of ['from "./voiceLabel.ts"', 'from "./ownWordsExtract.ts"', 'from "./relevanceActive.ts"', 'from "./previewOrder.ts"', 'from "../../../src/lib/firstRead/quoteProducer.ts"']) assert(sel.includes(imp), `imports ${imp}`);
   assert(!/function isChannelJunk|function isPairAdmissible|function isPageShapedRow|function compareBeat2/.test(sel), "no predicate is copied");

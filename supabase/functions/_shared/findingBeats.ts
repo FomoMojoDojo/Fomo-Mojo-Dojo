@@ -1,6 +1,11 @@
 // Finding beat-generation (2a, write-side). Turns a stored finding (body + kind)
-// into the insight three-beat — Observe / Name-the-tension / Open — using the same
-// model class as the public-synthesis path (callOpenAIJSON → gpt-4.1-mini class).
+// into the insight three-beat — Observe / Name-the-tension / Open.
+//
+// WALL BRIEF (operator ruling 8, signed 2026-09-18): the model is reached only through the routed call
+// (modelRouter.makeRoutedModel). An internal_inferred finding goes to the LOCAL model only when the company has
+// client-provided material (clientMaterial.companyHasClientProvidedMaterial — the one wall predicate, fail closed);
+// otherwise — a company with no client-provided material, or a public_inferred finding — it takes the routed call
+// with the finding's register as its provenance. Every routed call writes a model_calls ledger row.
 //
 // Beats are an OPENING, not a verdict (gentle by construction):
 //   - Observe       — faithful, precise restatement of the body's factual claim only.
@@ -14,7 +19,11 @@
 // Idempotent: only processes findings WHERE beats IS NULL, so re-running generates 0.
 // Render-side (Next Turn) is a separate item (2b) — nothing here renders.
 
-import { callOpenAIJSON } from "./openaiClient.ts";
+import { makeRoutedModel, type RoutedModel, type OpenAIUsage } from "./modelRouter.ts";
+import { callOllamaJson } from "./signalRecurrence.ts";
+import { companyHasClientProvidedMaterial } from "./clientMaterial.ts";
+import { openaiRecord, recordModelCall } from "./recordModelCall.ts";
+import { LOCAL_GENERATOR } from "../../../src/lib/modelRouter/resolveModel.ts";
 import { FINDING_VOICE, BEAT_LENGTH_RULE } from "./findingVoice.ts";
 
 // Loose client type — this module is called from both edge functions (service role)
@@ -41,7 +50,8 @@ type SignalProfile = {
   organization: number;
 };
 
-const BEATS_SCHEMA = {
+// Kept as the documented shape of the beats object (the routed call returns plain JSON; no schema-mode API).
+export const BEATS_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["observe", "name_tension", "open"],
@@ -123,23 +133,38 @@ async function getSignalProfile(supabase: AnySupabase, companyId: string): Promi
 // Generate beats for every finding in a company that does not yet have them.
 // Returns counts; never throws to the caller (logs and continues) so it is safe to
 // wire into the auto-capture path without making ingest fragile.
+export const BEATS_CALL_SITE = "finding-beats";
+export const BEATS_SCHEMA_INSTRUCTION = 'Return ONLY a JSON object {"observe": string, "name_tension": string, "open": string}.';
+
+/** Ruling 8: the provenance handed to the router for a finding — internal_inferred goes local ONLY while the company
+ *  has client-provided material; otherwise the finding's own register is what the router sees. */
+export function beatsRouteProvenance(register: string | null | undefined, hasClientMaterial: boolean): string {
+  const reg = String(register ?? "");
+  if (reg === "internal_inferred" && hasClientMaterial) return "internal_inferred"; // → local (non-public provenance)
+  if (reg === "internal_inferred") return "public_inferred"; // no client material: our own analysis of public sources
+  return reg || "unknown";
+}
+
+/** The default routed caller (external when the router says so, else local qwen). Injected so a guard can count calls. */
+export function defaultBeatsRoutedModel(openaiKey: string, onUsage?: (u: OpenAIUsage) => void): RoutedModel {
+  const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
+  const local = (model: string, system: string, user: string) => callOllamaJson(ollamaUrl, model || LOCAL_GENERATOR, system, user, 120_000);
+  return makeRoutedModel({ callLocalGenerator: local, callLocalJudge: local, openaiKey, onUsage });
+}
+
 export async function generateFindingBeats(args: {
   supabase: AnySupabase;
   companyId: string;
   openaiApiKey: string;
   model?: string;
+  /** Test seam: the routed caller (defaults to defaultBeatsRoutedModel). */
+  routedModel?: RoutedModel;
 }): Promise<{ generated: number; skipped: number; failed: number }> {
   const { supabase, companyId, openaiApiKey } = args;
-  const model = args.model || Deno.env.get("OPENAI_MODEL") || "gpt-4.1-mini";
-
-  if (!openaiApiKey) {
-    console.log("[beats] no OPENAI_API_KEY — skipping beat generation");
-    return { generated: 0, skipped: 0, failed: 0 };
-  }
 
   const { data: rows, error } = await supabase
     .from("findings")
-    .select("id, kind, body")
+    .select("id, kind, body, register")
     .eq("company_id", companyId)
     .is("beats", null)
     .order("created_at", { ascending: true });
@@ -152,7 +177,11 @@ export async function generateFindingBeats(args: {
   if (pending.length === 0) return { generated: 0, skipped: 0, failed: 0 };
 
   const profile = await getSignalProfile(supabase, companyId);
-  const systemText = buildSystemText();
+  const systemText = `${buildSystemText()}\n\n${BEATS_SCHEMA_INSTRUCTION}`;
+  // ruling 8: the wall predicate decides where an internal_inferred finding may go (fail closed on lookup error)
+  const material = await companyHasClientProvidedMaterial(supabase, companyId);
+  let usage: OpenAIUsage | null = null;
+  const routed = args.routedModel ?? defaultBeatsRoutedModel(openaiApiKey, (u) => { usage = u; });
 
   let generated = 0;
   let failed = 0;
@@ -162,17 +191,19 @@ export async function generateFindingBeats(args: {
       failed++;
       continue;
     }
+    let provider = "", model = "";
     try {
-      const beats = (await callOpenAIJSON({
-        apiKey: openaiApiKey,
-        model,
-        schemaName: "finding_beats",
-        schema: BEATS_SCHEMA,
-        systemText,
-        userText: buildUserText(f, profile),
-        maxOutputTokens: 600,
-        temperature: 0.2,
-      })) as FindingBeats;
+      usage = null;
+      const r = await routed({
+        role: "generator",
+        provenances: [beatsRouteProvenance((f as { register?: string | null }).register, material.has)],
+        system: systemText,
+        user: buildUserText(f, profile),
+      });
+      provider = r.provider; model = r.model;
+      const mm = r.content.match(/\{[\s\S]*\}/);
+      if (!mm) throw new Error(`${r.model} returned no JSON`);
+      const beats = JSON.parse(mm[0]) as FindingBeats;
 
       const { error: updErr } = await supabase
         .from("findings")
@@ -191,6 +222,14 @@ export async function generateFindingBeats(args: {
         String(err instanceof Error ? err.message : err),
       );
       failed++;
+    } finally {
+      // ruling 2/8: every routed call is ledgered
+      if (provider) {
+        await recordModelCall(supabase, {
+          companyId, runId: null, callSite: BEATS_CALL_SITE,
+          usage: provider === "external_openai" ? openaiRecord(model, usage) : { provider, model, prompt_tokens: null, completion_tokens: null, usd: null },
+        });
+      }
     }
   }
 
