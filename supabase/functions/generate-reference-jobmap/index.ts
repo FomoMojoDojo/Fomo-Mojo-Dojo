@@ -30,6 +30,7 @@ import { normalizeForHash, sha256Hex } from "../_shared/contentIdentity.ts";
 import { anchorsToPromptBlock, getIndustryStepAnchors, inferStandardMarketCategory } from "../_shared/industryStepAnchors.ts";
 import { JTBD_ODI_CHECKPOINTS } from "../_shared/jtbdProcess.ts";
 import { type NormStep, validateSubsetOfEight } from "../generate-normative-jobmap/logic.ts";
+import { meansViolations, RULES_VERSION, TAXONOMY_VERSION } from "./rules.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -41,7 +42,7 @@ const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
 const DEFAULT_JUDGE_MODEL = "llama3:70b";
 const GEN_TIMEOUT_MS = 120_000;
 const JUDGE_TIMEOUT_MS = 180_000;
-const TAXONOMY_VERSION = "fd1-priority-8";
+// TAXONOMY_VERSION / RULES_VERSION: ./rules.ts (methodology change M, 2026-09-18 — fd1-priority-8.1).
 const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.docker.internal"]);
 
 // The 8 SIGNED priority slugs → a SEED label (anchor seeding + 14b context only).
@@ -124,6 +125,7 @@ function trippedWords(steps: NormStep[]): string[] {
   return [...found];
 }
 
+// RULES_VERSION 2026-09-18.1 (rules.ts) — the sentence and the judge clause below are that version.
 const GEN_SYSTEM =
   "You produce an INDUSTRY-STANDARD job map — the standard, solution-agnostic sequence of ODI job STEPS for how ONE declared job performer (the EXECUTOR) gets their job done in a given industry. " +
   "This is the generally-accepted standard for the industry, stated as the norm — NOT any one company's process. " +
@@ -132,7 +134,7 @@ const GEN_SYSTEM =
   "The ODI universal scaffold has 8 canonical checkpoints in FIXED order: define, locate, prepare, confirm, execute, monitor, modify, conclude. " +
   "Use a SUBSET of these keys IN THIS ORDER — you may OMIT a checkpoint the industry genuinely doesn't exhibit, NEVER reorder, NEVER invent a step outside the 8. Omit ONLY when the executor's job truly lacks that stage; include every checkpoint the job really has. " +
   "Each step's CONTENT must match its checkpoint's ODI intent: define = clarify the desired outcome; locate = find/gather options or information; prepare = get set up before the core task; confirm = verify readiness before doing it; execute = DO the core task; monitor = OBSERVE/TRACK how it is going while it is underway (NOT doing/using/enjoying the task — that is execute); modify = adjust or correct course; conclude = finish and confirm the outcome. Never put doing-the-task content under monitor. " +
-  "Each step is solution-agnostic (no product, tool, brand, vendor, or prescribed method) and describes the EXECUTOR's job PROGRESS. " +
+  "Each step is solution-agnostic (no product, tool, brand, vendor, prescribed method, mechanism, document, or channel) and describes the EXECUTOR's job PROGRESS — a step names the executor's GOAL at that stage, never the MEANS. " +
   "NEVER use these words or phrases (they are solution/process jargon, not job progress): feature, dashboard, portal, campaign, launch, tool, app, platform, build, implement, rollout, workflow, template, mvp, ui, productize, standardize, integrate, promote, negotiate, supplier, vendor, pricing, terms, partnership, onboarding, awareness, acquisition, activation, retention, engagement, funnel, pipeline, implementation plan, delivery process, consulting process. Describe the plain progress a customer makes, in everyday words. " +
   'Also produce a concise client-facing industry_label (2-6 words, Title Case). ' +
   'JSON only: {"industry_label":"...","steps":[{"step_key":"define|locate|prepare|confirm|execute|monitor|modify|conclude","step_label":"2-8 words","description":"one sentence, industry-typical"}]}';
@@ -154,11 +156,13 @@ const JUDGE_SYSTEM =
   "REJECT (ok=false) if ANY step is framed from the PROVIDER / OPERATOR side — running, staffing, supplying, setting up, operating, or delivering the business/operation — instead of the executor getting the job done. " +
   "CHECKPOINT-CONTENT MATCH: REJECT if any step's CONTENT does not match the ODI intent of its checkpoint key. Intents: define = clarify the desired outcome; locate = find/gather options or information; prepare = get set up before the core task; confirm = verify readiness before doing it; execute = DO the core task that produces the outcome; monitor = OBSERVE/TRACK how the in-progress job is going (NOT doing the job — if the content is performing, using, or enjoying the task itself, that is execute mis-slotted → REJECT); modify = adjust or correct course; conclude = finish and confirm the outcome. A step whose content belongs to a different checkpoint than its key is mis-slotted — reject. " +
   "Also reject product/solution/method/vendor framing or marketing claims. " +
-  'JSON only: {"ok":true|false,"reason":"one sentence citing the offending step if any"}.';
+  "MEANS vs GOAL: REJECT any step that names a mechanism, document or channel (a proposal, an application, a form, a report, a meeting, a call, an email, a portal, a site visit) instead of the executor's goal at that stage — a step names the goal, never the means. " +
+  "ALWAYS state your reason — on pass (why every step is the executor's goal) and on reject (the offending step and what it names). " +
+  'JSON only: {"ok":true|false,"reason":"one sentence — always present"}.';
 
 type GenResult = { industry_label: string; steps: NormStep[] };
 
-async function generateForIndustry(ollamaUrl: string, genModel: string, judgeModel: string, pin: IndustryPin): Promise<{ ok: true; result: GenResult; judge_reason: string } | { ok: false; issue: string }> {
+async function generateForIndustry(ollamaUrl: string, genModel: string, judgeModel: string, pin: IndustryPin): Promise<{ ok: true; result: GenResult; judge_reason: string; attempts: number } | { ok: false; issue: string; attempts: number }> {
   const coarse = inferStandardMarketCategory(pin.seed_label);
   const anchors = coarse ? getIndustryStepAnchors(coarse) : null;
   const scaffold = anchors ? anchorsToPromptBlock(anchors) : bareScaffoldBlock();
@@ -190,6 +194,13 @@ async function generateForIndustry(ollamaUrl: string, genModel: string, judgeMod
         : `Your previous attempt was REJECTED (${subset.issue}). Rewrite in plain everyday customer language.`;
       continue;
     }
+    // Rule M (2026-09-18.1) — the deterministic MEANS guard, reference-map scope only (rules.ts).
+    const means = meansViolations(gen.steps);
+    if (means.length > 0) {
+      lastIssue = `means-guard: ${means.map((m) => `${m.step_key} names ${m.words.join("/")}`).join("; ")}`;
+      feedback = `Your previous attempt was REJECTED — these steps named a MEANS (a document or mechanism) instead of the executor's goal: ${means.map((m) => `${m.step_key} (${m.words.join(", ")})`).join("; ")}. A step names the goal at that stage, never the means. Rewrite those steps without naming any document, mechanism or channel.`;
+      continue;
+    }
     // 70b ODI-shape / solution-agnostic judge (judge-only).
     const judgeUser = `Industry: ${pin.seed_label}\nEXECUTOR: ${pin.executor}\nJOB: ${pin.jtbd}\nSteps:\n` + gen.steps.map((s, i) => `${i + 1} (${s.step_key}): ${s.step_label} — ${s.description}`).join("\n");
     const jr = await callOllamaJson(ollamaUrl, judgeModel, JUDGE_SYSTEM, judgeUser, JUDGE_TIMEOUT_MS);
@@ -198,6 +209,7 @@ async function generateForIndustry(ollamaUrl: string, genModel: string, judgeMod
       const jv = JSON.parse(jr) as { ok?: unknown; reason?: unknown };
       judgeOk = jv.ok === true; reason = String(jv.reason ?? "").trim();
     } catch { lastIssue = `judge unparseable: ${jr.slice(0, 120)}`; continue; }
+    console.log(`[generate-reference-jobmap] judge (${RULES_VERSION}) attempt ${attempt + 1}: ok=${judgeOk} reason=${JSON.stringify(reason)}`);
     if (!judgeOk) {
       lastIssue = `70b judge rejected: ${reason}`;
       // Feed the judge's reason back so the next attempt corrects the specific
@@ -205,9 +217,9 @@ async function generateForIndustry(ollamaUrl: string, genModel: string, judgeMod
       feedback = `Your previous attempt was REJECTED by the reviewer: ${reason}. Fix that specific problem — keep every step's content matching its ODI checkpoint intent (monitor = observing/tracking progress, NOT doing the task).`;
       continue;
     }
-    return { ok: true, result: gen, judge_reason: reason };
+    return { ok: true, result: gen, judge_reason: reason, attempts: attempt + 1 };
   }
-  return { ok: false, issue: lastIssue };
+  return { ok: false, issue: lastIssue, attempts: 5 };
 }
 
 serve(async (req) => {
@@ -237,7 +249,7 @@ serve(async (req) => {
 
       const pin = SIGNED_INDUSTRIES[key];
       const gen = await generateForIndustry(ollamaUrl, genModel, judgeModel, pin);
-      if (!gen.ok) { results.push({ industry_key: key, status: "failed", issue: gen.issue }); continue; }
+      if (!gen.ok) { results.push({ industry_key: key, status: "failed", issue: gen.issue, attempts: gen.attempts }); continue; }
 
       const stepRows = await Promise.all(gen.result.steps.map(async (s, i) => ({
         industry_key: key,
@@ -253,7 +265,7 @@ serve(async (req) => {
         is_published: false,
       })));
 
-      if (dry_run) { results.push({ industry_key: key, status: "dry_run", industry_label: gen.result.industry_label, executor: pin.executor, jtbd: pin.jtbd, judge_reason: gen.judge_reason, steps: gen.result.steps }); continue; }
+      if (dry_run) { results.push({ industry_key: key, status: "dry_run", industry_label: gen.result.industry_label, executor: pin.executor, jtbd: pin.jtbd, judge_reason: gen.judge_reason, attempts: gen.attempts, rules_version: RULES_VERSION, taxonomy_version: TAXONOMY_VERSION, steps: gen.result.steps }); continue; }
 
       // force replace: drop existing UNPUBLISHED drafts (published already skipped above).
       if (force && rows.length > 0) {
@@ -262,7 +274,7 @@ serve(async (req) => {
       }
       const { error: insErr } = await supabase.from("industry_reference_job_maps").insert(stepRows);
       if (insErr) return json({ ok: false, error: `draft insert failed (${key}): ${insErr.message}` }, 500);
-      results.push({ industry_key: key, status: "generated", industry_label: gen.result.industry_label, executor: pin.executor, jtbd: pin.jtbd, steps: gen.result.steps.length, judge_reason: gen.judge_reason });
+      results.push({ industry_key: key, status: "generated", industry_label: gen.result.industry_label, executor: pin.executor, jtbd: pin.jtbd, steps: gen.result.steps.length, judge_reason: gen.judge_reason, attempts: gen.attempts, rules_version: RULES_VERSION, taxonomy_version: TAXONOMY_VERSION });
     }
     return json({ ok: true, dry_run: !!dry_run, run_id: runId, results });
   } catch (err) {
