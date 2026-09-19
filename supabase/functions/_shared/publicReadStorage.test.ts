@@ -14,7 +14,7 @@ const U = { S1: "11111111-1111-4111-8111-111111111111", O1: "22222222-2222-4222-
 const uuidByRef = new Map(Object.entries(U));
 const inputs = [
   { id: U.S1, source_url: "https://www.mightycause.com/organization/edgewood", event_date: "2026-03-01", own_site: false },
-  { id: U.O1, own_site: true },
+  { id: U.O1, source_url: "https://edgewood.org/", own_site: true }, // own-words carry their URL (rule 2026-09-18: own host by URL only)
   { id: U.F1 },
   { id: U.D1 },
 ];
@@ -47,12 +47,16 @@ Deno.test("Part F: for every kind the staged payload equals the direct-write pay
     assertEquals(JSON.stringify(b.stored).includes("O1"), false, `${kind}: tokens translated`);
   }
   // offering enrichment on the STAGED payload
+  // Re-pinned 2026-09-18 (offering rule): seen_on is the EARNED tri-state — the own-host-cited item is named by
+  // its citation (union rule); the mightycause-cited item, with no own-site record supplied, is "own_site_not_read"
+  // (absence is never claimed). The citation facts (own_site / outside) stay on derivedSeenOn for the audit.
   const off = buildStoredPayloads({ kind: "offering", payload: PAYLOADS.offering, verdict: VERDICT, uuidByRef, refMeta, ownHosts });
   const items = off.staged.items as Array<Record<string, unknown>>;
   assertEquals(items.map((i) => [i.seen_on, i.source_count, i.source_domains, i.earliest_source, i.latest_source]), [
-    ["own_site", 2, ["edgewood.org"], null, null],
-    ["outside", 1, ["mightycause.com"], "2026-03-01", "2026-03-01"],
+    ["named_on_site", 2, ["edgewood.org"], null, null],
+    ["own_site_not_read", 1, ["mightycause.com"], "2026-03-01", "2026-03-01"],
   ]);
+  assertEquals(off.derivedSeenOn!.map((x) => x.seen_on), ["own_site", "outside"], "the citation facts are kept for the audit");
   assertEquals(items.map((i) => [i.label, i.statement, i.kind_hint]), (PAYLOADS.offering.items as Array<Record<string, unknown>>).map((i) => [i.label, i.statement, i.kind_hint]), "text fields byte-identical");
   assertEquals(items[0].refs, [U.O1, U.D1]);
   assertEquals((off.staged.open_questions as Array<Record<string, unknown>>)[0].refs, [U.S1]);
@@ -67,7 +71,7 @@ Deno.test("source guard: the generator inserts built.stored on write and built.s
   const gen = await read("../generate-public-read/index.ts");
   assert(gen.includes("company_id, kind, payload: built.stored, input_ledger: ledger,"), "direct write inserts built.stored");
   assert(gen.includes("company_id, kind, payload: built.staged, input_ledger: ledger,"), "stage inserts built.staged");
-  assert(gen.includes("const built = buildStoredPayloads({ kind, payload, verdict, uuidByRef, refMeta, ownHosts });"), "one builder");
+  assert(gen.includes("const built = buildStoredPayloads({ kind, payload, verdict, uuidByRef, refMeta, ownHosts, ownSiteRecord, refUrl });"), "one builder (with the own-site record, rule 2026-09-18)");
   assert(!gen.includes("function deriveOfferingSeenOn(") && !gen.includes("function translateCitations("), "moved, not copied");
   const sto = await read("./publicReadStorage.ts");
   assert(sto.includes("const stored = translateCitations(storage, uuidByRef) as Record<string, unknown>;") && sto.includes("? { ...stored, [CASCADE_SOURCE_KEY]:"), "staged = stored (+ cascade_source on strategy)");

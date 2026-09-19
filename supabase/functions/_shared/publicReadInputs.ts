@@ -69,14 +69,16 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   //    (own-words ARE judge-kept quotes from the company's own public site — the seen_on "own site" set).
   //    Ruling 5: only identities with an ACTIVE own_words claim, one per identity, ORDER BY created_at, id.
   const { data: ow } = await supabase
-    .from("own_words_candidates").select("id, quote, judge_kind, content_identity, created_at").eq("company_id", companyId).eq("judge_keep", true)
+    .from("own_words_candidates").select("id, quote, judge_kind, content_identity, created_at, source_url").eq("company_id", companyId).eq("judge_keep", true)
     .order("created_at", { ascending: true }).order("id", { ascending: true });
   const { data: owClaims } = await supabase.from("claims").select("raw_payload").eq("company_id", companyId).eq("claim_type", "own_words").eq("status", "active");
   const activeIdentities = new Set(((owClaims ?? []) as Array<{ raw_payload?: { content_identity?: string } }>).map((c) => c.raw_payload?.content_identity).filter((x): x is string => !!x));
   // ADMISSION CRITERION (2026-09-03): only declared-eligible kinds seed posits (a missing kind is eligible).
   const owSel = selectOwnWords((ow ?? []) as SelOwnWord[], READ_CAP.own_word, activeIdentities, (w) => declaredEligibleFor(parseOwnWordsKind(w.judge_kind)));
   dropped.push(...owSel.dropped);
-  for (const w of owSel.kept) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", text: (w.quote ?? "").trim(), own_site: true });
+  // source_url carried so the offering's own-host test can see WHERE the words were said (a registry-hosted
+  // own_word is not the company's own site — rule 2026-09-18); the own_site flag is no longer trusted downstream.
+  for (const w of owSel.kept) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", text: (w.quote ?? "").trim(), source_url: (w as { source_url?: string | null }).source_url ?? null, own_site: true });
 
   // 3. findings — the public_inferred register, open, AND RECURRENCE-BACKED (Gate 6a, 2026-08-26):
   //    only findings with a Gate-5c finding_recurrence row (entity-anchored, IDF-coherent, judge-anchored,

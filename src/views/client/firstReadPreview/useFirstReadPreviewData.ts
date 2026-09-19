@@ -51,8 +51,7 @@ import type {
   FROwnWord,
   FRReverseRow,
   FRSignal,
-  FRStatusSource,
-} from "./types";
+  FRStatusSource, FROwnSiteState } from "./types";
 import { EMPTY_FIRST_READ } from "./types";
 
 /** The judge's VERBATIM clause for an unstated group — operator view only, never the client sub-line.
@@ -364,6 +363,12 @@ async function uploadDerivedFor(claimRows: Array<{ id: string; raw_payload?: unk
 
 /** `refreshKey`: bump it to re-run the read (this surface is plain state, not react-query — the
  *  operator override path bumps it after a write so the beat re-reads the derived stamp). */
+/** The offering item's stored own-site value → render state (rule 2026-09-18): three explicit values; ANY
+ *  other value — including the legacy citation-derived "own_site" / "outside" — is "not_read", never own-site. */
+export function offerOwnSiteState(v: unknown): FROwnSiteState {
+  return v === "named_on_site" ? "named" : v === "seen_outside" ? "seen_outside" : "not_read";
+}
+
 export function useFirstReadPreviewData(companyId: string | undefined, refreshKey = 0) {
   const [data, setData] = useState<FirstReadPreviewData>(EMPTY_FIRST_READ);
   const [loading, setLoading] = useState(true);
@@ -1083,11 +1088,12 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           const s = v == null ? "" : String(v);
           return /^\d{4}/.test(s) ? s.slice(0, 4) : null;
         };
+        // Own-site state (rule 2026-09-18): the three explicit stored values, mapped by offerOwnSiteState.
         const offItems = (Array.isArray(offPayload?.items) ? offPayload!.items : [])
           .map((it) => ({
             label: String(it.label ?? "").trim(),
             statement: String(it.statement ?? "").trim(),
-            seenOn: it.seen_on === "outside" ? ("outside" as const) : ("own_site" as const),
+            ownSite: offerOwnSiteState(it.seen_on),
             sourceCount: Number(it.source_count ?? 0),
             earliestYear: yr(it.earliest_source),
             latestYear: yr(it.latest_source),

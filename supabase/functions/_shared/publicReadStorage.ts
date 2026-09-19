@@ -17,6 +17,7 @@
 // Everything here is pure (no I/O); the handler gathers inputs and builds refMeta, then calls this.
 import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, type StrategyPayload } from "./cascadeRouting.ts";
 import { CASCADE_SOURCE_KEY, cascadeSourceOf } from "./publicReadPromote.ts";
+import { applyOwnSiteStates, deriveOwnSiteStates, EMPTY_OWN_SITE_RECORD, type OwnSiteRecord, type OwnSiteVerdict } from "./offeringNamedOnSite.ts";
 
 export type RefMeta = { domain: string | null; date: string | null; own_site: boolean };
 export type OfferingSeenOn = {
@@ -31,7 +32,9 @@ export function hostOf(url: string | null | undefined): string | null {
   catch { return null; }
 }
 
-/** Per-input source metadata the offering enrichment reads (moved from the handler, unchanged). */
+/** Per-input source metadata the offering enrichment reads. own_site is TRUE ONLY when the input's own
+ *  URL is on the company's own host (rule signed 2026-09-18: registry, social and aggregator hosts never
+ *  count, including own_word inputs hosted there) — an input's `own_site` flag is no longer trusted. */
 export function buildRefMeta(
   inputs: Array<{ id: string; source_url?: string | null; event_date?: string | null; own_site?: boolean }>,
   ownHost: string | null,
@@ -39,13 +42,30 @@ export function buildRefMeta(
   const ownHosts = new Set<string>(ownHost ? [ownHost] : []);
   const refMeta = new Map<string, RefMeta>();
   for (const r of inputs) {
-    refMeta.set(r.id, {
-      domain: hostOf(r.source_url) ?? (r.own_site && ownHost ? ownHost : null),
-      date: r.event_date ?? null,
-      own_site: r.own_site === true || (hostOf(r.source_url) !== null && ownHosts.has(hostOf(r.source_url)!)),
-    });
+    const host = hostOf(r.source_url);
+    refMeta.set(r.id, { domain: host, date: r.event_date ?? null, own_site: host !== null && ownHosts.has(host) });
   }
   return refMeta;
+}
+
+/** The own-host citation fact per item: the first cited ref whose URL host is the company's own. */
+export function ownHostCitationFor(
+  payload: Record<string, unknown>,
+  uuidByRef: Map<string, string>,
+  refMeta: Map<string, RefMeta>,
+  ownHosts: Set<string>,
+  refUrl: (id: string) => string | null,
+): (index: number) => { cited: boolean; url: string | null } {
+  const items = Array.isArray(payload.items) ? (payload.items as Array<Record<string, unknown>>) : [];
+  return (index) => {
+    const it = items[index] ?? {};
+    const ids = [...new Set((Array.isArray(it.refs) ? it.refs : []).filter((r): r is string => typeof r === "string").map((r) => uuidByRef.get(r.trim()) ?? r.trim()))];
+    for (const id of ids) {
+      const m = refMeta.get(id);
+      if (m && (m.own_site || (m.domain !== null && ownHosts.has(m.domain)))) return { cited: true, url: refUrl(id) };
+    }
+    return { cited: false, url: null };
+  };
 }
 
 /** Citation tokens ([S1], [O3] …) → ledger uuids, recursively, on every key that names citations/refs/ids. */
@@ -112,6 +132,8 @@ export type StoredPayloads = {
   staged: Record<string, unknown>;
   cascadeItems: CascadeGapItem[];
   derivedSeenOn: OfferingSeenOn[] | null;
+  /** Offering only — the earned own-site state per item (rule signed 2026-09-18). */
+  ownSiteVerdicts: OwnSiteVerdict[] | null;
 };
 
 /** ONE builder for what a read row stores — direct write inserts `stored`, stage inserts `staged`. */
@@ -122,11 +144,16 @@ export function buildStoredPayloads(args: {
   uuidByRef: Map<string, string>;
   refMeta: Map<string, RefMeta>;
   ownHosts: Set<string>;
+  /** The own-site record (offering only). Absent ⇒ no page was read ⇒ items not named by citation are "own_site_not_read". */
+  ownSiteRecord?: OwnSiteRecord | null;
+  /** URL of a ledger input by id (for the own_host_citation evidence). */
+  refUrl?: (id: string) => string | null;
 }): StoredPayloads {
   const { kind, payload, verdict, uuidByRef, refMeta, ownHosts } = args;
   let storage: Record<string, unknown> = payload;
   let cascadeItems: CascadeGapItem[] = [];
   let derivedSeenOn: OfferingSeenOn[] | null = null;
+  let ownSiteVerdicts: OwnSiteVerdict[] | null = null;
   if (kind === "strategy") {
     const coherence = (verdict.cascade_coherence ?? null) as CascadeCoherence | null;
     const derived = deriveCascadeSpineAndGaps(payload as StrategyPayload, coherence);
@@ -134,11 +161,15 @@ export function buildStoredPayloads(args: {
     storage = derived.spine as Record<string, unknown>;
   } else if (kind === "offering") {
     derivedSeenOn = deriveOfferingSeenOn(payload, uuidByRef, refMeta, ownHosts);
-    storage = enrichOffering(payload, derivedSeenOn);
+    const enriched = enrichOffering(payload, derivedSeenOn);
+    // "Named on your own site" is EARNED (rule 2026-09-18): name check ∪ own-host citation; absence never claimed.
+    const cited = ownHostCitationFor(payload, uuidByRef, refMeta, ownHosts, args.refUrl ?? (() => null));
+    ownSiteVerdicts = deriveOwnSiteStates((enriched.items as Array<{ label?: unknown }>) ?? [], cited, args.ownSiteRecord ?? EMPTY_OWN_SITE_RECORD);
+    storage = applyOwnSiteStates(enriched, ownSiteVerdicts);
   }
   const stored = translateCitations(storage, uuidByRef) as Record<string, unknown>;
   const staged = kind === "strategy"
     ? { ...stored, [CASCADE_SOURCE_KEY]: cascadeSourceOf(translateCitations(payload, uuidByRef) as Record<string, unknown>) }
     : stored;
-  return { storage, stored, staged, cascadeItems, derivedSeenOn };
+  return { storage, stored, staged, cascadeItems, derivedSeenOn, ownSiteVerdicts };
 }

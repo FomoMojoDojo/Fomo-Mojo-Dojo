@@ -33,6 +33,7 @@ import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
 import { PromoteRefused, promoteStagedReads, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
 import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type OfferingSeenOn } from "../_shared/publicReadStorage.ts";
+import { loadOwnSiteRecord } from "../_shared/offeringNamedOnSite.ts";
 import { SELECTION_VERSION } from "../_shared/publicReadSelection.ts";
 import { selectPublicInputs, type InputRow } from "../_shared/publicReadInputs.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
@@ -354,6 +355,9 @@ Respond with ONLY JSON:
     const ownHost = hostOf((coRow as { website?: string | null } | null)?.website ?? null);
     const ownHosts = new Set<string>(ownHost ? [ownHost] : []);
     const refMeta = buildRefMeta(inputs, ownHost);
+    // The own-site record (rule 2026-09-18): the offering's "Named on your own site" is earned against it.
+    const ownSiteRecord = await loadOwnSiteRecord(supabase, company_id, ownHost);
+    const refUrl = (id: string) => inputs.find((r) => r.id === id)?.source_url ?? null;
 
     const payloads: Partial<Record<Kind, Record<string, unknown>>> = {};
     const storagePayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
@@ -369,7 +373,7 @@ Respond with ONLY JSON:
     // inserts `stored`, stage inserts `staged` (= stored + cascade_source on a strategy row). The derived artifacts the
     // response reports (cascade items, offering seen_on) come from the same call.
     const prepareStorage = (kind: Kind, payload: Record<string, unknown>, verdict: Record<string, unknown>) => {
-      const built = buildStoredPayloads({ kind, payload, verdict, uuidByRef, refMeta, ownHosts });
+      const built = buildStoredPayloads({ kind, payload, verdict, uuidByRef, refMeta, ownHosts, ownSiteRecord, refUrl });
       if (kind === "strategy") cascadeItems = built.cascadeItems;
       if (kind === "offering") derivedSeenOn = built.derivedSeenOn;
       return built;

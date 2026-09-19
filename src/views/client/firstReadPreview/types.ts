@@ -308,14 +308,20 @@ export type FRWhereYouStand = {
   sourceTag: SourceTagResult;
 } | null;
 
+/** The item's earned own-site state (operator rule signed 2026-09-18): "named" = its name is on the own
+ *  site or it cites an own-host input; "seen_outside" = not named, own site was read; "not_read" = not
+ *  named and no own-site page has been saved. The adapter maps the three stored values explicitly and
+ *  treats ANY other value as "not_read" — never as own-site. */
+export type FROwnSiteState = "named" | "seen_outside" | "not_read";
+
 /** Gate-C Stage B (2026-09-01) — one enumerated offering item read from the accepted, judged
- *  public_reads kind='offering' payload. seenOn splits the two groups (Named on your own site /
- *  Seen only from outside). sourceCount + the year range are CODE-DERIVED fields carried verbatim
- *  from the payload (never recomputed here); a null year omits that side of the range. */
+ *  public_reads kind='offering' payload. ownSite splits the three groups (Named on your own site /
+ *  Seen outside your site / Own site not yet read). sourceCount + the year range are CODE-DERIVED
+ *  fields carried verbatim from the payload (never recomputed here); a null year omits that side. */
 export type FROfferItem = {
   label: string;
   statement: string;
-  seenOn: "own_site" | "outside";
+  ownSite: FROwnSiteState;
   sourceCount: number;
   earliestYear: string | null;
   latestYear: string | null;

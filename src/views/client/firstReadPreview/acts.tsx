@@ -293,8 +293,11 @@ const OFFER_EYEBROW = "FROM THE RECORD"; // signed
 const OFFER_HEADLINE = "What you offer, as the market can see it."; // signed
 const OFFER_SUB = "Products, services, programs — as they appear in public. Not what you intend. What's visible."; // signed
 const OFFER_WHY = "Your base is what you intend. Your offering is what people actually meet. The gap between them is where the next phase starts."; // signed (WHY THIS body)
+// Three groups (operator rule signed 2026-09-18): "on your own site" is EARNED by a name check or an
+// own-host source; absence is never claimed — an item whose own site was never read says so.
 const OFFER_GROUP_OWN = "Named on your own site"; // signed
-const OFFER_GROUP_OUTSIDE = "Seen only from outside"; // signed
+const OFFER_GROUP_OUTSIDE = "Seen outside your site"; // signed 2026-09-18
+const OFFER_GROUP_NOT_READ = "Own site not yet read"; // signed 2026-09-18
 const OFFER_EARNED_EMPTY = "The record doesn't yet show what you offer."; // signed
 const OFFER_CLOSING = "Next, we lay this against what your market needs."; // signed
 // Design rationale (placement) — signed for beatRationale.test.tsx ONLY; internal shorthand, never
@@ -1075,7 +1078,7 @@ function UnstatedGroups({ read, tones }: { read: FirstReadPreviewData; tones: Ma
   );
 }
 
-/** Gate-C Stage B — one offering group ("Named on your own site" / "Seen only from outside").
+/** Gate-C Stage B — one offering group ("Named on your own site" / "Seen outside your site" / "Own site not yet read").
  *  Reuses the "Where this points" numbered hanging-indent idiom: the two-digit numeral is a SEPARATE
  *  flex item so wrapped lines align under the text column. Each cell is label (bold) + statement +
  *  the quiet code-derived source line. Numbering is continuous across groups (startIndex). */
@@ -1103,7 +1106,7 @@ function OfferGroup({ label, items, startIndex }: { label: string; items: FROffe
 }
 
 /** Beat — "What you offer": the public offering, enumerated from the accepted, judged offering read.
- *  Two groups (own-site first, then outside; an empty group's header is omitted). No chips, no verdict
+ *  Three groups (named, then seen outside, then not-yet-read; an empty group's header is omitted). No chips, no verdict
  *  language, no decorative rules — the only vertical rule is the header's Why-this divider. Earned-empty
  *  renders from the persisted integrity record's three honest states, never from an empty query. Open
  *  questions route to the Questions beat (via the shared open-question list), never onto this beat. */
@@ -1112,8 +1115,9 @@ export function ActWhatYouOffer({ read, eyebrow }: { read: FirstReadPreviewData;
   // The offering payload carries no created_at of its own; the foot line reuses the latest existing
   // "Public read · date" tag among the commitment reads (same source table, same read).
   const offerTag = basePublicReadTag(read);
-  const own = off ? off.items.filter((i) => i.seenOn === "own_site") : [];
-  const outside = off ? off.items.filter((i) => i.seenOn === "outside") : [];
+  const own = off ? off.items.filter((i) => i.ownSite === "named") : [];
+  const outside = off ? off.items.filter((i) => i.ownSite === "seen_outside") : [];
+  const notRead = off ? off.items.filter((i) => i.ownSite === "not_read") : [];
   const groundLine =
     read.offeringIntegrity === "couldnt_check"
       ? OFFER_COULDNT
@@ -1137,6 +1141,7 @@ export function ActWhatYouOffer({ read, eyebrow }: { read: FirstReadPreviewData;
           <div className="flex flex-col gap-12">
             {own.length > 0 ? <OfferGroup label={OFFER_GROUP_OWN} items={own} startIndex={0} /> : null}
             {outside.length > 0 ? <OfferGroup label={OFFER_GROUP_OUTSIDE} items={outside} startIndex={own.length} /> : null}
+            {notRead.length > 0 ? <OfferGroup label={OFFER_GROUP_NOT_READ} items={notRead} startIndex={own.length + outside.length} /> : null}
           </div>
         ) : (
           <Absent>

@@ -13,7 +13,8 @@ const S = {
   subhead: "Products, services, programs — as they appear in public. Not what you intend. What's visible.",
   why: "Your base is what you intend. Your offering is what people actually meet. The gap between them is where the next phase starts.",
   groupOwn: "Named on your own site",
-  groupOutside: "Seen only from outside",
+  groupOutside: "Seen outside your site", // signed 2026-09-18 (replaces the earlier outside eyebrow)
+  groupNotRead: "Own site not yet read", // signed 2026-09-18
   earnedEmpty: "The record doesn't yet show what you offer.",
   closing: "Next, we lay this against what your market needs.",
   rationale: "The offering is what the base produces — it has to be on the table before needs-vs-offer.",
@@ -21,7 +22,7 @@ const S = {
   couldnt: "We couldn't produce a grounded read from the record this time.",
 } as const;
 
-const item = (o: Partial<FROfferItem> & Pick<FROfferItem, "label" | "seenOn">): FROfferItem => ({
+const item = (o: Partial<FROfferItem> & Pick<FROfferItem, "label" | "ownSite">): FROfferItem => ({
   statement: `${o.label} — what it is.`,
   sourceCount: 2,
   earliestYear: null,
@@ -31,10 +32,10 @@ const item = (o: Partial<FROfferItem> & Pick<FROfferItem, "label" | "seenOn">): 
 
 // 3 own-site + 1 outside — the shape both live companies have (own-heavy, one outside).
 const ITEMS: FROfferItem[] = [
-  item({ label: "Roasted coffee in bags", seenOn: "own_site", sourceCount: 2 }),
-  item({ label: "Wholesale partnerships", seenOn: "own_site", sourceCount: 5, earliestYear: "2024", latestYear: "2024" }),
-  item({ label: "Roasting service", seenOn: "own_site", sourceCount: 3, earliestYear: "2023", latestYear: "2025" }),
-  item({ label: "DTC online sales", seenOn: "outside", sourceCount: 6, earliestYear: "2025", latestYear: "2025" }),
+  item({ label: "Roasted coffee in bags", ownSite: "named", sourceCount: 2 }),
+  item({ label: "Wholesale partnerships", ownSite: "named", sourceCount: 5, earliestYear: "2024", latestYear: "2024" }),
+  item({ label: "Roasting service", ownSite: "named", sourceCount: 3, earliestYear: "2023", latestYear: "2025" }),
+  item({ label: "DTC online sales", ownSite: "seen_outside", sourceCount: 6, earliestYear: "2025", latestYear: "2025" }),
 ];
 
 const withOffering = (items: FROfferItem[]): FirstReadPreviewData => ({
