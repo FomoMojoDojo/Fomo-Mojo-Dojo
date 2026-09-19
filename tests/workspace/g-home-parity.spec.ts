@@ -6,6 +6,9 @@
 // (raw_payload.hypothesis, no URL) restamped 'analysis' — the legacy null→outside fallback had counted it as
 // outside voice — PUBLIC 130 → 129; every other line byte-identical. The baseline now lives at
 // tests/workspace/fixtures/home-dom-before_20260918.txt.
+// Re-pinned 2026-09-18 (later) after the operator's resolve of Edgewood's frontier bet c7bfc5cc (integrity_runs 1538,
+// 23:01 UTC — after the pin above): find_primary_finding now returns observation f0fff520, so the three THE NEXT TURN
+// lines changed; every other line byte-identical (PUBLIC 129 · TEAM 42 unchanged).
 import fs from "node:fs";
 import { expect, test } from "playwright/test";
 import { HOME_DOM_BASELINE } from "../../playwright.config";
