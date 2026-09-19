@@ -63,6 +63,8 @@ const SIGNED_INDUSTRIES: Record<string, IndustryPin> = {
   "management-consulting": { seed_label: "Management and strategy consulting firms", executor: "a business leader facing a strategic problem", jtbd: "get a clear, workable path to solving a critical business problem" },
   "b2b-saas": { seed_label: "B2B software (SaaS) companies", executor: "a business team with a problem to solve", jtbd: "get their business problem solved with the right software" },
   "home-improvement-remodeling": { seed_label: "Home improvement and remodeling contractors", executor: "a homeowner planning an improvement", jtbd: "get their home improved the way they envisioned" },
+  // Ruling 3 (signed 2026-09-18): the funder-side pin — the scaffold for every 'funder' market (marketScaffold.ts).
+  "grantmaking": { seed_label: "Grantmaking foundations and philanthropic funders", executor: "a funder deciding which organizations and initiatives to support", jtbd: "direct money to the initiatives most likely to deliver the outcomes it exists to fund" },
 };
 
 function isLocalOllamaUrl(u: string): boolean {

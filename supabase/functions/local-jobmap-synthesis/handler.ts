@@ -8,6 +8,7 @@ import { judgeStepPerspectives } from "../_shared/stepPerspectiveJudge.ts";
 import { generateConditionsForSet, setHasConditions } from "../_shared/stepConditionsSynthesis.ts";
 import { type JourneyDefinition, renderOdiGrounding, resolveJourneyDefinitions } from "../_shared/marketDefinitionByKey.ts";
 import { isCustomerJourneyKey, resolveRunPerformer } from "../_shared/jobmapRunPerformer.ts";
+import { resolveScaffoldAnchors, SCAFFOLD_REFUSED, SCAFFOLD_UNPUBLISHED, scaffoldForRun, scaffoldRefusalMessage } from "../_shared/marketScaffold.ts";
 import { generateMarketHypothesisForSet } from "../_shared/marketHypothesisSynthesis.ts";
 import { generateOpportunitiesForSet, setHasOpportunities } from "../_shared/opportunitySynthesis.ts";
 import {
@@ -1092,16 +1093,33 @@ export async function handleLocalJobmapSynthesis(
       `[local-jobmap-synthesis] internal_documents: ${internalDocuments.length}/${contributingDocs.length} sidecars, ${internalDocuments.reduce((sum, d) => sum + d.excerpt.length, 0)} chars (voice-gated)`,
     );
 
-    const industryLabel = inferStandardMarketCategory(
+    const companyIndustryLabel = inferStandardMarketCategory(
       safeText(baseline?.category_archetype),
       safeText(lensCard?.economic_engine),
       ...evidenceLedger
         .slice(0, 18)
         .map((item) => safeText((item as Record<string, unknown>)?.snippet)),
     );
-    const industryAnchors: IndustryStepAnchor | null = industryLabel
-      ? getIndustryStepAnchors(industryLabel)
-      : null;
+    // Rulings 2 + 3 (2026-09-18): a MARKET run's scaffold is chosen from the market first (funder →
+    // grantmaking) and read from the PUBLISHED reference map; no published map → REFUSED, audited,
+    // nothing written — never another scaffold. A customer run keeps the company category (unchanged).
+    const scaffold = scaffoldForRun(performer.isMarketRun, spineDefinition, companyIndustryLabel);
+    const scaffoldAnchors = await resolveScaffoldAnchors(supabase as unknown as { from: (t: string) => any }, scaffold, getIndustryStepAnchors);
+    if (!scaffoldAnchors.ok) {
+      const journeyKey = spineDefinition?.journey_key ?? "";
+      const message = scaffoldRefusalMessage(scaffoldAnchors.industry_key, journeyKey);
+      await supabase.from("integrity_runs").insert({
+        company_id: companyId, component: SCAFFOLD_REFUSED, surface_type: "odi_market_definitions", surface_id: spineDefinition?.id ?? null,
+        ran_at: new Date().toISOString(), status: "rejected", examined: 1, admitted: 0,
+        excluded_by_rule: { journey_key: journeyKey, industry_key: scaffoldAnchors.industry_key, why: scaffold.why, trigger: trigger || null },
+        error: message, run_ref: null,
+      });
+      console.log(`[local-jobmap-synthesis] refused: ${message}`);
+      return json({ ok: false, error: SCAFFOLD_UNPUBLISHED, industry_key: scaffoldAnchors.industry_key, journey_key: journeyKey, message }, 422);
+    }
+    const industryLabel = scaffoldAnchors.industry_label;
+    const industryAnchors: IndustryStepAnchor | null = scaffoldAnchors.anchors;
+    if (scaffoldAnchors.from === "reference") console.log(`[local-jobmap-synthesis] market scaffold: ${industryLabel} (${scaffold.why}) from the published reference map`);
 
     const evidenceContext = {
       // Explicit ODI context — job performer, primary job, desired outcome, recurring challenge

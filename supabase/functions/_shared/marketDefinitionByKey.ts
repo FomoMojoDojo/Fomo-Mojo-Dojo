@@ -18,6 +18,8 @@ export type JourneyDefinition = {
   jtbd: string;
   provenance_type: string | null;
   market_register: string | null;
+  /** Emergent relationship kind (funder / partner / referrer …) — ruling 2 (2026-09-18) chooses a market's scaffold from it. */
+  relationship_kind?: string | null;
 };
 
 export type ResolveDefinitionsResult =
@@ -26,7 +28,7 @@ export type ResolveDefinitionsResult =
 
 type Db = { from: (t: string) => any };
 
-const SELECT = "id, journey_key, job_executor, chooser, jtbd, provenance_type, market_register";
+const SELECT = "id, journey_key, job_executor, chooser, jtbd, provenance_type, market_register, relationship_kind";
 
 /** The keyed, live-only read. null when the key has no live definition — callers refuse. */
 export async function readLiveDefinitionByKey(
@@ -52,6 +54,7 @@ export async function readLiveDefinitionByKey(
     jtbd: String(r.jtbd ?? "").trim(),
     provenance_type: r.provenance_type == null ? null : String(r.provenance_type),
     market_register: r.market_register == null ? null : String(r.market_register),
+    relationship_kind: r.relationship_kind == null ? null : String(r.relationship_kind),
   };
 }
 
