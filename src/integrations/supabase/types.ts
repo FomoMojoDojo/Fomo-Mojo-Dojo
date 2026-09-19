@@ -2979,7 +2979,7 @@ export type Database = {
       integrity_runs: {
         Row: {
           admitted: number | null
-          company_id: string
+          company_id: string | null
           component: string
           error: string | null
           examined: number | null
@@ -2990,10 +2990,11 @@ export type Database = {
           status: string
           surface_id: string | null
           surface_type: string | null
+          system_scope: boolean
         }
         Insert: {
           admitted?: number | null
-          company_id: string
+          company_id?: string | null
           component: string
           error?: string | null
           examined?: number | null
@@ -3004,10 +3005,11 @@ export type Database = {
           status: string
           surface_id?: string | null
           surface_type?: string | null
+          system_scope?: boolean
         }
         Update: {
           admitted?: number | null
-          company_id?: string
+          company_id?: string | null
           component?: string
           error?: string | null
           examined?: number | null
@@ -3018,6 +3020,7 @@ export type Database = {
           status?: string
           surface_id?: string | null
           surface_type?: string | null
+          system_scope?: boolean
         }
         Relationships: [
           {
