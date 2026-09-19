@@ -10,6 +10,9 @@ import { withStop } from "@/views/client/firstReadPreview/primitives-editorial";
 import { WorkspaceAbsent } from "./absent";
 import { WORKSPACE_STRINGS } from "./workspaceNav";
 
+/** T1 (2026-09-19): titles longer than this take the wide measure (data-fr-long-title). */
+export const LONG_TITLE_CHARS = 40;
+
 export function WorkspaceWorkingPage({ eyebrow, title, count, unit, children }: {
   eyebrow: string;
   title: string;
@@ -24,7 +27,7 @@ export function WorkspaceWorkingPage({ eyebrow, title, count, unit, children }: 
       <header className="fr-ws-working-head">
         <div>
           <Eyebrow>{eyebrow}</Eyebrow>
-          <h1 className="fr-display fr-ws-working-title">{withStop(title)}</h1>
+          <h1 className="fr-display fr-ws-working-title" data-fr-long-title={title.trim().length > LONG_TITLE_CHARS ? "" : undefined}>{withStop(title)}</h1>
         </div>
         <div className="fr-ws-working-set" data-testid="ws-working-set">
           <span className="fr-ws-working-set-label fr-mono">{WORKSPACE_STRINGS.workingSet}</span>

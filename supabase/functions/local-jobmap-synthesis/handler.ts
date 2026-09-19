@@ -12,6 +12,13 @@ import { resolveScaffoldAnchors, SCAFFOLD_REFUSED, SCAFFOLD_UNPUBLISHED, scaffol
 import { generateMarketHypothesisForSet } from "../_shared/marketHypothesisSynthesis.ts";
 import { generateOpportunitiesForSet, setHasOpportunities } from "../_shared/opportunitySynthesis.ts";
 import {
+  applyMarketEvidenceRule,
+  type LabelLedger,
+  LabelRefusalError,
+  labelLedgerForIntegrity,
+  newLabelLedger,
+} from "./marketEvidence.ts";
+import {
   JTBD_CHECKPOINT_COUNT,
   JTBD_ODI_CHECKPOINTS,
   buildCompanyVocabExclusions,
@@ -65,7 +72,8 @@ type NormalizedStep = {
   has_gap: boolean;
   evidence_status: "evidenced" | "implied" | "unclear" | "declared";
   evidence_basis: string;
-  evidence_confidence: number;
+  /** NULL = not measured — a market run (ruling M2) never carries an invented percentage. */
+  evidence_confidence: number | null;
   gap_note: string;
 };
 
@@ -612,8 +620,11 @@ function normalizeCustomerJourney(args: {
   forceContextualDescriptions?: boolean;
   industryExclusions?: Set<string>;
   strictModelContent?: boolean;
+  /** M4 — the model's raw labels and every repair land here (per run). */
+  ledger?: LabelLedger;
 }) {
   const rawSteps = Array.isArray(args.rawJourney?.steps) ? args.rawJourney?.steps : [];
+  const ledger = args.ledger;
   const contextTopic = normalizeContextTopic(args.contextHint || "");
   const contextualGapNote = `Capture direct customer evidence showing where delivery of ${contextTopic} breaks down in this step.`;
   const normalized = normalizeToEightCheckpointSpine(
@@ -639,7 +650,9 @@ function normalizeCustomerJourney(args: {
     },
   ).map((step, index) => {
     const checkpoint = JTBD_ODI_CHECKPOINTS[index];
-    const label = safeText(step.step_label) || checkpoint.canonicalLabel;
+    const modelLabel = safeText(step.step_label);
+    ledger?.raw_labels.push({ journey_key: args.map.journey_key, step_number: checkpoint.stepNumber, step_label: modelLabel });
+    const label = modelLabel || checkpoint.canonicalLabel;
     const rawDescription = safeText(step.description);
     const contextualDescription = contextualStepDescription(checkpoint.stepNumber, contextTopic);
     const description = rawDescription || contextualDescription;
@@ -653,8 +666,9 @@ function normalizeCustomerJourney(args: {
       containsNonOdiProcessLanguage(rawDescription);
     if (args.strictModelContent) {
       if (labelViolates) {
-        throw new Error(
+        throw new LabelRefusalError(
           `strict model content: customer checkpoint ${checkpoint.stepNumber} label ${JSON.stringify(label)} violates the vocabulary law — refusing canonical-label substitution.`,
+          { journey_key: args.map.journey_key, step_number: checkpoint.stepNumber, original: modelLabel, reason: "vocabulary_law" },
         );
       }
       if (shouldUseContextual) {
@@ -664,6 +678,12 @@ function normalizeCustomerJourney(args: {
       }
     }
     const repairedDescription = shouldUseContextual ? contextualDescription : description;
+    if (repairedLabel !== modelLabel) {
+      ledger?.repairs.push({
+        journey_key: args.map.journey_key, step_number: checkpoint.stepNumber, original: modelLabel, repaired: repairedLabel,
+        reason: !modelLabel ? "empty_label" : "vocabulary_law",
+      });
+    }
 
     return {
       step_number: checkpoint.stepNumber,
@@ -707,7 +727,7 @@ function normalizeCustomerJourney(args: {
   } as NormalizedJourney;
 }
 
-function normalizeNonCustomerJourney(args: {
+export function normalizeNonCustomerJourney(args: {
   map: SelectedJobMap;
   rawJourney: Record<string, unknown> | null;
   evidenceBasis: string;
@@ -716,8 +736,11 @@ function normalizeNonCustomerJourney(args: {
   // that would write template text in place of model text throws with a named
   // reason — caught by the require_model handler: loud 502, zero writes.
   strictModelContent?: boolean;
+  /** M4 — the model's raw labels and every repair land here (per run). */
+  ledger?: LabelLedger;
 }) {
   const rawSteps = Array.isArray(args.rawJourney?.steps) ? args.rawJourney?.steps : [];
+  const ledger = args.ledger;
   if (args.strictModelContent && rawSteps.length < 6) {
     throw new Error(
       `strict model content: journey '${args.map.journey_key}' parsed only ${rawSteps.length} steps (<6) — refusing template substitution (would have written JTBD_ODI_CHECKPOINTS 1..6).`,
@@ -729,11 +752,13 @@ function normalizeNonCustomerJourney(args: {
       const fallback = JTBD_ODI_CHECKPOINTS[Math.min(index, JTBD_ODI_CHECKPOINTS.length - 1)];
       const stepNumber = clampInt(Number(row?.step_number) || (index + 1), 1, 8);
       const rawLabel = safeText(row?.step_label);
+      ledger?.raw_labels.push({ journey_key: args.map.journey_key, step_number: stepNumber, step_label: rawLabel });
       const rawDescriptionText = safeText(row?.description);
       if (args.strictModelContent) {
         if (!rawLabel) {
-          throw new Error(
+          throw new LabelRefusalError(
             `strict model content: journey '${args.map.journey_key}' step ${stepNumber} has no label — refusing canonical-label substitution.`,
+            { journey_key: args.map.journey_key, step_number: stepNumber, original: rawLabel, reason: "empty_label" },
           );
         }
         if (!rawDescriptionText) {
@@ -742,16 +767,24 @@ function normalizeNonCustomerJourney(args: {
           );
         }
         if (containsSolutionPrescriptiveLanguage(rawLabel, args.industryExclusions)) {
-          throw new Error(
+          throw new LabelRefusalError(
             `strict model content: journey '${args.map.journey_key}' step ${stepNumber} label ${JSON.stringify(rawLabel)} violates the solution-agnostic vocabulary law — refusing canonical-label substitution; the model must rephrase.`,
+            { journey_key: args.map.journey_key, step_number: stepNumber, original: rawLabel, reason: "vocabulary_law" },
           );
         }
       }
       const label = rawLabel || fallback.canonicalLabel;
       const description = rawDescriptionText || fallback.description;
+      const repairedLabel = containsSolutionPrescriptiveLanguage(label, args.industryExclusions) ? fallback.canonicalLabel : label;
+      if (repairedLabel !== rawLabel) {
+        ledger?.repairs.push({
+          journey_key: args.map.journey_key, step_number: stepNumber, original: rawLabel, repaired: repairedLabel,
+          reason: !rawLabel ? "empty_label" : "vocabulary_law",
+        });
+      }
       return {
         step_number: stepNumber,
-        step_label: containsSolutionPrescriptiveLanguage(label, args.industryExclusions) ? fallback.canonicalLabel : label,
+        step_label: repairedLabel,
         description,
         designed: row?.designed === true,
         has_gap: row?.has_gap !== false,
@@ -1250,21 +1283,54 @@ export async function handleLocalJobmapSynthesis(
     const basis = industryAnchors
       ? `industry_anchor:${industryLabel}`
       : "industry_unresolved";
-    const normalizedJourneys: NormalizedJourney[] = requestedMaps.map((map) => {
-      const rawJourney = rawJourneyByKey.get(map.journey_key) || null;
-      if (isCustomerJourneyKey(map.journey_key)) {
-        return normalizeCustomerJourney({
-          map,
-          rawJourney,
-          evidenceBasis: basis,
-          contextHint,
-          forceContextualDescriptions: synthesisMode === "fallback",
-          industryExclusions,
-          strictModelContent: requireModel,
+    // M4: the model's raw labels and every repair are ledgered per run; a strict refusal is recorded on
+    // the run's integrity row with the model's original text before the run returns.
+    const labelLedger = newLabelLedger();
+    let normalizedJourneys: NormalizedJourney[];
+    try {
+      normalizedJourneys = requestedMaps.map((map) => {
+        const rawJourney = rawJourneyByKey.get(map.journey_key) || null;
+        if (isCustomerJourneyKey(map.journey_key)) {
+          return normalizeCustomerJourney({
+            map,
+            rawJourney,
+            evidenceBasis: basis,
+            contextHint,
+            forceContextualDescriptions: synthesisMode === "fallback",
+            industryExclusions,
+            strictModelContent: requireModel,
+            ledger: labelLedger,
+          });
+        }
+        return normalizeNonCustomerJourney({ map, rawJourney, evidenceBasis: basis, industryExclusions, strictModelContent: requireModel, ledger: labelLedger });
+      });
+    } catch (error) {
+      if (error instanceof LabelRefusalError) {
+        await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+          company_id: companyId,
+          component: "local_synthesis",
+          status: "rejected",
+          examined: rawModelJourneys.reduce((sum, j) => sum + j.raw_step_count, 0),
+          admitted: 0,
+          excluded_by_rule: { raw_model_journeys: rawModelJourneys, substitution_refused: true, model: ollamaModel, model_overridden: Boolean(modelOverride), ...labelLedgerForIntegrity(labelLedger, error.refusal) },
+          error: error.message,
+          run_ref: trigger,
         });
       }
-      return normalizeNonCustomerJourney({ map, rawJourney, evidenceBasis: basis, industryExclusions, strictModelContent: requireModel });
+      throw error;
+    }
+    // M2: a MARKET run's rows carry the scaffold as their evidence — status "unclear", basis
+    // "industry_anchor:<industry_key>", confidence NULL. The model's evidence sentences are displaced to
+    // the integrity row below. A customer run passes through byte-identical.
+    const marketEvidence = applyMarketEvidenceRule(normalizedJourneys, {
+      isMarketRun: performer.isMarketRun,
+      industryKey: industryLabel,
+      isCustomerKey: isCustomerJourneyKey,
     });
+    normalizedJourneys = marketEvidence.journeys;
+    if (marketEvidence.displaced.length > 0) {
+      console.log(`[local-jobmap-synthesis] M2 market run: ${marketEvidence.displaced.length} model evidence line(s) displaced to the integrity row; rows carry industry_anchor:${industryLabel}, confidence NULL`);
+    }
 
     const primaryCustomerJourney =
       normalizedJourneys.find((journey) => isCustomerJourneyKey(journey.journey_key)) ||
@@ -1394,7 +1460,13 @@ export async function handleLocalJobmapSynthesis(
       status: "completed",
       examined: rawModelJourneys.reduce((sum, j) => sum + j.raw_step_count, 0),
       admitted: stepsInserted,
-      excluded_by_rule: { raw_model_journeys: rawModelJourneys, substitution_refused: false, model: ollamaModel, model_overridden: Boolean(modelOverride) },
+      excluded_by_rule: {
+        raw_model_journeys: rawModelJourneys, substitution_refused: false, model: ollamaModel, model_overridden: Boolean(modelOverride),
+        ...labelLedgerForIntegrity(labelLedger, null),
+        // M2: the model-authored evidence lines a market run did NOT store on its rows.
+        market_run: performer.isMarketRun,
+        displaced_model_evidence: marketEvidence.displaced,
+      },
       run_ref: trigger,
     });
 

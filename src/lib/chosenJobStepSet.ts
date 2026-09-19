@@ -110,16 +110,26 @@ const isInternalKey = (k: string) => {
   return x === "internal" || x === "operations" || x.startsWith("internal-") || x.startsWith("internal_");
 };
 
-// Ephemeral default-VIEW seed ONLY — never an assertion of the chosen set. When no
-// set is chosen, seed the view to a real, complete set: prefer a NON-internal-ops
-// set with the most designed steps (tie-break by input order). Replaces the old
-// "first non-customer", which landed on the undesigned internal-operations set
-// (the latent EDGE-CKPT case: Edgewood with no choice → "internal").
+/** The customer set's key (mirrors the edge's isCustomerJourneyKey: "customer" or "customer-…"). */
+export const isCustomerSetKey = (k: string) => {
+  const x = norm(k);
+  return x === "customer" || x.startsWith("customer-");
+};
+
+// Ephemeral default-VIEW seed ONLY — never an assertion of the chosen set. Ruling P3 (2026-09-19):
+// with no chosen set the view opens on the CUSTOMER set whenever one exists — a non-customer set
+// (a funder market, say) is shown only by an explicit switch (?view=), never because it has the
+// most designed rows. Only when no customer set exists does the older heuristic run: prefer a
+// NON-internal-ops set with the most designed steps (tie-break by input order) — that replaced the
+// old "first non-customer", which landed on the undesigned internal-operations set (the latent
+// EDGE-CKPT case: Edgewood with no choice → "internal").
 export function heuristicDefaultViewSeed(
   optionKeys: readonly string[],
   designedByKey: ReadonlyMap<string, number>,
 ): string | null {
   if (optionKeys.length === 0) return null;
+  const customer = optionKeys.find((k) => isCustomerSetKey(k));
+  if (customer) return customer;
   const nonInternal = optionKeys.filter((k) => !isInternalKey(k));
   const pool = nonInternal.length ? nonInternal : [...optionKeys];
   let best = pool[0];

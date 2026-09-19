@@ -40,6 +40,8 @@
   /* ---- signed type ---- */
   --fr-font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
   --fr-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* T4 (2026-09-19): a long working-page title (> 40 chars, data-fr-long-title) at md+ — 3rem, never truncated. */
+  --fr-size-title-long: 3rem;
 
   /* The distance from the shell's content edge to the viewport edge (centered, max 1080, 24px pad). */
   --fr-bleed: calc((100vw - min(100vw, 1080px)) / 2 + 24px);
@@ -2326,7 +2328,11 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 }
 @media (min-width: 1024px) { .fr-ws-working-head { grid-template-columns: minmax(0, 1fr) 16rem; align-items: end; } }
 .fr-ws-working-title { max-width: 18ch; margin: 1rem 0 0; font-size: 2.25rem; line-height: 0.95; }
+/* T1 + T4 (2026-09-19): a long title (a market's lens title, >40 chars) takes the wide measure and the
+   3rem size at md+ (--fr-size-title-long) — 3 lines at 1440; never truncated. Short titles unchanged. */
+.fr-ws-working-title[data-fr-long-title] { max-width: 26ch; }
 @media (min-width: 768px) { .fr-ws-working-title { font-size: 3.75rem; } }
+@media (min-width: 768px) { .fr-ws-working-title[data-fr-long-title] { font-size: var(--fr-size-title-long); } }
 .fr-ws-working-set { padding: 16px 20px; border-left: 4px solid hsl(var(--fr-lime)); background: hsl(var(--fr-lime) / 0.15); }
 .fr-ws-working-set-label { display: block; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: hsl(var(--fr-steel)); }
 .fr-ws-working-set-count { display: block; margin-top: 4px; font-size: 1.875rem; font-weight: 700; line-height: 1.1; }

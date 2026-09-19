@@ -82,17 +82,36 @@ async function viewFirstUnmapped(page: Page): Promise<string> {
 }
 const shot = (page: Page, name: string) => page.screenshot({ path: `screenshots/item2/${name}.png`, fullPage: false });
 
-test("switcher: the union — unmapped entries carry the state word; Edgewood shows 19; default view stays mapped", async ({ page }) => {
+/** The union the switcher must show, read from the DB at test time (P1, 2026-09-19): never a literal count,
+ *  so the spec holds with ANY number of mapped funder sets. */
+async function dbUnion(page: Page): Promise<{ mappedKeys: string[]; unionSize: number }> {
+  return page.evaluate(async ({ companyId }) => {
+    const sb = (window as unknown as { supabase: { from: (t: string) => any } }).supabase;
+    const [steps, defs] = await Promise.all([
+      sb.from("job_steps").select("journey_key").eq("company_id", companyId).limit(400),
+      sb.from("odi_market_definitions").select("journey_key").eq("company_id", companyId).is("retracted_at", null),
+    ]);
+    const mapped = Array.from(new Set(((steps.data ?? []) as Array<{ journey_key: string }>).map((r) => r.journey_key)));
+    const union = new Set([...mapped, ...((defs.data ?? []) as Array<{ journey_key: string }>).map((r) => r.journey_key)]);
+    return { mappedKeys: mapped.sort(), unionSize: union.size };
+  }, { companyId: COMPANY_ID });
+}
+
+test("switcher: the union — unmapped entries carry the state word; counts derived from the DB; default view stays mapped (the customer set)", async ({ page }) => {
   const state: State = { mode: "refuse422", captured: [] };
   await guard(page, state);
   await openWorkspace(page, "job-map");
   await operatorOn(page);
+  const { mappedKeys, unionSize } = await dbUnion(page);
+  expect(mappedKeys).toEqual(expect.arrayContaining(["customer", "internal"]));
   const viewed = await page.locator("[data-fr-region=stages]").getAttribute("data-fr-set-key");
+  expect(viewed).toBe("customer"); // P3: no choice, no ?view= → the customer set, whatever else is mapped
   await page.getByTestId("jobmap-switcher-open").click();
   const options = page.getByTestId("jobmap-switcher-option");
-  await expect(options).toHaveCount(19);
-  await expect(page.locator('[data-testid=jobmap-switcher-option][data-fr-mapped="true"]')).toHaveCount(2);
-  await expect(page.locator('[data-testid=jobmap-switcher-state]')).toHaveCount(17);
+  await expect(options).toHaveCount(unionSize);
+  await expect(page.locator('[data-testid=jobmap-switcher-option][data-fr-mapped="true"]')).toHaveCount(mappedKeys.length);
+  await expect(page.locator('[data-testid=jobmap-switcher-state]')).toHaveCount(unionSize - mappedKeys.length);
+  for (const k of ["customer", "internal"]) await expect(page.locator(`[data-testid=jobmap-switcher-option][data-fr-set-key="${k}"]`)).toHaveAttribute("data-fr-mapped", "true");
   await expect(page.locator(`[data-testid=jobmap-switcher-option][data-fr-set-key="${viewed}"]`)).toHaveAttribute("data-fr-mapped", "true");
   await shot(page, "01-switcher-union");
   expect(state.captured).toHaveLength(0);
@@ -122,7 +141,7 @@ test("unmapped market viewed: executor band, wordless Absent, the ONE control (g
   await expect(control).toHaveAttribute("data-fr-operator", "generate-jobmap");
   await expect(page.getByTestId("jobmap-choose")).toHaveCount(0);
   await expect(page.getByTestId("jobmap-regenerate")).toHaveCount(0);
-  await expect(page.locator("[data-fr-seed-note]")).toHaveCount(1);
+  await expect(page.locator("[data-fr-seed-note]")).toHaveCount(0); // M3 (2026-09-19): never for a market switched to explicitly
   await shot(page, "02-unmapped-glyph-on");
   // glyph off: the view stays (state), the control and every operator node vanish, the Absent stays wordless
   await page.locator("[data-fr-operator-switch]").click();

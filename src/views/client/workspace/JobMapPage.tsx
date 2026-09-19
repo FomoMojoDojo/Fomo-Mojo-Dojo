@@ -29,20 +29,27 @@
 // selected_maps_only + require_model). Working… while in flight; the signed failure note on any failure
 // path (R3); the operator alone sees the server's code/message as a mono line under the note.
 //
-// Interview capture (gate 4, signed 2026-09-16): ONE operator-gated control on the step panel,
-// "Record interview finding" (data-fr-operator="record-interview-finding") → InterviewCaptureForm →
-// record-interview-finding (propose = dry_run, save = the operator's statement). After a save the keyed
-// needs read refreshes and the new row renders with its origin chip. On an unmapped market the same
-// control sits in the header row so the function's own no_step refusal renders inline with a link to the
-// "Generate job map" control (id="jobmap-generate"). No client-visible strings.
+// Interview capture (gate 4, signed 2026-09-16; ruling I7 part, 2026-09-19): the "Record interview
+// finding" control LEFT the step panel — InterviewCaptureForm and record-interview-finding are kept and
+// return on the interview page. No client-visible strings.
+//
+// Rulings M3 + FLIP + P3 (signed 2026-09-19):
+//   URL      the viewed market lives in ?view=<journey_key> — written by the switcher, read here and passed
+//            to useViewedSet as the override, so it survives the stage remount and a reload; the switcher
+//            button shows the viewed market's name.
+//   Title    the viewed market's lens title; "The customer job" only for the customer key.
+//   Choose   "Choose this as the on-strategy set" and the ON STRATEGY chip render only on the customer set.
+//   Seed     with no choice and no ?view=, the page opens on the customer set (heuristicDefaultViewSeed);
+//            the seed note never renders for a market the operator switched to explicitly.
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useCompany } from "@/hooks/useCompany";
 import { useChooseJobStepSet } from "@/hooks/useChooseJobStepSet";
 import { setHasConditions, useConditionsGeneration } from "@/hooks/useConditionsGeneration";
 import { useJobMapGeneration } from "@/hooks/useJobMapGeneration";
 import { markNeedReviewed, useOdiNeeds, type OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { JobStepRow } from "@/hooks/useJobSteps";
-import { DEFAULT_SEED_NOTE } from "@/lib/chosenJobStepSet";
+import { DEFAULT_SEED_NOTE, isCustomerSetKey } from "@/lib/chosenJobStepSet";
 import { isFrozenCompany } from "@/lib/frozenCompanies";
 import { checkpointForStepNumber } from "@/lib/jtbdProcess";
 import { needBestGuessBand, needBestGuessBandLabel, serviceVerdictWord } from "@/lib/surveyVerdict";
@@ -55,9 +62,6 @@ import { EvidenceDrawer, NEEDS_REVIEW_STATES } from "@/views/client/workshop/job
 import { InternalConditions, admissibleStepConditions } from "@/views/client/workshop/tabs/internalConditions";
 import { WorkspaceAbsent } from "./absent";
 import { InterviewOriginChip, marketChipLabel, needShowsBand } from "./InterviewOrigin";
-import { InterviewCaptureForm } from "./InterviewCaptureForm";
-import { INTERVIEW_CAPTURE_STRINGS } from "./interviewCaptureStrings";
-import { useInterviewRecords, useSignedInDisplayName } from "@/hooks/useInterviewRecords";
 import { useViewedSet } from "./viewedSet";
 import { useWorkspaceStage } from "./workspaceContext";
 import { WorkspaceWorkingPage } from "./WorkspaceWorkingPage";
@@ -76,28 +80,28 @@ function bandLabel(need: OdiNeedRow): string {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const mark = (v: string) => ({ [OPERATOR_MARK.attr]: v });
+/** FLIP — the URL parameter that carries the viewed market. */
+export const VIEW_PARAM = "view";
 
 export default function JobMapPage() {
   const { activeCompany } = useCompany();
   const companyId = activeCompany?.id;
   const operator = useOperatorControls();
   const gated = Boolean(operator);
-  // The view only — a switch never touches the choice. Reset with the company (keyed by the shell's remount).
-  const [viewKey, setViewKey] = useState<string | null>(null);
+  // The view only — a switch never touches the choice. FLIP: the viewed key lives in the URL (?view=),
+  // never in component state, so the stage remount and a reload keep it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const viewKey = searchParams.get(VIEW_PARAM)?.trim() || null;
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [needsRefresh, setNeedsRefresh] = useState(0);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
-  const [captureOpen, setCaptureOpen] = useState(false);
-  const [recordsRefresh, setRecordsRefresh] = useState(0);
   const set = useViewedSet(companyId, viewKey);
   const { needs, marketDefinition, loading: needsLoading } = useOdiNeeds(companyId, needsRefresh, set.viewedKey ?? undefined);
   const { choose, choosing } = useChooseJobStepSet(companyId);
   const conditionsRun = useConditionsGeneration({ companyId, setKey: set.viewedKey, steps: set.viewedSteps, refetch: set.refetchSteps });
   const jobMapRun = useJobMapGeneration({ companyId, journeyKey: set.viewedKey, journeyTitle: set.viewedTitle, refetch: set.refetchSteps });
   const stage = useWorkspaceStage();
-  const { records: interviewRecords } = useInterviewRecords(gated ? companyId : undefined, recordsRefresh);
-  const interviewerDefault = useSignedInDisplayName();
   const steps = set.viewedSteps;
   const n = steps.length;
   const index = Math.min(Math.max(parseInt(stage?.stageKey || "0", 10) || 0, 0), Math.max(n - 1, 0));
@@ -114,35 +118,19 @@ export default function JobMapPage() {
   const hypothesis = marketDefinition?.job_executor?.trim() || null;
   const canRegenerate = gated && Boolean(set.viewedKey) && set.viewedMapped && !isFrozenCompany(companyId);
   const canGenerateJobMap = gated && Boolean(set.viewedKey) && !set.viewedMapped;
-  const canCapture = gated && Boolean(companyId) && Boolean(set.viewedKey) && !isFrozenCompany(companyId);
-  const captureMarketTitle = set.viewedKey ? (set.lensTitles.get(set.viewedKey) ?? set.viewedTitle ?? set.viewedKey) : "";
-  const onFindingSaved = () => { setNeedsRefresh((k) => k + 1); setRecordsRefresh((k) => k + 1); };
-  const captureControl = (
-    <button type="button" className="fr-ws-control fr-mono" aria-expanded={captureOpen} onClick={() => setCaptureOpen((v) => !v)} {...mark("record-interview-finding")} data-testid="jobmap-capture-toggle">
-      {captureOpen ? INTERVIEW_CAPTURE_STRINGS.close : INTERVIEW_CAPTURE_STRINGS.open}
-    </button>
-  );
-  const captureForm = companyId && set.viewedKey ? (
-    <InterviewCaptureForm
-      key={`${set.viewedKey}:${step?.id ?? "none"}`}
-      companyId={companyId}
-      journeyKey={set.viewedKey}
-      marketTitle={captureMarketTitle}
-      step={step ? { step_number: step.step_number ?? index + 1, step_label: step.step_label || checkpointForStepNumber(step.step_number ?? index + 1).canonicalLabel } : null}
-      records={interviewRecords}
-      defaultInterviewer={interviewerDefault}
-      onSaved={onFindingSaved}
-      onDone={() => setCaptureOpen(false)}
-      generateJobMapHref="#jobmap-generate"
-    />
-  ) : null;
+  // M3 — the viewed set's identity. The customer set keeps its signed title; a market reads its lens title
+  // (job_steps.journey_title → key when no lens row exists). The explicit-switch flag is the URL itself.
+  const viewedIsCustomer = Boolean(set.viewedKey) && isCustomerSetKey(set.viewedKey!);
+  const explicitView = Boolean(viewKey) && viewKey === set.viewedKey;
+  const marketTitle = set.viewedKey ? (set.lensTitles.get(set.viewedKey) ?? set.viewedTitle ?? set.viewedKey) : "";
+  const pageTitle = !set.viewedKey || viewedIsCustomer ? WORKSPACE_STRINGS.titleJobMap : marketTitle;
+  const switcherLabel = set.viewedKey ? (viewedIsCustomer ? WORKSPACE_STRINGS.titleJobMap : marketTitle) : WORKSPACE_STRINGS.showAllMarkets;
 
   const viewSet = (key: string) => {
     setSwitcherOpen(false);
     if (key === set.viewedKey) return;
-    setViewKey(key);
+    setSearchParams((prev) => { const next = new URLSearchParams(prev); next.set(VIEW_PARAM, key); return next; });
     setEvidenceOpen(false);
-    setCaptureOpen(false);
     if (stage && index !== 0) stage.setStage("back", "0");
   };
   const chooseViewed = async () => {
@@ -156,17 +144,17 @@ export default function JobMapPage() {
   };
 
   return (
-    <WorkspaceWorkingPage eyebrow={pageLabel("job-map")} title={WORKSPACE_STRINGS.titleJobMap} count={set.loading ? null : n} unit={WORKSPACE_STRINGS.unitStages}>
+    <WorkspaceWorkingPage eyebrow={pageLabel("job-map")} title={pageTitle} count={set.loading ? null : n} unit={WORKSPACE_STRINGS.unitStages}>
       {set.loading ? null : (
         <>
-          <div className="fr-ws-setlead">
-            {set.chosen ? <Chip tone="accent-0">{ON_STRATEGY_LABEL}</Chip> : null}
-            {set.viewedTitle ? <Eyebrow>{set.viewedTitle}</Eyebrow> : null}
-            {!set.chosen && set.viewedKey ? <span className="fr-tag fr-mono" data-fr-seed-note>{DEFAULT_SEED_NOTE}</span> : null}
+          <div className="fr-ws-setlead" data-fr-viewed-key={set.viewedKey ?? undefined} data-fr-viewed-customer={viewedIsCustomer ? "true" : "false"}>
+            {set.chosen && viewedIsCustomer ? <Chip tone="accent-0">{ON_STRATEGY_LABEL}</Chip> : null}
+            {set.viewedTitle && set.viewedTitle.trim() !== pageTitle.trim() ? <Eyebrow>{set.viewedTitle}</Eyebrow> : null /* T2: dropped when it equals the title exactly */}
+            {!set.chosen && set.viewedKey && !explicitView ? <span className="fr-tag fr-mono" data-fr-seed-note>{DEFAULT_SEED_NOTE}</span> : null}
             {gated && set.sets.length > 1 ? (
               <div className="fr-ws-switcher" {...mark("switcher")} data-testid="jobmap-switcher">
-                <button type="button" className="fr-ws-control fr-mono" aria-haspopup="listbox" aria-expanded={switcherOpen} onClick={() => setSwitcherOpen((v) => !v)} data-testid="jobmap-switcher-open">
-                  {WORKSPACE_STRINGS.showAllMarkets}
+                <button type="button" className="fr-ws-control fr-mono" aria-haspopup="listbox" aria-expanded={switcherOpen} onClick={() => setSwitcherOpen((v) => !v)} data-testid="jobmap-switcher-open" data-fr-viewed-key={set.viewedKey ?? undefined}>
+                  {switcherLabel}
                 </button>
                 {switcherOpen ? (
                   <div role="listbox" aria-label={WORKSPACE_STRINGS.switchMarketViewingOnly} className="fr-ws-switcher-list" data-testid="jobmap-switcher-list">
@@ -181,7 +169,7 @@ export default function JobMapPage() {
                 ) : null}
               </div>
             ) : null}
-            {gated && set.viewedKey && set.viewedMapped && !set.chosen ? (
+            {gated && set.viewedKey && set.viewedMapped && !set.chosen && viewedIsCustomer ? (
               <button type="button" className="fr-ws-control fr-mono" disabled={choosing} onClick={() => { void chooseViewed(); }} {...mark("choose")} data-testid="jobmap-choose">
                 {choosing ? WORKSPACE_STRINGS.working : WORKSPACE_STRINGS.chooseSet}
               </button>
@@ -196,9 +184,7 @@ export default function JobMapPage() {
                 {jobMapRun.running ? WORKSPACE_STRINGS.working : WORKSPACE_STRINGS.generateJobMap}
               </button>
             ) : null}
-            {canCapture && n === 0 ? captureControl : null}
           </div>
-          {canCapture && n === 0 && captureOpen ? <div {...mark("record-interview-finding-form")} data-testid="jobmap-capture">{captureForm}</div> : null}
           {canGenerateJobMap && jobMapRun.failed ? (
             <div className="fr-ws-generate-failed" data-testid="jobmap-generate-failed" {...mark("generate-jobmap-failed")}>
               <p className="fr-ws-generate-failed-note">{WORKSPACE_STRINGS.jobMapGenerationFailed}</p>
@@ -253,10 +239,8 @@ export default function JobMapPage() {
                           {evidenceOpen ? WORKSPACE_STRINGS.hideEvidence : WORKSPACE_STRINGS.showEvidence}
                         </button>
                       ) : null}
-                      {canCapture ? captureControl : null}
                     </div>
                   </header>
-                  {canCapture && captureOpen ? <div {...mark("record-interview-finding-form")} data-testid="jobmap-capture">{captureForm}</div> : null}
                   {gated && evidenceOpen ? (
                     <div className="fr-ws-evidence" {...mark("evidence-drawer")} data-testid="jobmap-evidence">
                       <EvidenceDrawer step={step} />

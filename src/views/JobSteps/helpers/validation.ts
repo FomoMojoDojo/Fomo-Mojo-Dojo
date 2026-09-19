@@ -112,7 +112,7 @@ export function isDraftPlaceholderStep(step: JobStepRow) {
   const basis = safeText(step.evidence_basis, "").toLowerCase();
   return (
     step.evidence_status === "unclear" &&
-    Number(step.evidence_confidence ?? 0) <= 25 &&
+    typeof step.evidence_confidence === "number" && step.evidence_confidence <= 25 && // NULL = not measured, never 0
     basis.includes("local draft step generated without external model run")
   );
 }

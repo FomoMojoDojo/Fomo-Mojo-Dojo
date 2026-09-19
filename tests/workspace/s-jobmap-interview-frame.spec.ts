@@ -50,7 +50,9 @@ const shot = (page: Page, name: string) => page.screenshot({ path: `screenshots/
 test("job-map: both chips exact, origin attributes, no band and no name on the market row, quotes on expand, other rows untouched", async ({ page }) => {
   const state = { captured: [] as string[] };
   await guard(page, state);
-  await openWorkspace(page, "job-map");
+  // P1 (2026-09-19): the customer map explicitly through ?view=customer (FLIP) — never the seed view.
+  await openWorkspace(page, "job-map", "?view=customer");
+  await expect(page.locator("[data-fr-region=stages]")).toHaveAttribute("data-fr-set-key", "customer");
   const marketLabel = (await page.locator(".fr-ws-setlead .fr-eyebrow, .fr-ws-setlead [class*=eyebrow]").first().innerText().catch(() => "")) || "";
   const s = page.locator("[data-fr-need-id=fixture-need-stakeholder]");
   const m = page.locator("[data-fr-need-id=fixture-need-market]");

@@ -34,7 +34,7 @@ export type IntegrityRecord = {
     | "local_synthesis";
   surface_type?: string | null;
   surface_id?: string | null;
-  status: "completed" | "failed" | "skipped_empty_input";
+  status: "completed" | "failed" | "skipped_empty_input" | "rejected"; // mirrors integrity_runs_status_check (planned is written by other paths directly)
   examined?: number | null;
   admitted?: number | null;
   excluded_by_rule?: Record<string, unknown> | null;

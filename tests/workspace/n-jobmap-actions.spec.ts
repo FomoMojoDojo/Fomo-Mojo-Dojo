@@ -4,6 +4,10 @@
 // functions. Reads pass through to the real fixture (Edgewood), except the two reads the proofs must
 // control: the operator's choice (operator_primary_selection, domain job_step_set — mocked per test so
 // "chosen" is a known state) and, in (d), one need's dependency_state (planted into a review state).
+// Ruling M3 (signed 2026-09-19): Choose and ON STRATEGY render only on the CUSTOMER set, and the seed
+// note never renders for a set switched to explicitly (?view=) — (a) and (b2) assert that; (b2) no longer
+// chooses a non-customer set (there is no Choose there): it proves the chip follows the READ across a
+// switch away from and back to the chosen customer set.
 import { expect, test, type Page, type Route } from "playwright/test";
 import { COMPANY_ID } from "../../playwright.config";
 import { openWorkspace } from "./helpers";
@@ -115,10 +119,12 @@ test("a. switcher: picking the other set changes the stage list and never shows 
   await expect(list).toHaveCount(0);
   await expect(stages(page)).toHaveAttribute("data-fr-set-key", otherKey!);
   await expect(page.locator(".fr-ws-stage-title")).not.toHaveText(titleBefore);
-  // The view moved; the choice did not: no chip, the seed note, and the Choose control for this set.
+  // The view moved; the choice did not: no chip. M3: no seed note for a set switched to explicitly, and no
+  // Choose control on a non-customer set; the URL names the viewed set.
   await expect(lead(page)).not.toContainText(ON_STRATEGY);
-  await expect(page.locator("[data-fr-seed-note]")).toHaveText(SEED_NOTE);
-  await expect(page.getByTestId("jobmap-choose")).toHaveText("Choose this as the on-strategy set");
+  await expect(page.locator("[data-fr-seed-note]")).toHaveCount(0);
+  await expect(page.getByTestId("jobmap-choose")).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.get("view")).toBe(otherKey);
   // Switching is a view: nothing left the page.
   expect(captured).toHaveLength(0);
 });
@@ -160,14 +166,14 @@ test("b. Choose: the click issues the operator_primary_selection upsert for the 
   expect(captured.map((c) => c.url.replace(/\?.*$/, "").replace(/^.*\/rest\/v1\//, ""))).toEqual(["operator_primary_selection", "operator_primary_selection_audit"]);
 });
 
-test("b2. Choose B while A is chosen: no set reads as chosen until the read confirms B (the old chip never outlives the write)", async ({ page }) => {
-  let release!: () => void;
+test("b2. M3: only the customer set can be chosen — a non-customer set carries neither the chip nor Choose; the chip follows the read back on the customer set", async ({ page }) => {
   const state: GuardState = { reviewed: new Set() };
   const captured = await guardWrites(page, state);
   await openWorkspace(page, "job-map");
   await operatorOn(page);
-  // A = the fixture's chosen set (the seeded view carries the chip); present it through the mock from here on.
+  // A = the fixture's chosen set (customer, the default view carries the chip); present it through the mock from here on.
   const keyA = (await stages(page).getAttribute("data-fr-set-key"))!;
+  expect(keyA).toBe("customer");
   await expect(lead(page)).toContainText(ON_STRATEGY);
   state.chosen = keyA;
   const pick = async (key: string) => {
@@ -180,24 +186,18 @@ test("b2. Choose B while A is chosen: no set reads as chosen until the read conf
   const b = (await other.getAttribute("data-fr-set-key"))!;
   await other.click();
   await expect(stages(page)).toHaveAttribute("data-fr-set-key", b);
+  // B is not the customer set: no chip, no Choose, no seed note — nothing to click, nothing written.
   await expect(lead(page)).not.toContainText(ON_STRATEGY);
-  // Choose B with the confirming read HELD.
-  state.holdRead = new Promise<void>((r) => { release = r; });
-  await page.getByTestId("jobmap-choose").click();
-  await expect.poll(() => captured.some((c) => /\/rest\/v1\/operator_primary_selection\?/.test(c.url) && c.method === "POST")).toBe(true);
-  expect((captured.find((c) => /operator_primary_selection\?/.test(c.url))!.body as Record<string, unknown>).item_key).toBe(b);
-  // During the hold, look back at A: it must NOT read as chosen any more (the write is done; the read has not confirmed anything).
+  await expect(page.getByTestId("jobmap-choose")).toHaveCount(0);
+  await expect(page.locator("[data-fr-seed-note]")).toHaveCount(0);
+  await page.waitForTimeout(400);
+  expect(captured.filter((c) => /operator_primary_selection/.test(c.url))).toHaveLength(0);
+  // Back on A (customer): the chip is the read's, and Choose stays absent while it is chosen.
   await pick(keyA);
-  await page.waitForTimeout(400);
-  await expect(lead(page)).not.toContainText(ON_STRATEGY);
-  await expect(page.locator("[data-fr-seed-note]")).toHaveText(SEED_NOTE);
-  // The read returns B: A stays un-chosen; B carries the chip.
-  release();
-  await page.waitForTimeout(400);
-  await expect(lead(page)).not.toContainText(ON_STRATEGY);
-  await pick(b);
   await expect(lead(page)).toContainText(ON_STRATEGY);
   await expect(page.getByTestId("jobmap-choose")).toHaveCount(0);
+  await expect(page.locator("[data-fr-seed-note]")).toHaveCount(0); // ?view=customer is an explicit view
+  expect(captured).toHaveLength(0);
 });
 
 test("c. Regenerate conditions: the invoke carries the set key and nothing else; no job_steps column is touched", async ({ page }) => {

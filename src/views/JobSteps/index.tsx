@@ -406,7 +406,9 @@ function StepCard({
           >
             {evidenceTone.label}
           </span>
-          <MetaBadge>Conf {step.evidence_confidence ?? 0}</MetaBadge>
+          {typeof step.evidence_confidence === "number" && (
+            <MetaBadge>Conf {step.evidence_confidence}</MetaBadge>
+          )}
         </div>
 
         <div className="mt-4" style={{ minHeight: STEP_DETAIL_BLOCK_HEIGHT }}>

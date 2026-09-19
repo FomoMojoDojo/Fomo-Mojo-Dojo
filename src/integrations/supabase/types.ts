@@ -3106,7 +3106,7 @@ export type Database = {
           description: string
           designed: boolean
           evidence_basis: string
-          evidence_confidence: number
+          evidence_confidence: number | null
           evidence_state: string
           evidence_status: string
           frameworks_used: string[]
@@ -3135,7 +3135,7 @@ export type Database = {
           description?: string
           designed?: boolean
           evidence_basis?: string
-          evidence_confidence?: number
+          evidence_confidence?: number | null
           evidence_state?: string
           evidence_status?: string
           frameworks_used?: string[]
@@ -3164,7 +3164,7 @@ export type Database = {
           description?: string
           designed?: boolean
           evidence_basis?: string
-          evidence_confidence?: number
+          evidence_confidence?: number | null
           evidence_state?: string
           evidence_status?: string
           frameworks_used?: string[]

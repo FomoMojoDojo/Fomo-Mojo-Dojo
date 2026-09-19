@@ -43,7 +43,8 @@ export type JobMapRegenerationStep = {
   has_gap: boolean;
   evidence_status: string;
   evidence_basis: string;
-  evidence_confidence: number;
+  /** NULL = not measured (ruling M2, 2026-09-19: a market run carries no invented percentage). */
+  evidence_confidence: number | null;
   gap_note: string;
 };
 
@@ -300,7 +301,7 @@ export async function regenerateJobMapJourney(args: {
       has_gap: step.has_gap,
       evidence_status: step.evidence_status,
       evidence_basis: step.evidence_basis || `${sourceLabel}:${insertedAt.slice(0, 10)}`,
-      evidence_confidence: Number.isFinite(step.evidence_confidence) ? step.evidence_confidence : 40,
+      evidence_confidence: step.evidence_confidence === null ? null : Number.isFinite(step.evidence_confidence) ? step.evidence_confidence : 40,
       gap_note: step.has_gap ? String(step.gap_note || "").trim() : "",
       dependency_state: "fresh",
       validation_state: "unvalidated",

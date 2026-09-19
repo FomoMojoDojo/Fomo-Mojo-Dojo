@@ -386,7 +386,7 @@ type JobStepRow = {
   has_gap: boolean;
   evidence_status: string;
   evidence_basis: string;
-  evidence_confidence: number;
+  evidence_confidence: number | null; // NULL = not measured (a market map), never coerced to 0
 };
 
 type JourneyObject = {
@@ -426,7 +426,7 @@ function buildJourneysFromJobSteps(jobStepRows: unknown[]): JourneyObject[] {
       has_gap: !!r.has_gap,
       evidence_status: String(r.evidence_status || "unclear"),
       evidence_basis: String(r.evidence_basis || ""),
-      evidence_confidence: Number(r.evidence_confidence) || 0,
+      evidence_confidence: r.evidence_confidence === null || r.evidence_confidence === undefined ? null : (Number(r.evidence_confidence) || 0),
     });
   }
 
