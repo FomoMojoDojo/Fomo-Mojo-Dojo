@@ -24,6 +24,16 @@ export const INTERVIEW_UPLOAD_STRINGS = {
   hashMismatch: "The saved file doesn't match the upload. Nothing was recorded. Try again.",
   /** S7 — the Change market listbox. */
   chooseMarket: "Choose a market",
+  /** H1 (signed 2026-09-20) — the company has no customer-research input; nothing is recorded. */
+  noCustomerResearchInput: "This company has no Customer Research input, so an interview can't be uploaded yet.",
+  /** W1–W3 (signed 2026-09-20) — withdraw an interview upload (permanent). */
+  withdraw: "Withdraw interview (permanent)",
+  withdrawConfirm: "Withdraw this interview? This can't be undone. The file is archived and nothing from it is used.",
+  withdrawAction: "Withdraw",
+  /** P1–P3 (signed 2026-09-20) — correct the speaker until the transcript is parsed. */
+  changeSpeaker: "Change speaker",
+  speakerCollision: "This transcript is already recorded with that speaker.",
+  chooseSpeaker: "Choose the speaker",
 } as const;
 
 /** "Stakeholder" → client_stakeholder, "Customer" → market_participant (ruling A3 — the existing speaker_role). */

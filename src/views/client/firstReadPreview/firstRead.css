@@ -2615,6 +2615,14 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-interview { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .fr-ws-interview-market { position: relative; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: hsl(var(--fr-steel)); }
 .fr-ws-interview-market .fr-ws-switcher-list { position: static; flex-basis: 100%; max-height: 14rem; overflow-y: auto; text-transform: none; letter-spacing: 0; }
+/* Commit 2a (2026-09-20): Change speaker (listbox in flow) and the inline withdraw confirm. */
+.fr-ws-interview-speaker { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.fr-ws-interview-speaker .fr-ws-switcher-list { position: static; flex-basis: 100%; text-transform: none; letter-spacing: 0; }
+.fr-ws-withdraw-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; padding: 12px 16px; border-left: 3px solid hsl(var(--fr-bad)); background: hsl(var(--fr-bad) / 0.06); }
+.fr-ws-withdraw-confirm-text { margin: 0; max-width: 40rem; font-size: 13px; line-height: 1.5; color: hsl(var(--fr-slate)); }
+.fr-ws-withdraw-confirm-actions { display: flex; gap: 0.5rem; }
+.fr-ws-withdraw-confirm .fr-ws-control[data-fr-tone="danger"] { color: hsl(var(--fr-bad)); border-color: hsl(var(--fr-bad) / 0.5); }
+.fr-ws-table-actions .fr-ws-control { max-width: 11rem; text-align: left; line-height: 1.35; }
 /* Ruling 9 (2026-09-14): Dify's proposal-level confidence beside the analysis control — selector-only mapping to existing tokens. */
 .fr-ws-table-analysis .fr-ws-analysis-confidence { display: block; margin-top: 4px; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: hsl(var(--fr-muted)); }
 .fr-ws-table-analysis .fr-ws-analysis-confidence[data-fr-confidence="low"] { color: hsl(var(--fr-bad)); }

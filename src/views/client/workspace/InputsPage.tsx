@@ -44,7 +44,7 @@ import { useProposalSync } from "@/hooks/useProposalSync";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useRoutes } from "@/hooks/useRoutes";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
-import { useInterviewUploads, type InterviewUploadRecord } from "@/hooks/useInterviewUploads";
+import { canChangeSpeaker, useInterviewUploads, type InterviewUploadRecord } from "@/hooks/useInterviewUploads";
 import { INTERVIEW_UPLOAD_STRINGS } from "@/lib/interviewUploadStrings";
 import { readAreaSupportTags } from "@/lib/fileTags";
 import FileUploadDialog from "@/components/FileUploadDialog";
@@ -119,7 +119,13 @@ export default function InputsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const interviews = useInterviewUploads(companyId);
   const [marketPickerId, setMarketPickerId] = useState<string | null>(null);
+  const [withdrawId, setWithdrawId] = useState<string | null>(null);
+  const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
+  const [speakerPickerId, setSpeakerPickerId] = useState<string | null>(null);
+  const [speakerCollisionId, setSpeakerCollisionId] = useState<string | null>(null);
   const interviewByFile = useMemo(() => new Map(interviews.records.map((r) => [r.input_file_id, r])), [interviews.records]);
+  // Listing rule (2026-09-20): an interview row whose record is retracted is never rendered, archived or not.
+  const retractedFileIds = useMemo(() => new Set(interviews.records.filter((r) => r.retracted_at !== null).map((r) => r.input_file_id)), [interviews.records]);
 
   const rows = files.data ?? [];
   const isInterviewFile = (f: CompanyFileRow) => f.is_interview === true || interviewByFile.has(f.id);
@@ -137,11 +143,22 @@ export default function InputsPage() {
   const assigned = counted.filter((f) => areasOf(f).length > 0).length;
   const routeCount = routes.filter((r) => (r.level ?? "route") === "route").length;
   const counts = landscape ? { pub: landscape.byBand.outside.count, team: landscape.byBand.organization.count, cust: landscape.byBand.customer.count } : null;
-  const visible = rows.filter((f) => (typeFilter === "all" || typeOf(f) === typeFilter) && (foundationFilter === "all" || (foundationFilter === "yes") === (areasOf(f).length > 0)));
+  const visible = rows.filter((f) => !retractedFileIds.has(f.id) && (typeFilter === "all" || typeOf(f) === typeFilter) && (foundationFilter === "all" || (foundationFilter === "yes") === (areasOf(f).length > 0)));
 
   const refetchAll = async () => { await files.refetch(); await proposals.refetch(); await archivedQuery.refetch(); interviews.refetch(); };
   const marketTitle = (key: string | null) => (key ? (interviews.markets.find((m) => m.key === key)?.title ?? key) : "");
   const pickMarket = async (rec: InterviewUploadRecord, key: string) => { setMarketPickerId(null); if (key && key !== rec.journey_key) await interviews.changeMarket(rec, key); };
+  const withdrawInterview = async (rec: InterviewUploadRecord) => {
+    if (withdrawingId) return;
+    setWithdrawingId(rec.id);
+    try { const r = await interviews.withdraw(rec); if (r.ok) { setWithdrawId(null); await files.refetch(); } } finally { setWithdrawingId(null); }
+  };
+  const pickSpeaker = async (rec: InterviewUploadRecord, role: "client_stakeholder" | "market_participant") => {
+    setSpeakerPickerId(null); setSpeakerCollisionId(null);
+    if (role === rec.speaker_role) return;
+    const r = await interviews.correctSpeaker(rec, role);
+    if (!r.ok && r.collision) setSpeakerCollisionId(rec.id);
+  };
   const openFile = async (f: CompanyFileRow) => { window.open(await getFileSignedUrl(f.file_path), "_blank", "noopener"); };
   const analyze = async (f: CompanyFileRow) => {
     if (!gated || !companyId) return;
@@ -263,6 +280,21 @@ export default function InputsPage() {
                                 <span className="fr-ws-interview" data-testid="inputs-interview" data-fr-speaker={rec?.speaker_role ?? undefined} data-fr-market-state={rec?.market_state ?? undefined} data-fr-market-key={rec?.journey_key ?? undefined}>
                                   <Chip tone="accent-4">{INTERVIEW_UPLOAD_STRINGS.chip}</Chip>
                                   <span className="fr-tag fr-mono" data-testid="inputs-interview-state">{INTERVIEW_UPLOAD_STRINGS.savedNotParsed}</span>
+                                  {rec && gated && canChangeSpeaker(rec) ? (
+                                    <span className="fr-ws-interview-speaker fr-mono" data-testid="inputs-interview-speaker">
+                                      <button type="button" className="fr-ws-control fr-mono" aria-haspopup="listbox" aria-expanded={speakerPickerId === rec.id} onClick={() => { setSpeakerPickerId(speakerPickerId === rec.id ? null : rec.id); setSpeakerCollisionId(null); }} {...{ [OPERATOR_MARK.attr]: "change-speaker" }} data-testid="inputs-change-speaker">
+                                        {INTERVIEW_UPLOAD_STRINGS.changeSpeaker}
+                                      </button>
+                                      {speakerPickerId === rec.id ? (
+                                        <span role="listbox" aria-label={INTERVIEW_UPLOAD_STRINGS.chooseSpeaker} className="fr-ws-switcher-list" data-testid="inputs-speaker-list">
+                                          {([["client_stakeholder", INTERVIEW_UPLOAD_STRINGS.stakeholder], ["market_participant", INTERVIEW_UPLOAD_STRINGS.customer]] as const).map(([role, label]) => (
+                                            <button key={role} type="button" role="option" aria-selected={rec.speaker_role === role} className="fr-ws-switcher-option" data-fr-speaker-role={role} data-testid="inputs-speaker-option" onClick={() => { void pickSpeaker(rec, role); }}>{label}</button>
+                                          ))}
+                                        </span>
+                                      ) : null}
+                                      {speakerCollisionId === rec.id ? <span className="fr-ws-analysis-refused fr-mono" data-testid="inputs-speaker-collision">{INTERVIEW_UPLOAD_STRINGS.speakerCollision}</span> : null}
+                                    </span>
+                                  ) : null}
                                   {rec ? (
                                     <span className="fr-ws-interview-market fr-mono" data-testid="inputs-interview-market">
                                       {customer ? (placed ? marketTitle(rec.journey_key) : INTERVIEW_UPLOAD_STRINGS.marketNotInferred) : INTERVIEW_UPLOAD_STRINGS.marketPerItem}
@@ -315,9 +347,18 @@ export default function InputsPage() {
                           </td>
                           {gated ? (
                             <td className="fr-ws-table-actions">
-                              <button type="button" className="fr-ws-table-x" title={WORKSPACE_STRINGS.archiveTitle} aria-label={WORKSPACE_STRINGS.archiveTitle} disabled={deletingId === f.id} onClick={() => { if (areas.length === 0) void archiveFile(f, "file-only"); else setConfirmId(confirmId === f.id ? null : f.id); }} {...{ [OPERATOR_MARK.attr]: "archive" }} data-testid="inputs-archive">
-                                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M2 2 L10 10 M10 2 L2 10" fill="none" stroke="currentColor" strokeWidth="1.25" /></svg>
-                              </button>
+                              {isInterviewFile(f) ? (
+                                interviewByFile.get(f.id) ? (
+                                  // R11 (2026-09-20): an interview row is withdrawn (permanent), never archived — W1 replaces Archive ×.
+                                  <button type="button" className="fr-ws-control fr-mono" disabled={withdrawingId === f.id} aria-expanded={withdrawId === f.id} onClick={() => setWithdrawId(withdrawId === f.id ? null : f.id)} {...{ [OPERATOR_MARK.attr]: "withdraw-interview" }} data-testid="inputs-withdraw">
+                                    {INTERVIEW_UPLOAD_STRINGS.withdraw}
+                                  </button>
+                                ) : null
+                              ) : (
+                                <button type="button" className="fr-ws-table-x" title={WORKSPACE_STRINGS.archiveTitle} aria-label={WORKSPACE_STRINGS.archiveTitle} disabled={deletingId === f.id} onClick={() => { if (areas.length === 0) void archiveFile(f, "file-only"); else setConfirmId(confirmId === f.id ? null : f.id); }} {...{ [OPERATOR_MARK.attr]: "archive" }} data-testid="inputs-archive">
+                                  <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M2 2 L10 10 M10 2 L2 10" fill="none" stroke="currentColor" strokeWidth="1.25" /></svg>
+                                </button>
+                              )}
                             </td>
                           ) : null}
                         </tr>
@@ -332,6 +373,19 @@ export default function InputsPage() {
                                 onReject={async () => { setPanelId(null); if (proposal.processing_state === "ready") await rejectFileProposal(proposal.id); else await dismissFileProposal(proposal); await proposals.refetch(); }}
                                 onDismiss={async () => { setPanelId(null); await dismissFileProposal(proposal); await proposals.refetch(); }}
                               />
+                            </td>
+                          </tr>
+                        ) : null}
+                        {gated && withdrawId === f.id && interviewByFile.get(f.id) ? (
+                          <tr key={`${f.id}-withdraw`} data-testid="inputs-withdraw-confirm" {...{ [OPERATOR_MARK.attr]: "withdraw-confirm" }}>
+                            <td colSpan={4}>
+                              <div className="fr-ws-withdraw-confirm">
+                                <p className="fr-ws-withdraw-confirm-text">{INTERVIEW_UPLOAD_STRINGS.withdrawConfirm}</p>
+                                <div className="fr-ws-withdraw-confirm-actions">
+                                  <button type="button" className="fr-ws-control fr-mono" data-fr-tone="danger" disabled={withdrawingId === f.id} onClick={() => { void withdrawInterview(interviewByFile.get(f.id)!); }} data-testid="inputs-withdraw-go">{withdrawingId === f.id ? WORKSPACE_STRINGS.working : INTERVIEW_UPLOAD_STRINGS.withdrawAction}</button>
+                                  <button type="button" className="fr-ws-control fr-mono" disabled={withdrawingId === f.id} onClick={() => setWithdrawId(null)} data-testid="inputs-withdraw-cancel">Cancel</button>
+                                </div>
+                              </div>
                             </td>
                           </tr>
                         ) : null}

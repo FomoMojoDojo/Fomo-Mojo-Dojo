@@ -36,6 +36,10 @@ describe("interview home (R17)", () => {
     const refuse = body.indexOf("if (!assigned.input) { finish(");
     const upload = body.indexOf("uploadMutation.mutateAsync(");
     expect(refuse).toBeGreaterThan(0); expect(refuse).toBeLessThan(upload);
+    // (a) H1 (2026-09-20): the refusal line is the signed interview string, not the generic one
+    const refusal = body.slice(refuse, body.indexOf("continue;", refuse));
+    expect(refusal).toContain("error: INTERVIEW_UPLOAD_STRINGS.noCustomerResearchInput");
+    expect(refusal).not.toContain("'No matching input area.'");
     // the result line: no input name, no mapping word
     expect(body).toMatch(/status: 'uploaded', tags: \[\], reasoning: INTERVIEW_UPLOAD_STRINGS\.savedNotParsed, source: 'none'/);
     expect(body).not.toContain("inputLabel: assigned.input.input_label");

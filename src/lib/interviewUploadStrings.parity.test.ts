@@ -18,7 +18,15 @@ describe("interview upload strings — signed 2026-09-19", () => {
     expect(S.emptyExtraction).toBe("No text could be read from this file. Nothing was recorded.");
     expect(S.hashMismatch).toBe("The saved file doesn't match the upload. Nothing was recorded. Try again.");
     expect(S.chooseMarket).toBe("Choose a market");
-    expect(Object.keys(S).length).toBe(14);
+    // signed 2026-09-20 (commit 2a)
+    expect(S.noCustomerResearchInput).toBe("This company has no Customer Research input, so an interview can't be uploaded yet.");
+    expect(S.withdraw).toBe("Withdraw interview (permanent)");
+    expect(S.withdrawConfirm).toBe("Withdraw this interview? This can't be undone. The file is archived and nothing from it is used.");
+    expect(S.withdrawAction).toBe("Withdraw");
+    expect(S.changeSpeaker).toBe("Change speaker");
+    expect(S.speakerCollision).toBe("This transcript is already recorded with that speaker.");
+    expect(S.chooseSpeaker).toBe("Choose the speaker");
+    expect(Object.keys(S).length).toBe(21);
   });
   it("A3: the speaker words map onto the existing speaker_role", () => {
     expect(speakerRoleFor("stakeholder")).toBe("client_stakeholder");

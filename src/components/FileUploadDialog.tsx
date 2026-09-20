@@ -635,7 +635,7 @@ export default function FileUploadDialog({
           completedDurationsMs.push(Date.now() - fileStartedAtMs);
           setProgress((current) => current ? { ...current, completed: index + 1, currentFile: file.name, phase: index + 1 === queue.length ? 'done' : 'uploading', success: successCount, failed: failureCount, etaMs: computeReliableEtaMs(completedDurationsMs, queue.length, index + 1) } : current);
         };
-        if (!assigned.input) { finish({ fileName: file.name, status: 'failed', tags: [], reasoning: 'Could not map this file to an input area.', source: assigned.source, error: 'No matching input area.' }, false); continue; }
+        if (!assigned.input) { finish({ fileName: file.name, status: 'failed', tags: [], reasoning: INTERVIEW_UPLOAD_STRINGS.noCustomerResearchInput, source: assigned.source, error: INTERVIEW_UPLOAD_STRINGS.noCustomerResearchInput }, false); continue; } // H1 (2026-09-20)
         if (!isTranscriptFileName(file.name)) { finish({ fileName: file.name, status: 'failed', tags: [], reasoning: INTERVIEW_UPLOAD_STRINGS.unsupportedType, source: assigned.source, error: INTERVIEW_UPLOAD_STRINGS.unsupportedType }, false); continue; }
         setProgress((current) => current ? { ...current, currentFile: file.name, phase: 'uploading' } : current);
         try {
