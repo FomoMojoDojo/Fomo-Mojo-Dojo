@@ -24,6 +24,13 @@
 //   filters          type (the tab's row.type derivation: Intake tag → intake, else file) and foundation
 //   Archive ×        DeleteConfirmPanel (moved) → useArchiveInputFile (+ unlinkNeedsFromFilePath, lifted)
 //   Archived · Restore  useArchivedInputFiles / useRestoreInputFile
+//
+// Interview upload (Gate B commit 1, 2026-09-19): a row whose file is_interview renders as a file with the
+// "Interview" chip, "Saved. Not yet parsed." and its market line — a customer transcript: "Market not
+// inferred" + "Change market" (operator-gated; commit 2 infers), a stakeholder transcript: "Market: per item,
+// after parsing"; after an operator choice the chosen market's lens title + "Change market". Never a
+// "Run analysis" chip, never a proposal — the fence refuses both server-side. Change market writes journey_key
+// + market_state + the appended basis entry, nothing else (useInterviewUploads).
 import { Fragment, useMemo, useState } from "react";
 import { useCompany } from "@/hooks/useCompany";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
@@ -37,6 +44,8 @@ import { useProposalSync } from "@/hooks/useProposalSync";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useRoutes } from "@/hooks/useRoutes";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
+import { useInterviewUploads, type InterviewUploadRecord } from "@/hooks/useInterviewUploads";
+import { INTERVIEW_UPLOAD_STRINGS } from "@/lib/interviewUploadStrings";
 import { readAreaSupportTags } from "@/lib/fileTags";
 import FileUploadDialog from "@/components/FileUploadDialog";
 import { DeleteConfirmPanel, ProposalReviewPanel, fileProposalProcessingBadgeText, proposalPriority, type FoundationArea, type SourceRow } from "@/views/client/workshop/inputsShared";
@@ -108,8 +117,12 @@ export default function InputsPage() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const interviews = useInterviewUploads(companyId);
+  const [marketPickerId, setMarketPickerId] = useState<string | null>(null);
+  const interviewByFile = useMemo(() => new Map(interviews.records.map((r) => [r.input_file_id, r])), [interviews.records]);
 
   const rows = files.data ?? [];
+  const isInterviewFile = (f: CompanyFileRow) => f.is_interview === true || interviewByFile.has(f.id);
   // The tab's proposal-per-file choice (proposalPriority, newest wins ties).
   const proposalByFile = useMemo(() => {
     const m = new Map<string, FileProposalRow>();
@@ -119,12 +132,16 @@ export default function InputsPage() {
     }
     return m;
   }, [proposals.data]);
-  const assigned = rows.filter((f) => areasOf(f).length > 0).length;
+  // R13 (2026-09-19): the header numbers count evidence files only — interview rows stay listed but are outside both numbers.
+  const counted = rows.filter((f) => !isInterviewFile(f));
+  const assigned = counted.filter((f) => areasOf(f).length > 0).length;
   const routeCount = routes.filter((r) => (r.level ?? "route") === "route").length;
   const counts = landscape ? { pub: landscape.byBand.outside.count, team: landscape.byBand.organization.count, cust: landscape.byBand.customer.count } : null;
   const visible = rows.filter((f) => (typeFilter === "all" || typeOf(f) === typeFilter) && (foundationFilter === "all" || (foundationFilter === "yes") === (areasOf(f).length > 0)));
 
-  const refetchAll = async () => { await files.refetch(); await proposals.refetch(); await archivedQuery.refetch(); };
+  const refetchAll = async () => { await files.refetch(); await proposals.refetch(); await archivedQuery.refetch(); interviews.refetch(); };
+  const marketTitle = (key: string | null) => (key ? (interviews.markets.find((m) => m.key === key)?.title ?? key) : "");
+  const pickMarket = async (rec: InterviewUploadRecord, key: string) => { setMarketPickerId(null); if (key && key !== rec.journey_key) await interviews.changeMarket(rec, key); };
   const openFile = async (f: CompanyFileRow) => { window.open(await getFileSignedUrl(f.file_path), "_blank", "noopener"); };
   const analyze = async (f: CompanyFileRow) => {
     if (!gated || !companyId) return;
@@ -170,15 +187,15 @@ export default function InputsPage() {
           {activeCompany?.no_public_site ? (
             <p className="fr-ws-band-eyebrow fr-mono" data-fr-state="no-public-site" data-testid="inputs-no-public-site">{WORKSPACE_STRINGS.noPublicSiteState}</p>
           ) : null}
-          {rows.length > 0 && assigned > 0 && assigned < rows.length ? (
+          {counted.length > 0 && assigned > 0 && assigned < counted.length ? (
             <div className="fr-ws-integration" data-fr-region="integration" data-testid="inputs-integration">
               <p className="fr-ws-band-eyebrow fr-mono">{WORKSPACE_STRINGS.partiallyIntegrated}</p>
-              <p className="fr-ws-integration-count"><span data-testid="inputs-assigned">{assigned}</span> / {rows.length}</p>
+              <p className="fr-ws-integration-count"><span data-testid="inputs-assigned">{assigned}</span> / <span data-testid="inputs-counted">{counted.length}</span></p>
             </div>
           ) : null}
 
           <div className="fr-ws-counters" data-fr-region="counters" data-testid="inputs-counters">
-            <span><span className="fr-ws-counter-label">{WORKSPACE_STRINGS.evidenceFiles}</span><b>{rows.length}</b></span>
+            <span><span className="fr-ws-counter-label">{WORKSPACE_STRINGS.evidenceFiles}</span><b data-testid="inputs-evidence-files">{counted.length}</b></span>
             <span><span className="fr-ws-counter-label">{WORKSPACE_STRINGS.customerTensionsMapped}</span><b>{needs.length}</b></span>
             <span><span className="fr-ws-counter-label">{WORKSPACE_STRINGS.directionalRoutes}</span><b>{routeCount}</b></span>
           </div>
@@ -238,7 +255,34 @@ export default function InputsPage() {
                           </td>
                           <td className="fr-ws-table-areas">{areas.join(" · ")}</td>
                           <td className="fr-ws-table-analysis">
-                            {!proposal ? (
+                            {isInterviewFile(f) ? (() => {
+                              const rec = interviewByFile.get(f.id) ?? null;
+                              const customer = rec?.speaker_role === "market_participant";
+                              const placed = Boolean(rec && rec.market_state === "placed" && rec.journey_key);
+                              return (
+                                <span className="fr-ws-interview" data-testid="inputs-interview" data-fr-speaker={rec?.speaker_role ?? undefined} data-fr-market-state={rec?.market_state ?? undefined} data-fr-market-key={rec?.journey_key ?? undefined}>
+                                  <Chip tone="accent-4">{INTERVIEW_UPLOAD_STRINGS.chip}</Chip>
+                                  <span className="fr-tag fr-mono" data-testid="inputs-interview-state">{INTERVIEW_UPLOAD_STRINGS.savedNotParsed}</span>
+                                  {rec ? (
+                                    <span className="fr-ws-interview-market fr-mono" data-testid="inputs-interview-market">
+                                      {customer ? (placed ? marketTitle(rec.journey_key) : INTERVIEW_UPLOAD_STRINGS.marketNotInferred) : INTERVIEW_UPLOAD_STRINGS.marketPerItem}
+                                      {customer && gated ? (
+                                        <button type="button" className="fr-ws-control fr-mono" aria-haspopup="listbox" aria-expanded={marketPickerId === rec.id} onClick={() => setMarketPickerId(marketPickerId === rec.id ? null : rec.id)} {...{ [OPERATOR_MARK.attr]: "change-market" }} data-testid="inputs-change-market">
+                                          {INTERVIEW_UPLOAD_STRINGS.changeMarket}
+                                        </button>
+                                      ) : null}
+                                      {customer && gated && marketPickerId === rec.id ? (
+                                        <span role="listbox" aria-label={INTERVIEW_UPLOAD_STRINGS.chooseMarket} className="fr-ws-switcher-list" data-testid="inputs-market-list">
+                                          {interviews.markets.map((m) => (
+                                            <button key={m.key} type="button" role="option" aria-selected={m.key === rec.journey_key} className="fr-ws-switcher-option" data-fr-set-key={m.key} data-testid="inputs-market-option" onClick={() => { void pickMarket(rec, m.key); }}>{m.title}</button>
+                                          ))}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              );
+                            })() : !proposal ? (
                               gated ? (
                                 refusedById.has(f.id) && analyzingId !== f.id ? (
                                   <span className="fr-ws-analysis-refused fr-mono" data-testid="inputs-analysis-refused">{fileTooLargeMessage(refusedById.get(f.id)!)}</span>

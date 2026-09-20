@@ -504,7 +504,23 @@ Deno.serve(async (req) => {
     const { data: allFiles } = allInputIds.length > 0
       ? await supabase.from("input_files").select("*").in("input_id", allInputIds)
       : { data: [] };
+    // Gate B (A1, 2026-09-19): an interview transcript never reaches this model — this reader falls back to
+    // the RAW object for txt/csv/md/json (below), so the fence must sit on the file list itself, keyed on
+    // input_files.is_interview OR a matching interview_records.input_file_id. A lookup error fails closed
+    // (every file dropped).
+    let interviewFileIds = new Set<string>();
+    let interviewLookupFailed = false;
+    try {
+      const { data: iRows, error: iErr } = await supabase.from("interview_records").select("input_file_id").eq("company_id", company_id).not("input_file_id", "is", null);
+      if (iErr) throw iErr;
+      interviewFileIds = new Set(((iRows ?? []) as Array<{ input_file_id?: unknown }>).map((r) => String(r.input_file_id ?? "")).filter(Boolean));
+    } catch (e) {
+      interviewLookupFailed = true;
+      console.error("[generate-deep-dive] interview fence lookup failed — every upload dropped (fail closed):", String((e as Error)?.message ?? e));
+    }
     const files = (allFiles || []).filter((file: any) => {
+      if (interviewLookupFailed) return false;
+      if (file?.is_interview === true || interviewFileIds.has(String(file?.id ?? ""))) return false;
       const input = inputById.get(String(file.input_id || "").trim()) ?? null;
       return fileSupportsArea({ areaKey: area_key, file, input });
     });

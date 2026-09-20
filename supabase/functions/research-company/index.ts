@@ -589,12 +589,28 @@ type UploadedEvidenceInputRow = {
   why_it_matters?: string | null;
 };
 
+/** Gate B (A1): does the company hold an interview upload (a flagged file or a transcript record)? Fails closed. */
+async function companyHasInterviewUploads(supabase: { from: (t: string) => any }, companyId: string): Promise<boolean> {
+  try {
+    const { data: recs, error: rErr } = await supabase.from("interview_records").select("id").eq("company_id", companyId).not("input_file_id", "is", null).limit(1);
+    if (rErr) throw rErr;
+    if (((recs ?? []) as unknown[]).length > 0) return true;
+    const { count, error: fErr } = await supabase.from("input_files").select("id, inputs!inner(company_id)", { count: "exact", head: true }).eq("inputs.company_id", companyId).eq("is_interview", true);
+    if (fErr) throw fErr;
+    return Number(count ?? 0) > 0;
+  } catch (e) {
+    console.error("[research-company] interview-upload lookup failed — refusing (fail closed):", String((e as Error)?.message ?? e));
+    return true;
+  }
+}
+
 type UploadedEvidenceFileRow = {
   input_id?: string | null;
   file_name?: string | null;
   file_path?: string | null;
   tags?: string[] | null;
   uploaded_at?: string | null;
+  is_interview?: boolean | null;
 };
 
 function compactSnippet(value: unknown, maxChars = 220) {
@@ -634,7 +650,7 @@ async function buildUploadedEvidenceContext(args: {
   const { data: fileRows, error: filesErr } = inputIds.length > 0
     ? await supabase
         .from("input_files")
-        .select("input_id,file_name,file_path,tags,uploaded_at")
+        .select("input_id,file_name,file_path,tags,uploaded_at,is_interview")
         .in("input_id", inputIds)
         .order("uploaded_at", { ascending: false })
         .limit(120)
@@ -644,7 +660,9 @@ async function buildUploadedEvidenceContext(args: {
     console.log("[research-company] uploaded evidence file fetch error:", filesErr.message);
   }
 
-  const files = (Array.isArray(fileRows) ? fileRows : []) as UploadedEvidenceFileRow[];
+  // Gate B (A1, 2026-09-19): this context reaches an EXTERNAL model — an interview transcript's row (its
+  // name, tags, any sidecar snippet) is never part of it. Keyed on the file flag (input_files.is_interview).
+  const files = ((Array.isArray(fileRows) ? fileRows : []) as UploadedEvidenceFileRow[]).filter((f) => f?.is_interview !== true);
   const fileCount = files.length;
 
   const inputCoverage = new Set<string>();
@@ -5211,6 +5229,13 @@ Deno.serve(async (req) => {
     // that. Plain machine 409 (no operator prose — the friendly dialog is a later gate).
     if (await companyHasSpine(supabase, String(company_id))) {
       return jsonResponse({ error: "company_has_spine" }, 409);
+    }
+    // Gate B (A1, 2026-09-19): the cold start re-seeds inputs and re-inserts their input_files rows
+    // (delete + insert below, new ids, and interview_records.input_file_id is ON DELETE RESTRICT). A company
+    // holding an interview upload is therefore never cold-started: refused by name, before the lock,
+    // nothing written. Fails closed on a lookup error.
+    if (await companyHasInterviewUploads(supabase, String(company_id))) {
+      return jsonResponse({ error: "company_has_interview_uploads", message: "This company holds an interview upload; a cold start would re-create its file rows. Nothing was written." }, 409);
     }
     // No-public-site refusal (2026-09-16): refused by name, before the lock, nothing written.
     if (await readNoPublicSite(supabase, String(company_id))) {

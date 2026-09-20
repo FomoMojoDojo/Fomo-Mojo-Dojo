@@ -236,11 +236,12 @@ async function main() {
 
   const { data: files, error: filesErr } = await supabase
     .from('input_files')
-    .select('id,input_id,file_name,file_path,uploaded_at')
+    .select('id,input_id,file_name,file_path,uploaded_at,is_interview')
     .in('input_id', inputIds)
     .order('uploaded_at', { ascending: false });
   if (filesErr) throw filesErr;
-  const fileRows = Array.isArray(files) ? files : [];
+  // Gate B (A1, 2026-09-19): an interview transcript is never mirrored to disk (and so never re-synced as an unflagged row).
+  const fileRows = (Array.isArray(files) ? files : []).filter((f) => f?.is_interview !== true);
 
   const plan = [];
   for (const file of fileRows) {

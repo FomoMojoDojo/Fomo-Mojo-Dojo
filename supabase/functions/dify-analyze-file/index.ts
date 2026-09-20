@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { encodeBlobBase64, parserRequestBody } from "../_shared/base64.ts";
 import { fileTooLargeBody, isOverCap, MAX_ANALYSIS_FILE_BYTES, storageObjectSize } from "../_shared/fileSizeGuard.ts";
+import { interviewFenceForFile, interviewFileRefusalBody } from "../_shared/uploadCorpus.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
 import { isLocalOllamaUrl as isLocalClassifierUrl, resolveUploadOrigin } from "../_shared/uploadVoiceClassifier.ts";
@@ -1067,6 +1068,14 @@ serve(async (req) => {
       );
     }
 
+    // Interview fence (Gate B, A1, 2026-09-19): an interview transcript never goes through the Dify file
+    // workflow — refused before the signed URL, the download and the file_proposals insert. Fails closed.
+    const fence = await interviewFenceForFile(supabase as unknown as Parameters<typeof interviewFenceForFile>[0], { fileId, filePath });
+    if (fence.interview) {
+      console.log("[dify-analyze-file] refused interview_file:", fence.why, fence.detail);
+      return new Response(JSON.stringify(interviewFileRefusalBody(fence)), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // Create a 15-minute signed URL so Dify can fetch the file directly.
     const { data: signedData, error: signError } = await supabase.storage
       .from("input-files")
@@ -1116,7 +1125,7 @@ serve(async (req) => {
         normalizedType.startsWith("text/") ||
         normalizedType.includes("json") ||
         normalizedType.includes("csv") ||
-        ["txt", "csv", "md", "json", "xml", "yaml", "yml", "toml"].includes(ext)
+        ["txt", "csv", "md", "json", "xml", "yaml", "yml", "toml", "vtt", "srt"].includes(ext)
       ) {
         fileText = await downloaded.text();
       } else {

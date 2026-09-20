@@ -27,6 +27,8 @@ export function fakeDb(tables: Record<string, Row[]>) {
     q.eq = (col: string, val: unknown) => chain(() => filters.push((r) => r[col] === val));
     q.neq = (col: string, val: unknown) => chain(() => filters.push((r) => r[col] !== val));
     q.is = (col: string, val: unknown) => chain(() => filters.push((r) => (val === null ? r[col] == null : r[col] === val)));
+    // .not(col, "is", null) — the one negated form the loaders use (interview fence, Gate B).
+    q.not = (col: string, op: string, val: unknown) => chain(() => filters.push((r) => (op === "is" ? (val === null ? r[col] != null : r[col] !== val) : r[col] !== val)));
     q.in = (col: string, vals: unknown[]) => chain(() => filters.push((r) => vals.includes(r[col])));
     q.order = (col: string, o?: { ascending?: boolean }) => chain(() => { orderBy = { col, asc: o?.ascending !== false }; });
     q.limit = (n: number) => chain(() => { limitN = n; });

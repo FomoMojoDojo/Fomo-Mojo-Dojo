@@ -114,11 +114,13 @@ async function fetchEvidenceState(args: {
 
   let uploadedFileCount = 0;
   if (inputIds.length > 0) {
-    const { count } = await args.supabase
+    // R16 (2026-09-19): an interview transcript is never "uploaded evidence" — excluded; a lookup error counts as zero (fail closed).
+    const { count, error: countErr } = await args.supabase
       .from("input_files")
       .select("id", { count: "exact", head: true })
-      .in("input_id", inputIds);
-    uploadedFileCount = Number(count || 0);
+      .in("input_id", inputIds)
+      .eq("is_interview", false);
+    uploadedFileCount = countErr ? 0 : Number(count || 0);
   }
 
   const { count: existingOpportunityCount } = await args.supabase

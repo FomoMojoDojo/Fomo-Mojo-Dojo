@@ -12,6 +12,8 @@ export interface CompanyFileRow {
   archived_at: string | null;
   archive_reason: string | null;
   archive_source: string | null;
+  /** Gate B (A1, 2026-09-19): an interview transcript — saved and recorded only. */
+  is_interview?: boolean | null;
 }
 
 // Fetches active (non-archived) input_files for a company via inputs.company_id.

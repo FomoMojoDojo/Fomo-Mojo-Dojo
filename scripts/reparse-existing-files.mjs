@@ -2,7 +2,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+
+/** Gate B (R6, 2026-09-19): input_files.is_interview — such a file is skipped by this script, never sent to analyze-file. */
+export function isInterviewFile(file) {
+  return file?.is_interview === true;
+}
 
 function readEnvFile(envPath) {
   if (!fs.existsSync(envPath)) return;
@@ -104,7 +110,7 @@ async function main() {
 
   const { data: files, error: filesError } = await supabase
     .from("input_files")
-    .select("id,input_id,file_name,file_type,file_path,uploaded_at")
+    .select("id,input_id,file_name,file_type,file_path,uploaded_at,is_interview")
     .in("input_id", inputIds)
     .order("uploaded_at", { ascending: true });
   if (filesError) throw filesError;
@@ -112,7 +118,7 @@ async function main() {
   const queue = (files ?? []).filter((file) => {
     const input = inputById.get(file.input_id);
     return Boolean(input && selectedCompanyIds.has(input.company_id));
-  });
+  }).filter((file) => !isInterviewFile(file)); // Gate B (R6): an interview transcript is never re-parsed — no sidecar, ever
 
   const limitedQueue = args.limit > 0 ? queue.slice(0, args.limit) : queue;
   if (limitedQueue.length === 0) {
@@ -171,7 +177,10 @@ async function main() {
   console.log("Next step: run deep-dive analysis again for the affected company areas.");
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
-});
+// Run only when executed directly (the Gate B guard imports isInterviewFile without running the script).
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });
+}

@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 import http from "node:http";
+import { createRequire } from "node:module";
 import mammoth from "mammoth";
 import JSZip from "jszip";
 
 const HOST = process.env.LOCAL_PARSER_HOST || "0.0.0.0";
 const PORT = Number(process.env.LOCAL_PARSER_PORT || 8789);
+// Gate B (R1, 2026-09-19): every extraction reports the parser versions so a transcript record can store
+// extraction_version — { server, pdfjs, mammoth } read once from the installed packages.
+const require = createRequire(import.meta.url);
+const PARSER_VERSIONS = Object.freeze({
+  server: "local-parser-server-2026-09-19",
+  pdfjs: (() => { try { return String(require("pdfjs-dist/package.json").version); } catch { return "unknown"; } })(),
+  mammoth: (() => { try { return String(require("mammoth/package.json").version); } catch { return "unknown"; } })(),
+});
 const MAX_BODY_BYTES = Number(process.env.LOCAL_PARSER_MAX_BODY_BYTES || 35 * 1024 * 1024);
 
 function extensionFromName(name) {
@@ -81,13 +90,13 @@ async function extractText({ fileName, fileType, contentBase64 }) {
   const buffer = Buffer.from(String(contentBase64 || ""), "base64");
   const ext = extensionFromName(fileName);
   const normalizedType = String(fileType || "").toLowerCase();
-  const shaped = (text, source, images = 0, pages = null) => ({ text, source, chars: text.length, images, pages });
+  const shaped = (text, source, images = 0, pages = null) => ({ text, source, chars: text.length, images, pages, versions: PARSER_VERSIONS });
 
   const isText =
     normalizedType.startsWith("text/") ||
     normalizedType.includes("json") ||
     normalizedType.includes("csv") ||
-    ["txt", "csv", "md", "json", "xml", "yaml", "yml", "toml"].includes(ext);
+    ["txt", "csv", "md", "json", "xml", "yaml", "yml", "toml", "vtt", "srt"].includes(ext);
   if (isText) {
     return shaped(normalizeText(buffer.toString("utf8")), "local_text_reader");
   }

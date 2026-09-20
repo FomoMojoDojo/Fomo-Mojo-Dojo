@@ -834,10 +834,11 @@ Deno.serve(async (req) => {
     const { data: fileRows } = inputIds.length > 0
       ? await supabase
           .from("input_files")
-          .select("id,input_id,file_name,tags,uploaded_at")
+          .select("id,input_id,file_name,tags,uploaded_at,is_interview")
           .in("input_id", inputIds)
       : { data: [] };
-    const files = Array.isArray(fileRows) ? fileRows : [];
+    // Gate B (A1, 2026-09-19): an interview transcript's row (even its name) never reaches this model.
+    const files = (Array.isArray(fileRows) ? fileRows : []).filter((f: any) => f?.is_interview !== true);
 
     const filesByInput = new Map<string, Array<Record<string, unknown>>>();
     for (const file of files as any[]) {

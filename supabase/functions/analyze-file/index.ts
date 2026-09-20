@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { encodeBlobBase64, parserRequestBody } from "../_shared/base64.ts";
 import { fileTooLargeBody, isOverCap, MAX_ANALYSIS_FILE_BYTES, storageObjectSize } from "../_shared/fileSizeGuard.ts";
+import { interviewFenceForFile, interviewFileRefusalBody } from "../_shared/uploadCorpus.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -262,6 +263,13 @@ serve(async (req) => {
     );
 
     if (!effectiveFileContent.trim() && filePath) {
+      // Interview fence (Gate B, A1, 2026-09-19): an interview transcript is never analysed and never gets a
+      // sidecar — refused here, before the size guard and any download. Fails closed on a lookup error.
+      const fence = await interviewFenceForFile(supabase as unknown as Parameters<typeof interviewFenceForFile>[0], { filePath });
+      if (fence.interview) {
+        console.error("analyze-file refused interview_file:", fence.why, fence.detail);
+        return new Response(JSON.stringify(interviewFileRefusalBody(fence)), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       // Size guard (2026-09-12): refuse above the cap from storage metadata, before any download; this
       // function writes nothing (the sidecar comes after extraction), so nothing is left half-written.
       const objectSize = await storageObjectSize(supabase, "input-files", filePath);
@@ -285,7 +293,7 @@ serve(async (req) => {
           normalizedType.startsWith("text/") ||
           normalizedType.includes("json") ||
           normalizedType.includes("csv") ||
-          ["txt", "csv", "md", "json", "xml", "yaml", "yml", "toml"].includes(ext)
+          ["txt", "csv", "md", "json", "xml", "yaml", "yml", "toml", "vtt", "srt"].includes(ext)
         ) {
           effectiveFileContent = await downloaded.text();
           effectiveExtractionSource = "local_text_reader";

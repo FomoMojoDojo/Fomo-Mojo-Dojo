@@ -23,14 +23,19 @@
 // so their proposals dangle — Edgewood Alternatives-14b55a57.pdf). An upload with some live
 // signals, or with no signals at all (not yet ingested), still contributes. A lookup error
 // FAILS CLOSED: every upload is excluded and the exclusion is reported, never silently included.
+//
+// INTERVIEW uploads are EXCLUDED (Gate B, ruling A1, signed 2026-09-19): an interview transcript never
+// enters the client-voice corpus — the fence keys on the FILE: input_files.is_interview = true OR a
+// matching interview_records.input_file_id (either alone is enough). Reported with reason "interview".
+// A lookup error on the record side fails closed: every upload is excluded.
 
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { sidecarCapForFile } from "./sidecarAllocation.ts";
 
-export const UPLOAD_FAMILY_SOURCE_TYPES = ["uploaded_file", "file", "file_proposal", "intake"] as const;
+export const UPLOAD_FAMILY_SOURCE_TYPES = ["uploaded_file", "file", "file_proposal", "intake", "interview"] as const;
 export const OPERATOR_RETIRED_PREFIX = "operator_retired";
 
-export type ExcludedUpload = { input_file_id: string; file_name: string; reason: "operator_retired" | "lookup_error"; detail: string };
+export type ExcludedUpload = { input_file_id: string; file_name: string; reason: "operator_retired" | "lookup_error" | "interview"; detail: string };
 export type ContributingCorpus = { docs: ContributingDoc[]; excluded: ExcludedUpload[] };
 
 type ProposalRow = { id: string; file_id: string | null; file_name: string | null };
@@ -91,7 +96,7 @@ export async function loadContributingCorpus(
 
   const { data: fileRows } = await supabase
     .from("input_files")
-    .select("id, file_name, file_type, file_path, archived_at")
+    .select("id, file_name, file_type, file_path, archived_at, is_interview")
     .in("input_id", inputIds)
     .limit(180);
   const notArchived = ((fileRows ?? []) as Array<{
@@ -100,7 +105,19 @@ export async function loadContributingCorpus(
     file_type?: string;
     file_path?: string;
     archived_at?: string | null;
+    is_interview?: boolean | null;
   }>).filter((f) => !f?.archived_at); // withdrawn uploads are never declared voice
+
+  // A1 — the interview fence: the flag on the file OR a record naming the file. Fail closed on a lookup error.
+  let interviewFileIds: Set<string> | null = null;
+  let interviewLookupError: string | null = null;
+  try {
+    const { data: iRows, error: iErr } = await supabase.from("interview_records").select("input_file_id").eq("company_id", companyId).not("input_file_id", "is", null);
+    if (iErr) throw new Error(`interview_records: ${String(iErr.message ?? iErr)}`);
+    interviewFileIds = new Set(((iRows ?? []) as Array<{ input_file_id?: unknown }>).map((r) => String(r.input_file_id ?? "")).filter(Boolean));
+  } catch (e) {
+    interviewLookupError = String(e instanceof Error ? e.message : e);
+  }
 
   // J2 — the retirement filter, ONE predicate, ONE place. Fail closed on a lookup error.
   let proposals: ProposalRow[] = [];
@@ -120,6 +137,14 @@ export async function loadContributingCorpus(
   const files = notArchived.filter((f) => {
     const id = String(f?.id || "");
     const name = String(f?.file_name || "").trim();
+    if (interviewLookupError) {
+      excluded.push({ input_file_id: id, file_name: name, reason: "lookup_error", detail: `interview lookup failed — excluded (fail closed): ${interviewLookupError}` });
+      return false;
+    }
+    if (f?.is_interview === true || interviewFileIds?.has(id)) {
+      excluded.push({ input_file_id: id, file_name: name, reason: "interview", detail: f?.is_interview === true ? "input_files.is_interview" : "interview_records.input_file_id" });
+      return false;
+    }
     if (lookupError) {
       excluded.push({ input_file_id: id, file_name: name, reason: "lookup_error", detail: `retirement lookup failed — excluded (fail closed): ${lookupError}` });
       return false;
@@ -169,4 +194,41 @@ export async function loadContributingCorpus(
   }
   // `ordered` already fixes B2B_-first + within-partition file_path order.
   return { docs: out, excluded };
+}
+
+// ── The interview fence for the analysis doors (Gate B, ruling A1) ────────────────────────────────
+// analyze-file and dify-analyze-file call this BEFORE any download or proposal insert. An interview file
+// is refused 422 interview_file. The key is the FILE: input_files.is_interview = true OR a matching
+// interview_records.input_file_id. A lookup error FAILS CLOSED (refused, reported as lookup_error).
+export const INTERVIEW_FILE_REFUSAL = "interview_file";
+export type InterviewFenceVerdict =
+  | { interview: false }
+  | { interview: true; why: "input_files.is_interview" | "interview_records.input_file_id" | "lookup_error"; detail: string };
+
+export async function interviewFenceForFile(
+  supabase: SupabaseLike,
+  ref: { fileId?: string | null; filePath?: string | null },
+): Promise<InterviewFenceVerdict> {
+  try {
+    let q = supabase.from("input_files").select("id, is_interview");
+    if (ref.fileId) q = q.eq("id", ref.fileId);
+    else if (ref.filePath) q = q.eq("file_path", ref.filePath);
+    else return { interview: false }; // nothing to key on (fileContent-only analyze-file calls have no file)
+    const { data: rows, error } = await q.limit(1);
+    if (error) throw new Error(`input_files: ${String((error as { message?: unknown }).message ?? error)}`);
+    const row = ((rows ?? []) as Array<{ id?: unknown; is_interview?: unknown }>)[0];
+    if (!row) return { interview: false }; // an object with no input_files row is not an interview (and not ours to fence)
+    if (row.is_interview === true) return { interview: true, why: "input_files.is_interview", detail: String(row.id ?? "") };
+    const { data: recs, error: rErr } = await supabase.from("interview_records").select("id").eq("input_file_id", String(row.id ?? "")).limit(1);
+    if (rErr) throw new Error(`interview_records: ${String((rErr as { message?: unknown }).message ?? rErr)}`);
+    if (((recs ?? []) as unknown[]).length > 0) return { interview: true, why: "interview_records.input_file_id", detail: String(row.id ?? "") };
+    return { interview: false };
+  } catch (e) {
+    return { interview: true, why: "lookup_error", detail: `interview fence lookup failed — refused (fail closed): ${String(e instanceof Error ? e.message : e)}` };
+  }
+}
+
+/** The 422 body both doors return. */
+export function interviewFileRefusalBody(v: Extract<InterviewFenceVerdict, { interview: true }>) {
+  return { ok: false, error: INTERVIEW_FILE_REFUSAL, why: v.why, detail: v.detail, message: "An interview transcript is never analysed — it is saved and recorded only. Nothing was written." };
 }

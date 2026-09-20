@@ -17,6 +17,7 @@ function fakeDb(tables: Record<string, Row[]>, sidecars: Record<string, string>,
       select: () => b,
       eq: (c: string, v: unknown) => chain((r) => r.filter((x) => x[c] === v)),
       in: (c: string, vs: unknown[]) => chain((r) => r.filter((x) => vs.includes(x[c]))),
+      not: (c: string, _op: string, v: unknown) => chain((r) => r.filter((x) => (v === null ? x[c] != null : x[c] !== v))), // Gate B: the interview-record lookup
       limit: () => b,
       then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve(result()).then(res, rej),
     });

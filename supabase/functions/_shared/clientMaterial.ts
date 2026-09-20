@@ -25,8 +25,8 @@ export type ClientMaterialKind = {
 };
 
 export const CLIENT_PROVIDED_SOURCE_KINDS: readonly ClientMaterialKind[] = [
-  { kind: "upload_signal", table: "signals", column: "source_type ∈ {uploaded_file, file, file_proposal, intake}",
-    query: (sb, c) => sb.from("signals").select("id", { count: "exact", head: true }).eq("company_id", c).in("source_type", ["uploaded_file", "file", "file_proposal", "intake"]) },
+  { kind: "upload_signal", table: "signals", column: "source_type ∈ {uploaded_file, file, file_proposal, intake, interview}",
+    query: (sb, c) => sb.from("signals").select("id", { count: "exact", head: true }).eq("company_id", c).in("source_type", ["uploaded_file", "file", "file_proposal", "intake", "interview"]) },
   { kind: "uploaded_file", table: "input_files", column: "input_id → inputs.company_id (any row, archived included)",
     query: (sb, c) => sb.from("input_files").select("id, inputs!inner(company_id)", { count: "exact", head: true }).eq("inputs.company_id", c) },
   { kind: "file_proposal", table: "file_proposals", column: "file_id IS NOT NULL (a Dify analysis of an uploaded file; the file-less mojo-analysis proposal is not client material)",

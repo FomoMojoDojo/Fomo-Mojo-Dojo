@@ -1073,7 +1073,7 @@ export async function handleLocalJobmapSynthesis(
     const { data: inputFiles } = inputIds.length > 0
       ? await supabase
           .from("input_files")
-          .select("input_id,file_name,file_path,tags,uploaded_at")
+          .select("input_id,file_name,file_path,tags,uploaded_at,is_interview")
           .in("input_id", inputIds)
           .order("uploaded_at", { ascending: false })
           .limit(180)
@@ -1084,7 +1084,8 @@ export async function handleLocalJobmapSynthesis(
     const evidenceLedger = Array.isArray(baseline?.evidence_ledger) ? baseline?.evidence_ledger : [];
     const strategicProblems = Array.isArray(strategicProblemsData) ? strategicProblemsData : [];
     const inputs = Array.isArray(inputRows) ? inputRows : [];
-    const files = Array.isArray(inputFiles) ? inputFiles : [];
+    // Gate B (A1, 2026-09-19): an interview transcript's row (even its name) never reaches the model context.
+    const files = (Array.isArray(inputFiles) ? inputFiles : []).filter((row) => (row as Record<string, unknown>)?.is_interview !== true);
     const primaryOutcome = asRecord(primaryOutcomeRow as Record<string, unknown> | null);
     // Ruling 1: the customer's extras only on a customer run — a market run carries none.
     const performer = resolveRunPerformer(journeyDefinitions, definitionsByKey, {

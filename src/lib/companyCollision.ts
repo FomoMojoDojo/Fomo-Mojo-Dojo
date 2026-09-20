@@ -204,6 +204,7 @@ export async function createCompanyInstance(args: {
         file_type: (file.file_type as string | null) ?? null,
         file_path: newPath,
         tags: (file.tags as string[] | null) ?? undefined,
+        is_interview: file.is_interview === true, // Gate B (A1): a copied transcript stays fenced (its record is not copied)
       });
       if (fileErr) result.fileFailures.push(String(file.file_name || baseName));
       else result.filesCopied += 1;

@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { mapInputToAreaKey } from '@/lib/areaMapping';
 import { makeAreaSupportTag } from '@/lib/fileTags';
 import { FILE_TOO_LARGE_CAP_BYTES, fileTooLargeMessage, refusalFromInvoke, type FileTooLargeRefusal } from '@/lib/fileTooLarge';
+import { INTERVIEW_UPLOAD_STRINGS, isTranscriptFileName, resolveInterviewHome, sha256HexOfFile, speakerRoleFor, type InterviewSpeaker } from '@/lib/interviewUploadStrings';
 
 interface Props {
   open: boolean;
@@ -53,6 +54,8 @@ type UploadSummary = {
   reasoning: string;
   source: AssignmentSource;
   error?: string;
+  /** Gate B: an interview transcript — saved and recorded only (no analysis, no corpus, no needs). */
+  interview?: { speakerRole: 'client_stakeholder' | 'market_participant'; marketState: string };
 };
 
 type UploadProgress = {
@@ -71,6 +74,7 @@ const ANALYZE_TIMEOUT_MS = 20_000;
 const SUPPORTED_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
   'csv', 'txt', 'md', 'json', 'xml', 'yaml', 'yml', 'toml',
+  'vtt', 'srt', // F1 (2026-09-19): caption / subtitle transcripts — text types on every path
   'png', 'jpg', 'jpeg', 'webp',
 ]);
 const FILE_ACCEPT_ATTR = Array.from(SUPPORTED_EXTENSIONS)
@@ -460,6 +464,10 @@ export default function FileUploadDialog({
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [uploadSummaries, setUploadSummaries] = useState<UploadSummary[]>([]);
   const [selectedProvenanceTags, setSelectedProvenanceTags] = useState<string[]>([]);
+  // Gate B (2026-09-19): the interview door — one switch, one choice. With the switch on the dialog calls ONLY
+  // record-interview-upload: no analyze-file, no classify-upload-voice, no upload-derived needs, no tag enrichment.
+  const [isInterview, setIsInterview] = useState(false);
+  const [interviewSpeaker, setInterviewSpeaker] = useState<InterviewSpeaker | null>(null);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [alignmentRunning, setAlignmentRunning] = useState(false);
   const queryClient = useQueryClient();
@@ -503,6 +511,8 @@ export default function FileUploadDialog({
     setIsDraggingFile(false);
     setUploadSummaries([]);
     setSelectedProvenanceTags([]);
+    setIsInterview(false);
+    setInterviewSpeaker(null);
     setProgress(null);
     setAlignmentRunning(false);
     clearNativeInputValue();
@@ -609,6 +619,44 @@ export default function FileUploadDialog({
             }
           : current,
       );
+
+      if (isInterview && interviewSpeaker) {
+        // ── The interview door (Gate B commit 1) ────────────────────────────────────────────────────────
+        // No analysis of any kind: the input is resolved without a model (default / filename / first),
+        // the row is inserted with is_interview = true (A1), and record-interview-upload does the rest
+        // (hash check, extraction, ONE record). The client never sends transcript text (A4).
+        const speakerRole = speakerRoleFor(interviewSpeaker);
+        // R17 (2026-09-19): an interview file is never keyword-mapped — its fixed home is the company's
+        // customer-research input, for both speaker roles; no such input → refused, nothing recorded.
+        const assigned = { input: resolveInterviewHome(eligibleInputs, file.name), source: 'none' as AssignmentSource };
+        const finish = (summary: UploadSummary, ok: boolean) => {
+          if (ok) successCount += 1; else { failureCount += 1; failedFiles.push(file); }
+          localSummaries.push(summary);
+          completedDurationsMs.push(Date.now() - fileStartedAtMs);
+          setProgress((current) => current ? { ...current, completed: index + 1, currentFile: file.name, phase: index + 1 === queue.length ? 'done' : 'uploading', success: successCount, failed: failureCount, etaMs: computeReliableEtaMs(completedDurationsMs, queue.length, index + 1) } : current);
+        };
+        if (!assigned.input) { finish({ fileName: file.name, status: 'failed', tags: [], reasoning: 'Could not map this file to an input area.', source: assigned.source, error: 'No matching input area.' }, false); continue; }
+        if (!isTranscriptFileName(file.name)) { finish({ fileName: file.name, status: 'failed', tags: [], reasoning: INTERVIEW_UPLOAD_STRINGS.unsupportedType, source: assigned.source, error: INTERVIEW_UPLOAD_STRINGS.unsupportedType }, false); continue; }
+        setProgress((current) => current ? { ...current, currentFile: file.name, phase: 'uploading' } : current);
+        try {
+          const fileSha256 = await sha256HexOfFile(file);
+          const uploadResult = await uploadMutation.mutateAsync({ inputId: assigned.input.id, inputKey: assigned.input.input_key, companyName: companyName ?? activeCompany?.name ?? '', file, tags: [], isInterview: true });
+          const { data, error } = await supabase.functions.invoke('record-interview-upload', { body: { company_id: selectedCompanyId, input_file_id: uploadResult.id, speaker_role: speakerRole, file_sha256: fileSha256 } });
+          const payload = (data ?? {}) as { ok?: boolean; error?: string; message?: string; market_state?: string };
+          if (error || !payload.ok) {
+            // The server rolled the object and the row back; its message is a signed string (S4 / S5 / S6).
+            let message = typeof payload.message === 'string' && payload.message ? payload.message : INTERVIEW_UPLOAD_STRINGS.hashMismatch;
+            if (error && !payload.message) { try { const body = await (error as { context?: Response }).context?.json?.(); if (body && typeof body.message === 'string') message = body.message; } catch { /* keep the signed default */ } }
+            finish({ fileName: file.name, status: 'failed', tags: [], reasoning: message, source: assigned.source, error: message }, false);
+            continue;
+          }
+          // The result line for an interview shows the file name and "Interview · Saved. Not yet parsed." only — no input name, no mapping word.
+          finish({ fileName: file.name, status: 'uploaded', tags: [], reasoning: INTERVIEW_UPLOAD_STRINGS.savedNotParsed, source: 'none', interview: { speakerRole, marketState: String(payload.market_state ?? '') } }, true);
+        } catch (err: unknown) {
+          finish({ fileName: file.name, status: 'failed', tags: [], reasoning: (err as Error)?.message ?? 'Upload failed', source: assigned.source, error: (err as Error)?.message ?? 'Upload failed' }, false);
+        }
+        continue;
+      }
 
       const initialAnalysis = await analyzeFileWithTimeout(file, eligibleInputs, { includeFileContent: false });
       const provisionalAssigned = resolveAssignedInput({
@@ -784,7 +832,8 @@ export default function FileUploadDialog({
       void queryClient.invalidateQueries({ queryKey: ['company-files', selectedCompanyId] });
     }
 
-    if (successCount > 0 && selectedCompanyId) {
+    // Gate B: an interview batch calls ONLY record-interview-upload — no local comparison kick either.
+    if (successCount > 0 && selectedCompanyId && !isInterview) {
       setAlignmentRunning(true);
       void supabase.functions
         .invoke("local-alignment", {
@@ -816,7 +865,7 @@ export default function FileUploadDialog({
     onOpenChange(nextOpen);
   }
 
-  const canUpload = files.length > 0 && hasInputs && !uploading;
+  const canUpload = files.length > 0 && hasInputs && !uploading && (!isInterview || interviewSpeaker !== null); // the interview switch needs its one choice
 
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -947,6 +996,28 @@ export default function FileUploadDialog({
           ) : null}
 
           {files.length > 0 ? (
+            <div className="border px-3 py-3" style={{ background: '#ffffff', borderColor: '#dde6d1' }} data-testid="upload-interview">
+              <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: '#6e847f' }}>
+                <input type="checkbox" role="switch" aria-checked={isInterview} checked={isInterview} onChange={(e) => { setIsInterview(e.target.checked); if (!e.target.checked) setInterviewSpeaker(null); }} data-testid="upload-interview-switch" />
+                {INTERVIEW_UPLOAD_STRINGS.isInterview}
+              </label>
+              {isInterview ? (
+                <fieldset className="mt-2" data-testid="upload-interview-speaker">
+                  <legend className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: '#6e847f' }}>{INTERVIEW_UPLOAD_STRINGS.whoIsSpeaking}</legend>
+                  <div className="mt-1 flex gap-2">
+                    {(["stakeholder", "customer"] as const).map((who) => (
+                      <label key={who} className="border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={interviewSpeaker === who ? { background: '#233c4b', color: '#faf7f6', borderColor: '#233c4b' } : { background: '#ffffff', color: '#46606d', borderColor: '#dde6d1' }}>
+                        <input type="radio" name="interview-speaker" className="sr-only" value={who} checked={interviewSpeaker === who} onChange={() => setInterviewSpeaker(who)} data-testid={`upload-interview-${who}`} />
+                        {who === "stakeholder" ? INTERVIEW_UPLOAD_STRINGS.stakeholder : INTERVIEW_UPLOAD_STRINGS.customer}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              ) : null}
+            </div>
+          ) : null}
+
+          {files.length > 0 && !isInterview ? (
             <div className="border px-3 py-3" style={{ background: '#ffffff', borderColor: '#dde6d1' }}>
               <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: '#6e847f' }}>
                 Source Tags (Optional)
@@ -1068,9 +1139,11 @@ export default function FileUploadDialog({
                     </p>
                     {summary.status === 'uploaded' ? (
                       <>
-                        <p className="mt-0.5 font-sans text-[12px]" style={{ color: '#46606d' }}>
-                          {summary.inputLabel} ({summary.subGroup}) • {sourceLabel(summary.source)}
-                        </p>
+                        {summary.interview ? null : (
+                          <p className="mt-0.5 font-sans text-[12px]" style={{ color: '#46606d' }} data-testid="upload-result-mapping">
+                            {summary.inputLabel} ({summary.subGroup}) • {sourceLabel(summary.source)}
+                          </p>
+                        )}
                         {summary.derivedNeedsAdded && summary.derivedNeedsAdded > 0 ? (
                           <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#4c7f73' }}>
                             +{summary.derivedNeedsAdded} upload-derived Strategic Decision System need{summary.derivedNeedsAdded === 1 ? '' : 's'} added
@@ -1086,7 +1159,11 @@ export default function FileUploadDialog({
                             {summary.additionalSignals[0]}
                           </p>
                         ) : null}
-                        {summary.refusal ? (
+                        {summary.interview ? (
+                          <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#4c7f73' }} data-testid="upload-interview-saved">
+                            {INTERVIEW_UPLOAD_STRINGS.chip} · {INTERVIEW_UPLOAD_STRINGS.savedNotParsed}
+                          </p>
+                        ) : summary.refusal ? (
                           <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#915e46' }} data-testid="upload-analysis-refused">
                             {fileTooLargeMessage(summary.refusal)}
                           </p>

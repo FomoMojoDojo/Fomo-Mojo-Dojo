@@ -345,12 +345,15 @@ export function useUploadInputFile() {
       companyName,
       file,
       tags,
+      isInterview,
     }: {
       inputId: string;
       inputKey?: string;
       companyName?: string;
       file: File;
       tags?: string[];
+      /** Gate B (A1, 2026-09-19): an interview transcript — the flag lands in the SAME insert as the row. */
+      isInterview?: boolean;
     }) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
@@ -374,6 +377,7 @@ export function useUploadInputFile() {
           file_type: file.type || file.name.split('.').pop() || '',
           file_path: filePath,
           tags: normalizedTags,
+          is_interview: isInterview === true,
         })
         .select('id, file_path, uploaded_at')
         .single();
@@ -396,7 +400,8 @@ export function useUploadInputFile() {
       if (subitemsError) throw subitemsError;
 
       const rows = (subitems ?? []) as Array<{ id: string; done: boolean }>;
-      if (rows.length === 1 && !rows[0].done) {
+      // R15 (2026-09-19): an interview upload never toggles a checklist subitem (and so never moves completeness).
+      if (isInterview !== true && rows.length === 1 && !rows[0].done) {
         const { error: toggleError } = await supabase
           .from('input_subitems')
           .update({ done: true })

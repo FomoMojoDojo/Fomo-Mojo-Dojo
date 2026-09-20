@@ -34,6 +34,9 @@ vi.mock("@/hooks/useRoutes", () => ({ useRoutes: () => ({ items: [] }) }));
 vi.mock("@/hooks/useSignalLandscape", () => ({ useSignalLandscape: () => ({ landscape: null }) }));
 vi.mock("@/hooks/usePublicBaseline", () => ({ usePublicBaseline: () => ({ run: null, preferredRun: null, loading: false }) })); // gate B: the page reads the latest run's plan_kind
 vi.mock("@/components/FileUploadDialog", () => ({ default: () => null }));
+// Gate B (2026-09-19): the page reads interview upload records through this hook at mount; stubbed so the
+// "zero supabase calls" proof below stays about the View-analysis click, as before.
+vi.mock("@/hooks/useInterviewUploads", () => ({ useInterviewUploads: () => ({ records: [], markets: [], loading: false, refetch: () => {}, changeMarket: async () => ({ ok: true }) }) }));
 const PROPOSAL: FileProposalRow = {
   id: "prop-1", company_id: "c1", file_id: "file-1", file_name: FILE.file_name, source_type: "uploaded_file",
   summary: "The document outlines a strategic review session.", evidence: ["Funds it on a shoestring."], signal_type: "document", framework_results: [],
