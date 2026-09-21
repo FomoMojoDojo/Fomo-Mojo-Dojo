@@ -451,6 +451,12 @@ async function persistUploadDerivedNeeds(params: {
   }
 }
 
+/** Commit 2b: the browser's post-upload inference call — fire-and-forget, result and failure both ignored here
+ *  (the Inputs page shows the run through its planned row). Exported for the test. */
+export function startInterviewMarketInference(companyId: string, recordId: string): void {
+  void supabase.functions.invoke('infer-interview-market', { body: { company_id: companyId, interview_record_id: recordId } }).catch(() => undefined);
+}
+
 export default function FileUploadDialog({
   open,
   onOpenChange,
@@ -642,7 +648,7 @@ export default function FileUploadDialog({
           const fileSha256 = await sha256HexOfFile(file);
           const uploadResult = await uploadMutation.mutateAsync({ inputId: assigned.input.id, inputKey: assigned.input.input_key, companyName: companyName ?? activeCompany?.name ?? '', file, tags: [], isInterview: true });
           const { data, error } = await supabase.functions.invoke('record-interview-upload', { body: { company_id: selectedCompanyId, input_file_id: uploadResult.id, speaker_role: speakerRole, file_sha256: fileSha256 } });
-          const payload = (data ?? {}) as { ok?: boolean; error?: string; message?: string; market_state?: string };
+          const payload = (data ?? {}) as { ok?: boolean; error?: string; message?: string; market_state?: string; record_id?: string };
           if (error || !payload.ok) {
             // The server rolled the object and the row back; its message is a signed string (S4 / S5 / S6).
             let message = typeof payload.message === 'string' && payload.message ? payload.message : INTERVIEW_UPLOAD_STRINGS.hashMismatch;
@@ -652,6 +658,9 @@ export default function FileUploadDialog({
           }
           // The result line for an interview shows the file name and "Interview · Saved. Not yet parsed." only — no input name, no mapping word.
           finish({ fileName: file.name, status: 'uploaded', tags: [], reasoning: INTERVIEW_UPLOAD_STRINGS.savedNotParsed, source: 'none', interview: { speakerRole, marketState: String(payload.market_state ?? '') } }, true);
+          // Commit 2b (2026-09-21): a CUSTOMER upload that succeeded starts its market inference as its OWN call —
+          // never awaited by the upload, never part of it; a failure here changes nothing about the upload.
+          if (speakerRole === 'market_participant' && payload.record_id) startInterviewMarketInference(selectedCompanyId, payload.record_id);
         } catch (err: unknown) {
           finish({ fileName: file.name, status: 'failed', tags: [], reasoning: (err as Error)?.message ?? 'Upload failed', source: assigned.source, error: (err as Error)?.message ?? 'Upload failed' }, false);
         }

@@ -30,6 +30,8 @@ export const MODEL_CALL_SITES: readonly ModelCallSite[] = [
   { site: "generate-open-questions", provider: "openai", role: "open-questions generate + judge", captured: true },
   { site: "generate-conflict-explanation", provider: "openai", role: "conflict one-liner + grounding judge", captured: true },
   { site: "own-words-judge", provider: "openai", role: "own-words keep/kind judge (birth + retype)", captured: true },
+  // Gate B 2b (2026-09-21): the first local site that reads prompt_eval_count / eval_count — one row per window, usd NULL.
+  { site: "infer-interview-market", provider: "ollama", role: "interview market inference (one call per transcript window)", captured: true },
 
   // ── not captured: the transports never read usage. A later gate. ──
   { site: "ollama-local-judges", provider: "ollama", role: "all local generators and judges", captured: false, note: "prompt_eval_count/eval_count not read by any local transport" },

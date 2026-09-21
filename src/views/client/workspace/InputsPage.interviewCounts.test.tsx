@@ -25,7 +25,7 @@ vi.mock("@/hooks/useSignalLandscape", () => ({ useSignalLandscape: () => ({ land
 vi.mock("@/hooks/usePublicBaseline", () => ({ usePublicBaseline: () => ({ run: null, preferredRun: null, loading: false }) }));
 vi.mock("@/components/FileUploadDialog", () => ({ default: () => null }));
 vi.mock("@/hooks/useFileProposals", () => ({ useFileProposals: () => ({ data: [], refetch: async () => {} }) }));
-vi.mock("@/hooks/useInterviewUploads", () => ({ useInterviewUploads: () => ({ records: [{ id: "r1", input_file_id: "iv-1", speaker_role: "market_participant", market_state: "unplaced", journey_key: null, market_basis: [], review_state: "unreviewed", retracted_at: null }], markets: [], loading: false, refetch: () => {}, changeMarket: async () => ({ ok: true }) }) }));
+vi.mock("@/hooks/useInterviewUploads", async (orig) => ({ ...(await orig<typeof import("@/hooks/useInterviewUploads")>()), useInterviewUploads: () => ({ records: [{ id: "r1", input_file_id: "iv-1", speaker_role: "market_participant", market_state: "unplaced", journey_key: null, market_basis: [], review_state: "unreviewed", retracted_at: null }], markets: [], loading: false, refetch: () => {}, changeMarket: async () => ({ ok: true }) }) }));
 
 const file = (id: string, tags: string[], is_interview = false) => ({ id, input_id: "in-1", file_name: `${id}.txt`, file_type: "text/plain", file_path: `c1/${id}.txt`, tags, uploaded_at: "2026-06-01T00:00:00Z", archived_at: null, archive_reason: null, archive_source: null, is_interview });
 const mount = () => render(<OperatorControlsContext.Provider value={null}><InputsPage /></OperatorControlsContext.Provider>).container;

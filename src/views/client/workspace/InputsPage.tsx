@@ -44,7 +44,7 @@ import { useProposalSync } from "@/hooks/useProposalSync";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useRoutes } from "@/hooks/useRoutes";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
-import { canChangeSpeaker, useInterviewUploads, type InterviewUploadRecord } from "@/hooks/useInterviewUploads";
+import { canChangeSpeaker, canInferMarket, lastRunFailed, lastRunFoundNoMajority, placedByInference, useInterviewUploads, type InterviewUploadRecord } from "@/hooks/useInterviewUploads";
 import { INTERVIEW_UPLOAD_STRINGS } from "@/lib/interviewUploadStrings";
 import { readAreaSupportTags } from "@/lib/fileTags";
 import FileUploadDialog from "@/components/FileUploadDialog";
@@ -123,6 +123,13 @@ export default function InputsPage() {
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
   const [speakerPickerId, setSpeakerPickerId] = useState<string | null>(null);
   const [speakerCollisionId, setSpeakerCollisionId] = useState<string | null>(null);
+  // Commit 2b (2026-09-21): a run this page started (M2 until it answers); the last outcome per record (M4 on
+  // failure — M3 is the placed line itself); S6 for a withdraw / speaker change / market change that did not save.
+  const [inferringId, setInferringId] = useState<string | null>(null);
+  const [inferFailedIds, setInferFailedIds] = useState<ReadonlySet<string>>(new Set());
+  const [saveFailedId, setSaveFailedId] = useState<string | null>(null);
+  const inFlight = interviews.inFlight ?? new Set<string>();
+  const inFlightReady = interviews.inFlightReady ?? true; // M1 waits for the page's first planned-rows read
   const interviewByFile = useMemo(() => new Map(interviews.records.map((r) => [r.input_file_id, r])), [interviews.records]);
   // Listing rule (2026-09-20): an interview row whose record is retracted is never rendered, archived or not.
   const retractedFileIds = useMemo(() => new Set(interviews.records.filter((r) => r.retracted_at !== null).map((r) => r.input_file_id)), [interviews.records]);
@@ -147,17 +154,27 @@ export default function InputsPage() {
 
   const refetchAll = async () => { await files.refetch(); await proposals.refetch(); await archivedQuery.refetch(); interviews.refetch(); };
   const marketTitle = (key: string | null) => (key ? (interviews.markets.find((m) => m.key === key)?.title ?? key) : "");
-  const pickMarket = async (rec: InterviewUploadRecord, key: string) => { setMarketPickerId(null); if (key && key !== rec.journey_key) await interviews.changeMarket(rec, key); };
+  const pickMarket = async (rec: InterviewUploadRecord, key: string) => {
+    setMarketPickerId(null); setSaveFailedId(null);
+    if (key && key !== rec.journey_key) { const r = await interviews.changeMarket(rec, key); if (!r.ok) setSaveFailedId(rec.id); } // S6 (2026-09-21): a failed change was silent before
+  };
   const withdrawInterview = async (rec: InterviewUploadRecord) => {
     if (withdrawingId) return;
-    setWithdrawingId(rec.id);
-    try { const r = await interviews.withdraw(rec); if (r.ok) { setWithdrawId(null); await files.refetch(); } } finally { setWithdrawingId(null); }
+    setWithdrawingId(rec.id); setSaveFailedId(null);
+    try { const r = await interviews.withdraw(rec); if (r.ok) { setWithdrawId(null); await files.refetch(); } else setSaveFailedId(rec.id); } finally { setWithdrawingId(null); }
   };
   const pickSpeaker = async (rec: InterviewUploadRecord, role: "client_stakeholder" | "market_participant") => {
-    setSpeakerPickerId(null); setSpeakerCollisionId(null);
+    setSpeakerPickerId(null); setSpeakerCollisionId(null); setSaveFailedId(null);
     if (role === rec.speaker_role) return;
     const r = await interviews.correctSpeaker(rec, role);
     if (!r.ok && r.collision) setSpeakerCollisionId(rec.id);
+    else if (!r.ok) setSaveFailedId(rec.id);
+  };
+  /** M1 → the edge function; M2 while it answers; a failure → M4 and M1 again; a placement → the M3 line. */
+  const inferMarket = async (rec: InterviewUploadRecord) => {
+    if (inferringId || !interviews.inferMarket) return;
+    setInferringId(rec.id); setInferFailedIds((prev) => { if (!prev.has(rec.id)) return prev; const next = new Set(prev); next.delete(rec.id); return next; });
+    try { const r = await interviews.inferMarket(rec); if (!r.ok) setInferFailedIds((prev) => new Set([...prev, rec.id])); } finally { setInferringId(null); }
   };
   const openFile = async (f: CompanyFileRow) => { window.open(await getFileSignedUrl(f.file_path), "_blank", "noopener"); };
   const analyze = async (f: CompanyFileRow) => {
@@ -280,7 +297,7 @@ export default function InputsPage() {
                                 <span className="fr-ws-interview" data-testid="inputs-interview" data-fr-speaker={rec?.speaker_role ?? undefined} data-fr-market-state={rec?.market_state ?? undefined} data-fr-market-key={rec?.journey_key ?? undefined}>
                                   <Chip tone="accent-4">{INTERVIEW_UPLOAD_STRINGS.chip}</Chip>
                                   <span className="fr-tag fr-mono" data-testid="inputs-interview-state">{INTERVIEW_UPLOAD_STRINGS.savedNotParsed}</span>
-                                  {rec && gated && canChangeSpeaker(rec) ? (
+                                  {rec && gated && canChangeSpeaker(rec, inFlight) && inferringId !== rec.id ? (
                                     <span className="fr-ws-interview-speaker fr-mono" data-testid="inputs-interview-speaker">
                                       <button type="button" className="fr-ws-control fr-mono" aria-haspopup="listbox" aria-expanded={speakerPickerId === rec.id} onClick={() => { setSpeakerPickerId(speakerPickerId === rec.id ? null : rec.id); setSpeakerCollisionId(null); }} {...{ [OPERATOR_MARK.attr]: "change-speaker" }} data-testid="inputs-change-speaker">
                                         {INTERVIEW_UPLOAD_STRINGS.changeSpeaker}
@@ -297,7 +314,19 @@ export default function InputsPage() {
                                   ) : null}
                                   {rec ? (
                                     <span className="fr-ws-interview-market fr-mono" data-testid="inputs-interview-market">
-                                      {customer ? (placed ? marketTitle(rec.journey_key) : INTERVIEW_UPLOAD_STRINGS.marketNotInferred) : INTERVIEW_UPLOAD_STRINGS.marketPerItem}
+                                      {customer
+                                        ? (placed
+                                          ? (placedByInference(rec) ? `${INTERVIEW_UPLOAD_STRINGS.marketInferredPrefix}${marketTitle(rec.journey_key)}` : marketTitle(rec.journey_key)) // M3 when inference placed it
+                                          : (inferringId === rec.id || inFlight.has(rec.id) ? INTERVIEW_UPLOAD_STRINGS.inferringMarket // M2 while a run is in flight
+                                            : lastRunFoundNoMajority(rec) ? INTERVIEW_UPLOAD_STRINGS.notInferredNoMajority // M5 after a run without a majority
+                                            : INTERVIEW_UPLOAD_STRINGS.marketNotInferred))
+                                        : INTERVIEW_UPLOAD_STRINGS.marketPerItem}
+                                      {customer && gated && !placed && (inferFailedIds.has(rec.id) || lastRunFailed(rec)) && inferringId !== rec.id && !inFlight.has(rec.id) ? <span className="fr-ws-analysis-refused fr-mono" data-testid="inputs-infer-failed">{INTERVIEW_UPLOAD_STRINGS.inferenceFailed}</span> : null}
+                                      {customer && gated && inFlightReady && canInferMarket(rec, inFlight) && inferringId !== rec.id ? (
+                                        <button type="button" className="fr-ws-control fr-mono" onClick={() => { void inferMarket(rec); }} {...{ [OPERATOR_MARK.attr]: "infer-market" }} data-testid="inputs-infer-market">
+                                          {INTERVIEW_UPLOAD_STRINGS.inferMarket}
+                                        </button>
+                                      ) : null}
                                       {customer && gated ? (
                                         <button type="button" className="fr-ws-control fr-mono" aria-haspopup="listbox" aria-expanded={marketPickerId === rec.id} onClick={() => setMarketPickerId(marketPickerId === rec.id ? null : rec.id)} {...{ [OPERATOR_MARK.attr]: "change-market" }} data-testid="inputs-change-market">
                                           {INTERVIEW_UPLOAD_STRINGS.changeMarket}
@@ -312,6 +341,7 @@ export default function InputsPage() {
                                       ) : null}
                                     </span>
                                   ) : null}
+                                  {rec && saveFailedId === rec.id ? <span className="fr-ws-analysis-refused fr-mono" data-testid="inputs-save-failed">{INTERVIEW_UPLOAD_STRINGS.saveFailed}</span> : null}
                                 </span>
                               );
                             })() : !proposal ? (

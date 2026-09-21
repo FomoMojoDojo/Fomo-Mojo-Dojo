@@ -103,12 +103,12 @@ describe("an accounting failure NEVER fails the call it measures", () => {
 });
 
 describe("coverage is COMPUTED from the registry, not a maintained label", () => {
-  it("the seven sites wired in this gate are captured; the rest are not", () => {
+  it("the seven sites wired in this gate are captured (+ infer-interview-market, 2b); the rest are not", () => {
     const cov = costCoverage();
-    expect(cov.captured).toBe(7);
+    expect(cov.captured).toBe(8);
     expect(cov.complete).toBe(false);
     expect(cov.uncaptured).toContain("ollama-local-judges");
-    expect(coverageLabel(cov)).toBe(`partial (7 of ${cov.total} sites)`);
+    expect(coverageLabel(cov)).toBe(`partial (8 of ${cov.total} sites)`);
   });
 
   it("VACUOUS PROOF — flipping one captured site to false changes coverage", () => {

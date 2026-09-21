@@ -26,7 +26,13 @@ describe("interview upload strings — signed 2026-09-19", () => {
     expect(S.changeSpeaker).toBe("Change speaker");
     expect(S.speakerCollision).toBe("This transcript is already recorded with that speaker.");
     expect(S.chooseSpeaker).toBe("Choose the speaker");
-    expect(Object.keys(S).length).toBe(21);
+    // signed 2026-09-21 (commit 2b)
+    expect(S.inferMarket).toBe("Infer market");
+    expect(S.inferringMarket).toBe("Inferring market…");
+    expect(S.inferenceFailed).toBe("Market inference failed");
+    expect(S.saveFailed).toBe("That didn't save. Try again.");
+    expect(S.notInferredNoMajority).toBe("Market not inferred · last run found no majority");
+    expect(Object.keys(S).length).toBe(26);
   });
   it("A3: the speaker words map onto the existing speaker_role", () => {
     expect(speakerRoleFor("stakeholder")).toBe("client_stakeholder");

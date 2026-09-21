@@ -34,6 +34,15 @@ export const INTERVIEW_UPLOAD_STRINGS = {
   changeSpeaker: "Change speaker",
   speakerCollision: "This transcript is already recorded with that speaker.",
   chooseSpeaker: "Choose the speaker",
+  /** M1–M4 (signed 2026-09-21, commit 2b) — local market inference for a customer transcript. */
+  inferMarket: "Infer market",
+  inferringMarket: "Inferring market…",
+  /** M3 is marketInferredPrefix + the market title. */
+  inferenceFailed: "Market inference failed",
+  /** M5 (signed 2026-09-21) — the row's last inference run ended without a strict majority; M1 is offered beside it. */
+  notInferredNoMajority: "Market not inferred · last run found no majority",
+  /** S6 (signed 2026-09-21) — a withdraw, speaker change or market change that did not save. */
+  saveFailed: "That didn't save. Try again.",
 } as const;
 
 /** "Stakeholder" → client_stakeholder, "Customer" → market_participant (ruling A3 — the existing speaker_role). */

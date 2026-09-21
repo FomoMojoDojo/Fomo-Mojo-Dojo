@@ -10,6 +10,8 @@
 //       Change market; stakeholder: "Market: per item, after parsing", no Change market); no Run analysis
 //       chip on an interview row; Change market writes journey_key + market_state + the appended basis.
 //   A normal upload in the same spec behaves as before: analyze-file + classify-upload-voice, is_interview false.
+//   Commit 2b (2026-09-21): a CUSTOMER upload that succeeded is followed by the browser's OWN inference call
+//   (infer-interview-market, {company_id, interview_record_id} and nothing else) — a stakeholder upload is not.
 import { expect, test, type Page, type Route } from "playwright/test";
 import { createHash } from "node:crypto";
 import { COMPANY_ID } from "../../playwright.config";
@@ -100,8 +102,11 @@ test("(m) customer transcript: one function request, A1 flag, no analysis; the r
   await operatorOn(page);
   const dialog = await uploadInterview(page, "customer");
   await shot(page, "80-interview-dialog-on");
-  // exactly one function request, the A4 shape, the file's sha256
-  expect(fnCalls(captured)).toEqual(["record-interview-upload"]);
+  // the upload call with the A4 shape and the file's sha256, then (2b) the browser's own inference call — two ids, nothing about the actor
+  await expect.poll(() => fnCalls(captured)).toEqual(["record-interview-upload", "infer-interview-market"]);
+  const infer = captured.find((c) => /infer-interview-market/.test(c.url))!.body as Record<string, unknown>;
+  expect(Object.keys(infer).sort()).toEqual(["company_id", "interview_record_id"]);
+  expect(infer).toEqual({ company_id: COMPANY_ID, interview_record_id: "fixture-rec-1" });
   const call = captured.find((c) => /record-interview-upload/.test(c.url))!.body as Record<string, unknown>;
   expect(Object.keys(call).sort()).toEqual(["company_id", "file_sha256", "input_file_id", "speaker_role"]);
   expect(call).toMatchObject({ company_id: COMPANY_ID, input_file_id: "fixture-file-1", speaker_role: "market_participant", file_sha256: FIXTURE_SHA });
@@ -142,7 +147,7 @@ test("(m) customer transcript: one function request, A1 flag, no analysis; the r
   await expect(row.locator("[data-testid=inputs-interview-market]")).toContainText(title);
   await expect(row.getByText("Market inferred:")).toHaveCount(0); // nothing was inferred
   await expect(row.locator("[data-testid=inputs-change-market]")).toHaveText("Change market");
-  expect(fnCalls(captured)).toEqual(["record-interview-upload"]);
+  expect(fnCalls(captured)).toEqual(["record-interview-upload", "infer-interview-market"]);
 });
 
 test("(m) stakeholder transcript: 'Market: per item, after parsing', no Change market; no Run analysis chip", async ({ page }) => {

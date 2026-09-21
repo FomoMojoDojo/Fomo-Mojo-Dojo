@@ -32,7 +32,8 @@ export type IntegrityRecord = {
     | "local_canonical_gen"
     | "cascade_reconcile"
     | "local_synthesis"
-    | "interview_upload"; // Gate B (2026-09-19): record-interview-upload — completed (one record) or rejected (rolled back)
+    | "interview_upload" // Gate B (2026-09-19): record-interview-upload — completed (one record) or rejected (rolled back)
+    | "interview_market_inference"; // Gate B 2b (2026-09-21): infer-interview-market — one row per run: planned (bumped per window) → completed | failed
   surface_type?: string | null;
   surface_id?: string | null;
   status: "completed" | "failed" | "skipped_empty_input" | "rejected"; // mirrors integrity_runs_status_check (planned is written by other paths directly)
