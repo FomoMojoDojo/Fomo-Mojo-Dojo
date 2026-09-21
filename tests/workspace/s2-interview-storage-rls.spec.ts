@@ -2,7 +2,9 @@
 // (admin) creates a throwaway company with one customer-research input, uploads two throwaway objects and
 // their input_files rows (one is_interview), adds the throwaway NON-ADMIN user as a member; as that member a
 // signed URL for the interview object is refused and one for the ordinary object is allowed; the member also
-// reads 0 upload interview records (R21). Everything is deleted after — never CB1 / CB2 / Edgewood data.
+// reads 0 upload interview records (R21) while still reading the ONE hand-entered (capture-form, input_file_id
+// NULL) record the admin planted — the (h) record-policy half over HTTP (added 2026-09-21). Everything is deleted
+// after (the hand-entered record cascades with the company) — never CB1 / CB2 / Edgewood data.
 // Planted failure: the NOT EXISTS clause removed from "Users can view company input files" → the member
 // signs the interview object too (run under scripts/guards/interview-commit2a-guard.sh PLANT=policy for the
 // DB-level proof; this spec proves the HTTP path).
@@ -37,6 +39,9 @@ test("(g) member: signed URL refused for an interview object, allowed for an ord
     if (fErr) return { error: `input_files: ${fErr.message}` };
     const { error: mErr } = await s.from("company_members").insert({ company_id: cid, user_id: args.nonadmin, role: "participant" });
     if (mErr) return { error: `member: ${mErr.message}` };
+    // (h) one hand-entered record (the capture-form shape: no input_file_id) — members must still read these
+    const { error: rErr } = await s.from("interview_records").insert({ company_id: cid, speaker_role: "client_stakeholder", verbatim: args.fixture, created_by: user!.id, person_name: "Fixture Person" });
+    if (rErr) return { error: `hand-entered record: ${rErr.message}` };
     return { cid, paths };
   }, { name: NAME, fixture: FIXTURE, nonadmin: nonadminId! });
   expect(planted.error ?? null).toBeNull();
@@ -63,6 +68,9 @@ test("(g) member: signed URL refused for an interview object, allowed for an ord
     // R21: 0 upload records readable (none exist for this company, and the policy would hide them anyway) — the read itself succeeds
     const recs = await p2.evaluate(async (c) => { const s = (window as unknown as { supabase: Sb }).supabase; const { data, error } = await s.from("interview_records").select("id").eq("company_id", c).not("input_file_id", "is", null); return { n: (data ?? []).length, error: error?.message ?? null }; }, cid);
     expect(recs).toEqual({ n: 0, error: null });
+    // (h) the capture-form half: the member reads the hand-entered record (input_file_id NULL) — exactly one
+    const hand = await p2.evaluate(async (c) => { const s = (window as unknown as { supabase: Sb }).supabase; const { data, error } = await s.from("interview_records").select("id").eq("company_id", c).is("input_file_id", null); return { n: (data ?? []).length, error: error?.message ?? null }; }, cid);
+    expect(hand).toEqual({ n: 1, error: null });
     await ctx2.close();
   } finally {
     const gone = await page.evaluate(async (args) => {

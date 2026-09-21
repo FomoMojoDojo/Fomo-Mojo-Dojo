@@ -73,3 +73,18 @@ Deno.test("(d) wiring: in both doors the fence precedes the signed URL / size gu
   assert(dFence < pos(dify, "source_type:  sourceType ?? \"\""), "dify: fence before the file_proposals insert");
   assert(dify.includes("interviewFileRefusalBody(fence)"));
 });
+
+// (f) after a withdraw (2026-09-21, commit 2b Part 1): the file is archived and its record retracted, but the flag
+// stays and the record still names the file — both analysis doors keep refusing it (a withdrawn transcript is
+// never analysable). Plant: an archived exemption inside interviewFenceForFile → not fenced → red.
+Deno.test("(f) after a withdraw the fence still refuses in both doors: archived file, retracted record, flag on", async () => {
+  const t = tables();
+  t.input_files.push({ id: "f-wd", file_path: "u/withdrawn.txt", is_interview: true, archived_at: "2026-09-20T15:23:49.924Z" });
+  t.interview_records.push({ id: "r-wd", input_file_id: "f-wd", retracted_at: "2026-09-20T15:23:49.924Z" });
+  const db = fakeDb(t) as never;
+  assertEquals(await interviewFenceForFile(db, { fileId: "f-wd" }), { interview: true, why: "input_files.is_interview", detail: "f-wd" });
+  assertEquals(await interviewFenceForFile(db, { filePath: "u/withdrawn.txt" }), { interview: true, why: "input_files.is_interview", detail: "f-wd" });
+  // the record alone (flag cleared by some future path) still fences
+  t.input_files[t.input_files.length - 1] = { ...t.input_files[t.input_files.length - 1], is_interview: false };
+  assertEquals(await interviewFenceForFile(fakeDb(t) as never, { fileId: "f-wd" }), { interview: true, why: "interview_records.input_file_id", detail: "f-wd" });
+});

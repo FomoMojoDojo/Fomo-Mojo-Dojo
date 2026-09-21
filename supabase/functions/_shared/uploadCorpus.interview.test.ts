@@ -86,3 +86,24 @@ Deno.test("(iii) classify-upload-voice inherits: its plan over the same company 
 Deno.test("(iv) the upload-family list carries interview", () => {
   assert((UPLOAD_FAMILY_SOURCE_TYPES as readonly string[]).includes("interview"));
 });
+
+// (f) after a withdraw (2026-09-21, commit 2b Part 1): withdraw_interview_upload archives the file and retracts
+// the record. The corpus loader then drops the file BEFORE the exclusion list is built ("withdrawn uploads are
+// never declared voice") — it is neither contributing nor reported as excluded, in both loader doors
+// (loadContributingCorpus, loadContributingDocs). Plant: the archived_at filter removed → the withdrawn file
+// reappears in the exclusion list (reason interview) and this test goes red.
+function seedWithdrawn() {
+  const s = seed({ flag: true, record: true });
+  s.tables.input_files[1] = { ...s.tables.input_files[1], archived_at: "2026-09-20T15:23:49.924Z" };
+  s.tables.interview_records = [{ ...s.tables.interview_records[0], retracted_at: "2026-09-20T15:23:49.924Z", retracted_reason: "operator_withdrew_upload" }];
+  return s;
+}
+Deno.test("(f) after a withdraw the loader excludes the file in both doors — not contributing, not even listed as excluded", async () => {
+  const s = seedWithdrawn();
+  const corpus = await loadContributingCorpus(fakeDb(s.tables, s.sidecars) as never, CO);
+  assertEquals(corpus.docs.map((d) => d.input_file_id), ["f-ord"]);
+  assertEquals(corpus.excluded, []);
+  assert(!corpus.docs.some((d) => d.excerpt.includes("FIXTURE transcript")));
+  const docs = await loadContributingDocs(fakeDb(s.tables, s.sidecars) as never, CO);
+  assertEquals(docs.map((d) => d.input_file_id), ["f-ord"]);
+});

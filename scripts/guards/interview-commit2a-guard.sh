@@ -6,6 +6,8 @@
 # the throwaway NONADMIN_ID user from backups/fr-nonadmin.env. Prints "guard: PASS" or "guard: FAIL …".
 # Plants (each removes one rule INSIDE the transaction): PLANT=trigger (b) · PLANT=archive (d) ·
 # PLANT=policy (g) · PLANT=records (h) · PLANT=catch (k) · PLANT=guc (m) · PLANT=append (n)
+# Added 2026-09-21 (commit 2b Part 1 — every 2a check shown failing): PLANT=admin (c, member withdraw) ·
+# PLANT=jwt (c, no-JWT withdraw) · PLANT=setonce (e) · PLANT=dir_i (i) · PLANT=dir_j (j) · PLANT=parsed (l)
 set -uo pipefail
 PGC=${PGC:-supabase_db_dzlgyxcvuwiulgifbmew}
 NA=${NONADMIN_ID:-}
@@ -21,6 +23,12 @@ case "${PLANT:-}" in
   catch)   P="$(docker exec -i "$PGC" psql -U postgres -d postgres -At -c "select replace(pg_get_functiondef('public.correct_interview_speaker'::regproc), 'EXCEPTION WHEN unique_violation THEN', 'EXCEPTION WHEN no_data_found THEN')");";;
   guc)     P="$(docker exec -i "$PGC" psql -U postgres -d postgres -At -c "select replace(pg_get_functiondef('public.interview_records_immutable'::regproc), 'AND NOT v_correcting THEN', 'AND false THEN')");";;
   append)  P="$(docker exec -i "$PGC" psql -U postgres -d postgres -At -c "select replace(pg_get_functiondef('public.interview_records_immutable'::regproc), 'IF NEW.speaker_history -> i IS DISTINCT FROM OLD.speaker_history -> i THEN', 'IF false THEN')");";;
+  admin)   P="$(docker exec -i "$PGC" psql -U postgres -d postgres -At -c "select replace(pg_get_functiondef('public.withdraw_interview_upload'::regproc), 'IF NOT public.has_role(v_actor, ''admin''::app_role) THEN', 'IF false THEN')");";;
+  jwt)     P="$(docker exec -i "$PGC" psql -U postgres -d postgres -At -c "select replace(pg_get_functiondef('public.withdraw_interview_upload'::regproc), 'IF v_actor IS NULL THEN', 'IF false THEN')");";;
+  setonce) P="$(docker exec -i "$PGC" psql -U postgres -d postgres -At -c "select replace(pg_get_functiondef('public.withdraw_interview_upload'::regproc), 'IF v_rec.retracted_at IS NOT NULL THEN', 'IF false THEN')");";;
+  dir_i)   P="$(docker exec -i "$PGC" psql -U postgres -d postgres -At -c "select replace(pg_get_functiondef('public.correct_interview_speaker'::regproc), 'THEN ''per_item'' ELSE ''unplaced'' END;', 'THEN ''unplaced'' ELSE ''unplaced'' END;')");";;
+  dir_j)   P="$(docker exec -i "$PGC" psql -U postgres -d postgres -At -c "select replace(pg_get_functiondef('public.correct_interview_speaker'::regproc), 'THEN ''per_item'' ELSE ''unplaced'' END;', 'THEN ''per_item'' ELSE ''per_item'' END;')");";;
+  parsed)  P="$(docker exec -i "$PGC" psql -U postgres -d postgres -At -c "select replace(pg_get_functiondef('public.correct_interview_speaker'::regproc), 'IF v_rec.parsed_at IS NOT NULL THEN', 'IF false THEN')");";;
 esac
 out=$(docker exec -i "$PGC" psql -U postgres -d postgres -At -v ON_ERROR_STOP=0 <<SQL 2>&1
 begin;

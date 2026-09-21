@@ -5,6 +5,9 @@
 // whatever the live list holds; ordinary rows are Edgewood's real files. Proves: W1 only on interview rows and Archive × only on ordinary rows;
 // the confirm flow (W2 / W3 / Cancel) → exactly ONE RPC request with {p_record_id}; P1 → listbox P3 → ONE RPC
 // request with {p_record_id, p_speaker_role}; a stubbed collision (409 / speaker_identity_collision) → P2.
+// Interview-row count (2026-09-21): planted rows + the LIVE interview rows read from the database at test time
+// (active input_files.is_interview rows whose record is not retracted) — the 2026-09-20 run passed with a hardcoded
+// 2 only because Edgewood's five TEST-* interview files were archived at that moment (restored 15:19 UTC that day).
 import { expect, test, type Page, type Route } from "playwright/test";
 import { COMPANY_ID } from "../../playwright.config";
 import { openWorkspace } from "./helpers";
@@ -19,9 +22,13 @@ const PLANTED_RECORDS = [
 ];
 
 type Captured = { method: string; url: string; body: unknown };
+type Live = { interviewFiles: Set<string>; retractedFileIds: Set<string> };
+/** Live interview rows the page will render: active is_interview files minus those named by a retracted record. */
+const liveInterviewRows = (live: Live) => [...live.interviewFiles].filter((id) => !live.retractedFileIds.has(id)).length;
 const SUPABASE = /\/(rest|storage|functions)\/v1\//;
-async function guard(page: Page, opts: { collision?: boolean } = {}): Promise<Captured[]> {
-  const captured: Captured[] = [];
+async function guard(page: Page, opts: { collision?: boolean } = {}): Promise<Captured[] & { live: Live }> {
+  const live: Live = { interviewFiles: new Set(), retractedFileIds: new Set() };
+  const captured = Object.assign([] as Captured[], { live });
   await page.route(SUPABASE, async (route: Route) => {
     const req = route.request(); const method = req.method(); const url = req.url();
     if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
@@ -30,11 +37,13 @@ async function guard(page: Page, opts: { collision?: boolean } = {}): Promise<Ca
           const res = await route.fetch(); let rows: Array<Record<string, unknown>> = [];
           try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
           const inputId = String(rows[0]?.input_id ?? "");
+          for (const r of rows) if (r.archived_at == null && r.is_interview === true) live.interviewFiles.add(String(r.id));
           return route.fulfill({ response: res, body: JSON.stringify([...PLANTED_FILES.map((f) => ({ ...f, input_id: inputId })), ...rows]), headers: { ...res.headers(), "content-type": "application/json" } });
         }
         if (/\/rest\/v1\/interview_records\?/.test(url)) {
           const res = await route.fetch(); let rows: Array<Record<string, unknown>> = [];
           try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+          for (const r of rows) if (r.retracted_at != null && r.input_file_id != null) live.retractedFileIds.add(String(r.input_file_id));
           return route.fulfill({ response: res, body: JSON.stringify([...rows, ...PLANTED_RECORDS]), headers: { ...res.headers(), "content-type": "application/json" } });
         }
       } catch { return; }
@@ -66,7 +75,8 @@ test("(o) W1 on interview rows only, Archive × on ordinary rows only; confirm �
   const interviewRows = page.locator("[data-testid=inputs-file-row]:has([data-testid=inputs-interview])");
   const ordinaryRows = page.locator("[data-testid=inputs-file-row]:not(:has([data-testid=inputs-interview]))");
   const nI = await interviewRows.count(); const nO = await ordinaryRows.count();
-  expect(nI).toBe(2); expect(nO).toBeGreaterThan(0);
+  const expectedInterview = PLANTED_FILES.length + liveInterviewRows(captured.live); // planted + live, read from the DB at test time
+  expect(nI).toBe(expectedInterview); expect(nO).toBeGreaterThan(0);
   await expect(interviewRows.locator("[data-testid=inputs-withdraw]")).toHaveCount(nI);
   await expect(interviewRows.locator("[data-testid=inputs-archive]")).toHaveCount(0);
   await expect(ordinaryRows.locator("[data-testid=inputs-archive]")).toHaveCount(nO);
