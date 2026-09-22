@@ -2867,3 +2867,25 @@ span.fr-mark-target .fr-mark-box { display: flex; }
 .fr-heard-entry--gone .fr-heard-anchor { color: hsl(var(--fr-muted)); text-decoration: line-through; }
 .fr-heard-note { margin-top: 0.5rem; color: hsl(var(--fr-muted)); font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
 .fr-heard-entry .fr-ws-table-link { margin-top: 0.5rem; }
+
+/* ── the revisit prompt (FM12 revised, 2026-09-22) ───────────────────────────────────────────────────
+   Operator-only, page level, above the beat body. Existing tokens only — no new custom property. */
+.fr-revisit {
+  border: 1px solid hsl(var(--fr-line));
+  background: hsl(var(--fr-paper));
+  padding: 1.25rem 1.5rem;
+  margin: 0 0 2rem;
+  max-width: 44rem;
+}
+.fr-revisit-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.fr-revisit-allactions { display: flex; gap: 8px; }
+.fr-revisit-failed { margin-top: 0.75rem; font-size: 13px; color: hsl(var(--fr-bad)); }
+.fr-revisit-group + .fr-revisit-group { margin-top: 1.5rem; }
+.fr-revisit-group { margin-top: 1.25rem; }
+.fr-revisit-beat { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: hsl(var(--fr-muted)); }
+.fr-revisit-list { display: flex; flex-direction: column; gap: 1.25rem; margin-top: 0.75rem; }
+.fr-revisit-entry { border-top: 1px solid hsl(var(--fr-hair)); padding-top: 1rem; }
+.fr-revisit-why { font-size: 13px; color: hsl(var(--fr-muted)); }
+.fr-revisit-label { margin-top: 0.75rem; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+.fr-revisit-text { font-size: 15px; font-weight: 300; line-height: 1.6; color: hsl(var(--fr-ink)); }
+.fr-revisit-actions { display: flex; gap: 8px; margin-top: 1rem; }

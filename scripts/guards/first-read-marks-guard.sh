@@ -22,6 +22,11 @@
 # FM9 (commit 3, 2026-09-22): (p) the workspace Inputs list is operator-gated in source and its spec covers both
 # switch states · (q) the first read reads the ?mark= carrier and opens silently on an unknown id, with a spec for
 # both. These two are STATIC (source + spec presence) — the guard runs no browser; the specs run in Playwright.
+# FM12 revised (commit 4, 2026-09-22): (r) the keep RPC — member refused, a blank / malformed p_against refused,
+# a withdrawn mark refused, the triple set with its actor, ONE kept audit row, a re-keep against new wording,
+# row_gone legal, the anchor still immutable, and a withdraw that never rides with a revisit resolution ·
+# (s) the prompt is operator-gated in source and x8 covers Keep / Remove / Keep all / Remove all (static) ·
+# (t) the one reader selects both revisit columns, so a remembered Keep is read back (static).
 set -uo pipefail
 PGC=${PGC:-supabase_db_dzlgyxcvuwiulgifbmew}
 NA=${NONADMIN_ID:-}
@@ -131,6 +136,27 @@ savepoint g1; select 'G1 '||public.append_first_read_mark_note((select id from f
 savepoint h3; select 'H3 '||public.withdraw_first_read_mark((select id from fm), 'again')::text; rollback to h3;
 select 'H4 audits='||(select count(*) from integrity_runs where component='first_read_mark_withdrawn' and surface_id=(select id from fm));
 reset role;
+-- (r) FM12 revised: the keep RPC. `om` is still live (only `fm` was withdrawn above).
+select set_config('request.jwt.claims', '{"sub":"$NA","role":"authenticated"}', true); set role authenticated;
+savepoint r0; select 'R0 '||public.keep_first_read_mark((select id from om), repeat('a',64))::text; rollback to r0;
+reset role; select set_config('request.jwt.claims', '{"sub":"$ADMIN","role":"authenticated"}', true); set role authenticated;
+savepoint r1; select 'R1 '||public.keep_first_read_mark((select id from om), '')::text; rollback to r1;
+savepoint r2; select 'R2 '||public.keep_first_read_mark((select id from om), 'not-a-sha')::text; rollback to r2;
+savepoint r3; select 'R3 '||public.keep_first_read_mark((select id from fm), repeat('a',64))::text; rollback to r3;
+select 'R4 '||(public.keep_first_read_mark((select id from om), repeat('a',64))->>'ok');
+select 'R4b against='||(select revisit_resolved_against from first_read_marks where id=(select id from om))||' by='||(select revisit_resolved_by='$ADMIN' from first_read_marks where id=(select id from om));
+select 'R5 audits='||(select count(*) from integrity_runs where component='first_read_mark_kept' and surface_id=(select id from om));
+-- a row that changed AGAIN is kept again, against the new wording; row_gone is a legal value
+select 'R6 '||(public.keep_first_read_mark((select id from om), repeat('b',64))->>'ok');
+select 'R6b against='||(select revisit_resolved_against from first_read_marks where id=(select id from om));
+select 'R7 '||(public.keep_first_read_mark((select id from om), 'row_gone')->>'ok');
+-- the anchor stays immutable, and a withdraw never rides along with a revisit resolution
+reset role;
+savepoint r8; update first_read_marks set anchor_text='rewritten', revisit_resolved_at=now() where id=(select id from om); rollback to r8;
+savepoint r9; update first_read_marks set withdrawn_at=now(), withdrawn_by='$ADMIN', withdraw_reason='x', revisit_resolved_at=now(), revisit_resolved_against=repeat('c',64), revisit_resolved_by='$ADMIN' where id=(select id from om); rollback to r9;
+savepoint r10; update first_read_marks set revisit_resolved_at=null, revisit_resolved_against=null, revisit_resolved_by=null where id=(select id from om); rollback to r10;
+select set_config('request.jwt.claims', '{"sub":"$ADMIN","role":"authenticated"}', true); set role authenticated;
+reset role;
 -- (i) SELECT: the member sees 0, the admin sees the row
 select set_config('request.jwt.claims', '{"sub":"$NA","role":"authenticated"}', true); set role authenticated;
 select 'I1 member_marks='||(select count(*) from first_read_marks where company_id='$CO')||' member_notes='||(select count(*) from first_read_mark_notes where mark_id=(select id from fm));
@@ -162,7 +188,8 @@ chk "(d) our_mark with a disposition refused (CHECK)" 'violates check constraint
 chk "(d) client_reaction without one refused (RPC, before any write)" "create_first_read_mark: a client reaction carries a disposition"
 if echo "$out" | grep -q "^D2 "; then echo "  FAIL (d) client_reaction without a disposition was written"; fail=1; fi
 chk "(m) mark + note v1 in one call"   "M1 created=1 v1=1"
-if [ "$(echo "$out" | grep -c 'anchor, kind, disposition and birth fields are immutable')" = 2 ]; then echo "  ok   (e) anchor UPDATE and kind UPDATE both refused"; else echo "  FAIL (e) anchor / kind UPDATE (expected 2 refusals)"; fail=1; fi
+# 3 since FM12 revised: the anchor UPDATE, the kind UPDATE, and an anchor change smuggled inside a revisit update (r8).
+if [ "$(echo "$out" | grep -c 'anchor, kind, disposition and birth fields are immutable')" = 3 ]; then echo "  ok   (e) anchor UPDATE, kind UPDATE and an anchor change inside a revisit update all refused"; else echo "  FAIL (e) anchor / kind / revisit-anchor UPDATE (expected 3 refusals)"; fail=1; fi
 chk "(e) DELETE refused"               "withdrawn, never deleted"
 chk "(f) versions 1..5 append"        "F3 versions=1,2,3,4,5"
 chk "(f) note UPDATE refused"          "never edited; append the next version"
@@ -182,6 +209,16 @@ chk "(h) withdraw ok, one audit row, triple set" "H2 audits=1 withdrawn=true"
 chk "(g) append on a withdrawn mark refused" "append_first_read_mark_note: mark .* is withdrawn"
 chk "(h) second withdraw refused"      "is already withdrawn"
 chk "(h) still one audit row"          "H4 audits=1"
+chk "(r) member keep refused"          "keep_first_read_mark: caller is not an admin"
+chk "(r) blank p_against refused"      "keep_first_read_mark: what the mark was kept against is required"
+chk "(r) a non-sha, non-row_gone p_against refused" "keep_first_read_mark: not-a-sha is neither a sha256 nor row_gone"
+chk "(r) keep on a withdrawn mark refused" "keep_first_read_mark: mark .* is withdrawn"
+chk "(r) keep ok, the triple set, the actor recorded" "R4b against=aaaaaaaa"
+chk "(r) one kept audit row"           "R5 audits=1"
+chk "(r) a row that changed again is kept again, against the new wording" "R6b against=bbbbbbbb"
+chk "(r) row_gone is a legal value"    "R7 true"
+chk "(r) a withdraw never rides with a revisit resolution" "a withdraw and a revisit resolution never travel in one statement"
+chk "(r) a revisit resolution is never cleared" "a revisit resolution is never cleared"
 chk "(i) member SELECT = 0"            "I1 member_marks=0 member_notes=0"
 chk "(i) admin SELECT sees the rows"   "I2 admin_marks=2 admin_notes=7"
 
@@ -204,5 +241,22 @@ if [ -f tests/workspace/inputs-marks-link.spec.ts ] && grep -q 'no-such-anchor' 
   echo "  ok   (q) the link-back carrier is read in source and opens silently on an unknown id, with a spec for both"
 else
   echo "  FAIL (q) the link-back carrier or tests/workspace/inputs-marks-link.spec.ts"; fail=1
+fi
+# (t) The reader must SELECT the revisit columns, or every mark reads as unresolved and a remembered Keep is
+# silently forgotten — the prompt would ask the same question on every reload with nothing else failing.
+HOOK=src/lib/firstReadMarks/useFirstReadMarks.ts
+if grep -q 'revisit_resolved_against' "$HOOK" && grep -q 'revisit_resolved_at' "$HOOK" \
+   && [ "$(grep -c 'select("id, company_id, kind, beat_key, anchor_kind, anchor_key, anchor_text, anchor_text_sha256, created_at, revisit_resolved_against, revisit_resolved_at")' "$HOOK")" = 1 ]; then
+  echo "  ok   (t) the one reader selects both revisit columns — a remembered Keep is actually read back"
+else
+  echo "  FAIL (t) $HOOK does not select revisit_resolved_against + revisit_resolved_at"; fail=1
+fi
+if [ -f tests/workspace/x8-revisit-prompt.spec.ts ] \
+   && grep -q 'operator_removed_on_revisit' tests/workspace/x8-revisit-prompt.spec.ts \
+   && grep -q 'WITHDRAW_REASON_REVISIT = "operator_removed_on_revisit"' src/lib/firstReadMarks/strings.ts \
+   && grep -q 'operatorControls ? (' src/views/client/firstReadPreview/FirstReadPreviewView.tsx; then
+  echo "  ok   (s) the revisit prompt is operator-gated in source and its spec covers Keep, Remove and both all-actions"
+else
+  echo "  FAIL (s) the revisit prompt gate or tests/workspace/x8-revisit-prompt.spec.ts"; fail=1
 fi
 [ $fail = 0 ] && echo "guard: PASS" || { echo "guard: FAIL"; echo "$out" | grep -E "^[A-Z][0-9]|ERROR" | head -40; exit 1; }

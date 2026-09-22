@@ -61,4 +61,6 @@ export const OPERATOR_MARK = {
   kindLabel: "kind-label",
   allCompanies: "all-companies",
   looks: "looks",
+  /** FM12 revised (2026-09-22): the revisit prompt, page level. */
+  revisit: "revisit",
 } as const;

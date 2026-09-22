@@ -4,7 +4,7 @@
 // nav, keyboard). Data comes from useFirstReadPreviewData — real queries
 // only; no fixture data is reachable from this route.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import "./firstRead.css";
 import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
@@ -19,8 +19,11 @@ import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { MarksProvider, prefersReducedMotion, type MarksSurface } from "@/lib/firstReadMarks/MarksContext";
 import { useFirstReadMarks } from "@/lib/firstReadMarks/useFirstReadMarks";
 import { HEARD_BEAT_KEY, WhatWeHeard } from "@/lib/firstReadMarks/WhatWeHeard";
-import { offeringQuestionKeys } from "@/lib/firstReadMarks/anchors";
-import { beatsFor } from "./beats";
+import { offeringQuestionKeys, hashAnchorText } from "@/lib/firstReadMarks/anchors";
+import { currentAnchors } from "@/lib/firstReadMarks/currentAnchors";
+import { revisitEntries, type HashedAnchor } from "@/lib/firstReadMarks/revisit";
+import { RevisitPrompt } from "@/lib/firstReadMarks/RevisitPrompt";
+import { beatsFor, beatLabel as beatLabelOf } from "./beats";
 import { bareHost } from "./mapping";
 import { CLIENT_REFINE_PREVIEW_ROUTE, FIRSTREAD_MARK_PARAM } from "@/lib/clientRefinePreview";
 import {
@@ -143,6 +146,32 @@ export default function FirstReadPreviewView() {
     }),
     [baseData, questions, questionRows, offeringKeys],
   );
+  // The revisit prompt's current side (FM12 revised, 2026-09-22). The rows as the page renders them now, hashed
+  // the one way anchors are hashed — async, so it fills after the read like the offering keys above. Until it has
+  // filled, nothing fires, so the prompt cannot flash on a reload (R7).
+  // The effect is keyed on the rows' CONTENT, never on `data`: useFirstReadOpenQuestions returns a fresh
+  // `questions` array every render, so `data` has a new identity every render. Nothing minded while only memos
+  // read it, but an effect that SETS STATE on `data` re-runs forever — and because the setState lands in a
+  // promise callback, React's "maximum update depth" guard never trips; the tab simply pegs. The signature
+  // below changes only when a row's kind, key or text changes, which is exactly when the hashes must be redone.
+  const currentRows = useMemo(() => currentAnchors(data), [data]);
+  const rowsSignature = useMemo(() => JSON.stringify(currentRows), [currentRows]);
+  const currentRowsRef = useRef(currentRows);
+  currentRowsRef.current = currentRows;
+  const [hashedRows, setHashedRows] = useState<HashedAnchor[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (loading) { setHashedRows(null); return; }
+    const rows = currentRowsRef.current;
+    Promise.all(rows.map(async (r) => ({ ...r, sha: r.text === null ? null : await hashAnchorText(r.text) })))
+      .then((hashed) => { if (!cancelled) setHashedRows(hashed); });
+    return () => { cancelled = true; };
+  }, [rowsSignature, loading]);
+  const revisits = useMemo(
+    () => revisitEntries(marksStore.marks, hashedRows ?? [], marksStore.loaded && hashedRows !== null),
+    [marksStore.marks, marksStore.loaded, hashedRows],
+  );
+
   const [index, setIndex] = useState(0);
   // Mark link-back (FM9, 2026-09-22): ?mark=<anchor id> from the workspace list. Read ONCE — the value is
   // captured at mount so a later beat change never re-jumps, and the param is left in the URL untouched
@@ -370,6 +399,20 @@ export default function FirstReadPreviewView() {
         showCounter={FIRST_READ_SHOW_NAV_CHROME}
       />
       <div className="first-read-shell">
+        {/* The revisit prompt (FM12 revised, 2026-09-22): ONE per read, page level, above the beat body and
+            gated on the same `operatorControls` value every operator node is gated on — so the default render
+            is still the client render, with no prompt and no operator node anywhere (R1, R2). */}
+        {operatorControls ? (
+          <RevisitPrompt
+            entries={revisits}
+            beatLabel={beatLabelOf}
+            beatIndex={(k) => beats.findIndex((b) => b.key === k)}
+            keep={marksStore.keep}
+            withdraw={marksStore.withdraw}
+            markAttr={OPERATOR_MARK.attr}
+            markValue={OPERATOR_MARK.revisit}
+          />
+        ) : null}
         <div key={beat.key} className="fr-act-enter fr-beat">
           {/* The closer renders its own eyebrow ("Before you go") inside ActNext, and the opener
               renders its nav label inside its Screen (stage 2), so suppress the auto-eyebrow for both —

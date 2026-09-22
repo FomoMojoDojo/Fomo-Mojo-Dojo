@@ -23,6 +23,12 @@ export type LiveMark = {
   version: number;
   note: string;
   disposition: MarkDisposition | null;
+  /** FM12 revised: what the operator last kept this mark against — a row sha256, the literal row_gone, or null
+   *  when it was never asked about. The revisit prompt fires when the row's state differs from this. The reader
+   *  below always selects both; they are optional on the type so a fixture that predates them still builds, and
+   *  an absent value reads as "never resolved" — the conservative answer (the prompt asks). */
+  revisit_resolved_against?: string | null;
+  revisit_resolved_at?: string | null;
 };
 export type MarkWrite = { ok: true } | { ok: false; error: string };
 
@@ -40,7 +46,7 @@ async function readLiveMarks(companyId: string): Promise<{ marks: LiveMark[]; fr
   try {
     const [{ data: co }, { data: rows }] = await Promise.all([
       c.from("companies").select("frozen").eq("id", companyId).maybeSingle(),
-      c.from("first_read_marks").select("id, company_id, kind, beat_key, anchor_kind, anchor_key, anchor_text, anchor_text_sha256, created_at").eq("company_id", companyId).is("withdrawn_at", null).order("created_at", { ascending: true }),
+      c.from("first_read_marks").select("id, company_id, kind, beat_key, anchor_kind, anchor_key, anchor_text, anchor_text_sha256, created_at, revisit_resolved_against, revisit_resolved_at").eq("company_id", companyId).is("withdrawn_at", null).order("created_at", { ascending: true }),
     ]);
     const marks = (Array.isArray(rows) ? rows : []) as Array<Omit<LiveMark, "version" | "note" | "disposition">>;
     if (marks.length === 0) return { marks: [], frozen: Boolean((co as { frozen?: boolean } | null)?.frozen) };
@@ -101,14 +107,24 @@ export function useFirstReadMarks(companyId?: string | null) {
     refetch();
     return { ok: true };
   }, [refetch]);
-  const withdraw = useCallback(async (markId: string): Promise<MarkWrite> => {
+  /** FM12 revised: remember that the operator reconciled this mark against the row as it NOW reads
+   *  (its sha256), or against the row having left the read (the literal row_gone). */
+  const keep = useCallback(async (markId: string, against: string): Promise<MarkWrite> => {
     const c = client();
     if (typeof c.rpc !== "function") return { ok: false, error: "no_client" };
-    const { error } = await c.rpc("withdraw_first_read_mark", { p_mark_id: markId, p_reason: WITHDRAW_REASON });
+    const { error } = await c.rpc("keep_first_read_mark", { p_mark_id: markId, p_against: against });
+    if (error) return { ok: false, error: rpcError(error) };
+    refetch();
+    return { ok: true };
+  }, [refetch]);
+  const withdraw = useCallback(async (markId: string, reason: string = WITHDRAW_REASON): Promise<MarkWrite> => {
+    const c = client();
+    if (typeof c.rpc !== "function") return { ok: false, error: "no_client" };
+    const { error } = await c.rpc("withdraw_first_read_mark", { p_mark_id: markId, p_reason: reason });
     if (error) return { ok: false, error: rpcError(error) };
     refetch();
     return { ok: true };
   }, [refetch]);
 
-  return { marks, byAnchor, frozen, loaded, refetch, create, append, withdraw };
+  return { marks, byAnchor, frozen, loaded, refetch, create, append, keep, withdraw };
 }

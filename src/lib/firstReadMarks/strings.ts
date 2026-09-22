@@ -16,6 +16,21 @@ export const MARK_STRINGS = {
   whatWeHeard: "What we heard",
   /** S6 (signed 2026-09-21) — reused: a save that did not land. */
   saveFailed: "That didn't save. Try again.",
+  // ── the revisit prompt (FM12 revised, signed 2026-09-22) — operator-only; no client surface shows any of it ──
+  /** The prompt's heading. */
+  revisitTitle: "Marks that no longer match",
+  /** Why one entry fired. */
+  wordingChanged: "The wording changed.",
+  rowGone: "This row is gone.",
+  /** The two blocks of an entry. */
+  asMarked: "As marked",
+  nowReads: "Now reads",
+  /** Per entry. */
+  keep: "Keep",
+  remove: "Remove (permanent)",
+  /** At the top of the prompt. */
+  keepAll: "Keep all",
+  removeAll: "Remove all (permanent)",
 } as const;
 
 /** The reaction choices of the box, in box order (single choice; nothing preselected — FM18). */
@@ -28,3 +43,6 @@ export const REACTION_CHOICES = [
 export const HEARD_GROUP_ORDER = ["important", "interesting", "not_important", "our_mark"] as const;
 /** The withdraw reason stored on every operator withdraw from the page. */
 export const WITHDRAW_REASON = "operator_withdrew_mark";
+/** FM12 revised: the withdraw reason stored when a Remove comes from the revisit prompt — a distinct value so
+ *  the integrity_runs audit can tell a deliberate withdraw from a revisit removal. Never shown to anyone. */
+export const WITHDRAW_REASON_REVISIT = "operator_removed_on_revisit";
