@@ -43,6 +43,9 @@ import { judgeConditionPerspectives } from "./stepPerspectiveJudge.ts";
 // renderer is what stops the model reaching for a word the surface then has to mislabel — Riverlane's
 // VCs became `funder` because `investor` existed nowhere the model could see it.
 import { KNOWN_RELATIONSHIP_KINDS } from "./relationshipKinds.ts";
+// R3 (2026-09-22) — the deterministic goal-not-means terms. Checked BEFORE gate (a), so a candidate naming
+// one of the six spends no judge call at all; the model layers carry the rest of the rule.
+import { marketMeansHits, marketMeansReason } from "./marketMeansTerms.ts";
 // Gate 3b — the DECIDED predicate (written def, or a banked gate-(b)/(c) verdict). The worker asks it
 // before spending model calls on a candidate a judge has already ruled on.
 import { marketCandidateDecided, type ExistsProbe } from "./marketCandidateAccounted.ts";
@@ -156,6 +159,11 @@ const GEN_SYSTEM =
   "(1) Describe the executor's own job, NEVER a seller or acquisition goal — never 'increase the percentage who choose/buy X', never the company's growth or sales. " +
   "(2) NEVER name a company, brand, or vendor — not even the company under analysis. " +
   "(3) job_executor = a SINGLE clause naming WHO the executor is AND the job they are getting done. Form exemplar (match the SHAPE, not the facts): 'Independent cafe operators sourcing a specialty coffee offering for their venue.' jtbd = ONE sentence with the deeper detail of the progress they are trying to make. chooser = who makes the choice. " +
+  // GOAL, NOT MEANS (operator ruling R1, 2026-09-22) — the rule text verbatim, then the never-use list.
+  // The deterministic guard (_shared/marketMeansTerms.ts) rejects six of these before a judge is spent;
+  // the rest stay here because they are legitimate goal words in other executors' worlds.
+  "(3b) GOAL, NOT MEANS. A job statement names what the executor is trying to get done, in the executor's own words. It never names a provider, program, service line, facility, treatment setting, or category of supplier the executor would shop for. Form: transitive verb + object + contextual clarifier." +
+  "NEVER use these words in a job statement — they name a means, not a goal: provider, program, service, services, continuum of care, residential, outpatient, inpatient, clinic, facility, treatment, therapy, organizations that provide. " +
   "(4) Each market must have a DISTINCT executor — do not restate the same market in different words. " +
   "(5) relationship_kind = the executor's relationship to the company as the evidence shows it — in the evidence's own terms, one or two lowercase words. " +
   `Kinds we already know, as EXAMPLES and not a closed list: ${KNOWN_RELATIONSHIP_KINDS.join(", ")}. A kind outside them is fine when the evidence calls for it. ` +
@@ -218,15 +226,20 @@ export function buildSameMarketUser(a: { executor: string; jtbd: string }, b: { 
 // SCOPE: generator-authored candidates only — declared markets never enter
 // this pipeline (they appear solely as dedup targets, kept untouched).
 
+export type ReframeProblem = "seller-framed" | "solution-bound" | "names-a-means";
+
 const REFRAME_SYSTEM =
   "You restate a job-to-be-done in the JOB EXECUTOR'S OWN terms. The executor is FIXED — do not change who they are. " +
   "If the problem is 'seller-framed': the job was stated as some provider's acquisition or growth goal — restate it as the progress the EXECUTOR is trying to make in their own world. " +
   "If the problem is 'solution-bound': the job named or presupposed a specific provider's services — restate the underlying job free of ANY provider's product, service, or solution language. " +
+  // GOAL, NOT MEANS (operator ruling R1, 2026-09-22) — the same sentence the generator is given, so a
+  // repair cannot restate the job in a shape the judge will reject again for the same reason.
+  "If the problem is 'names-a-means': A job statement names what the executor is trying to get done, in the executor's own words. It never names a provider, program, service line, facility, treatment setting, or category of supplier the executor would shop for. Form: transitive verb + object + contextual clarifier." +
   "Hard rules: never name a company, brand, vendor, or specific service offering; the job existed before any provider and must read that way; " +
   "do not invent facts beyond the substance already present in the original job. " +
   'JSON only: {"jtbd":"<one sentence, the executor\'s own job>"}.';
 
-function buildReframeUser(executor: string, originalJtbd: string, problem: "seller-framed" | "solution-bound"): string {
+function buildReframeUser(executor: string, originalJtbd: string, problem: ReframeProblem): string {
   return `EXECUTOR (fixed): ${executor}\nORIGINAL JOB (rejected as ${problem}): ${originalJtbd}\nRestate this executor's own job.`;
 }
 
@@ -308,6 +321,8 @@ export type DiscoveryRunResult =
       accepted_deferred: number;
       rejected_buyer: number;
       rejected_solution: number;
+      /** R3: rejected by the deterministic means guard, before any judge call. */
+      rejected_means: number;
       deduped_same_market: number;
       defs_written: number;
       verdicts_pruned: number;
@@ -325,7 +340,7 @@ export type DiscoveryRunResult =
       jtbd: string;
       relationship_kind: string;
       relationship_basis: string;
-      outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped" | "error" | "already_decided";
+      outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "rejected_means" | "deduped" | "error" | "already_decided";
       journey_key?: string;
       judge_reasons: Record<string, string>;
       reframed?: boolean;
@@ -512,6 +527,7 @@ export async function computeMarketDiscovery(
     accepted_deferred: 0,
     rejected_buyer: 0,
     rejected_solution: 0,
+    rejected_means: 0,
     deduped_same_market: 0,
     defs_written: 0,
     verdicts_pruned: 0,
@@ -523,7 +539,7 @@ export async function computeMarketDiscovery(
   };
   const results: Array<{
     job_executor: string; jtbd: string; relationship_kind: string; relationship_basis: string;
-    outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped" | "error" | "already_decided";
+    outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "rejected_means" | "deduped" | "error" | "already_decided";
     journey_key?: string; judge_reasons: Record<string, string>;
     reframed?: boolean; original_jtbd?: string;
     /** Gate 4b — for a fold, the identity of the def it folded into. */
@@ -577,7 +593,7 @@ export async function computeMarketDiscovery(
     // The FULL, UNCHANGED gate chain (buyer → solution-agnostic → dedup) for
     // one attempt. Extracted (MPD-1e) so a reframed candidate re-enters it
     // verbatim — judges are never relaxed for a reframe.
-    type GateOutcome = "accepted" | "rejected_buyer" | "rejected_solution" | "deduped";
+    type GateOutcome = "accepted" | "rejected_buyer" | "rejected_solution" | "rejected_means" | "deduped";
     // Gate 4b — set by gate (c) when a candidate FOLDS, so the outcome row can name the def it folded
     // into. Reset per candidate by the loop below; read only when the outcome is "deduped".
     let foldTarget: string | null = null;
@@ -587,6 +603,17 @@ export async function computeMarketDiscovery(
       tag: string,
     ): Promise<GateOutcome> => {
       const identity = await marketIdentity(cand.job_executor, cand.jtbd);
+
+      // Gate (0) — R3 (2026-09-22): the deterministic means terms, whole word / whole phrase, any case,
+      // over executor AND job together. A hit is a rejection BEFORE any judge call is spent: these six
+      // name a means in every reading a market statement can give them. Everything subtler is left to
+      // the model layers, which can read context.
+      const meansTerms = marketMeansHits(`${cand.job_executor} ${cand.jtbd}`);
+      if (meansTerms.length) {
+        totals.rejected_means++;
+        reasons[`means${tag}`] = marketMeansReason(meansTerms);
+        return "rejected_means";
+      }
 
       // Gate (a): buyer perspective — reuse the b-ii executor judge (its own
       // verdict-by-content-identity store makes re-runs free).
@@ -850,8 +877,9 @@ export async function computeMarketDiscovery(
         // reframed. Exactly ONE attempt; executor FIXED; job restated in the
         // executor's own terms; relationship kind/basis carry over untouched
         // (model-discovered at generation, never seeded here).
-        if (outcome === "rejected_buyer" || outcome === "rejected_solution") {
-          const problem = outcome === "rejected_buyer" ? "seller-framed" : "solution-bound";
+        if (outcome === "rejected_buyer" || outcome === "rejected_solution" || outcome === "rejected_means") {
+          const problem: ReframeProblem = outcome === "rejected_buyer" ? "seller-framed"
+            : outcome === "rejected_solution" ? "solution-bound" : "names-a-means";
           totals.reframe_attempts++;
           const raw = await callOllamaJson(args.ollamaUrl, genModel, REFRAME_SYSTEM, buildReframeUser(original.job_executor, original.jtbd, problem), GEN_TIMEOUT_MS);
           let newJtbd = "";
@@ -866,7 +894,7 @@ export async function computeMarketDiscovery(
             // ANTI-FABRICATION RAIL (hard): still failing perspective or
             // solution-agnostic ⇒ the executor is genuinely solution-defined —
             // DROP. No second reframe, no relaxation.
-            if (outcome === "rejected_buyer" || outcome === "rejected_solution") {
+            if (outcome === "rejected_buyer" || outcome === "rejected_solution" || outcome === "rejected_means") {
               totals.reframe_rail_dropped++;
             } else if (outcome === "accepted") {
               totals.reframe_rescued++;
@@ -943,6 +971,9 @@ export async function computeMarketDiscovery(
             market_register: "public_inferred",
             source_path: "market_portfolio_discovery:outside_only",
             frameworks_used: ["JTBD", "ODI", "local_ollama", "market_portfolio_discovery", "outside_only"],
+            // R4 (2026-09-22): the row says which criterion judged it. Rows written before the stamp stay
+            // NULL and are never backfilled — the next bump can tell them apart without inferring.
+            criterion_version: CRITERION_VERSION,
             updated_at: args.nowIso,
           });
           if (defErr) return { ok: false, error: `market def insert failed: ${defErr.message}` };

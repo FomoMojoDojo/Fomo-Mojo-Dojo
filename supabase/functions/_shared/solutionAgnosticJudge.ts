@@ -1,4 +1,4 @@
-// ── The solution-agnostic judge, criterion v2 (Gate 5b) ────────────────────────────────────────────
+// ── The solution-agnostic judge, criterion v3 (Gate 5b + goal-not-means, operator ruling 2026-09-22) ──
 //
 // WHAT v1 GOT WRONG. It was told nothing about the company and asked whether a job was "free of the
 // company's product/solution". With no solution named, it inferred one from the job's own words, and
@@ -28,10 +28,12 @@
 import { sha256Hex, normalizeForHash } from "./contentIdentity.ts";
 
 /** THE criterion version. Bump it when SOLUTION_AGNOSTIC_SYSTEM or the injection rule changes: the
- *  verdict key carries it, so a bump re-judges every candidate exactly once and leaves v1 as history. */
-export const CRITERION_VERSION = 2;
+ *  verdict key carries it, so a bump re-judges every candidate exactly once and leaves the prior version as
+ *  history. v3 (operator ruling R2, 2026-09-22) adds the goal-not-means clause below; v2 verdicts stand. */
+export const CRITERION_VERSION = 3;
 
-/** Frozen verbatim from Gate 5a-3. Do not edit without bumping CRITERION_VERSION. */
+/** v2's first test is frozen verbatim from Gate 5a-3; v3 appends the second test (goal-not-means) and
+ *  nothing else. Do not edit either without bumping CRITERION_VERSION. */
 export const SOLUTION_AGNOSTIC_SYSTEM =
   "You judge whether a market definition is SOLUTION-AGNOSTIC. You are told what the company sells. " +
   "A job FAILS only if it names that product, or names the category of solution the company sells as the MEANS of getting the job done. " +
@@ -39,10 +41,22 @@ export const SOLUTION_AGNOSTIC_SYSTEM =
   "A job that says it will USE a general technology (AI, software, data, cloud) to get something done is still a FIELD job — 'using AI to X' is about X, not about AI — even when that technology also appears in the company's product names. " +
   "It FAILS only when the thing it names is the company's product or the company's specific category of solution, not the technology behind it. " +
   "The test: if the company's solution category did not exist, would the job read the same? If yes, it is solution-agnostic. " +
+  // v3 (operator ruling R1/R2, 2026-09-22) — the goal-not-means clause. The v2 criterion above turns on the
+  // COMPANY's solution and so passes "finding a reliable provider of specialized care": with the company name
+  // withheld, a supplier category reads as something the executor shops for. This clause judges the STATEMENT'S
+  // OWN SHAPE instead, and it binds even when the company is unknown.
+  "SECOND TEST — GOAL, NOT MEANS. A job statement names what the executor is trying to GET DONE, in the executor's own words. " +
+  "It FAILS when its object or its means is a provider, a program, a service line, a facility, a treatment setting, or a category of supplier the executor would shop for — even when no company is named and even when the first test passes. " +
+  "'Finding a reliable provider of X' FAILS: the goal is not to find a provider, it is whatever the executor needs X for. " +
+  "'Seeking a continuum of care including residential treatment and outpatient therapy' FAILS: that is a catalogue of service lines, not a job. " +
+  "'Helping young patients access appropriate care and support' PASSES: a transitive verb, an object that is the executor's own outcome, and a clarifier. " +
+  "Form that passes: transitive verb + object + contextual clarifier, where the object is the progress the executor is making, not the thing they would buy. " +
+  "A job fails if EITHER test fails. State which test failed in your reason. " +
   'JSON only: {"solution_free":true|false,"reason":"<one short clause>"}.';
 
 /** Versioned verdict key. v1 is byte-identical to the pre-Gate-5b key so existing rows still resolve;
- *  v≥2 carries the version inside the hash so a v2 lookup can never find a v1 row. */
+ *  v≥2 carries the version inside the hash, so a v3 lookup can never find a v2 (or v1) row and the bump
+ *  re-judges every candidate exactly once. marketOptionSynthesis.ts stays on v1 by recorded decision. */
 export async function solutionAgnosticKey(executor: string, jtbd: string, version: number = CRITERION_VERSION): Promise<string> {
   const content = normalizeForHash(`${executor}|${jtbd}`);
   return version <= 1
@@ -55,7 +69,7 @@ export async function solutionAgnosticKey(executor: string, jtbd: string, versio
 // kept for ONE consumer: marketOptionSynthesis.ts (generate-market-options) extends this judge as its
 // third criterion and was written against v1 — the COMPANY line, the company name in the question.
 // Moving that pipeline to v2 is a separate decision; nothing in Gate 5b re-judges market options.
-// Discovery (marketPortfolioDiscovery.ts) uses v2 and never imports these.
+// Discovery (marketPortfolioDiscovery.ts) uses v3 and never imports these.
 export const SOLUTION_AGNOSTIC_SYSTEM_V1 =
   "You judge whether a market definition is SOLUTION-AGNOSTIC. " +
   "The job must be stated entirely in the executor's own world — a job that names, presupposes, or is only meaningful in terms of the company's product, service, or solution FAILS. " +
