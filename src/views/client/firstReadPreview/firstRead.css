@@ -2889,3 +2889,9 @@ span.fr-mark-target .fr-mark-box { display: flex; }
 .fr-revisit-label { margin-top: 0.75rem; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
 .fr-revisit-text { font-size: 15px; font-weight: 300; line-height: 1.6; color: hsl(var(--fr-ink)); }
 .fr-revisit-actions { display: flex; gap: 8px; margin-top: 1rem; }
+
+/* R1 (2026-09-22) — the per-pair verdict chip is the SAME chip as the statement's, one step down in
+   scale so the statement chip stays the louder of the two. No new colour, no new token: .fr-chip's
+   own tones carry the meaning. */
+.fr-chip-sub { display: inline-flex; }
+.fr-chip-sub .fr-chip { transform: scale(0.85); transform-origin: left center; }

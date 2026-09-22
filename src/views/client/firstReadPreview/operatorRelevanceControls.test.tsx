@@ -95,7 +95,11 @@ describe("(b) the preview mount renders both markers in their slots", () => {
     const strike = container.querySelector(`${SEL_CONTROLS}[data-fr-action="strike"]`);
     expect(strike).not.toBeNull();
     expect(strike!.parentElement!.className).toContain("flex");
-    expect(strike!.parentElement!.querySelector("span")!.textContent).toContain("Source:");
+    // The tag line CARRIES the source tag — co-location is the claim, not position. (It used to ask
+    // for the first span; R1, 2026-09-22, put the pair's own verdict chip ahead of the source tag in
+    // that same row, which is a render change, not a change to where the control sits.)
+    const tagLine = strike!.parentElement!.textContent ?? "";
+    expect(tagLine).toContain("Source:");
     // one struck block per statement that has struck pairs (s1 and s2) — each holds a Spare
     const blocks = container.querySelectorAll(SEL_STRUCK);
     expect(blocks).toHaveLength(2);

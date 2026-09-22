@@ -44,6 +44,20 @@ function strongestDivergentPair(st: Pick<FRGapStatement, "verdict" | "evidence">
 // explanation contains it is treated as non-specific and DEFERRED to a specific pair when one exists.
 const NON_SPECIFIC_MARK = "critical without specifics";
 
+/** R2 (2026-09-22) — the order of the evidence pairs WITHIN one statement: the pairs that dispute it
+ *  first, then the ones that echo it. Stable inside each group, so the upstream ordering (orderGapPairs:
+ *  strongest active evidence first, then most-recent) survives untouched within the run.
+ *
+ *  WHY: a contradicted statement renders EVERY admissible pair under one statement-level chip — the
+ *  confirming ones too (the any-one rule, mapping.ts:282, unchanged). Reading top-down, the disputing
+ *  pair could sit fifth under a "Disputed" chip with four echoes above it, which reads as though the
+ *  echoes were the dispute. Putting the dispute first makes the chip's own evidence the first thing
+ *  under it. Nothing here changes which pairs render, or the statement's verdict, or gapCounts. */
+export function orderPairsByVerdict<T extends { verdict: FRGapVerdict }>(pairs: readonly T[]): T[] {
+  const rank = (v: FRGapVerdict) => (v === "contradicted" ? 0 : 1);
+  return [...pairs].sort((a, b) => rank(a.verdict) - rank(b.verdict)); // Array.sort is stable
+}
+
 /** TIER 1 of the contradiction "why": the freshly generated, grounded "what differs" explanation.
  *  Among the statement's divergent pairs that carry a grounded explanation, PREFER the strongest one
  *  whose explanation is SPECIFIC (names the excerpt's concrete allegation) over an honest non-specific
@@ -60,15 +74,24 @@ export function conflictExplanationFor(st: Pick<FRGapStatement, "verdict" | "evi
 }
 
 /** TIER 2: the judged reason to show for a contradicted statement, or null when there is none or it
- *  fails the grounding check. Same STRONGEST-divergent-pair rule; grounded against the pair host set. */
+ *  fails the grounding check. Same STRONGEST-divergent-pair rule.
+ *
+ *  R4 (2026-09-22): grounded against the hosts of the statement's CONTRADICTED pairs only — not every
+ *  evidence host. The reason explains a CONTRADICTION, so a host that merely ECHOES the statement
+ *  cannot ground it: a reason naming a confirming source read as grounded while pointing at evidence
+ *  that says the opposite. When this rejects a reason the old check passed, the line falls to tier 3
+ *  (deriveContradictionWhy), which is the honest derived sentence — never nothing. */
 export function judgedContradictionReason(st: Pick<FRGapStatement, "verdict" | "evidence">): string | null {
   const strongest = strongestDivergentPair(st);
   if (!strongest) return null;
   const reason = (strongest.judgeReason ?? "").trim();
-  const evidenceHosts = new Set(
-    st.evidence.map((e) => (e.recordHost ?? "").trim().toLowerCase()).filter((h) => h.length > 0),
+  const contradictingHosts = new Set(
+    st.evidence
+      .filter((e) => e.verdict === "contradicted")
+      .map((e) => (e.recordHost ?? "").trim().toLowerCase())
+      .filter((h) => h.length > 0),
   );
-  return isGroundedReason(reason, evidenceHosts) ? reason : null;
+  return isGroundedReason(reason, contradictingHosts) ? reason : null;
 }
 
 export function deriveContradictionWhy(st: Pick<FRGapStatement, "verdict" | "evidence" | "declaredDate">): string | null {

@@ -22,7 +22,7 @@ import {
 } from "./primitives";
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
-import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
+import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason, orderPairsByVerdict } from "./mapping";
 import type { FirstReadPreviewData, FRGapCounts, FRGapPair, FRGapStatement, FROfferItem, FRSignal, FRStatusConflict } from "./types";
 import type { ChipTone } from "./primitives";
 import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
@@ -1686,14 +1686,21 @@ function StatementEvidence({ statement, struck = [] }: { statement: FRGapStateme
   // column under the declared statement (see ActGap's leftExtra) — NOT here in the evidence column.
   return (
     <div className="flex flex-col gap-8">
-      {statement.evidence.map((pair) => {
+      {/* R2 (2026-09-22): the pairs that DISPUTE the statement first, then the ones that echo it —
+          stable within each group, so orderGapPairs' strength/recency order survives. Which pairs
+          render, the statement's verdict and gapCounts are all untouched. */}
+      {orderPairsByVerdict(statement.evidence).map((pair) => {
         const recency = formatMonthYear(pair.eventDate);
         return (
           <MarkTarget key={pair.id} kind="gap_pair" keyVal={pair.contentIdentity ?? null} text={pair.record ?? pair.listing?.productName ?? ""}>
-          <div>
+          <div data-fr-pair-verdict={pair.verdict}>
             <div className="mb-3 flex flex-wrap items-center gap-4">
-              {/* Chip dedup (2026-08-26, retires item 30): the STATUS DISPUTED chip renders ONCE per
-                  statement (in ActGap's meta), not per pair. */}
+              {/* R1 (2026-09-22): each pair carries its OWN verdict, from the same signed VERDICT_LABEL
+                  the statement chip uses — a confirming pair under a "Disputed" statement said so all
+                  along, and the surface now says which is which. Subordinate by scale only (the
+                  existing .fr-chip at 0.85), never a second vocabulary. The STATUS DISPUTED chip is
+                  untouched and still renders once per statement in ActGap's meta (2026-08-26). */}
+              <span className="fr-chip-sub"><VerdictChip verdict={pair.verdict} /></span>
               {pair.sourceTag ? <SourceTag>{pair.sourceTag.label}</SourceTag> : null}
               {recency ? <RecencyTag>{recency}</RecencyTag> : null}
               {/* Operator-only (context-gated): Strike, or provenance + Withdraw on an operator-spared pair. */}
