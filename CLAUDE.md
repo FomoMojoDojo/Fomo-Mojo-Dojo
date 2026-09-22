@@ -150,6 +150,16 @@ served until the stack is recreated (`source supabase/functions/.env.local` → 
 - record-interview-finding (gate 2, 2026-09-16 — the one write path for interview findings)
 - record-interview-upload (gate B 2a, 2026-09-19)
 
+**Served code is not live on edit** (R46, 2026-09-21). The edge runtime's worker keeps the module it booted with:
+an in-place edit of a served function (its `index.ts`/`handler.ts` or a `_shared` file it imports) is live only
+after `docker restart supabase_edge_runtime_<project>` (no DB touch; volumes untouched) — or once the worker's
+400 s wall clock recycles it, which is not a step to rely on. After the restart, the boot list above proves the
+worker is up (400 on `{}`).
+
+**Planted failures on served code** (R46): a plant in a served function counts as RED only when the run made
+AFTER that `docker restart` shows it; restore the file (md5-identical), restart again, and the GREEN run is the
+one after the second restart. A plant run without the restart proves nothing — it exercises the old module.
+
 **Never probe `restamp-aggregator-self-voice` with `{}`** (2026-09-21). Its body is `{ dry_run: true (DEFAULT),
 company_id? }`, so an empty body is a valid all-companies dry run: it loads every unfrozen company's outside-voice
 rows and runs the local Ollama authorship judge (qwen2.5:14b-instruct) on each — no 400, no write, but the worker

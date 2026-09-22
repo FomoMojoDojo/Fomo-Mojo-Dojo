@@ -10,7 +10,9 @@
 //
 // Windows: ≤ 12,000 chars cut at line boundaries. One call per window — qwen2.5:14b-instruct, format json,
 // schema { market_key | null, reason }. Candidates = the company's live market definitions
-// (odi_market_definitions, retracted_at NULL) excluding internal (R34); a key outside the list is invalid and
+// (odi_market_definitions, retracted_at NULL) whose market_lens.portfolio_state is 'active', excluding internal
+// (R34, R45 — a definition with no lens row or a deferred lens is not offered; "Change market" still lists every
+// live market); the keys offered are recorded as candidate_keys on the basis entry. A key outside the list is invalid and
 // counted as "none"; an errored window is recorded as an error, never as "none". R33: any errored window fails
 // the run — nothing placed. R32: before each window, elapsed + the slowest window so far (minimum 30 s) past
 // 300 s → stop, reason time_budget, nothing placed. Result: a STRICT majority of the windows that named a
@@ -246,18 +248,23 @@ export async function handleInferInterviewMarket(req: Request, deps: Deps = { cr
       staleMarked.push(p.id);
     }
 
-    // ── candidates: the live market definitions, internal excluded (R34) ──
+    // ── candidates: the live market definitions with an ACTIVE lens, internal excluded (R34, R45) ──
     const [{ data: defs }, { data: lens }] = await Promise.all([
       db.from("odi_market_definitions").select("journey_key, job_executor, jtbd").eq("company_id", companyId).is("retracted_at", null),
-      db.from("market_lens").select("journey_key, title").eq("company_id", companyId),
+      db.from("market_lens").select("journey_key, title, portfolio_state").eq("company_id", companyId),
     ]);
     const titles = new Map<string, string>();
-    for (const l of (Array.isArray(lens) ? lens : []) as Array<{ journey_key?: unknown; title?: unknown }>) { const k = text(l.journey_key); const t = text(l.title); if (k && t && !titles.has(k)) titles.set(k, t); }
+    const activeLens = new Set<string>();
+    for (const l of (Array.isArray(lens) ? lens : []) as Array<{ journey_key?: unknown; title?: unknown; portfolio_state?: unknown }>) {
+      const k = text(l.journey_key); const t = text(l.title);
+      if (k && t && !titles.has(k)) titles.set(k, t);
+      if (k && l.portfolio_state === "active") activeLens.add(k);
+    }
     const seen = new Set<string>();
     const candidates: Candidate[] = [];
     for (const d of (Array.isArray(defs) ? defs : []) as Array<{ journey_key?: unknown; job_executor?: unknown; jtbd?: unknown }>) {
       const k = text(d.journey_key);
-      if (!k || k === "internal" || seen.has(k)) continue;
+      if (!k || k === "internal" || seen.has(k) || !activeLens.has(k)) continue; // R45: no lens row / deferred → not offered
       seen.add(k);
       candidates.push({ market_key: k, title: titles.get(k) || text(d.job_executor) || k, job_executor: text(d.job_executor), jtbd: text(d.jtbd) });
     }
@@ -340,7 +347,7 @@ export async function handleInferInterviewMarket(req: Request, deps: Deps = { cr
     const result: "placed" | "not_inferred" | "failed" | "operator_placed_meanwhile" = failure ? "failed" : operatorMeanwhile ? "operator_placed_meanwhile" : t.winner ? "placed" : "not_inferred";
     const finishedAt = now();
     const entry = {
-      kind: "inference", at: iso(finishedAt), run_id: runId, model: INFERENCE_MODEL, num_ctx: NUM_CTX, ollama_version: ollamaVersion, result,
+      kind: "inference", at: iso(finishedAt), run_id: runId, model: INFERENCE_MODEL, num_ctx: NUM_CTX, ollama_version: ollamaVersion, candidate_keys: candidates.map((c) => c.market_key), result,
       ...(failure ? { failure_reason: failure.reason, failure_detail: failure.detail } : {}),
       ...(result === "placed" ? { journey_key: t.winner } : {}),
       windows_total: windows.length, windows_run: outcomes.length, named: t.named, votes: t.votes,

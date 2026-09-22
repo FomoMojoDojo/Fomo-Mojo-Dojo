@@ -22,8 +22,16 @@ function fake(seed: { records: Row[]; companies?: Row[]; defs?: Row[]; lens?: Ro
       { company_id: CO, journey_key: "mkt-c", job_executor: "Executor C", jtbd: "Job C", retracted_at: null },
       { company_id: CO, journey_key: "internal", job_executor: "Ops", jtbd: "Internal", retracted_at: null },
       { company_id: CO, journey_key: "mkt-old", job_executor: "Old", jtbd: "Old", retracted_at: "2026-09-01T00:00:00Z" },
+      { company_id: CO, journey_key: "mkt-deferred", job_executor: "Deferred executor", jtbd: "Deferred job", retracted_at: null }, // R45: live definition, deferred lens
+      { company_id: CO, journey_key: "mkt-nolens", job_executor: "No-lens executor", jtbd: "No-lens job", retracted_at: null }, // R45: live definition, no lens row
     ]).map((r) => ({ ...r })),
-    market_lens: (seed.lens ?? [{ company_id: CO, journey_key: "mkt-a", title: "Market A title" }]).map((r) => ({ ...r })),
+    market_lens: (seed.lens ?? [
+      { company_id: CO, journey_key: "mkt-a", title: "Market A title", portfolio_state: "active" },
+      { company_id: CO, journey_key: "mkt-b", title: "Market B title", portfolio_state: "active" },
+      { company_id: CO, journey_key: "mkt-c", title: "Market C title", portfolio_state: "active" },
+      { company_id: CO, journey_key: "internal", title: "Internal Operations", portfolio_state: "active" },
+      { company_id: CO, journey_key: "mkt-deferred", title: "Deferred market title", portfolio_state: "deferred" },
+    ]).map((r) => ({ ...r })),
     user_roles: (seed.roles ?? [{ user_id: ADMIN, role: "admin" }]).map((r) => ({ ...r })),
     integrity_runs: (seed.runs ?? []).map((r) => ({ ...r })),
     model_calls: [],
@@ -183,7 +191,7 @@ Deno.test("(g) windows: ≤ 12,000 chars cut at line boundaries; an over-long li
   assertEquals(r.status, 200); assertEquals(r.json.windows_total, 3); assertEquals(t.calls.length, 3);
   const calls = f.tables.model_calls; assertEquals(calls.length, 3);
   for (const c of calls) { assertEquals(c.provider, "ollama"); assertEquals(c.model, INFERENCE_MODEL); assertEquals(c.call_site, CALL_SITE); assertEquals(c.prompt_tokens, 3900); assertEquals(c.completion_tokens, 50); assertEquals(c.usd, null); assertEquals(c.run_id, null); }
-  for (const c of t.calls) { assertEquals(c.baseUrl, "http://host.docker.internal:11434"); assertEquals(c.model, INFERENCE_MODEL); assertStringIncludes(c.user, "- mkt-a: Market A title"); assert(!c.user.includes("internal"), "R34: internal never a candidate"); assert(!c.user.includes("mkt-old"), "a retracted definition never a candidate"); }
+  for (const c of t.calls) { assertEquals(c.baseUrl, "http://host.docker.internal:11434"); assertEquals(c.model, INFERENCE_MODEL); assertStringIncludes(c.user, "- mkt-a: Market A title"); assert(!c.user.includes("internal"), "R34: internal never a candidate"); assert(!c.user.includes("mkt-old"), "a retracted definition never a candidate"); assert(!c.user.includes("mkt-deferred") && !c.user.includes("mkt-nolens"), "R45: deferred / no-lens never a candidate"); }
 });
 
 Deno.test("(h) strict majority places: A,A,B → placed A (M3 title from the lens); every run appends ONE basis entry; the planned row ends completed with admitted 1", async () => {
@@ -302,6 +310,9 @@ Deno.test("(q) local-only: a non-local Ollama base → 500 before any call; no e
 Deno.test("(r) no live markets → 409 no_markets, no run; tally is a pure strict majority", async () => {
   const f = fake({ records: [await seeded()], defs: [{ company_id: CO, journey_key: "internal", job_executor: "Ops", jtbd: "x", retracted_at: null }] }); const t = transport([{ key: "mkt-a" }]);
   const r = await run(f, t); assertEquals(r.status, 409); assertEquals(r.json.error, "no_markets"); assertEquals(t.calls.length, 0); assertEquals(runsOf(f).length, 0);
+  // R45: live definitions whose lens is all deferred → no candidates either
+  const g = fake({ records: [await seeded()], defs: [{ company_id: CO, journey_key: "mkt-x", job_executor: "X", jtbd: "x", retracted_at: null }], lens: [{ company_id: CO, journey_key: "mkt-x", title: "X", portfolio_state: "deferred" }] });
+  const rg = await run(g, transport([{ key: "mkt-x" }])); assertEquals(rg.status, 409); assertEquals(rg.json.error, "no_markets");
   const w = (k: string | null, status: "ok" | "error" = "ok") => ({ index: 0, chars: 1, status, market_key: k, reason: null, ms: 1, prompt_tokens: null, completion_tokens: null });
   assertEquals(tally([w("a"), w("a"), w("b")]).winner, "a");
   assertEquals(tally([w("a"), w("b")]).winner, null);
@@ -357,4 +368,17 @@ Deno.test("(u) R44 runtime gate: the Ollama version is read once per run and rec
   const h = fake({ records: [await seeded()] }); const v = transport([{ key: "mkt-a" }]);
   const ok = await run(h, v); assertEquals(ok.status, 200); assertEquals(ok.json.result, "placed");
   assertEquals(basisOf(h)[1].ollama_version, "0.34.0"); assertEquals((runsOf(h)[0].excluded_by_rule as Row).ollama_version, "0.34.0");
+});
+
+Deno.test("(v) R45: a deferred-lens market and a definition with no lens row are never offered; a window naming the deferred key is invalid = none; the basis entry carries candidate_keys (the keys offered)", async () => {
+  const f = fake({ records: [await seeded({}, 3 * LPW)] }); const t = transport([{ key: "mkt-a" }, { key: "mkt-deferred" }, { key: "mkt-a" }]);
+  const r = await run(f, t);
+  assertEquals(r.status, 200); assertEquals(r.json.result, "placed"); assertEquals(r.json.named, 2); // the deferred vote is none
+  const e = basisOf(f)[1];
+  assertEquals(e.candidate_keys, ["mkt-a", "mkt-b", "mkt-c"]);
+  const w = (e.windows as Row[])[1]; assertEquals(w.status, "ok"); assertEquals(w.market_key, null); assertEquals(w.invalid_key, "mkt-deferred");
+  for (const c of t.calls) { assert(!c.user.includes("mkt-deferred") && !c.user.includes("Deferred market title") && !c.user.includes("mkt-nolens"), "never offered"); assertStringIncludes(c.user, "- mkt-c: Market C title"); }
+  const schemaEnum = (buildPrompt([{ market_key: "mkt-a", title: "t", job_executor: "", jtbd: "" }], "w").schema as { properties: { market_key: { anyOf: Array<{ enum?: string[] }> } } }).properties.market_key.anyOf[0].enum;
+  assertEquals(schemaEnum, ["mkt-a"]); // the schema only ever enumerates the offered keys
+  assertEquals((runsOf(f)[0].excluded_by_rule as Row).candidates, 3);
 });

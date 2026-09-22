@@ -7,6 +7,7 @@
 //       (chars, prompt_tokens, completion_tokens, ms, status) with the integrity and model_calls ids;
 //   (b) status error / context_overflow on the window, the run failed (422), nothing placed, the call ledgered with
 //       prompt_tokens = 4098 (Ollama 0.34.0's truncation size at num_ctx 8192).
+// A fourth, DEFERRED-lens definition is planted too (R45): it is never offered and never appears in candidate_keys.
 // Cleanup inside the spec: the throwaway's model_calls rows are deleted by id (listed), then the company cascade.
 // Never CB1 / CB2 / Edgewood data; the texts are filler written here. Plant: the guard's detection removed → (b) red.
 import { execFileSync } from "node:child_process";
@@ -69,8 +70,10 @@ async function plant(page: Page) {
   const p = planted as { cid: string; adminId: string; three: string; overflow: string };
   for (const [k, ex, job] of [["mkt-families", "Families and caregivers of a child in counselling", "Find a counsellor who can see the child during school hours"], ["mkt-funders", "Grant-making bodies funding youth programmes", "Fund a programme and see its outcome numbers"], ["mkt-clinics", "Paediatric clinics referring teenagers", "Refer a young patient to a specialist quickly"]]) {
     psql(`insert into odi_market_definitions (company_id, user_id, journey_key, job_executor, jtbd, market_register) values ('${p.cid}', '${p.adminId}', '${k}', '${ex}', '${job}', 'internal_declared')`);
-    psql(`insert into market_lens (company_id, journey_key, title) values ('${p.cid}', '${k}', '${ex}')`);
+    psql(`insert into market_lens (company_id, journey_key, title, portfolio_state) values ('${p.cid}', '${k}', '${ex}', 'active')`); // R45: only an active lens is a candidate
   }
+  psql(`insert into odi_market_definitions (company_id, user_id, journey_key, job_executor, jtbd, market_register) values ('${p.cid}', '${p.adminId}', 'mkt-deferred', 'Deferred executor', 'Deferred job', 'internal_declared')`);
+  psql(`insert into market_lens (company_id, journey_key, title, portfolio_state) values ('${p.cid}', 'mkt-deferred', 'Deferred market', 'deferred')`);
   return p;
 }
 const invoke = (page: Page, cid: string, recId: string) => page.evaluate(async (a) => {
@@ -88,13 +91,14 @@ test("(R43) real run: three windows of format (c) → 3 × ok, no context_overfl
   const { cid, three, overflow } = await plant(page);
   const written: string[] = [];
   try {
-    expect(psql(`select count(*) from odi_market_definitions where company_id='${cid}' and retracted_at is null`)).toBe("3");
+    expect(psql(`select count(*) from odi_market_definitions where company_id='${cid}' and retracted_at is null`)).toBe("4"); // 3 active + 1 deferred
     // (a) three windows
     const a = await invoke(page, cid, three);
     const ea = lastEntry(three);
     console.log(`x6 (a) run_id=${ea.run_id} result=${ea.result} ollama=${ea.ollama_version} num_ctx=${ea.num_ctx} windows=${ea.windows_total}/${ea.windows_run} votes=${JSON.stringify(ea.votes)}`);
     for (const w of ea.windows) console.log(`x6 (a) window ${w.index}: chars=${w.chars} prompt_tokens=${w.prompt_tokens} completion_tokens=${w.completion_tokens} ms=${w.ms} status=${w.status}${w.error ? ` error=${w.error}` : ""} key=${w.market_key ?? "none"}`);
     expect(a.ok, JSON.stringify(a)).toBe(true);
+    expect([...(ea.candidate_keys as string[])].sort()).toEqual(["mkt-clinics", "mkt-families", "mkt-funders"]); // R45: the keys offered, recorded — never the deferred one
     expect(ea.windows_total).toBe(3); expect(ea.windows_run).toBe(3);
     expect(ea.windows.map((w) => w.status)).toEqual(["ok", "ok", "ok"]);
     expect(ea.windows.some((w) => w.error === "context_overflow")).toBe(false);
