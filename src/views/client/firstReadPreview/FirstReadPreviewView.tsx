@@ -16,6 +16,11 @@ import { decideRelevance, overrideFailureMessage } from "./relevanceOverrideActi
 // Stage 2 (visual port): shell chrome — sticky Header (title / identity / segments / counter) + bottom Nav.
 import { Header, Nav } from "./shell";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
+import { MarksProvider, type MarksSurface } from "@/lib/firstReadMarks/MarksContext";
+import { useFirstReadMarks } from "@/lib/firstReadMarks/useFirstReadMarks";
+import { HEARD_BEAT_KEY, WhatWeHeard } from "@/lib/firstReadMarks/WhatWeHeard";
+import { MARK_STRINGS } from "@/lib/firstReadMarks/strings";
+import { offeringQuestionKeys } from "@/lib/firstReadMarks/anchors";
 import { bareHost } from "./mapping";
 import { CLIENT_REFINE_PREVIEW_ROUTE } from "@/lib/clientRefinePreview";
 import {
@@ -42,6 +47,7 @@ import {
   ColdOpen,
   ScoreReveal,
 } from "./acts";
+import { Spread } from "./primitives-editorial";
 
 /**
  * Page order (reorder sweep 2026-08-24): cold → what the world sees and says → what you say
@@ -83,12 +89,22 @@ export const BEATS = [
   { key: "next", label: "Next move", act: undefined },
 ] as const;
 
+/** Marks (commit 2, 2026-09-22): "What we heard" sits just before the closer and only when the company holds at
+ *  least one live mark; BEATS itself stays the fixed reading order every test pins. */
+export const HEARD_BEAT = { key: HEARD_BEAT_KEY, label: MARK_STRINGS.whatWeHeard, act: undefined } as const;
+export type Beat = { key: string; label: string; act: number | undefined };
+export function beatsFor(hasMarks: boolean): readonly Beat[] {
+  if (!hasMarks) return BEATS as readonly Beat[];
+  const i = BEATS.findIndex((b) => b.key === "next");
+  return [...BEATS.slice(0, i), HEARD_BEAT, ...BEATS.slice(i)] as readonly Beat[];
+}
+
 /** Beats that render their own eyebrow inside the body (the closer's "Before you go", the siestas'
  *  none, and — stages 2–3 — the Screen/Spread beats, which take the nav label as a prop). The view's
  *  generic auto-eyebrow renders only for the remaining beats (promise / positioning / strategy). */
 const EYEBROW_IN_BODY: ReadonlySet<string> = new Set([
   "arc", "next", "siesta1", "siesta2",
-  "record", "yousay", "gap", "findings", "serve", "base", "offer", "score", "questions",
+  "record", "yousay", "gap", "findings", "serve", "base", "offer", "score", "questions", HEARD_BEAT_KEY,
   // Stage 3b: the dark Screens use their own PROMISE_TITLE / POSITIONING_TITLE / STRATEGY_TITLE (the
   // same words as the nav label) as the eyebrow — so the label renders once, not twice.
   "promise", "positioning", "strategy",
@@ -111,6 +127,9 @@ export default function FirstReadPreviewView() {
   // solely under the admin preview route, so client views structurally never render the controls.
   const [refreshKey, setRefreshKey] = useState(0);
   const { data: baseData, loading, error } = useFirstReadPreviewData(companyId, refreshKey);
+  // Marks (commit 2): this view is the ONLY provider of MarksContext — the affordance exists on this route alone.
+  const marksStore = useFirstReadMarks(companyId);
+  const beats = useMemo(() => beatsFor(marksStore.marks.length > 0), [marksStore.marks.length]);
   const queryClient = useOptionalQueryClient();
   // RULE (a) (operator ruling 2026-09-03): this preview is the surface shown on screen in client meetings,
   // so the operator affordance is OFF by default and lives in component state ONLY — no localStorage,
@@ -133,23 +152,37 @@ export default function FirstReadPreviewView() {
   }, [companyId, queryClient, operatorOn]);
   // Questions come from the ONE open-question authority — it applies
   // the outside-only provenance gate (doc-derived questions never render).
-  const { questions } = useFirstReadOpenQuestions(companyId);
+  const { questions, rows: questionRows } = useFirstReadOpenQuestions(companyId);
   // The offering payload's open_questions route to the Questions beat via the SAME open-question
   // list (the existing mechanic) — appended after the DB-authority questions, never rendered as
-  // verdicts on the offer beat itself.
+  // verdicts on the offer beat itself. Marks (FM15): the DB rows' question_identity rides beside them.
+  // Marks: the offering questions key by a text hash (async) — filled here, absent until then (not markable meanwhile).
+  const [offeringKeys, setOfferingKeys] = useState<string[] | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    const texts = baseData.offeringOpenQuestions ?? [];
+    if (texts.length === 0) { setOfferingKeys(undefined); return; }
+    offeringQuestionKeys(texts).then((keys) => { if (!cancelled) setOfferingKeys(keys); });
+    return () => { cancelled = true; };
+  }, [baseData.offeringOpenQuestions]);
   const data = useMemo(
-    () => ({ ...baseData, questions: [...questions, ...(baseData.offeringOpenQuestions ?? [])] }),
-    [baseData, questions],
+    () => ({
+      ...baseData,
+      questions: [...questions, ...(baseData.offeringOpenQuestions ?? [])],
+      questionAnchors: (questionRows ?? []).map((r) => ({ identity: String(r.question_identity ?? ""), text: r.question_text.trim() })),
+      offeringQuestionKeys: offeringKeys,
+    }),
+    [baseData, questions, questionRows, offeringKeys],
   );
   const [index, setIndex] = useState(0);
 
   const go = useCallback((next: number) => {
     setIndex((current) => {
-      const clamped = Math.min(Math.max(next, 0), BEATS.length - 1);
+      const clamped = Math.min(Math.max(next, 0), beats.length - 1);
       if (clamped !== current) window.scrollTo({ top: 0, behavior: "smooth" });
       return clamped;
     });
-  }, []);
+  }, [beats.length]); // marks: the beat list grows by one when "What we heard" is present
 
   // Company switch resets to the cold open.
   useEffect(() => {
@@ -198,16 +231,16 @@ export default function FirstReadPreviewView() {
           break;
         case "End":
           event.preventDefault();
-          go(BEATS.length - 1);
+          go(beats.length - 1);
           break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [go, index]);
+  }, [go, index, beats.length]);
 
   const body = useMemo(() => {
-    const beatKey: string = BEATS[index].key;
+    const beatKey: string = beats[index].key;
     switch (beatKey) {
       case "arc":
         // New opener (2026): the "you are here" process arc — a four-stage engagement spine (in ActArc).
@@ -215,26 +248,26 @@ export default function FirstReadPreviewView() {
         // the hand-off. Structure only — no findings/signal/verdict content.
         // Stage 2: the beat's nav label is the opener's eyebrow (rendered inside its Screen; the
         // generic auto-eyebrow below skips "arc" so the string renders exactly once, as before).
-        return <ActArc eyebrow={BEATS[index].label} onContinue={() => go(index + 1)} />;
+        return <ActArc eyebrow={beats[index].label} onContinue={() => go(index + 1)} />;
       case "cold":
         // FIX 1: relative advancement (was hardcoded go(1), which self-looped once the arc took index 0).
         return <ColdOpen read={data} onContinue={() => go(index + 1)} />;
       // Stage 3: the nine Spread beats render their nav label as the sidebar eyebrow (the generic
       // auto-eyebrow below skips them, so the string renders exactly once, as before).
       case "record":
-        return <ActRecord read={data} eyebrow={BEATS[index].label} />;
+        return <ActRecord read={data} eyebrow={beats[index].label} />;
       case "yousay":
-        return <ActWhatYouSay read={data} eyebrow={BEATS[index].label} />;
+        return <ActWhatYouSay read={data} eyebrow={beats[index].label} />;
       case "gap":
-        return <ActGap read={data} eyebrow={BEATS[index].label} />;
+        return <ActGap read={data} eyebrow={beats[index].label} />;
       case "serve":
-        return <ActWhoYouServe read={data} eyebrow={BEATS[index].label} />;
+        return <ActWhoYouServe read={data} eyebrow={beats[index].label} />;
       case "offer":
-        return <ActWhatYouOffer read={data} eyebrow={BEATS[index].label} />;
+        return <ActWhatYouOffer read={data} eyebrow={beats[index].label} />;
       case "findings":
-        return <ActFindings read={data} eyebrow={BEATS[index].label} />;
+        return <ActFindings read={data} eyebrow={beats[index].label} />;
       case "score":
-        return <ScoreReveal read={data} eyebrow={BEATS[index].label} />;
+        return <ScoreReveal read={data} eyebrow={beats[index].label} />;
       // case "where": return <ActWhereYouStand read={data} />;  // hidden — restore with BEATS entry + import
       case "siesta1":
         return <ActSiesta1 />;
@@ -245,22 +278,33 @@ export default function FirstReadPreviewView() {
       case "strategy":
         return <ActStrategy read={data} />;
       case "base":
-        return <BaseGate eyebrow={BEATS[index].label} read={data} />;
+        return <BaseGate eyebrow={beats[index].label} read={data} />;
       case "siesta2":
         return <ActSiesta2 />;
       case "questions":
-        return <ActQuestions read={data} eyebrow={BEATS[index].label} />;
+        return <ActQuestions read={data} eyebrow={beats[index].label} />;
       case "next":
-        return <ActNext isLast={index === BEATS.length - 1} />;
+        return <ActNext isLast={index === beats.length - 1} />;
+      case HEARD_BEAT_KEY:
+        return (
+          <Spread eyebrow={beats[index].label}>
+            <WhatWeHeard read={data} beats={beats} />
+          </Spread>
+        );
       default:
         // Every BEATS key MUST have an explicit case above — the closer ("next") is never the fallback.
         // A missing case is a structural bug (a new beat that would otherwise render as the closer
         // mid-flow); throw so the guard catches it rather than silently showing "Next move".
         throw new Error(`FirstReadPreviewView: no body case for beat key "${beatKey}"`);
     }
-  }, [data, go, index]);
+  }, [data, go, index, beats]);
 
-  const beat = BEATS[index];
+  const beat = beats[index];
+  const goToBeat = useCallback((key: string) => { const i = beats.findIndex((b) => b.key === key); if (i >= 0) go(i); }, [beats, go]);
+  const marksSurface = useMemo<Omit<MarksSurface, "openId" | "setOpenId"> | null>(() => (companyId ? {
+    companyId, marks: marksStore.marks, byAnchor: marksStore.byAnchor, frozen: marksStore.frozen, currentBeat: beat.key, goToBeat,
+    create: marksStore.create, append: marksStore.append, withdraw: marksStore.withdraw,
+  } : null), [companyId, marksStore.marks, marksStore.byAnchor, marksStore.frozen, marksStore.create, marksStore.append, marksStore.withdraw, beat.key, goToBeat]);
   const isCold = beat.key === "cold";
   const isSiesta = beat.key === "siesta1" || beat.key === "siesta2";
   const host = bareHost(data.company?.website);
@@ -294,6 +338,7 @@ export default function FirstReadPreviewView() {
   return (
     // D1: a siesta is visibly a break — full-page accent ground (--fr-accent), white type. The break
     // class scopes the inversion of the header + progress ticks so they stay legible (never global).
+    <MarksProvider value={marksSurface}>
     <OperatorControlsContext.Provider value={operatorControls}>
     <div className={`first-read${isSiesta ? " fr-siesta" : ""}${beat.key === "siesta2" ? " fr-siesta--dark" : ""}${FIRST_READ_SHOW_NAV_CHROME ? " fr-has-nav" : ""}`}>
       {/* Stage 2 shell: the sticky header carries the same two strings the old in-body nav did
@@ -318,7 +363,7 @@ export default function FirstReadPreviewView() {
         }
         title="First read"
         identity={identity}
-        beats={BEATS}
+        beats={beats}
         index={index}
         onGo={go}
         showCounter={FIRST_READ_SHOW_NAV_CHROME}
@@ -335,7 +380,7 @@ export default function FirstReadPreviewView() {
         {/* D2: the bottom Back / forward-link / Reference / Keys bar stays behind the flag. */}
         {FIRST_READ_SHOW_NAV_CHROME ? (
           <Nav
-            beats={BEATS}
+            beats={beats}
             index={index}
             onGo={go}
             referenceName={`FIRST_READ · ${(data.company.name || "").toUpperCase()}`}
@@ -361,5 +406,6 @@ export default function FirstReadPreviewView() {
       </button>
     </div>
     </OperatorControlsContext.Provider>
+    </MarksProvider>
   );
 }

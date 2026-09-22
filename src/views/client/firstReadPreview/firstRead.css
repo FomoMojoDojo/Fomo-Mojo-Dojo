@@ -2829,3 +2829,41 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-capture-placement dd { margin: 0; color: hsl(var(--fr-steel)); }
 .fr-ws-capture-actions { display: flex; gap: 8px; }
 .fr-ws-capture-saved { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--fr-lime)); }
+
+/* ── First-read marks (commit 2, 2026-09-22) — existing tokens only. The target wraps a row; a marked row
+   carries a lime edge + tint and its kind icons; the box opens inline beneath the row. Nothing here renders
+   without the marks provider (the wrapper is absent on every other surface). ── */
+/* FM17: the hover cue — a pointer and a faint outline — sits on markable targets only (the class is applied only when a
+   provider is present, the company is not frozen and the row has a key; everything else renders without it). */
+.fr-mark-target { position: relative; cursor: pointer; }
+.fr-mark-target:hover { outline: 1px solid hsl(var(--fr-hair)); outline-offset: 6px; }
+.fr-mark-target:has(.fr-mark-box:hover) { outline: none; }
+.fr-mark-target--marked { box-shadow: inset 3px 0 0 hsl(var(--fr-lime)); background: hsl(var(--fr-lime) / 0.08); }
+.fr-mark-target--marked[data-fr-marked="client_reaction"] { box-shadow: inset 3px 0 0 hsl(var(--fr-electric)); background: hsl(var(--fr-electric) / 0.06); }
+span.fr-mark-target { display: inline; box-shadow: none; }
+span.fr-mark-target--marked { background: hsl(var(--fr-lime) / 0.18); box-decoration-break: clone; }
+span.fr-mark-target--marked[data-fr-marked="client_reaction"] { background: hsl(var(--fr-electric) / 0.14); }
+.fr-mark-body { min-width: 0; }
+span.fr-mark-body { display: inline; }
+.fr-mark-icons { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+.fr-mark-box { position: relative; z-index: 5; margin-top: 12px; padding: 14px 40px 14px 16px; border: 1px solid hsl(var(--fr-line)); background: hsl(var(--fr-paper)); color: hsl(var(--fr-ink)); display: flex; flex-direction: column; gap: 10px; max-width: 42rem; cursor: default; font-size: 13px; }
+/* FM20: ~150 ms fade + short slide on open; none at all under prefers-reduced-motion (the box also carries
+   data-fr-mark-motion="none" then, so the rule below never applies) */
+@keyframes fr-mark-box-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.fr-mark-box[data-fr-mark-motion="enter"] { animation: fr-mark-box-in 150ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .fr-mark-box[data-fr-mark-motion="enter"] { animation: none; } }
+.fr-mark-close { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; background: transparent; color: hsl(var(--fr-muted)); cursor: pointer; }
+.fr-mark-close:hover { color: hsl(var(--fr-ink)); border-color: hsl(var(--fr-hair)); }
+.fr-mark-close:focus-visible { outline: 2px solid hsl(var(--fr-electric)); outline-offset: 1px; }
+.fr-mark-divider { border: 0; border-top: 1px solid hsl(var(--fr-hair)); margin: 2px 0; }
+span.fr-mark-target .fr-mark-box { display: flex; }
+.fr-mark-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.fr-mark-choices .fr-ws-control[aria-pressed="true"] { background: hsl(var(--fr-ink)); color: hsl(var(--fr-paper)); border-color: hsl(var(--fr-ink)); }
+.fr-mark-note { width: 100%; resize: vertical; border: 1px solid hsl(var(--fr-line)); background: hsl(var(--fr-paper)); color: hsl(var(--fr-ink)); padding: 8px 10px; font: inherit; font-size: 14px; line-height: 1.5; }
+.fr-mark-note:focus { outline: 2px solid hsl(var(--fr-electric)); outline-offset: 1px; }
+.fr-heard-group + .fr-heard-group { margin-top: 3rem; }
+.fr-heard-list { display: flex; flex-direction: column; gap: 1.5rem; }
+.fr-heard-entry { border-bottom: 1px solid hsl(var(--fr-hair)); padding-bottom: 1.5rem; }
+.fr-heard-entry--gone .fr-heard-anchor { color: hsl(var(--fr-muted)); text-decoration: line-through; }
+.fr-heard-note { margin-top: 0.5rem; color: hsl(var(--fr-muted)); font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
+.fr-heard-entry .fr-ws-table-link { margin-top: 0.5rem; }

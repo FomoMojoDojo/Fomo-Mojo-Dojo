@@ -191,3 +191,20 @@ describe("beat order — ruled sequence", () => {
     expect(monotonic).toBe(false);
   });
 });
+
+// Marks (commit 2, 2026-09-22): "What we heard" is present only when the company holds a live mark, and then it
+// sits just before the closer — the closer stays last in both states.
+import { beatsFor, HEARD_BEAT } from "./FirstReadPreviewView";
+describe("marks: the What-we-heard beat", () => {
+  it("absent at 0 marks: beatsFor(false) is BEATS itself", () => {
+    expect(beatsFor(false).map((b) => b.key)).toEqual(BEATS.map((b) => b.key));
+    expect(beatsFor(false).some((b) => b.key === HEARD_BEAT.key)).toBe(false);
+  });
+  it("present at ≥1 mark: inserted just before next; next stays last; every other beat keeps its order", () => {
+    const withMarks = beatsFor(true).map((b) => b.key);
+    expect(withMarks[withMarks.length - 1]).toBe("next");
+    expect(withMarks[withMarks.length - 2]).toBe(HEARD_BEAT.key);
+    expect(withMarks.filter((k) => k !== HEARD_BEAT.key)).toEqual(BEATS.map((b) => b.key));
+    expect(HEARD_BEAT.label).toBe("What we heard");
+  });
+});

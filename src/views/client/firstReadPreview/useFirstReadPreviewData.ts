@@ -601,9 +601,9 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         // consumer below can flag itself.
         const { data: scRows } = await loose()
           .from("first_read_open_questions")
-          .select("question_text, conflict_location, conflict_sources")
+          .select("question_text, question_identity, conflict_location, conflict_sources")
           .eq("company_id", companyId).eq("source_kind", "status_conflict").eq("status", "live");
-        type SCRow = { question_text: string; conflict_location: string | null; conflict_sources: { closed?: RawStatusSource[]; open?: RawStatusSource[] } | null };
+        type SCRow = { question_text: string; question_identity?: string | null; conflict_location: string | null; conflict_sources: { closed?: RawStatusSource[]; open?: RawStatusSource[] } | null };
         const scParsed = (scRows ?? []) as SCRow[];
         // Dispute-refresh (2026-08-26): the stored conflict_sources is a frozen snapshot; honor CURRENT
         // signal liveness at render (refreshStatusConflictLiveness — terminal citations dropped, held /
@@ -625,6 +625,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             const location = r.conflict_location ?? "";
             return refreshStatusConflictLiveness({
               location,
+              questionIdentity: r.question_identity ?? undefined,
               matchKey: location.split(/\s[&(]/)[0].trim().toLowerCase(),
               question: r.question_text,
               closed: r.conflict_sources?.closed ?? [],
@@ -673,6 +674,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
                 statusDisputed: disputes(claim.statement),
                 // Gate 1: the featured outside claim renders quoted only if provably own-words verbatim.
                 provablyVerbatim: isProvablyVerbatim(sig?.id, provableVerbatim),
+                rung: "pointer", anchorKey: pointer.item_identity,
               };
             }
           }
@@ -680,7 +682,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         if (!coldOpen) {
           const fallback = signals.find((s) => s.strength === "strong") ?? null;
           if (fallback) {
-            coldOpen = { text: fallback.text, sourceTag: fallback.sourceTag, eventDate: fallback.eventDate, statusDisputed: disputes(fallback.text), provablyVerbatim: fallback.provablyVerbatim };
+            coldOpen = { text: fallback.text, sourceTag: fallback.sourceTag, eventDate: fallback.eventDate, statusDisputed: disputes(fallback.text), provablyVerbatim: fallback.provablyVerbatim, rung: "signal", anchorKey: fallback.id };
           }
         }
 
@@ -926,11 +928,11 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             // an older version rejected it — the current criterion has spoken.
             const { data: outRows } = await loose()
               .from("market_candidate_outcomes")
-              .select("id, candidate_index, job_executor, original_jtbd, relationship_kind, outcome, judge_reasons, reconstructed, criterion_version")
+              .select("id, candidate_index, job_executor, original_jtbd, original_identity, relationship_kind, outcome, judge_reasons, reconstructed, criterion_version")
               .eq("run_id", mdRunId)
               .order("candidate_index", { ascending: true });
             type OutRow = {
-              id: string; candidate_index: number; job_executor: string | null; original_jtbd: string | null;
+              id: string; candidate_index: number; job_executor: string | null; original_jtbd: string | null; original_identity?: string | null;
               relationship_kind: string | null; outcome: string;
               judge_reasons: Record<string, string> | null; reconstructed: boolean | null; criterion_version: number | null;
             };
@@ -946,6 +948,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
               reconstructed: !!r.reconstructed,
               criterionVersion: Number(r.criterion_version ?? 1),
               stale: r.stale,
+              originalIdentity: r.original_identity ?? null,
             }));
           }
           // Gate 4d — the product labels the section names. Same current offering read the "What you
@@ -1006,6 +1009,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           .sort((a, b) => Number(activeKeys.has(b.journey_key)) - Number(activeKeys.has(a.journey_key)))
           .map((m) => ({
             id: m.id,
+            journeyKey: m.journey_key ?? null,
             who: (m.job_executor ?? "").trim(),
             job: (m.jtbd ?? "").trim() || null,
             // null/empty ⇒ null ⇒ NO chip, silently (the pre-MO-1 KindChip behavior).
@@ -1256,7 +1260,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             // Gate 1: per cluster MEMBER — quoted only if provably own-words verbatim; a mixed
             // cluster keeps an own-words member quoted while an outside member downgrades.
             picked.push({ text: c.text, sourceTag: publicSignalTag(c.s, runDates), eventDate: c.s.event_date ?? null,
-              provablyVerbatim: isProvablyVerbatim(c.s.id, provableVerbatim), listing: toFRListing(c.s) });
+              provablyVerbatim: isProvablyVerbatim(c.s.id, provableVerbatim), listing: toFRListing(c.s), signalId: c.s.id });
           }
           f.quotes = picked;
         }
@@ -1337,6 +1341,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             gapIntegrity,
             looksPairsLooked,
             questions: [],
+            questionAnchors: [], // filled by the view from useFirstReadOpenQuestions (FM15)
             offering,
             offeringIntegrity,
             offeringExamined,

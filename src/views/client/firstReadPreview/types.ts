@@ -43,6 +43,10 @@ export type FRColdOpen = {
   /** Gate 1 (2026-08-25): the strongest-signal rung renders quoted ONLY when provably own-words
    *  verbatim; an unprovable outside featured signal downgrades to un-quoted. */
   provablyVerbatim?: boolean;
+  /** Marks (2026-09-22): which rung this is and its durable key — the featured pointer's content identity, the
+   *  fallback signal's id, or the signed line's rung name. Absent on legacy shapes → not markable. */
+  rung?: "pointer" | "signal" | "conflict" | "echo_gap";
+  anchorKey?: string;
 };
 
 export type FRDeclared = {
@@ -197,6 +201,8 @@ export type FRReverseRow = {
 export type FRStatusSource = { host: string; date: string | null; quote: string; provisional?: boolean };
 export type FRStatusConflict = {
   location: string;
+  /** Marks (2026-09-22): the conflict row's question_identity — its durable key. */
+  questionIdentity?: string;
   /** lowercased match key (the partner name) used to mark disputed rows. */
   matchKey: string;
   question: string;
@@ -218,6 +224,8 @@ export type FRScore = {
 /** Observed market (odi_market_definitions, public register): people + the job. */
 export type FRMarketDef = {
   id: string;
+  /** Marks (2026-09-22, FM14): the durable key — research-company reinserts definitions, the journey_key survives. Optional for the legacy fixtures. */
+  journeyKey?: string | null;
   who: string;
   job: string | null;
   /** Relationship-kind chip (2026-08-31 restore): stored lowercase kind from the SAME
@@ -260,6 +268,8 @@ export type FRStrategy = {
  *  (verbatimRecord: non-empty, not model-'interpreted', a normalizeForHash-substring of claim_text).
  *  Unverifiable ⇒ omitted entirely, never paraphrased into existence. */
 export type FRFindingQuote = { text: string; sourceTag: SourceTagResult; eventDate: string | null;
+  /** Marks (2026-09-22): the cluster member's signals.id — the quote's durable key beside its finding. */
+  signalId?: string;
   /** LISTING CLASS: a listing member renders ListingRow (never quoted). */
   listing?: FRListing | null;
   /** Gate 1 (2026-08-25): per cluster MEMBER — quoted only if provably own-words verbatim; a mixed
@@ -429,6 +439,12 @@ export type FirstReadPreviewData = {
    */
   scoreLooked: boolean;
   questions: string[];
+  /** Marks (2026-09-22, FM15): the DB questions with their question_identity, in the same order as the head of
+   *  `questions`; the offering payload questions that follow carry no identity (anchored by text hash). */
+  questionAnchors: Array<{ identity: string; text: string }>;
+  /** Marks (2026-09-22): the offering questions' anchor keys ("offering:<sha>"), same order as offeringOpenQuestions;
+   *  absent until hashed (the view fills it asynchronously). */
+  offeringQuestionKeys?: string[];
   /** GATE (mirrors gapIntegrity/offeringIntegrity): the open-questions persisted integrity state
    *  (integrity_runs, component 'first_read_open_questions', written by open-questions-step's finalize).
    *  No row → not-yet; completed → looked-and-none; failed → couldn't-check. The Questions beat's empty
@@ -488,6 +504,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   findingsIntegrity: "not_yet",
   scoreLooked: false,
   questions: [],
+  questionAnchors: [],
   openQuestionsIntegrity: "not_yet",
   offering: null,
   offeringIntegrity: "not_yet",
@@ -512,4 +529,6 @@ export type FRUnstatedGroup = {
   criterionVersion: number;
   /** True when this row is an OLDER criterion's ruling with no current-version ruling yet. */
   stale: boolean;
+  /** Marks (2026-09-22, FM14): the candidate's original_identity — durable across discovery runs. Optional for the legacy fixtures. */
+  originalIdentity?: string | null;
 };

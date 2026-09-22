@@ -5,6 +5,7 @@
 // strings) ported verbatim. Empty-state strings signed per the operator string
 // sheet (2026-08-21); the findings standfirst is the sole HELD string.
 
+import { MarkTarget } from "@/lib/firstReadMarks/MarksContext";
 import { useState, type ReactNode } from "react";
 import { NOT_ENOUGH_SIGNAL_NOTE } from "./signedNotes";
 import {
@@ -149,7 +150,7 @@ function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) 
       {conflicts.map((c) => (
         <div key={c.location} className="fr-conflict-banner rounded-lg border-l-4 p-6" style={{ borderColor: "hsl(var(--fr-bad))", background: "hsl(var(--fr-bad) / 0.04)" }}>
           <div className="mb-3"><StatusDisputedChip /></div>
-          <p className="fr-conflict-question max-w-2xl">{c.question}</p>
+          <MarkTarget kind="status_conflict" keyVal={c.questionIdentity ?? null} text={c.question}><p className="fr-conflict-question max-w-2xl">{c.question}</p></MarkTarget>
           {/* S4 (2026-08-21): fold identical host+date rows on DISPLAY (×N); the underlying
               duplicate signal rows are untouched. "+n more" counts folded groups, not raw rows, and
               now expands in place (both columns) so every source is reachable. */}
@@ -376,8 +377,10 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
   const recency = formatMonthYear(read.coldOpen?.eventDate ?? null);
   // STANDING RULE (2026-08-24): NO rationale rail on the cold open — it added an unwanted
   // vertical rule line. Cold passes no rationale; BeatWhy also no-ops for key `cold`.
+  const coldKind = read.coldOpen?.rung === "pointer" ? "cold_open_pointer" : read.coldOpen?.rung === "signal" ? "signal" : "cold_open_line";
   const note = read.coldOpen ? (
     <blockquote className="fr-cold-quote">
+      <MarkTarget kind={coldKind} keyVal={read.coldOpen.anchorKey ?? null} text={read.coldOpen.text}>
       <p className="fr-cold-text">
         {/* Ladder: signed lines (conflict / echo gap) render unquoted (quoted===false). Gate 1:
             the strongest-signal rung is quoted ONLY when provably own-words verbatim; an
@@ -386,6 +389,7 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
           ? <>&ldquo;{read.coldOpen.text}&rdquo;</>
           : (read.coldOpen.quoted === false ? read.coldOpen.text : stripEdgeQuotes(read.coldOpen.text))}
       </p>
+      </MarkTarget>
       <footer className="mt-6 flex flex-col gap-2">
         {/* Q2 ruling (2026): the verdict-adjacent Status-conflict chip is REMOVED from the opener —
             the cold-open is the hook, not a verdict surface. Evidence framing (the source line)
@@ -753,8 +757,8 @@ export function ActFindings({ read, eyebrow }: { read: FirstReadPreviewData; eye
         {shown.map((f) => (
           // No source-count label: counts are unearned until gate 5a (clusterer repair). The
           // `f.recurrence` plumbing stays for 5a but nothing reads from it here.
+          <MarkTarget key={f.id} kind="finding" keyVal={f.id} text={f.body}>
           <LedgerRow
-            key={f.id}
             variant="hanging"
             // STEP 2a: the finding BODY is OUR reading (synthesis), not a quote — no hanging-quote glyph.
             // Its verbatim cluster-member receipts (rightContent below) keep their glyph, isProvablyVerbatim-gated.
@@ -780,7 +784,8 @@ export function ActFindings({ read, eyebrow }: { read: FirstReadPreviewData; eye
               f.quotes.length > 0 ? (
                 <div className="flex flex-col gap-6">
                   {f.quotes.map((q, i) => (
-                    <div key={i}>
+                    <MarkTarget key={i} kind="finding_quote" keyVal={q.signalId ? `${f.id}:${q.signalId}` : null} text={q.text}>
+                    <div>
                       {/* LISTING CLASS (shape d): a listing member is a listing, never a quote. */}
                       {q.listing ? (
                         <ListingRow listing={q.listing} sourceTag={q.sourceTag} extra={<OperatorKindTag kind="listing" reason={null} />} />
@@ -793,11 +798,13 @@ export function ActFindings({ read, eyebrow }: { read: FirstReadPreviewData; eye
                         </>
                       )}
                     </div>
+                    </MarkTarget>
                   ))}
                 </div>
               ) : undefined
             }
           />
+          </MarkTarget>
         ))}
       </main>
       {total > FINDINGS_SHOWN ? (
@@ -850,24 +857,26 @@ export function ActWhatYouSay({ read, eyebrow }: { read: FirstReadPreviewData; e
         <OwnWordsNotRunNote run={read.ownWordsRun} />
         {/* Verbatim self-assertions lead — quoted, page + read date. */}
         {verbatim.map((w) => (
+          <MarkTarget key={w.id} kind="own_words" keyVal={w.id} text={w.quote}>
           <LedgerRow
-            key={w.id}
             variant="hanging"
             leftLabel={IN_YOUR_WORDS_LABEL}
             leftBody={w.quote}
             meta={<>{w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}<OperatorKindTag kind={w.kind ?? null} reason={w.reason ?? null} /></>}
           />
+          </MarkTarget>
         ))}
         {/* Judge-faithful paraphrases — NOT quoted; labelled "as stated on {page}". */}
         {paraphrased.map((w) => (
+          <MarkTarget key={w.id} kind="own_words" keyVal={w.id} text={w.quote}>
           <LedgerRow
-            key={w.id}
             variant="hanging"
             quoted={false}
             leftLabel={`As stated on ${w.pageHost}`}
             leftBody={w.quote}
             meta={<>{w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}<OperatorKindTag kind={w.kind ?? null} reason={w.reason ?? null} /></>}
           />
+          </MarkTarget>
         ))}
         {/* ADMISSION CRITERION: own words kept as record only — operator view (context-gated, null for the client). */}
         <OwnWordsRecordBlock words={read.ownWordsRecordOnly} />
@@ -878,10 +887,10 @@ export function ActWhatYouSay({ read, eyebrow }: { read: FirstReadPreviewData; e
             saved-page tie required) is applied once in the hook, not here. */}
         {read.ownWordsRun && read.declared.length > 0 ? (
           <div data-fr-block="channels" className="mt-16 border-t pt-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-            <div className="mb-8"><Eyebrow>{CHANNELS_AS_READ_LABEL}</Eyebrow></div>
+            <div className="mb-8"><MarkTarget kind="group" keyVal="yousay:channels" text={CHANNELS_AS_READ_LABEL} as="span"><Eyebrow>{CHANNELS_AS_READ_LABEL}</Eyebrow></MarkTarget></div>
             {read.declared.map((claim) => (
+              <MarkTarget key={claim.id} kind="channel_claim" keyVal={claim.id} text={claim.statement}>
               <LedgerRow
-                key={claim.id}
                 variant="hanging"
                 muted
                 quoted={false}
@@ -889,6 +898,7 @@ export function ActWhatYouSay({ read, eyebrow }: { read: FirstReadPreviewData; e
                 leftBody={claim.statement}
                 meta={<>{claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}<OperatorKindTag kind={claim.kind ?? null} reason={claim.reason ?? null} /></>}
               />
+              </MarkTarget>
             ))}
           </div>
         ) : null}
@@ -949,7 +959,7 @@ export function ActWhoYouServe({ read, eyebrow }: { read: FirstReadPreviewData; 
                     {isNewKind ? <span className="fr-kindnew">{NEW_KIND_NOTE}</span> : null}
                   </span>
                 ) : undefined}
-                title={m.who}
+                title={<MarkTarget kind="market" keyVal={m.journeyKey ?? null} text={m.who} as="span">{m.who}</MarkTarget>}
                 meta={m.sourceTag ? <SourceTag>{m.sourceTag.label}</SourceTag> : undefined}
               >
                 {m.job ? <p className="fr-hanging-text">{m.job}</p> : null}
@@ -1044,7 +1054,7 @@ function UnstatedGroups({ read, tones }: { read: FirstReadPreviewData; tones: Ma
   return (
     <section className="fr-unstated">
       <div className="fr-unstated-head">
-        <Eyebrow>{UNSTATED_EYEBROW}</Eyebrow>
+        <MarkTarget kind="group" keyVal="serve:unstated" text={UNSTATED_EYEBROW} as="span"><Eyebrow>{UNSTATED_EYEBROW}</Eyebrow></MarkTarget>
         <p className="fr-unstated-intro">{UNSTATED_INTRO}</p>
       </div>
       <ol className="fr-unstated-list">
@@ -1066,7 +1076,7 @@ function UnstatedGroups({ read, tones }: { read: FirstReadPreviewData; tones: Ma
                   {isNewKind ? <span className="fr-kindnew">{NEW_KIND_NOTE}</span> : null}
                 </span>
               ) : null}
-              <p className="fr-unstated-who">{g.who}</p>
+              <MarkTarget kind="candidate_group" keyVal={g.originalIdentity ?? null} text={g.who}><p className="fr-unstated-who">{g.who}</p></MarkTarget>
               {g.job ? <JobWithProduct job={g.job} head={product?.head ?? null} /> : null}
               <p className="fr-unstated-sub">{subline}</p>
               <OperatorUnstatedReason reason={g.judgeReason} reconstructed={g.reconstructed} criterionVersion={g.criterionVersion} stale={g.stale} />
@@ -1082,7 +1092,7 @@ function UnstatedGroups({ read, tones }: { read: FirstReadPreviewData; tones: Ma
  *  Reuses the "Where this points" numbered hanging-indent idiom: the two-digit numeral is a SEPARATE
  *  flex item so wrapped lines align under the text column. Each cell is label (bold) + statement +
  *  the quiet code-derived source line. Numbering is continuous across groups (startIndex). */
-function OfferGroup({ label, items, startIndex }: { label: string; items: FROfferItem[]; startIndex: number }) {
+function OfferGroup({ label, items, startIndex, indexOf }: { label: string; items: FROfferItem[]; startIndex: number; indexOf?: (it: FROfferItem) => number }) {
   // Stage 3b: the group eyebrow ABOVE its group; titles at row-headline weight, statements light.
   return (
     <div className="fr-offer-group">
@@ -1093,11 +1103,13 @@ function OfferGroup({ label, items, startIndex }: { label: string; items: FROffe
             <span className="fr-hanging-num fr-mono">
               {String(startIndex + i + 1).padStart(2, "0")}
             </span>
+            <MarkTarget kind="read_field" keyVal={indexOf ? `offering:items:${indexOf(it)}` : null} text={`${it.label} — ${it.statement}`} className="fr-hanging-body">
             <div className="fr-hanging-body">
               <p className="fr-hanging-title">{it.label}</p>
               <p className="fr-hanging-text">{it.statement}</p>
               <p className="fr-hanging-meta fr-mono">{offerSourceLine(it)}</p>
             </div>
+            </MarkTarget>
           </li>
         ))}
       </ol>
@@ -1118,6 +1130,8 @@ export function ActWhatYouOffer({ read, eyebrow }: { read: FirstReadPreviewData;
   const own = off ? off.items.filter((i) => i.ownSite === "named") : [];
   const outside = off ? off.items.filter((i) => i.ownSite === "seen_outside") : [];
   const notRead = off ? off.items.filter((i) => i.ownSite === "not_read") : [];
+  // Marks (FM12): an item anchors by its index in the PAYLOAD (the durable key), not its display number.
+  const payloadIndex = (it: FROfferItem) => (off ? off.items.indexOf(it) : -1);
   const groundLine =
     read.offeringIntegrity === "couldnt_check"
       ? OFFER_COULDNT
@@ -1139,9 +1153,9 @@ export function ActWhatYouOffer({ read, eyebrow }: { read: FirstReadPreviewData;
       <main className="fr-stagger">
         {off ? (
           <div className="flex flex-col gap-12">
-            {own.length > 0 ? <OfferGroup label={OFFER_GROUP_OWN} items={own} startIndex={0} /> : null}
-            {outside.length > 0 ? <OfferGroup label={OFFER_GROUP_OUTSIDE} items={outside} startIndex={own.length} /> : null}
-            {notRead.length > 0 ? <OfferGroup label={OFFER_GROUP_NOT_READ} items={notRead} startIndex={own.length + outside.length} /> : null}
+            {own.length > 0 ? <OfferGroup label={OFFER_GROUP_OWN} items={own} startIndex={0} indexOf={payloadIndex} /> : null}
+            {outside.length > 0 ? <OfferGroup label={OFFER_GROUP_OUTSIDE} items={outside} startIndex={own.length} indexOf={payloadIndex} /> : null}
+            {notRead.length > 0 ? <OfferGroup label={OFFER_GROUP_NOT_READ} items={notRead} startIndex={own.length + outside.length} indexOf={payloadIndex} /> : null}
           </div>
         ) : (
           <Absent>
@@ -1376,7 +1390,7 @@ export function ActPromise({ read }: { read: FirstReadPreviewData }) {
     <Screen tone="dark" eyebrow={PROMISE_TITLE} foot={<DarkFoot tag={pr?.text ? pr.sourceTag : null} why={PROMISE_WHY} />}>
       <main className="fr-stagger">
         {pr?.text ? (
-          <h1 className={statementClass(pr.text)}>{withStop(pr.text)}</h1>
+          <h1 className={statementClass(pr.text)}><MarkTarget kind="read_field" keyVal="promise:promise" text={pr.text} as="span">{withStop(pr.text)}</MarkTarget></h1>
         ) : (
           <GatedLine>{PROMISE_NOT_ENOUGH}</GatedLine>
         )}
@@ -1398,8 +1412,8 @@ export function ActPositioning({ read }: { read: FirstReadPreviewData }) {
       <main className="fr-stagger">
         {p ? (
           <>
-            {p.category ? <h1 className={statementClass(sentenceCase(p.category))}>{withStop(sentenceCase(p.category))}</h1> : null}
-            {p.value ? <p className="fr-lede fr-lede--dark">{sentenceCase(p.value)}</p> : null}
+            {p.category ? <h1 className={statementClass(sentenceCase(p.category))}><MarkTarget kind="read_field" keyVal="positioning:category" text={p.category} as="span">{withStop(sentenceCase(p.category))}</MarkTarget></h1> : null}
+            {p.value ? <p className="fr-lede fr-lede--dark"><MarkTarget kind="read_field" keyVal="positioning:value" text={p.value} as="span">{sentenceCase(p.value)}</MarkTarget></p> : null}
             {/* B9: below a hairline, the label column carries the existing Why-this line (no "What holds
                 it up" string exists); the attributes sit as numbered columns (their numerals are text). */}
             {p.differentiators.length > 0 ? (
@@ -1408,7 +1422,7 @@ export function ActPositioning({ read }: { read: FirstReadPreviewData }) {
                   label={<><Eyebrow>Why this</Eyebrow><span className="fr-dark-label fr-mono">{POSITIONING_WHY}</span></>}
                   className="fr-labeled--dark"
                 >
-                  <NumberedList items={p.differentiators} className="fr-numbered-cols" />
+                  <NumberedList items={p.differentiators} className="fr-numbered-cols" itemKey={(i) => `positioning:differentiators:${i}`} />
                 </Labeled>
               </div>
             ) : null}
@@ -1435,17 +1449,17 @@ export function ActStrategy({ read }: { read: FirstReadPreviewData }) {
             {st.aspiration ? (
               <div className="mt-6">
                 <span className="fr-eyebrow">{RUNG_ASPIRATION}</span>
-                <h1 className={`${statementClass(st.aspiration)} mt-4`}>{withStop(st.aspiration)}</h1>
+                <h1 className={`${statementClass(st.aspiration)} mt-4`}><MarkTarget kind="read_field" keyVal="strategy:aspiration" text={st.aspiration} as="span">{withStop(st.aspiration)}</MarkTarget></h1>
               </div>
             ) : null}
             {/* Hairline, then the rungs as columns: Where to play / How to win / Must-have capabilities
                 (+ Management systems when present). Rung text at text-xl paper 500; lists numbered. */}
             <div className="fr-dark-section">
               <div className="fr-rung-cols">
-                {st.whereToPlay ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_WHERE}</span><p className="fr-rung-text">{st.whereToPlay}</p></div> : null}
-                {st.howToWin ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_HOW}</span><p className="fr-rung-text">{st.howToWin}</p></div> : null}
-                {caps.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_CAPABILITIES}</span><NumberedList items={caps} className="mt-3" /></div> : null}
-                {mgmt.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_MGMT}</span><NumberedList items={mgmt} className="mt-3" /></div> : null}
+                {st.whereToPlay ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_WHERE}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:where_to_play" text={st.whereToPlay} as="span">{st.whereToPlay}</MarkTarget></p></div> : null}
+                {st.howToWin ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_HOW}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:how_to_win" text={st.howToWin} as="span">{st.howToWin}</MarkTarget></p></div> : null}
+                {caps.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_CAPABILITIES}</span><NumberedList items={caps} className="mt-3" itemKey={(i) => `strategy:capabilities:${i}`} /></div> : null}
+                {mgmt.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_MGMT}</span><NumberedList items={mgmt} className="mt-3" itemKey={(i) => `strategy:management_systems:${i}`} /></div> : null}
               </div>
             </div>
           </>
@@ -1502,8 +1516,8 @@ export function ActRecord({ read, eyebrow }: { read: FirstReadPreviewData; eyebr
         {/* Stage 3b: no group column — tier order kept, the strength chip above each row in colour;
             strong rows at row-headline size, moderate/thin at body size (muted). */}
         {tiers.flatMap((g) => g.rows).map((signal) => (
+          <MarkTarget key={signal.id} kind="signal" keyVal={signal.id} text={signal.text}>
           <LedgerRow
-            key={signal.id}
             variant="hanging"
             leftLabel={signal.strength === "strong" ? "Outside" : "Outside"}
             lead={signalChip(signal)}
@@ -1515,6 +1529,7 @@ export function ActRecord({ read, eyebrow }: { read: FirstReadPreviewData; eyebr
             muted={signal.strength !== "strong"}
             meta={signalTags(signal)}
           />
+          </MarkTarget>
         ))}
       </main>
       {further.length > 0 ? (
@@ -1545,9 +1560,11 @@ export function ActRecord({ read, eyebrow }: { read: FirstReadPreviewData; eyebr
                     className="flex items-center gap-4 border-b py-3"
                     style={{ borderColor: "hsl(var(--fr-hair))" }}
                   >
+                    <MarkTarget kind="signal" keyVal={item.id} text={item.text} as="span" className="fr-oneline min-w-0 flex-1 text-sm font-light">
                     <span className="fr-oneline min-w-0 flex-1 text-sm font-light" style={{ color: "hsl(var(--fr-muted))" }}>
                       {item.provablyVerbatim ? item.text : stripEdgeQuotes(item.text)}
                     </span>
+                    </MarkTarget>
                     <Chip tone={item.strength}>{item.strength}</Chip>
                     {item.sourceTag ? (
                       <span className="fr-oneline hidden max-w-[180px] shrink-0 md:inline">
@@ -1589,7 +1606,7 @@ export function ScoreReveal({ read, eyebrow }: { read: FirstReadPreviewData; eye
     <Spread
       eyebrow={SCORE_EYEBROW}
       // The Mojo Score number lives here, in its own beat (ruling 2026-08-20) — exactly once.
-      lead={read.score ? <ScoreNow now={read.score.value} band={active?.name} display /> : undefined}
+      lead={read.score ? <MarkTarget kind="score_value" keyVal="score" text={String(read.score.value)} as="span"><ScoreNow now={read.score.value} band={active?.name} display /></MarkTarget> : undefined}
       title={withStop("One number, read from the record.")}
       lede="The Mojo Score is the likelihood your strategy succeeds. In this phase it is read only from public signals — it moves when evidence lands, not when opinion changes."
       statement={ANCHOR_LINE}
@@ -1672,7 +1689,8 @@ function StatementEvidence({ statement, struck = [] }: { statement: FRGapStateme
       {statement.evidence.map((pair) => {
         const recency = formatMonthYear(pair.eventDate);
         return (
-          <div key={pair.id}>
+          <MarkTarget key={pair.id} kind="gap_pair" keyVal={pair.contentIdentity ?? null} text={pair.record ?? pair.listing?.productName ?? ""}>
+          <div>
             <div className="mb-3 flex flex-wrap items-center gap-4">
               {/* Chip dedup (2026-08-26, retires item 30): the STATUS DISPUTED chip renders ONCE per
                   statement (in ActGap's meta), not per pair. */}
@@ -1694,6 +1712,7 @@ function StatementEvidence({ statement, struck = [] }: { statement: FRGapStateme
               </p>
             ) : null}
           </div>
+          </MarkTarget>
         );
       })}
       <StruckPairsBlock pairs={struck} />
@@ -1768,8 +1787,8 @@ export function ActGap({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?
             ? conflictExplanationFor(statement) ?? judgedContradictionReason(statement) ?? deriveContradictionWhy(statement)
             : null;
           return (
+            <MarkTarget key={statement.statementId} kind="gap_statement" keyVal={statement.statementId} text={statement.declared}>
             <LedgerRow
-              key={statement.statementId}
               variant="hanging"
               dataVerdict={statement.verdict}
               leftLabel="You say"
@@ -1788,6 +1807,7 @@ export function ActGap({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?
               meta={null}
               rightContent={<StatementEvidence statement={statement} struck={struckByStatement.get(statement.statementId) ?? []} />}
             />
+            </MarkTarget>
           );
         })}
       </main>
@@ -1801,7 +1821,7 @@ export function ActGap({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?
           into the say-vs-see standfirst tally above. */}
       {read.reverseRows.length > 0 ? (
         <section className="mt-16 border-t pt-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-          <Eyebrow>{REVERSE_SECTION_LABEL}</Eyebrow>
+          <MarkTarget kind="group" keyVal="gap:reverse" text={REVERSE_SECTION_LABEL} as="span"><Eyebrow>{REVERSE_SECTION_LABEL}</Eyebrow></MarkTarget>
           <p className="mt-4 mb-2 max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
             {REVERSE_INTRO}
           </p>
@@ -1810,10 +1830,12 @@ export function ActGap({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?
           </p>
           <div className="fr-stagger flex flex-col">
             {read.reverseRows.map((row) => (
-              <div key={row.id} className="fr-row fr-reverse-row border-b py-8" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+              <MarkTarget key={row.id} kind="reverse_row" keyVal={row.id} text={row.statement}>
+              <div className="fr-row fr-reverse-row border-b py-8" style={{ borderColor: "hsl(var(--fr-hair))" }}>
                 <p className="text-lg font-light leading-relaxed">{row.statement}</p>
                 {row.sourceTag ? <div className="mt-3"><SourceTag>{row.sourceTag.label}</SourceTag></div> : null}
               </div>
+              </MarkTarget>
             ))}
           </div>
         </section>
@@ -1903,7 +1925,9 @@ export function ActQuestions({ read, eyebrow }: { read: FirstReadPreviewData; ey
                     return (
                       <li key={question} className="flex gap-6">
                         <span className="fr-question-num fr-mono">{String(index + 1).padStart(2, "0")}</span>
+                        <MarkTarget kind={index < (read.questionAnchors?.length ?? 0) ? "question" : "offering_question"} keyVal={index < (read.questionAnchors?.length ?? 0) ? (read.questionAnchors[index]?.identity || null) : (read.offeringQuestionKeys?.[index - (read.questionAnchors?.length ?? 0)] ?? null)} text={question} className="min-w-0 flex-1">
                         <p>{question}</p>
+                        </MarkTarget>
                       </li>
                     );
                   })}

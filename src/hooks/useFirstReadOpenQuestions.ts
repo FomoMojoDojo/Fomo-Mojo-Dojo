@@ -10,6 +10,8 @@ import { firstReadExcludedClaimIds } from "../../supabase/functions/_shared/firs
 
 export interface OpenQuestionListRow {
   question_text: string;
+  /** Marks (2026-09-22, FM15): the row's durable key. */
+  question_identity?: string | null;
   source_kind: string; // 'finding' | 'silent_delta'
   finding_identity: string | null;
   anchor_identity: string | null;
@@ -35,7 +37,7 @@ export function useFirstReadOpenQuestions(companyId?: string) {
       }
       const { data, error: qErr } = await supabase
         .from("first_read_open_questions")
-        .select("question_text, source_kind, finding_identity, anchor_identity")
+        .select("question_text, question_identity, source_kind, finding_identity, anchor_identity")
         .eq("company_id", companyId)
         .eq("status", "live") // live set only; superseded is history, never rendered
         .order("created_at", { ascending: true })

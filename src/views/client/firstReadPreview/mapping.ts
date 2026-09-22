@@ -355,12 +355,12 @@ export function filterCitations(arr: RawStatusSource[], liveness: Map<string, Ci
 }
 
 export function refreshStatusConflictLiveness(
-  raw: { location: string; matchKey: string; question: string; closed: RawStatusSource[]; open: RawStatusSource[] },
+  raw: { location: string; questionIdentity?: string; matchKey: string; question: string; closed: RawStatusSource[]; open: RawStatusSource[] },
   liveness: Map<string, CitationLiveness>,
 ): FRStatusConflict | null {
   const closed = filterCitations(raw.closed, liveness);
   if (closed.length === 0) return null; // retire: no live-or-provisional closure evidence
-  return { location: raw.location, matchKey: raw.matchKey, question: raw.question, closed, open: filterCitations(raw.open, liveness) };
+  return { location: raw.location, ...(raw.questionIdentity ? { questionIdentity: raw.questionIdentity } : {}), matchKey: raw.matchKey, question: raw.question, closed, open: filterCitations(raw.open, liveness) };
 }
 
 export function foldByHostDate(sources: Pick<FRStatusSource, "host" | "date" | "provisional">[]): FoldedStatusSource[] {

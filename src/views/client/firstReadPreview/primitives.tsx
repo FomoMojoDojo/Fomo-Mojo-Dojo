@@ -3,6 +3,7 @@
 // (real declared statements may carry no detail column) and an Absent
 // primitive for persisted-integrity empty states.
 
+import { MarkTarget } from "@/lib/firstReadMarks/MarksContext";
 import type { FRListing } from "./types";
 import { LISTING_STRINGS, listingBody } from "./listingStrings";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -369,7 +370,8 @@ export function SeqChip({ children, tone = "neutral" }: { children: ReactNode; t
   return <Chip tone={tone}>{children}</Chip>;
 }
 
-export function NumberedList({ items, className }: { items: string[]; className?: string }) {
+/** `itemKey(i)` (marks, 2026-09-22): the read_field key of item i — given, each item becomes a mark target. */
+export function NumberedList({ items, className, itemKey }: { items: string[]; className?: string; itemKey?: (i: number) => string }) {
   if (items.length === 0) return null;
   return (
     <ol className={`flex flex-col gap-2${className ? ` ${className}` : ""}`}>
@@ -380,7 +382,9 @@ export function NumberedList({ items, className }: { items: string[]; className?
           </span>
           {/* Stage 3f: colour comes from .fr-numbered-text (ink/85 on paper; paper alphas on a dark Screen) —
               an inline colour here used to win the cascade and kept beats 9/10 dark-on-dark. */}
+          <MarkTarget kind="read_field" keyVal={itemKey ? itemKey(i) : null} text={text} className="min-w-0 flex-1">
           <p className="fr-numbered-text text-sm font-light leading-relaxed">{text}</p>
+          </MarkTarget>
         </li>
       ))}
     </ol>

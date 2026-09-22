@@ -128,3 +128,8 @@ export function matchAnchor(anchor: Pick<MarkAnchor, "anchor_kind" | "anchor_key
   if (same.length === 0) return "row_gone";
   return same.some((r) => r.sha === anchor.sha) ? "match" : "wording_changed";
 }
+
+/** The offering-question keys for a list of texts ("offering:<sha>"), in order — for the view's async fill. */
+export async function offeringQuestionKeys(texts: readonly string[]): Promise<string[]> {
+  return Promise.all(texts.map(async (t) => `offering:${await hashAnchorText(t)}`));
+}

@@ -9,6 +9,7 @@
 // Later gates apply these beat by beat; stage 2 applies them to beats 1–2 only.
 
 import type { CSSProperties, ReactNode } from "react";
+import { SectionMarkTarget } from "@/lib/firstReadMarks/SectionMarkTarget";
 import { Eyebrow } from "./primitives";
 
 export type ScreenTone = "paper" | "dark";
@@ -39,7 +40,7 @@ export function Screen({
       data-fr-tone={tone}
     >
       <div className="fr-screen-main">
-        {eyebrow ? <div className="fr-screen-eyebrow"><Eyebrow>{eyebrow}</Eyebrow></div> : null}
+        {eyebrow ? <div className="fr-screen-eyebrow"><Eyebrow><SectionMarkTarget>{eyebrow}</SectionMarkTarget></Eyebrow></div> : null}
         {children}
       </div>
       {note ? <aside className="fr-screen-note">{note}</aside> : null}
@@ -85,7 +86,7 @@ export function Spread({
         <div className="fr-spread-side-inner">
           {eyebrow ? <div className="fr-spread-eyebrow"><Eyebrow>{eyebrow}</Eyebrow></div> : null}
           {lead ? <div className="fr-spread-lead">{lead}</div> : null}
-          {title ? <h1 className="fr-display fr-spread-title">{title}</h1> : null}
+          {title ? <h1 className="fr-display fr-spread-title"><SectionMarkTarget>{title}</SectionMarkTarget></h1> : null}
           {lede ? <p className="fr-spread-lede">{lede}</p> : null}
           {statement ? <p className="fr-spread-statement">{statement}</p> : null}
           {aside ? <div className="fr-spread-aside">{aside}</div> : null}
