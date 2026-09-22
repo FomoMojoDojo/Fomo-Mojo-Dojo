@@ -162,7 +162,7 @@ const GEN_SYSTEM =
   // GOAL, NOT MEANS (operator ruling R1, 2026-09-22) — the rule text verbatim, then the never-use list.
   // The deterministic guard (_shared/marketMeansTerms.ts) rejects six of these before a judge is spent;
   // the rest stay here because they are legitimate goal words in other executors' worlds.
-  "(3b) GOAL, NOT MEANS. A job statement names what the executor is trying to get done, in the executor's own words. It never names a provider, program, service line, facility, treatment setting, or category of supplier the executor would shop for. Form: transitive verb + object + contextual clarifier." +
+  "(3b) GOAL, NOT MEANS. A job statement names what the executor is trying to get done, in the executor's own words. It never names a provider, program, service line, facility, treatment setting, or category of supplier the executor would shop for. Form: transitive verb + object + contextual clarifier. " +
   "NEVER use these words in a job statement — they name a means, not a goal: provider, program, service, services, continuum of care, residential, outpatient, inpatient, clinic, facility, treatment, therapy, organizations that provide. " +
   "(4) Each market must have a DISTINCT executor — do not restate the same market in different words. " +
   "(5) relationship_kind = the executor's relationship to the company as the evidence shows it — in the evidence's own terms, one or two lowercase words. " +
@@ -234,7 +234,7 @@ const REFRAME_SYSTEM =
   "If the problem is 'solution-bound': the job named or presupposed a specific provider's services — restate the underlying job free of ANY provider's product, service, or solution language. " +
   // GOAL, NOT MEANS (operator ruling R1, 2026-09-22) — the same sentence the generator is given, so a
   // repair cannot restate the job in a shape the judge will reject again for the same reason.
-  "If the problem is 'names-a-means': A job statement names what the executor is trying to get done, in the executor's own words. It never names a provider, program, service line, facility, treatment setting, or category of supplier the executor would shop for. Form: transitive verb + object + contextual clarifier." +
+  "If the problem is 'names-a-means': A job statement names what the executor is trying to get done, in the executor's own words. It never names a provider, program, service line, facility, treatment setting, or category of supplier the executor would shop for. Form: transitive verb + object + contextual clarifier. " +
   "Hard rules: never name a company, brand, vendor, or specific service offering; the job existed before any provider and must read that way; " +
   "do not invent facts beyond the substance already present in the original job. " +
   'JSON only: {"jtbd":"<one sentence, the executor\'s own job>"}.';
