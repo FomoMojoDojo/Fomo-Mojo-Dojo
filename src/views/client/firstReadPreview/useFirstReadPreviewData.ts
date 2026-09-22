@@ -14,6 +14,7 @@
 // claims are structurally excluded via the shared predicate.
 
 import { selectUnstatedRows } from "./unstatedSelect";
+import { firstSeenByKey, orderWhoYouServe } from "./whoYouServeOrder";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -1004,9 +1005,20 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         const activeKeys = new Set(
           ((lensRows ?? []) as Array<{ journey_key: string | null }>).map((r) => r.journey_key),
         );
-        const observedMarkets: FRMarketDef[] = mdAll
-          .filter((m) => (m.job_executor ?? "").trim())
-          .sort((a, b) => Number(activeKeys.has(b.journey_key)) - Number(activeKeys.has(a.journey_key)))
+        // R1 (2026-09-22) — ORDER-ONLY read. Deliberately NOT walled by register or retraction: its
+        // only job is to tell each journey_key when it was FIRST seen, so a replacement inherits the
+        // position of the row it replaced instead of landing at the end. It selects two columns,
+        // neither renderable, and nothing downstream reads it but the sort.
+        const { data: seenRows } = await supabase
+          .from("odi_market_definitions")
+          .select("journey_key, created_at")
+          .eq("company_id", companyId);
+        const firstSeen = firstSeenByKey((seenRows ?? []) as Array<{ journey_key: string | null; created_at: string | null }>);
+        const observedMarkets: FRMarketDef[] = orderWhoYouServe(
+          mdAll.filter((m) => (m.job_executor ?? "").trim()),
+          activeKeys,
+          firstSeen,
+        )
           .map((m) => ({
             id: m.id,
             journeyKey: m.journey_key ?? null,

@@ -147,15 +147,43 @@ describe("render — one chip per card where earned; null silent", () => {
 
 describe("source guard — the chip reads ONLY the register-filtered query", () => {
   const src = readFileSync(resolve(process.cwd(), "src/views/client/firstReadPreview/useFirstReadPreviewData.ts"), "utf8");
-  it("exactly ONE odi_market_definitions read exists in the data hook", () => {
-    expect(src.split('.from("odi_market_definitions")').length - 1).toBe(1);
+  // Comments are stripped before scanning: a `;` inside one ("It vanishes from this list; nothing
+  // renders in its place") would otherwise end a statement early and hide the filters that follow.
+  const code = src.replace(/^\s*\/\/.*$/gm, "");
+  /** Every `.from("odi_market_definitions")` chained call, sliced at its own terminator. */
+  const statements = () => {
+    const out: string[] = [];
+    let at = code.indexOf('.from("odi_market_definitions")');
+    while (at > -1) {
+      const end = code.indexOf(";", at);
+      out.push(code.slice(at, end > -1 ? end + 1 : at + 600));
+      at = code.indexOf('.from("odi_market_definitions")', at + 1);
+    }
+    return out;
+  };
+  const selectedColumns = (stmt: string) => {
+    const m = /\.select\("([^"]*)"\)/.exec(stmt);
+    return (m?.[1] ?? "").split(",").map((c) => c.trim()).filter(Boolean).sort();
+  };
+  /** The columns no read may serve to the render unless it carries both walls. */
+  const RENDERABLE = ["relationship_kind", "job_executor", "jtbd", "market_register"];
+
+  // This guard was ONE-READ-ONLY until R1 (2026-09-22), when the beat gained a deterministic order and
+  // needed each key's FIRST-SEEN time — which lives on rows the render wall (register + not retracted)
+  // deliberately hides. A count is the wrong shape for that: what the guard protects is that no
+  // RENDERABLE field reaches the beat through an unwalled query. It now asks that directly, which is
+  // strictly stronger than the count it replaces — the count would have passed a single read that
+  // dropped its own filters.
+  it("exactly ONE read serves renderable fields, and it carries BOTH walls", () => {
+    const render = statements().filter((st) => selectedColumns(st).some((c) => RENDERABLE.includes(c)));
+    expect(render.length).toBe(1);
+    expect(selectedColumns(render[0])).toContain("relationship_kind");
+    expect(render[0]).toContain('.in("market_register", ["public_inferred", "publicly_declared"])');
+    expect(render[0]).toContain('.eq("retracted", false)');
   });
-  it("relationship_kind is selected inside that read, and the register filter follows it", () => {
-    const at = src.indexOf('.from("odi_market_definitions")');
-    expect(at).toBeGreaterThan(-1);
-    const stmt = src.slice(at, at + 400);
-    expect(stmt).toContain("relationship_kind");
-    expect(stmt).toContain('.in("market_register", ["public_inferred", "publicly_declared"])');
+  it("every OTHER read is order-only: journey_key + created_at, nothing else", () => {
+    const others = statements().filter((st) => !selectedColumns(st).some((c) => RENDERABLE.includes(c)));
+    for (const st of others) expect(selectedColumns(st)).toEqual(["created_at", "journey_key"]);
   });
   it("acts.tsx introduces no odi_market_definitions read of its own", () => {
     const acts = readFileSync(resolve(process.cwd(), "src/views/client/firstReadPreview/acts.tsx"), "utf8");
