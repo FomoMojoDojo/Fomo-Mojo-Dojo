@@ -55,3 +55,14 @@ Deno.test("the tool constructs no supabase client and names no table", async () 
     "../supabase/functions/_shared/solutionAgnosticJudge.ts",
   ]);
 });
+
+Deno.test("the tool keeps EVERY majority vote — it never reports a tally with one reason", async () => {
+  const tool = await read("../dryrun-market-criterion.ts");
+  // the majority helper hands back all three; the tool must carry them onto the gate result
+  assert(tool.includes("votes: m.votes.map("), "the solution-agnostic gate must carry m.votes");
+  assert(tool.includes("votes?: Vote[]"), "GateResult must be able to hold the votes");
+  // and it must not silently drop them by taking only the winning reason
+  const gate = tool.slice(tool.indexOf("const m = await judgeSolutionAgnosticMajority("), tool.indexOf("// Gate (c)"));
+  assert(gate.includes("m.votes"), "the gate push must reference m.votes");
+  assert(gate.includes("m.tally") && gate.includes("m.reason"), "the tally and winning reason stay too");
+});

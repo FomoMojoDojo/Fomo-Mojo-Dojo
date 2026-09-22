@@ -65,7 +65,12 @@ async function ollamaJson(model: string, system: string, user: string): Promise<
 
 type Row = { id: string; role: string; who: string; jtbd: string };
 type Peer = { id: string; who: string; jtbd: string };
-type GateResult = { gate: string; pass: boolean; verdict: string; reason: string };
+/** A gate's outcome. `votes` is present only for the 3-call majority gate, and carries EVERY vote —
+ *  the majority helper keeps all three and the tool must not throw two of them away. A unanimous
+ *  accept whose three reasons disagree about WHY is a different thing from three that agree, and the
+ *  operator cannot see that difference from the tally and one reason alone. */
+type Vote = { solutionFree: boolean; reason: string };
+type GateResult = { gate: string; pass: boolean; verdict: string; reason: string; votes?: Vote[] };
 
 /** The chain, in the order marketPortfolioDiscovery runs it. Stops at the first failing gate. */
 async function runChain(solutionLine: string, who: string, jtbd: string, peers: readonly Peer[]): Promise<GateResult[]> {
@@ -94,7 +99,10 @@ async function runChain(solutionLine: string, who: string, jtbd: string, peers: 
     const p = JSON.parse(raw) as { solution_free?: unknown; reason?: unknown };
     return { solutionFree: p.solution_free === true, reason: String(p.reason ?? "").trim() };
   });
-  out.push({ gate: `b solution-agnostic v${CRITERION_VERSION}`, pass: m.solutionFree, verdict: m.tally, reason: m.reason });
+  out.push({
+    gate: `b solution-agnostic v${CRITERION_VERSION}`, pass: m.solutionFree, verdict: m.tally, reason: m.reason,
+    votes: m.votes.map((v) => ({ solutionFree: v.solutionFree, reason: v.reason })),
+  });
   if (!m.solutionFree) return out;
 
   // Gate (c): same-market dedup against the company's other public rows.
