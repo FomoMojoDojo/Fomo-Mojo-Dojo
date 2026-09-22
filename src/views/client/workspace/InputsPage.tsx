@@ -25,6 +25,11 @@
 //   Archive ×        DeleteConfirmPanel (moved) → useArchiveInputFile (+ unlinkNeedsFromFilePath, lifted)
 //   Archived · Restore  useArchivedInputFiles / useRestoreInputFile
 //
+// Marks list (FM9, commit 3 of 4, 2026-09-22): operator-gated, read-only. Every live mark the company holds,
+// grouped the way "What we heard" groups them, each entry carrying the row text AS MARKED, the latest note when
+// it has one, and a link back to the beat the mark sits on. The store is read through useFirstReadMarks — the
+// one reader — so this page names no table. No withdraw, no edit, no empty state here (commit 4 owns revisit).
+//
 // Interview upload (Gate B commit 1, 2026-09-19): a row whose file is_interview renders as a file with the
 // "Interview" chip, "Saved. Not yet parsed." and its market line — a customer transcript: "Market not
 // inferred" + "Change market" (operator-gated; commit 2 infers), a stakeholder transcript: "Market: per item,
@@ -32,6 +37,7 @@
 // "Run analysis" chip, never a proposal — the fence refuses both server-side. Change market writes journey_key
 // + market_state + the appended basis entry, nothing else (useInterviewUploads).
 import { Fragment, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useCompany } from "@/hooks/useCompany";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useCapability } from "@/hooks/useCapability";
@@ -52,6 +58,11 @@ import { DeleteConfirmPanel, ProposalReviewPanel, fileProposalProcessingBadgeTex
 import { Chip, type ChipTone } from "@/views/client/firstReadPreview/primitives";
 import { useOperatorControls } from "@/views/client/firstReadPreview/operatorControls";
 import { OPERATOR_MARK } from "@/views/client/firstReadPreview/operatorStrings";
+import { beatLabel, beatOrderIndex } from "@/views/client/firstReadPreview/beats";
+import { useFirstReadMarks, anchorId, type LiveMark } from "@/lib/firstReadMarks/useFirstReadMarks";
+import { orderMarks } from "@/lib/firstReadMarks/WhatWeHeard";
+import { HEARD_GROUP_ORDER, MARK_STRINGS, REACTION_CHOICES } from "@/lib/firstReadMarks/strings";
+import { clientRefineFirstReadMarkPath } from "@/lib/clientRefinePreview";
 import { WorkspaceAbsent } from "./absent";
 import { WorkspaceHeroPage } from "./WorkspaceHeroPage";
 import { WORKSPACE_AREA_LABELS, WORKSPACE_STRINGS, pageLabel } from "./workspaceNav";
@@ -96,6 +107,9 @@ export default function InputsPage() {
   const canEvidence = useCapability("evidence.manage", companyId);
   const canApply = useCapability("governance.proposal.apply", companyId);
   const gated = Boolean(operator) && canEvidence;
+  // FM9: the mark store is read only when the page is gated — the same idiom useArchivedInputFiles uses below,
+  // so the default (client) render issues no read at all and the list can never exist ungated.
+  const marksStore = useFirstReadMarks(gated ? companyId : null);
   // Sync poll (2026-09-13, moved from the tab into useProposalSync): while a proposal is queued/running
   // and the cell is gated, the page reconciles it against Dify every 5 s — so a run completes promptly
   // while watched. The pg_cron sweep remains the authority when nothing is watching.
@@ -133,6 +147,17 @@ export default function InputsPage() {
   const interviewByFile = useMemo(() => new Map(interviews.records.map((r) => [r.input_file_id, r])), [interviews.records]);
   // Listing rule (2026-09-20): an interview row whose record is retracted is never rendered, archived or not.
   const retractedFileIds = useMemo(() => new Set(interviews.records.filter((r) => r.retracted_at !== null).map((r) => r.input_file_id)), [interviews.records]);
+
+  // The mark groups, in the signed order (Important · Interesting · Not important · Stood out to us); a group
+  // with no marks is dropped here so the render never emits an eyebrow for it. Order inside a group is the
+  // reading order of the first read — beat order, then created_at — via the same orderMarks the beat uses.
+  const markGroups = useMemo(() => {
+    const label = (key: string) => (key === "our_mark" ? MARK_STRINGS.stoodOut : REACTION_CHOICES.find((c) => c.disposition === key)!.label);
+    const picks = (key: string) => (key === "our_mark" ? (m: LiveMark) => m.kind === "our_mark" : (m: LiveMark) => m.kind === "client_reaction" && m.disposition === key);
+    return HEARD_GROUP_ORDER
+      .map((key) => ({ key, label: label(key), marks: orderMarks(marksStore.marks.filter(picks(key)), beatOrderIndex) }))
+      .filter((g) => g.marks.length > 0);
+  }, [marksStore.marks]);
 
   const rows = files.data ?? [];
   const isInterviewFile = (f: CompanyFileRow) => f.is_interview === true || interviewByFile.has(f.id);
@@ -433,6 +458,31 @@ export default function InputsPage() {
               </table>
             )}
           </div>
+
+          {gated && marksStore.marks.length > 0 ? (
+            <div className="fr-ws-tablewrap" data-fr-region="marks" data-testid="inputs-marks" {...{ [OPERATOR_MARK.attr]: "marks" }}>
+              <p className="fr-ws-band-eyebrow fr-mono" data-testid="inputs-marks-title">{MARK_STRINGS.whatWeHeard}</p>
+              {markGroups.map((g) => (
+                <section key={g.key} className="fr-heard-group" data-fr-heard-group={g.key}>
+                  <p className="fr-eyebrow mb-4">{g.label}</p>
+                  <ol className="fr-heard-list">
+                    {g.marks.map((m) => (
+                      <li key={m.id} className="fr-heard-entry" data-fr-heard-entry={m.id} data-testid="inputs-marks-entry">
+                        <p className="fr-heard-anchor text-lg font-light leading-relaxed">{m.anchor_text}</p>
+                        {m.note ? <p className="fr-heard-note">{m.note}</p> : null}
+                        <Link
+                          className="fr-ws-table-link fr-mono"
+                          data-testid="inputs-marks-link"
+                          data-fr-heard-jump={m.beat_key}
+                          to={clientRefineFirstReadMarkPath(m.company_id, anchorId(m.anchor_kind, m.anchor_key))}
+                        >{beatLabel(m.beat_key)}</Link>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+              ))}
+            </div>
+          ) : null}
 
           {gated && archived.length > 0 ? (
             <div className="fr-ws-archived" {...{ [OPERATOR_MARK.attr]: "archived" }} data-testid="inputs-archived">

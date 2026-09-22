@@ -10,6 +10,8 @@ import { EMPTY_FIRST_READ } from "./types";
 // provide one. A plain anchor keeps the DOM assertions below unchanged.
 vi.mock("react-router-dom", () => ({
   useParams: () => ({ companyId: "co-1" }),
+  // FM9 (2026-09-22): the view reads ?mark= once at mount; these mounts carry no param.
+  useSearchParams: () => [new URLSearchParams(""), () => {}],
   Link: ({ to, children, ...rest }: { to: string; children?: unknown }) =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ({ type: "a", props: { href: to, ...rest, children }, key: null, ref: null, $$typeof: Symbol.for("react.element") }) as any,

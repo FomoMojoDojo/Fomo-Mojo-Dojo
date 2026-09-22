@@ -37,6 +37,9 @@ vi.mock("@/components/FileUploadDialog", () => ({ default: () => null }));
 // Gate B (2026-09-19): the page reads interview upload records through this hook at mount; stubbed so the
 // "zero supabase calls" proof below stays about the View-analysis click, as before.
 vi.mock("@/hooks/useInterviewUploads", () => ({ useInterviewUploads: () => ({ records: [], markets: [], loading: false, refetch: () => {}, changeMarket: async () => ({ ok: true }) }) }));
+// FM9 (2026-09-22): the gated page reads the mark store at mount; stubbed for the same reason as the line
+// above, so the "zero supabase calls" proof below stays about the View-analysis click, as before.
+vi.mock("@/lib/firstReadMarks/useFirstReadMarks", async (orig) => ({ ...(await orig() as object), useFirstReadMarks: () => ({ marks: [], byAnchor: new Map(), frozen: false, loaded: true, refetch: () => {}, create: async () => ({ ok: true }), append: async () => ({ ok: true }), withdraw: async () => ({ ok: true }) }) }));
 const PROPOSAL: FileProposalRow = {
   id: "prop-1", company_id: "c1", file_id: "file-1", file_name: FILE.file_name, source_type: "uploaded_file",
   summary: "The document outlines a strategic review session.", evidence: ["Funds it on a shoestring."], signal_type: "document", framework_results: [],

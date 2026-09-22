@@ -23,6 +23,15 @@ export function clientRefineFirstReadPath(companyId: string) {
   return `${CLIENT_REFINE_PREVIEW_FIRSTREAD_BASE}/${companyId}`;
 }
 
+// Mark link-back (FM9, commit 3, 2026-09-22): the first read opens on the beat a mark sits on and scrolls
+// its row into view. The value is the mark's anchor id — "<anchor_kind>|<anchor_key>", the same composition
+// anchorId() makes. An id the company does not hold is not an error: the read opens normally, silently.
+export const FIRSTREAD_MARK_PARAM = "mark";
+
+export function clientRefineFirstReadMarkPath(companyId: string, markAnchorId: string) {
+  return `${clientRefineFirstReadPath(companyId)}?${FIRSTREAD_MARK_PARAM}=${encodeURIComponent(markAnchorId)}`;
+}
+
 // WORKSPACE (2026-09-11). A nested route family under one shell (the First Read language):
 // /workspace is the index; the nine pages are children. Company comes from CompanyProvider
 // (the active company), never a URL param — same as every sibling except the First Read.

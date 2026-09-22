@@ -5,7 +5,7 @@
 // only; no fixture data is reachable from this route.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import "./firstRead.css";
 import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
 import { useQueryClient } from "@tanstack/react-query";
@@ -16,13 +16,13 @@ import { decideRelevance, overrideFailureMessage } from "./relevanceOverrideActi
 // Stage 2 (visual port): shell chrome — sticky Header (title / identity / segments / counter) + bottom Nav.
 import { Header, Nav } from "./shell";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
-import { MarksProvider, type MarksSurface } from "@/lib/firstReadMarks/MarksContext";
+import { MarksProvider, prefersReducedMotion, type MarksSurface } from "@/lib/firstReadMarks/MarksContext";
 import { useFirstReadMarks } from "@/lib/firstReadMarks/useFirstReadMarks";
 import { HEARD_BEAT_KEY, WhatWeHeard } from "@/lib/firstReadMarks/WhatWeHeard";
-import { MARK_STRINGS } from "@/lib/firstReadMarks/strings";
 import { offeringQuestionKeys } from "@/lib/firstReadMarks/anchors";
+import { beatsFor } from "./beats";
 import { bareHost } from "./mapping";
-import { CLIENT_REFINE_PREVIEW_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_ROUTE, FIRSTREAD_MARK_PARAM } from "@/lib/clientRefinePreview";
 import {
   ActArc,
   ActFindings,
@@ -58,46 +58,15 @@ import { Spread } from "./primitives-editorial";
  * (←/→) plus Home/End only — there is no number-key jump. The `act` field now only styles the nav
  * tick (act vs gate) — it no longer drives any keyboard shortcut.
  */
-// Flow restructure (operator-ruled 2026-09-02): PROMISE-FIRST unpacking arc — each page reveals what is
-// behind the one before (the reverse of derivation order). "Where this points" splits into three pages
-// (promise → positioning → strategy). Two siesta interludes (siesta1 after findings, siesta2 after base).
-// "What you offer" moves AFTER siesta2 (downstream of the base by law). "Where you stand" stays dark.
-// Siesta/promise/positioning/strategy labels are operator-signed (2026-09-02). The siesta "A moment"
-// labels only surface in the nav/forward-link, which is hidden behind FIRST_READ_SHOW_NAV_CHROME.
 // D2 (operator 2026-09-02): the operator drives the presentation by keyboard, so the footer chrome
 // (Back / forward-link / Reference / Keys hint) is HIDDEN behind this flag. Keyboard nav (←/→/Home/End)
 // and the progress ticks stay. A client-facing build flips this true — the components are never deleted.
 const FIRST_READ_SHOW_NAV_CHROME = false;
 
-export const BEATS = [
-  { key: "arc", label: "Before we start", act: undefined },
-  { key: "cold", label: "The first thing we saw.", act: undefined },
-  { key: "record", label: "What the world sees and says", act: 1 },
-  { key: "yousay", label: "What you say", act: 2 },
-  { key: "gap", label: "The gap", act: 3 },
-  { key: "findings", label: "What stands out", act: 4 },
-  { key: "siesta1", label: "A moment", act: undefined },
-  { key: "promise", label: "Your promise", act: undefined },
-  { key: "positioning", label: "Your positioning", act: undefined },
-  { key: "strategy", label: "Your strategy", act: undefined },
-  { key: "serve", label: "Who you serve", act: 5 },
-  { key: "base", label: "Your Base", act: undefined },
-  { key: "siesta2", label: "A moment", act: undefined },
-  { key: "offer", label: "What you offer", act: 5 },
-  { key: "score", label: "Mojo Score", act: undefined },
-  { key: "questions", label: "Questions", act: undefined },
-  { key: "next", label: "Next move", act: undefined },
-] as const;
-
-/** Marks (commit 2, 2026-09-22): "What we heard" sits just before the closer and only when the company holds at
- *  least one live mark; BEATS itself stays the fixed reading order every test pins. */
-export const HEARD_BEAT = { key: HEARD_BEAT_KEY, label: MARK_STRINGS.whatWeHeard, act: undefined } as const;
-export type Beat = { key: string; label: string; act: number | undefined };
-export function beatsFor(hasMarks: boolean): readonly Beat[] {
-  if (!hasMarks) return BEATS as readonly Beat[];
-  const i = BEATS.findIndex((b) => b.key === "next");
-  return [...BEATS.slice(0, i), HEARD_BEAT, ...BEATS.slice(i)] as readonly Beat[];
-}
+// The reading order and "What we heard"'s place in it now live in ./beats (marks commit 3, 2026-09-22) —
+// pure data, so the workspace list can read a beat's own nav label without importing this view. Re-exported
+// here unchanged: every spec that pins the order through this module keeps working.
+export { BEATS, HEARD_BEAT, beatsFor, beatLabel, type Beat } from "./beats";
 
 /** Beats that render their own eyebrow inside the body (the closer's "Before you go", the siestas'
  *  none, and — stages 2–3 — the Screen/Spread beats, which take the nav label as a prop). The view's
@@ -175,6 +144,14 @@ export default function FirstReadPreviewView() {
     [baseData, questions, questionRows, offeringKeys],
   );
   const [index, setIndex] = useState(0);
+  // Mark link-back (FM9, 2026-09-22): ?mark=<anchor id> from the workspace list. Read ONCE — the value is
+  // captured at mount so a later beat change never re-jumps, and the param is left in the URL untouched
+  // (this route holds no other param and nothing writes one). An id the company does not hold, or a read
+  // that has not loaded yet, simply does nothing: the page opens on its first beat, with no node and no word.
+  const [searchParams] = useSearchParams();
+  const [requestedMark] = useState<string | null>(() => searchParams.get(FIRSTREAD_MARK_PARAM)?.trim() || null);
+  const [markJumped, setMarkJumped] = useState(false);
+  const [pendingMark, setPendingMark] = useState<{ beatKey: string; kind: string; key: string } | null>(null);
 
   const go = useCallback((next: number) => {
     setIndex((current) => {
@@ -301,6 +278,30 @@ export default function FirstReadPreviewView() {
 
   const beat = beats[index];
   const goToBeat = useCallback((key: string) => { const i = beats.findIndex((b) => b.key === key); if (i >= 0) go(i); }, [beats, go]);
+  // The jump runs once, after the store has loaded: seed the beat through the same goToBeat the "What we
+  // heard" links use, then — in a second pass, once that beat is the one on screen and its body has mounted —
+  // bring the row itself into view. A row the beat does not render (commit 4 owns that case) simply leaves
+  // the reader on the right beat.
+  useEffect(() => {
+    if (!requestedMark || markJumped || !marksStore.loaded) return;
+    setMarkJumped(true);
+    const mark = marksStore.byAnchor.get(requestedMark)?.[0];
+    if (!mark) return; // not a live mark of this company — open normally, silently
+    setPendingMark({ beatKey: mark.beat_key, kind: mark.anchor_kind, key: mark.anchor_key });
+    goToBeat(mark.beat_key);
+  }, [requestedMark, markJumped, marksStore.loaded, marksStore.byAnchor, goToBeat]);
+  useEffect(() => {
+    if (!pendingMark || beats[index]?.key !== pendingMark.beatKey) return;
+    const q = (v: string) => v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const sel = `[data-fr-mark-kind="${q(pendingMark.kind)}"][data-fr-mark-key="${q(pendingMark.key)}"]`;
+    const id = requestAnimationFrame(() => {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      // jsdom has no scrollIntoView; the guard keeps the unit mounts silent.
+      if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
+      setPendingMark(null);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [pendingMark, beats, index]);
   const marksSurface = useMemo<Omit<MarksSurface, "openId" | "setOpenId"> | null>(() => (companyId ? {
     companyId, marks: marksStore.marks, byAnchor: marksStore.byAnchor, frozen: marksStore.frozen, currentBeat: beat.key, goToBeat,
     create: marksStore.create, append: marksStore.append, withdraw: marksStore.withdraw,

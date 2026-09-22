@@ -19,6 +19,9 @@
 # accepted and address_next_phase refused on both tables · (o) an append that changes neither the note nor the
 # disposition is refused. Plants: PLANT=nullnote (c: the create RPC refuses an empty note again) · PLANT=vocab
 # (n: both CHECKs widened back to admit address_next_phase) · PLANT=nochange (o: the check off)
+# FM9 (commit 3, 2026-09-22): (p) the workspace Inputs list is operator-gated in source and its spec covers both
+# switch states · (q) the first read reads the ?mark= carrier and opens silently on an unknown id, with a spec for
+# both. These two are STATIC (source + spec presence) — the guard runs no browser; the specs run in Playwright.
 set -uo pipefail
 PGC=${PGC:-supabase_db_dzlgyxcvuwiulgifbmew}
 NA=${NONADMIN_ID:-}
@@ -181,4 +184,25 @@ chk "(h) second withdraw refused"      "is already withdrawn"
 chk "(h) still one audit row"          "H4 audits=1"
 chk "(i) member SELECT = 0"            "I1 member_marks=0 member_notes=0"
 chk "(i) admin SELECT sees the rows"   "I2 admin_marks=2 admin_notes=7"
+
+# FM9 (commit 3, 2026-09-22) — the two surface specs of the marks list and its link-back, and the source
+# invariant each one protects. Static: this guard stays DB + source; the specs themselves run in the
+# Playwright suite (npx playwright test tests/workspace/inputs-marks*.spec.ts).
+srcchk() { local label="$1" file="$2" pattern="$3"; if [ -f "$file" ] && grep -q -- "$pattern" "$file"; then echo "  ok   $label"; else echo "  FAIL $label"; fail=1; fi; }
+INPUTS=src/views/client/workspace/InputsPage.tsx
+VIEW=src/views/client/firstReadPreview/FirstReadPreviewView.tsx
+if [ -f tests/workspace/inputs-marks.spec.ts ] && grep -q 'data-fr-operator-switch' tests/workspace/inputs-marks.spec.ts \
+   && grep -q 'useFirstReadMarks(gated ? companyId : null)' "$INPUTS" \
+   && grep -q '{gated && marksStore.marks.length > 0 ?' "$INPUTS"; then
+  echo "  ok   (p) the workspace list is operator-gated in source, and its spec covers both switch states"
+else
+  echo "  FAIL (p) the workspace list gate or tests/workspace/inputs-marks.spec.ts"; fail=1
+fi
+if [ -f tests/workspace/inputs-marks-link.spec.ts ] && grep -q 'no-such-anchor' tests/workspace/inputs-marks-link.spec.ts \
+   && grep -q 'FIRSTREAD_MARK_PARAM' "$VIEW" \
+   && grep -q 'if (!mark) return;' "$VIEW"; then
+  echo "  ok   (q) the link-back carrier is read in source and opens silently on an unknown id, with a spec for both"
+else
+  echo "  FAIL (q) the link-back carrier or tests/workspace/inputs-marks-link.spec.ts"; fail=1
+fi
 [ $fail = 0 ] && echo "guard: PASS" || { echo "guard: FAIL"; echo "$out" | grep -E "^[A-Z][0-9]|ERROR" | head -40; exit 1; }
