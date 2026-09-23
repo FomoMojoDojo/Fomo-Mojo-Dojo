@@ -18,7 +18,7 @@
 // ("finding a therapy that fits", a school's own programs), so they stay with the model layers where
 // context can be read. Only the six below are means in every reading a market statement can give them.
 
-/** The deterministic means terms — whole word / whole phrase, any case. */
+/** The deterministic means terms — whole word (singular or plural) / whole phrase, any case. */
 export const MARKET_MEANS_TERMS = [
   "continuum of care",
   "residential treatment",
@@ -31,9 +31,22 @@ export const MARKET_MEANS_TERMS = [
 export type MarketMeansTerm = (typeof MARKET_MEANS_TERMS)[number];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-/** \b…\b so "provided", "providers'" stem-mismatches and "clinical" never hit; the phrases match whole. */
-const termPattern = (term: string) => new RegExp(`\\b${escapeRe(term)}\\b`, "i");
-const ANY_PATTERN = new RegExp(`\\b(${MARKET_MEANS_TERMS.map(escapeRe).join("|")})\\b`, "i");
+/**
+ * RULING C (operator, 2026-09-22). The six entries are unchanged; the MATCHING now covers the plural
+ * of each single-word term — provider/providers, clinic/clinics, outpatient/outpatients,
+ * inpatient/inpatients. "We compared the providers in town" names a means exactly as its singular
+ * does, and before this it reached the model layers instead of being refused before a judge was spent.
+ *
+ * The two PHRASES are unchanged and match whole: "continuum of care" and "residential treatment" have
+ * no plural a market statement uses.
+ *
+ * \b…\b still does the near-miss work, and the optional `s` cannot widen it: "provided",
+ * "providing", "clinical" and "clinicians" all continue with a word character where the pattern
+ * requires a boundary, so none of them can ever hit.
+ */
+const termSource = (term: string) => escapeRe(term) + (term.includes(" ") ? "" : "s?");
+const termPattern = (term: string) => new RegExp(`\\b${termSource(term)}\\b`, "i");
+const ANY_PATTERN = new RegExp(`\\b(${MARKET_MEANS_TERMS.map(termSource).join("|")})\\b`, "i");
 
 /** True when the text names one of the deterministic means terms (whole word/phrase, any case). */
 export function containsMarketMeansTerm(value: string | null | undefined): boolean {

@@ -149,6 +149,7 @@ served until the stack is recreated (`source supabase/functions/.env.local` → 
 - feed-first-read-corrections · record-check-outcome
 - record-interview-finding (gate 2, 2026-09-16 — the one write path for interview findings)
 - record-interview-upload (gate B 2a, 2026-09-19)
+- interview-parser (parser commit 3, 2026-09-22 — 400 `record_id required` on `{}`)
 
 **Served code is not live on edit** (R46, 2026-09-21). The edge runtime's worker keeps the module it booted with:
 an in-place edit of a served function (its `index.ts`/`handler.ts` or a `_shared` file it imports) is live only

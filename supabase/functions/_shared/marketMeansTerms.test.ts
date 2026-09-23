@@ -33,7 +33,6 @@ Deno.test("R3: whole word only — the near misses never hit", () => {
     "Providing support to families",            // providing
     "Clinical progress the family can see",     // clinical
     "Clinicians they trust",                    // clinicians
-    "Outpatients" /* plural noun, not the adjective */,
   ]) {
     assertEquals(marketMeansHits(near), [], `false hit on: ${near}`);
     assert(!containsMarketMeansTerm(near), `false hit on: ${near}`);
@@ -41,6 +40,42 @@ Deno.test("R3: whole word only — the near misses never hit", () => {
   // but the bare words themselves still hit
   assertEquals(marketMeansHits("an outpatient option"), ["outpatient"]);
   assertEquals(marketMeansHits("a clinic near home"), ["clinic"]);
+});
+
+// ── RULING C (operator, 2026-09-22): the six entries stand; the MATCHING covers their plurals ─────
+// This replaces the pinned "plurals slip" gap. It is the same four near-misses that guard the widening:
+// provided / providing / clinical / clinicians must STILL never hit, because the optional `s` is
+// followed by \b and every one of those continues with a word character.
+Deno.test("RULING C: each single-word term hits in the plural, and reports its SIGNED singular", () => {
+  for (const singular of ["outpatient", "inpatient", "provider", "clinic"]) {
+    assert(containsMarketMeansTerm(`We compared the ${singular}s in town.`), `plural missed: ${singular}s`);
+    assertEquals(
+      marketMeansHits(`We compared the ${singular}s in town.`),
+      [singular],
+      `the plural must report the signed singular term, not "${singular}s"`,
+    );
+    // and the singular is unchanged
+    assertEquals(marketMeansHits(`We compared the ${singular} in town.`), [singular]);
+  }
+  // the reason keeps its signed shape whichever number the text used
+  assertEquals(marketMeansReason(marketMeansHits("Choosing between the two clinics in town.")), "names a means: clinic");
+});
+
+Deno.test("RULING C: the two PHRASES are unchanged — no plural form is added to them", () => {
+  assertEquals(marketMeansHits("a continuum of cares"), []);      // not a phrase anyone writes
+  assertEquals(marketMeansHits("two residential treatments"), []); // the phrase matches whole, singular
+  assertEquals(marketMeansHits("a continuum of care"), ["continuum of care"]);
+  assertEquals(marketMeansHits("residential treatment"), ["residential treatment"]);
+});
+
+Deno.test("RULING C: plurals are caught on the executor side too, and mixed number reports once", () => {
+  const v = marketMeansViolations([
+    { job_executor: "Clinic managers", jtbd: "Keeping the roster covered." },
+    { job_executor: "Families comparing providers", jtbd: "Choosing between the outpatients and the clinic." },
+  ]);
+  assertEquals(v.length, 2);
+  assertEquals(v[0].terms, ["clinic"]);
+  assertEquals(v[1].terms, ["outpatient", "provider", "clinic"]); // list order, each term once
 });
 
 Deno.test("R3: 'residential' alone does not hit — only 'residential treatment' is on the list", () => {
