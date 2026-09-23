@@ -8,7 +8,15 @@
 // The version below is stamped on every row the parser writes. Bump it when any rule text changes:
 // a row then says which rules produced it, and rows written under an older version stand as history
 // rather than being re-interpreted under rules they never saw.
-export const PARSER_RULES_VERSION = "2026-09-22.1";
+export const PARSER_RULES_VERSION = "2026-09-23.1";
+
+/** R6 (operator ruling, 2026-09-23) — SUPERSESSION. Parsing a record whose live items carry an OLDER
+ *  rules_version retracts every one of them first, with the reason below, then lands the new set; a
+ *  same-version parse stays idempotent (rule 5). Retracted rows are kept: they are the history of what
+ *  the older rules produced, and the audit reads the pair. */
+export const supersededReason = (version: string = PARSER_RULES_VERSION): string => `superseded by rules ${version}`;
+/** R7 — the one case where a SAME-version parse is not a no-op: our_speakers changed under it. */
+export const SIDE_CHANGED_REASON = "speaker side changed";
 
 /** The five rules, verbatim. interviewParserRules.test.ts pins each string and the count. */
 export const PARSER_RULES = [

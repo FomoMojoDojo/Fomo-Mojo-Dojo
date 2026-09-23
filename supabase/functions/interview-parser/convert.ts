@@ -155,6 +155,32 @@ export function buildJobFromWordsUser(rawWords: string, speaker: string | null):
   return `SPEAKER: ${speaker ?? "unknown"}\nTHEIR WORDS, verbatim:\n"""${rawWords}"""\nState the job they are trying to get done.`;
 }
 
+// ── R2: the ODI writer's CONTEXT rule (operator ruling, 2026-09-23) ──────────────────────────────
+//
+// Measured on Edgewood's kickoff: 40 of 43 need items landed annotated, and 35 of those 40 rejections
+// were the writer ADDING a dimension or a context the words never carried — "when the interviewee",
+// "when handling inquiries", "the visibility of". The writer had been handed a job_executor string to
+// fill the when-clause with, and when the record carried no journey_key that string was the literal
+// fallback "the interviewee", which is not a context at all.
+//
+// R2: the dimension and the when-context must both come from the RAW WORDS. If the words carry no
+// context, the writer says so instead of inventing one, and the item lands annotated with the signed
+// reason. The refusal rides on the call the writer already makes — the same shape as R2 of commit 3b —
+// so it costs nothing, and the "the interviewee" fallback is gone from handler.ts.
+export const NO_CONTEXT_REASON = "no context in the words";
+
+/** Appended to ODI_CANONICAL_SYSTEM; the shared formula prompt itself is untouched, because three
+ *  other callers depend on it byte-for-byte. */
+export const ODI_CONTEXT_RULE =
+  " R2 (2026-09-23) — THE DIMENSION AND THE CONTEXT COME FROM THE SPEAKER, NOT FROM YOU. " +
+  "The [dimension] must be something the quoted words actually name or measure, and the [context] after \"when\" " +
+  "must be a circumstance the quoted words actually describe. " +
+  "Never fill the when-clause with a description of who the speaker is; that is not a context. " +
+  "Never introduce a metric, a dimension or a circumstance the words do not carry. " +
+  'If the quoted words carry NO circumstance you could put after "when", answer {"no_context":true} and nothing else — do not invent one.';
+
+export const ODI_CANONICAL_SYSTEM_R2 = ODI_CANONICAL_SYSTEM + ODI_CONTEXT_RULE;
+
 // ── the faithfulness judge (PR10, rewritten under RULING A, operator 2026-09-22) ─────────────────
 //
 // WHAT THE FIRST VERSION GOT WRONG, measured on the commit-3 throwaway: it asked whether the derived
@@ -181,6 +207,15 @@ export const FAITHFUL_SYSTEM =
   "even when the speaker never said a direction verb and never said \"when\". " +
   "For FORM job_statement the verb + object + contextual clarifier shape belongs to the form in the same way. " +
   "So ask only this: is every OBJECT, METRIC, QUANTITY and CONTEXT in the statement carried by the quoted words, and is the speaker's own object and context still there? " +
+  // R3 (operator ruling, 2026-09-23). Ruling A exempted the scaffolding but the judge kept CITING it:
+  // 21 of Edgewood's 40 need rejections named a direction verb inside the reason, alongside whatever
+  // the real objection was. A reason that names the exempt scaffolding is unreadable as an objection,
+  // so the rule is now explicit in both directions — never cite it, and if it is the ONLY thing you
+  // could object to, the verdict is ok=true.
+  "NEVER CITE THE EXEMPT SCAFFOLDING AS AN OBJECTION. Do not write that the statement 'adds' or " +
+  "'introduces' the direction verb (Minimize, Maximize, Reduce, Increase), the formula frame, or the " +
+  "verb + object + clarifier shape — those are the form's and are never a fault. " +
+  "If the ONLY thing you could object to is the direction verb or the form's shape, answer ok=true. " +
   "ALWAYS state your reason — on pass (why it is faithful) and on reject (what it added, lost or named). " +
   'JSON only: {"ok":true|false,"reason":"one sentence — always present"}.';
 
@@ -239,9 +274,14 @@ export async function convertItem(args: {
     for (let attempt = 0; attempt < 2; attempt++) {
       const prior = formatReason || numericReason;
       const user = buildOdiCanonicalUser(args.rawWords, args.jobExecutor) + (prior ? `\nYour previous attempt was rejected: ${prior}. Fix exactly that.\n` : "");
-      const raw = await args.call({ stage: "convert:need", system: ODI_CANONICAL_SYSTEM, user });
-      try { statement = String((JSON.parse(raw) as { odi_canonical_statement?: unknown })?.odi_canonical_statement ?? "").trim(); }
-      catch { statement = ""; }
+      const raw = await args.call({ stage: "convert:need", system: ODI_CANONICAL_SYSTEM_R2, user });
+      let parsed: { odi_canonical_statement?: unknown; no_context?: unknown } = {};
+      try { parsed = JSON.parse(raw) as typeof parsed; } catch { parsed = {}; }
+      // R2: the writer was asked to decide this on the call it was already making.
+      if (parsed.no_context === true) {
+        return { framework_statement: null, framework_form: "odi_need", judge_state: "annotated", judge_reason: NO_CONTEXT_REASON };
+      }
+      statement = String(parsed.odi_canonical_statement ?? "").trim();
       formatReason = ""; numericReason = "";
       const check = isValidCanonical(statement, args.rawWords);
       if (!check.ok) { formatReason = check.reason ?? "invalid canonical form"; continue; }

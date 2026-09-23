@@ -2,11 +2,21 @@
 // judge and the pointer are built against, and every row the parser writes stamps the version — so a
 // change to either must be deliberate and must move the version with it.
 import { describe, it, expect } from "vitest";
-import { MATCH_TOLERANCE, PARSER_RULES, PARSER_RULES_VERSION, POINTER_IS_CODE_COMPUTED, STRICTNESS } from "../../../supabase/functions/interview-parser/rules.ts";
+import { MATCH_TOLERANCE, PARSER_RULES, PARSER_RULES_VERSION, POINTER_IS_CODE_COMPUTED, SIDE_CHANGED_REASON, STRICTNESS, supersededReason } from "../../../supabase/functions/interview-parser/rules.ts";
 
-describe("interview parser rules — signed 2026-09-22", () => {
+describe("interview parser rules — signed 2026-09-22, version moved 2026-09-23 (R6)", () => {
   it("the version is stamped and is the one the migration writes", () => {
-    expect(PARSER_RULES_VERSION).toBe("2026-09-22.1");
+    // R6 (operator ruling, 2026-09-23): the version is no longer only a stamp. Parsing a record whose
+    // live items carry an OLDER version now retracts them first, so moving this string re-parses every
+    // record it touches. It moves only with a signed ruling.
+    expect(PARSER_RULES_VERSION).toBe("2026-09-23.1");
+  });
+
+  it("R6: the supersession reason names the version, and the side reason is distinct from it", () => {
+    expect(supersededReason()).toBe(`superseded by rules ${PARSER_RULES_VERSION}`);
+    expect(supersededReason("2026-12-01.1")).toBe("superseded by rules 2026-12-01.1");
+    expect(SIDE_CHANGED_REASON).toBe("speaker side changed");
+    expect(SIDE_CHANGED_REASON).not.toBe(supersededReason()); // the audit must tell the two apart
   });
 
   it("all five rules, verbatim, in order", () => {

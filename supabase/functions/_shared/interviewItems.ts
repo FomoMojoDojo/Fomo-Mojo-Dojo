@@ -18,6 +18,10 @@ export const TRACE_STATES = ["located", "not_located"] as const;
 export const LANDINGS = ["market", "step", "unplaced"] as const;
 export const REVIEW_STATES = ["unreviewed", "reviewed"] as const;
 export const JUDGE_STATES = ["accepted", "annotated"] as const;
+/** R5 (operator ruling, 2026-09-23): whose side of the room said it. Derived AT LANDING from the
+ *  record's our_speakers as they stood at that moment; never in the content identity, so R7's
+ *  retract-and-re-land shows the SAME identity landing twice rather than two different items. */
+export const SPEAKER_SIDES = ["client", "ours"] as const;
 
 export type ItemKind = (typeof ITEM_KINDS)[number];
 export type FrameworkForm = (typeof FRAMEWORK_FORMS)[number];
@@ -25,6 +29,7 @@ export type TraceState = (typeof TRACE_STATES)[number];
 export type Landing = (typeof LANDINGS)[number];
 export type ReviewState = (typeof REVIEW_STATES)[number];
 export type JudgeState = (typeof JUDGE_STATES)[number];
+export type SpeakerSide = (typeof SPEAKER_SIDES)[number];
 
 /** The code-computed pointer (rule 2). The model never supplies any of these. */
 export type ItemPointer = {
@@ -45,6 +50,7 @@ export type InterviewItem = {
   kind: ItemKind;
   raw_words: string;
   speaker_label: string | null;
+  speaker_side: SpeakerSide;
   framework_statement: string | null;
   framework_form: FrameworkForm | null;
   pointer: ItemPointer;
@@ -63,6 +69,10 @@ export type InterviewItem = {
   retracted_at: string | null;
   retracted_reason: string | null;
 };
+
+/** R5: an item spoken by our own side lands with its words and its pointer and nothing derived — no
+ *  converter runs, no judge call is spent, and this is the reason it carries. */
+export const OURS_SIDE_REASON = "spoken by our side";
 
 /**
  * The identity a landing is keyed by (rule 5): the KIND, the normalized raw words, and the passage's
