@@ -24,20 +24,27 @@ export const MAX_RAW_WORDS = 400;
 export const FINDER_SYSTEM =
   "You read one window of an interview transcript and list the TYPED ITEMS it contains. " +
   "The window is given as numbered passages; each passage carries its speaker. " +
-  "kind is one of: " +
-  "job (a job the speaker is trying to get done); " +
-  "pain_point (something that is hard, slow, costly or frustrating for them); " +
-  "desire (something they want to be true); " +
-  "outcome (a result they measure or would measure); " +
-  "route (a way they go about getting something done, or an approach they took or considered); " +
-  "step (one stage of a process they describe, in the order it happens); " +
-  "positioning (how they describe who they are, who they serve, or how they differ from the alternatives); " +
-  "cascade (a strategic choice — where they will play, how they intend to win, or what they will not do). " +
+  "THE ITEM TEST. An item is a passage where a speaker is " +
+  "trying to get something done (kind job); " +
+  "struggling with or losing something (kind pain_point); " +
+  "wanting something (kind desire); " +
+  "naming a result they judge by (kind outcome); " +
+  "stating how they reach customers (kind route); " +
+  "naming a step they take toward a job (kind step); " +
+  "saying what they stand for against the alternatives (kind positioning); " +
+  "or laying out a chain of intent — where they will play, how they intend to win, what they will not do (kind cascade). " +
+  "A NARRATED FACT IS NOT AN ITEM. A schedule, a headcount, a date, a piece of history, or a description of what the " +
+  "company does is not an item, however clearly it is stated. " +
+  "\"There is a handover meeting every fortnight\" is a schedule, not a step. " +
+  "\"The team has grown by three people since the spring\" is a headcount, not an item of any kind. " +
+  "\"Funding is reviewed at the end of each quarter\" is a schedule, not a job. " +
+  "\"The referral came through on a Tuesday\" is a narrated fact, not a step. " +
+  "If a passage contains no item, RETURN NOTHING FOR IT. Returning nothing for a whole window is a correct answer " +
+  "when the window is narration. Do not pad the list. " +
   "raw_words MUST be a VERBATIM quote copied from the passage — never a paraphrase, never your own " +
   `words, at most ${MAX_RAW_WORDS} characters. Copy it exactly, including punctuation. ` +
   "passage_index is the number of the passage the quote came from. " +
-  "List every item you find; do not merge two items into one and do not invent items the words do not " +
-  "support. If a passage contains nothing of these kinds, list nothing for it. " +
+  "Do not merge two items into one and do not invent items the words do not support. " +
   'JSON only: {"items":[{"passage_index":<int>,"kind":"job|pain_point|desire|outcome|route|step|positioning|cascade","raw_words":"<verbatim quote>"}]}.';
 
 export function buildFinderUser(passages: readonly Passage[], offset: number): string {
@@ -67,6 +74,42 @@ export function parseFinderOutput(raw: string): FoundItem[] {
   return out;
 }
 
+// ── R3: the NUMERIC INVENTION guard (operator ruling, 2026-09-22) ────────────────────────────────
+//
+// Measured on the commit-3 re-proof: given "We lose two whole days every month reconciling the intake
+// spreadsheet by hand", the ODI writer returned "Reduce the time spent reconciling the intake
+// spreadsheet TO TWO DAYS PER MONTH" — a target the speaker never set, built out of a quantity they
+// used to describe the loss. The judge caught it, but only after a judge call was spent, and only
+// because it happened to notice. A digit is decidable, so the code decides it.
+//
+// THE RULE: every digit sequence in the framework statement must occur in the raw words. Nothing is
+// inferred about meaning — "48" in the statement when the words say "forty eight" is a VIOLATION, and
+// deliberately so: the writer was told to keep the executor's words, and a numeral the speaker never
+// typed is the writer's, not theirs. A violation re-prompts ONCE carrying the reason, then lands
+// annotated. No model call is spent on the check itself.
+export const NUMERIC_INVENTION_REASON = "adds a quantity the words do not carry";
+
+/** Every digit run, thousands separators removed and leading zeros kept (they can be meaningful). */
+export function numbersIn(text: string): string[] {
+  const out: string[] = [];
+  for (const m of String(text ?? "").matchAll(/\d[\d,]*(?:\.\d+)?/g)) {
+    out.push(m[0].replace(/,/g, ""));
+  }
+  return out;
+}
+
+/** The numbers the statement carries that the raw words do not. Empty array = the statement is clean. */
+export function inventedNumbers(statement: string, rawWords: string): string[] {
+  const carried = new Set(numbersIn(rawWords));
+  const seen = new Set<string>();
+  return numbersIn(statement).filter((n) => !carried.has(n) && !seen.has(n) && (seen.add(n), true));
+}
+
+/** The re-prompt's reason line — it names the offending numbers so the retry can fix exactly that. */
+export function numericInventionReason(invented: readonly string[]): string {
+  return `${NUMERIC_INVENTION_REASON}: ${invented.join(", ")}`;
+}
+
 // ── the kind router (PR9) ────────────────────────────────────────────────────────────────────────
 export const NEED_KINDS: ReadonlySet<ItemKind> = new Set(["pain_point", "desire", "outcome"]);
 export const JOB_KINDS: ReadonlySet<ItemKind> = new Set(["job"]);
@@ -89,14 +132,24 @@ export function routeKind(kind: ItemKind): "need" | "job" | "not_built" {
 }
 
 // ── the job-statement writer: a raw-words variant of GEN_SYSTEM carrying the v3 rule ─────────────
+export const NO_EXECUTOR_GOAL_REASON = "no executor goal in the words";
+
 export const JOB_FROM_WORDS_SYSTEM =
   "You restate what a person said as ONE job-to-be-done statement, in their own terms. " +
+  // R2 (operator ruling, 2026-09-22). A job item names an ACTOR and a GOAL. The commit-3 re-proof
+  // landed 29 "jobs" whose words were "Funding for the programme is reviewed at the end of each
+  // quarter" — a schedule with no actor trying to get anything done, restated as a job because the
+  // writer was only ever asked to restate. The refusal rides on the call the writer already makes, so
+  // it costs nothing: the writer answers with no_executor_goal instead of inventing an actor.
+  "FIRST decide whether the words name an ACTOR who is trying to GET SOMETHING DONE. " +
+  "A schedule, a headcount, a narrated fact, or a description of what an organisation does names no actor with a goal. " +
+  'If the words name no such actor and goal, answer {"no_executor_goal":true} and nothing else — do not invent an actor, and do not restate the fact as a job. ' +
   "A job statement names what the executor is trying to get done, in the executor's own words. " +
   "It never names a provider, program, service line, facility, treatment setting, or category of supplier the executor would shop for. " +
   "Form: transitive verb + object + contextual clarifier. " +
   `NEVER use these words (they name a means, not a goal): ${MARKET_MEANS_TERMS.join(", ")}, program, service, services, therapy, facility, organizations that provide. ` +
   "Never name a company, brand or vendor. Do not invent anything the quoted words do not support. " +
-  'JSON only: {"jtbd":"<one sentence>"}.';
+  'JSON only: {"jtbd":"<one sentence>"} — or {"no_executor_goal":true}.';
 
 export function buildJobFromWordsUser(rawWords: string, speaker: string | null): string {
   return `SPEAKER: ${speaker ?? "unknown"}\nTHEIR WORDS, verbatim:\n"""${rawWords}"""\nState the job they are trying to get done.`;
@@ -180,28 +233,56 @@ export async function convertItem(args: {
     // ODI canonical form, with ONE re-prompt carrying the format reason (PR9).
     let statement = "";
     let formatReason = "";
+    // R3 rides in the SAME loop as the format guard: whichever of the two fails, the one retry carries
+    // its reason. A numeric violation is not a format error, so it keeps its own signed reason.
+    let numericReason = "";
     for (let attempt = 0; attempt < 2; attempt++) {
-      const user = buildOdiCanonicalUser(args.rawWords, args.jobExecutor) + (formatReason ? `\nYour previous attempt was rejected: ${formatReason}. Fix exactly that.\n` : "");
+      const prior = formatReason || numericReason;
+      const user = buildOdiCanonicalUser(args.rawWords, args.jobExecutor) + (prior ? `\nYour previous attempt was rejected: ${prior}. Fix exactly that.\n` : "");
       const raw = await args.call({ stage: "convert:need", system: ODI_CANONICAL_SYSTEM, user });
       try { statement = String((JSON.parse(raw) as { odi_canonical_statement?: unknown })?.odi_canonical_statement ?? "").trim(); }
       catch { statement = ""; }
+      formatReason = ""; numericReason = "";
       const check = isValidCanonical(statement, args.rawWords);
-      if (check.ok) { formatReason = ""; break; }
-      formatReason = check.reason ?? "invalid canonical form";
+      if (!check.ok) { formatReason = check.reason ?? "invalid canonical form"; continue; }
+      const invented = inventedNumbers(statement, args.rawWords);   // R3: decided by the code, no call
+      if (invented.length) { numericReason = numericInventionReason(invented); continue; }
+      break;
     }
     if (formatReason) {
       return { framework_statement: statement || null, framework_form: "odi_need", judge_state: "annotated", judge_reason: `ODI format rejected after one retry: ${formatReason}` };
+    }
+    if (numericReason) {
+      return { framework_statement: statement || null, framework_form: "odi_need", judge_state: "annotated", judge_reason: numericReason };
     }
     const j = await judgeFaithful(args.call, { rawWords: args.rawWords, statement, kind: args.kind, form: "odi_need", model: args.judgeModel });
     return { framework_statement: statement, framework_form: "odi_need", judge_state: j.ok ? "accepted" : "annotated", judge_reason: j.reason };
   }
 
   // job: write it, then the DETERMINISTIC means layer, then solution-agnostic v3, then faithfulness.
-  const raw = await args.call({ stage: "convert:job", system: JOB_FROM_WORDS_SYSTEM, user: buildJobFromWordsUser(args.rawWords, args.speaker) });
   let statement = "";
-  try { statement = String((JSON.parse(raw) as { jtbd?: unknown })?.jtbd ?? "").trim(); } catch { statement = ""; }
+  let jobNumericReason = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const user = buildJobFromWordsUser(args.rawWords, args.speaker) +
+      (jobNumericReason ? `\nYour previous attempt was rejected: ${jobNumericReason}. Fix exactly that.\n` : "");
+    const raw = await args.call({ stage: "convert:job", system: JOB_FROM_WORDS_SYSTEM, user });
+    let parsed: { jtbd?: unknown; no_executor_goal?: unknown } = {};
+    try { parsed = JSON.parse(raw) as typeof parsed; } catch { parsed = {}; }
+    // R2: the writer was asked to decide this first, on the call it was already making.
+    if (parsed.no_executor_goal === true) {
+      return { framework_statement: null, framework_form: "job_statement", judge_state: "annotated", judge_reason: NO_EXECUTOR_GOAL_REASON };
+    }
+    statement = String(parsed.jtbd ?? "").trim();
+    if (!statement) break;
+    const invented = inventedNumbers(statement, args.rawWords);     // R3 again, same rule, no call
+    jobNumericReason = invented.length ? numericInventionReason(invented) : "";
+    if (!jobNumericReason) break;
+  }
   if (!statement) {
     return { framework_statement: null, framework_form: "job_statement", judge_state: "annotated", judge_reason: "the job writer returned nothing usable" };
+  }
+  if (jobNumericReason) {
+    return { framework_statement: statement, framework_form: "job_statement", judge_state: "annotated", judge_reason: jobNumericReason };
   }
   const hits = marketMeansHits(statement);
   if (hits.length) {

@@ -7,8 +7,9 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import { toPassages } from "./segment.ts";
 import { locateQuote } from "./locate.ts";
 import {
-  FAITHFUL_SYSTEM, FINDER_SYSTEM, NOT_BUILT_REASON, buildFaithfulUser, buildFinderUser, convertItem,
-  judgeFaithful, parseFinderOutput, routeKind, type Call,
+  FAITHFUL_SYSTEM, FINDER_SYSTEM, JOB_FROM_WORDS_SYSTEM, NOT_BUILT_REASON, NO_EXECUTOR_GOAL_REASON,
+  buildFaithfulUser, buildFinderUser, convertItem, inventedNumbers, judgeFaithful, numbersIn,
+  numericInventionReason, parseFinderOutput, routeKind, type Call,
 } from "./convert.ts";
 import { ITEM_KINDS, itemContentIdentity } from "../_shared/interviewItems.ts";
 import { marketMeansHits } from "../_shared/marketMeansTerms.ts";
@@ -343,8 +344,10 @@ Deno.test({
 
 // ── RULING B: the finder emits all eight kinds ───────────────────────────────────────────────────
 Deno.test("RULING B: all eight kinds are defined in the prompt, in the schema line, and parsed", () => {
+  // R1 restructured the definitions into the item test ("...trying to get something done (kind job)"),
+  // so the pin moved with it; the R1 test above owns the wording of each clause.
   for (const k of ITEM_KINDS) {
-    assert(FINDER_SYSTEM.includes(`${k} (`), `the prompt must DEFINE the kind: ${k}`);
+    assert(FINDER_SYSTEM.includes(`(kind ${k})`), `the prompt must DEFINE the kind: ${k}`);
   }
   assert(FINDER_SYSTEM.includes('"kind":"job|pain_point|desire|outcome|route|step|positioning|cascade"'), "the schema line must offer all eight");
   const raw = JSON.stringify({ items: ITEM_KINDS.map((k, i) => ({ passage_index: i, kind: k, raw_words: `words for ${k}` })) });
@@ -375,4 +378,184 @@ Deno.test({
     assert(kinds.has("positioning"), `no positioning item found; kinds were: ${[...kinds].join(", ") || "(none)"}`);
     assert(kinds.has("route"), `no route item found; kinds were: ${[...kinds].join(", ") || "(none)"}`);
   },
+});
+
+// ── R1: the ITEM TEST — narration yields nothing ─────────────────────────────────────────────────
+Deno.test("R1: the item test and the not-an-item examples are in the finder prompt", () => {
+  assert(FINDER_SYSTEM.includes("THE ITEM TEST"));
+  assert(FINDER_SYSTEM.includes("A NARRATED FACT IS NOT AN ITEM"));
+  assert(FINDER_SYSTEM.includes("A schedule, a headcount, a date, a piece of history"));
+  assert(FINDER_SYSTEM.includes("RETURN NOTHING FOR IT"));
+  assert(FINDER_SYSTEM.includes("Do not pad the list"));
+  // the eight kinds keep their test clauses
+  for (const [kind, clause] of [
+    ["job", "trying to get something done"], ["pain_point", "struggling with or losing something"],
+    ["desire", "wanting something"], ["outcome", "naming a result they judge by"],
+    ["route", "stating how they reach customers"], ["step", "naming a step they take toward a job"],
+    ["positioning", "saying what they stand for against the alternatives"], ["cascade", "chain of intent"],
+  ] as const) {
+    assert(FINDER_SYSTEM.includes(clause), `missing the ${kind} clause`);
+    assert(FINDER_SYSTEM.includes(`kind ${kind}`), `missing the kind name: ${kind}`);
+  }
+});
+
+Deno.test({
+  name: "R1 (live): a window of pure NARRATION yields no items at all",
+  ignore: !LIVE_JUDGE,
+  fn: async () => {
+    // Every line here is a narrated fact: a schedule, a headcount, a date. Under the commit-3 prompt
+    // these same lines produced 118 of 159 items (steps and routes) on the throwaway.
+    const narration = [
+      "Dana Reeves | 00:00:37",
+      "The team has grown by three people since the spring.",
+      "Funding for the programme is reviewed at the end of each quarter.",
+      "",
+      "Sam Okafor | 00:01:14",
+      "There is a handover meeting every fortnight where we go through the new names.",
+      "The referral came through on a Tuesday and we started the intake the same week.",
+    ].join("\n");
+    const ps = await toPassages(narration);
+    const found = parseFinderOutput(await liveCall({
+      stage: "finder", system: FINDER_SYSTEM, user: buildFinderUser(ps, 0),
+      model: Deno.env.get("PARSER_FINDER_MODEL") || JUDGE_MODEL_T,
+    }));
+    assertEquals(found.length, 0, `narration produced items: ${found.map((f) => f.kind).join(", ")}`);
+  },
+});
+
+Deno.test({
+  name: "R1 (live): a window with a REAL item still yields it — the test narrows, it does not silence",
+  ignore: !LIVE_JUDGE,
+  fn: async () => {
+    const mixed = [
+      "Dana Reeves | 00:00:37",
+      "The team has grown by three people since the spring.",
+      "",
+      "Sam Okafor | 00:01:14",
+      "We lose two whole days every month reconciling the intake spreadsheet by hand.",
+    ].join("\n");
+    const ps = await toPassages(mixed);
+    const found = parseFinderOutput(await liveCall({
+      stage: "finder", system: FINDER_SYSTEM, user: buildFinderUser(ps, 0),
+      model: Deno.env.get("PARSER_FINDER_MODEL") || JUDGE_MODEL_T,
+    }));
+    assert(found.length >= 1, "the real pain point must still be found");
+    assert(found.some((f) => f.kind === "pain_point"), `kinds found: ${found.map((f) => f.kind).join(", ")}`);
+    assert(!found.some((f) => /grown by three people/i.test(f.raw_words)), "the headcount must not be an item");
+  },
+});
+
+// ── R2: a job with no actor-with-a-goal lands annotated ──────────────────────────────────────────
+Deno.test("R2: the writer's no_executor_goal answer lands the item annotated with the signed reason", async () => {
+  let calls = 0;
+  const call: Call = ({ stage }) => {
+    if (stage === "convert:job") { calls++; return Promise.resolve(JSON.stringify({ no_executor_goal: true })); }
+    throw new Error("no further call may be made once the words carry no executor goal");
+  };
+  const c = await convertItem({ call, kind: "job", rawWords: "Funding for the programme is reviewed at the end of each quarter.", speaker: "Dana", jobExecutor: "families" });
+  assertEquals(calls, 1, "the refusal rides on the call the writer already makes — no extra call");
+  assertEquals(c.judge_state, "annotated");
+  assertEquals(c.judge_reason, NO_EXECUTOR_GOAL_REASON);
+  assertEquals(c.judge_reason, "no executor goal in the words");
+  assertEquals(c.framework_statement, null);
+  assertEquals(c.framework_form, "job_statement", "the item still lands, with its form (rule 1)");
+});
+
+Deno.test("R2: the prompt asks for the actor-and-goal decision FIRST and offers the refusal shape", () => {
+  assert(JOB_FROM_WORDS_SYSTEM.includes("FIRST decide whether the words name an ACTOR who is trying to GET SOMETHING DONE"));
+  assert(JOB_FROM_WORDS_SYSTEM.includes("A schedule, a headcount, a narrated fact"));
+  assert(JOB_FROM_WORDS_SYSTEM.includes('{"no_executor_goal":true}'));
+  assert(JOB_FROM_WORDS_SYSTEM.includes("do not invent an actor"));
+});
+
+Deno.test({
+  name: "R2 (live): a schedule is refused as having no executor goal; a real job is not",
+  ignore: !LIVE_JUDGE,
+  fn: async () => {
+    const schedule = await convertItem({
+      call: liveCall, kind: "job", rawWords: "Funding for the programme is reviewed at the end of each quarter.",
+      speaker: "Dana", jobExecutor: "the interviewee",
+      solutionAgnostic: () => Promise.resolve({ solutionFree: true, tally: "3-0 accepted", reason: "-" }),
+    });
+    assertEquals(schedule.judge_reason, NO_EXECUTOR_GOAL_REASON, `a schedule was converted anyway: ${schedule.framework_statement}`);
+    const real = await convertItem({
+      call: liveCall, kind: "job", rawWords: "I am trying to get a young person seen before the crisis escalates.",
+      speaker: "Dana", jobExecutor: "the interviewee",
+      solutionAgnostic: () => Promise.resolve({ solutionFree: true, tally: "3-0 accepted", reason: "-" }),
+    });
+    assert(real.framework_statement, "a real job must still be written, not refused");
+    assert(real.judge_reason !== NO_EXECUTOR_GOAL_REASON);
+  },
+});
+
+// ── R3: the numeric invention guard ──────────────────────────────────────────────────────────────
+Deno.test("R3: numbersIn / inventedNumbers decide the rule, with no model anywhere near them", () => {
+  assertEquals(numbersIn("Reduce the time to two days per month"), []);          // spelled out, no digits
+  assertEquals(numbersIn("within 48 hours and 1,200 referrals and 2.5 days"), ["48", "1200", "2.5"]);
+  assertEquals(inventedNumbers("Minimize the time to 2 days", "We lose two whole days"), ["2"]);
+  assertEquals(inventedNumbers("Increase call-backs inside 48 hours", "get a call back inside 48 hours"), []);
+  assertEquals(inventedNumbers("Reduce it to 48 hours", "we measure forty eight hours"), ["48"], "a numeral for a spelled-out number is still the writer's");
+  assertEquals(inventedNumbers("no digits here", "none here either"), []);
+  assertEquals(inventedNumbers("7 and 7 and 9", "there were 7"), ["9"], "each invented number is reported once");
+  assertEquals(numericInventionReason(["2", "30"]), "adds a quantity the words do not carry: 2, 30");
+});
+
+Deno.test("R3: a need that adds a quantity re-prompts ONCE, then lands annotated with the signed reason", async () => {
+  let writes = 0;
+  const seen: string[] = [];
+  const call: Call = ({ stage, user }) => {
+    if (stage === "convert:need") {
+      writes++; seen.push(user);
+      return Promise.resolve(JSON.stringify({ odi_canonical_statement: "Reduce the time spent reconciling the spreadsheet to 2 days when doing it by hand" }));
+    }
+    throw new Error("no judge call may be spent on a statement that invented a quantity");
+  };
+  const c = await convertItem({ call, kind: "pain_point", rawWords: "We lose two whole days every month reconciling the intake spreadsheet by hand.", speaker: "Dana", jobExecutor: "families" });
+  assertEquals(writes, 2, "exactly one re-prompt");
+  assert(seen[1].includes("adds a quantity the words do not carry: 2"), "the retry must carry the reason and the offending number");
+  assertEquals(c.judge_state, "annotated");
+  assertEquals(c.judge_reason, "adds a quantity the words do not carry: 2");
+  assertEquals(c.framework_statement, "Reduce the time spent reconciling the spreadsheet to 2 days when doing it by hand", "the statement is KEPT beside the annotation");
+});
+
+Deno.test("R3: a need whose number the WORDS carry passes the guard and reaches the judge", async () => {
+  let writes = 0, judged = 0;
+  const call: Call = ({ stage }) => {
+    if (stage === "convert:need") { writes++; return Promise.resolve(JSON.stringify({ odi_canonical_statement: "Increase the number of families called back when 48 hours have passed" })); }
+    judged++; return Promise.resolve(JSON.stringify({ ok: true, reason: "faithful" }));
+  };
+  const c = await convertItem({ call, kind: "outcome", rawWords: "We measure how many families get a call back inside 48 hours.", speaker: "Dana", jobExecutor: "families" });
+  assertEquals(writes, 1, "a clean statement is never re-prompted");
+  assertEquals(judged, 1);
+  assertEquals(c.judge_state, "accepted");
+});
+
+Deno.test("R3: the retry SUCCEEDING lands the item normally — the guard is not a one-way door", async () => {
+  let writes = 0;
+  const call: Call = ({ stage }) => {
+    if (stage === "convert:need") {
+      writes++;
+      return Promise.resolve(JSON.stringify({ odi_canonical_statement: writes === 1
+        ? "Reduce the time spent reconciling to 2 days when doing it by hand"
+        : "Reduce the time spent reconciling the intake spreadsheet when doing it by hand" }));
+    }
+    return Promise.resolve(JSON.stringify({ ok: true, reason: "faithful" }));
+  };
+  const c = await convertItem({ call, kind: "pain_point", rawWords: "We lose two whole days every month reconciling the intake spreadsheet by hand.", speaker: "Dana", jobExecutor: "families" });
+  assertEquals(writes, 2);
+  assertEquals(c.judge_state, "accepted");
+  assert(!c.judge_reason.includes("adds a quantity"));
+});
+
+Deno.test("R3: a JOB that adds a quantity re-prompts once, then lands annotated — same rule, same reason", async () => {
+  let writes = 0;
+  const call: Call = ({ stage }) => {
+    if (stage === "convert:job") { writes++; return Promise.resolve(JSON.stringify({ jtbd: "Getting a young person seen within 24 hours of a referral." })); }
+    throw new Error("no judge call may be spent on a statement that invented a quantity");
+  };
+  const c = await convertItem({ call, kind: "job", rawWords: "I am trying to get a young person seen before the crisis escalates.", speaker: "Dana", jobExecutor: "families" });
+  assertEquals(writes, 2, "exactly one re-prompt");
+  assertEquals(c.judge_state, "annotated");
+  assertEquals(c.judge_reason, "adds a quantity the words do not carry: 24");
+  assertEquals(c.framework_form, "job_statement");
 });
