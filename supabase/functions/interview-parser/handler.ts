@@ -26,11 +26,11 @@
 // rejection lands annotated. Nothing is dropped silently, and judge_reason is never blank.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { sha256Hex } from "../_shared/contentIdentity.ts";
-import { OURS_SIDE_REASON, itemContentIdentity, type ItemKind, type SpeakerSide } from "../_shared/interviewItems.ts";
+import { OURS_SIDE_REASON, itemContentIdentity, type ItemKind, type Scope, type SpeakerSide } from "../_shared/interviewItems.ts";
 import { PARSER_RULES_VERSION, SIDE_CHANGED_REASON, supersededReason, type MatchTolerance, type Strictness } from "./rules.ts";
 import { detectShape, toPassages, toWindows, type Passage } from "./segment.ts";
 import { locateQuote } from "./locate.ts";
-import { FINDER_SYSTEM, buildFinderUser, convertItem, parseFinderOutput, type Call } from "./convert.ts";
+import { FINDER_SYSTEM, buildFinderUser, convertItem, findNearDuplicates, parseFinderOutput, type Call } from "./convert.ts";
 import { INTERNAL_CALL_HEADER, isInternalServiceCall } from "../_shared/internalCall.ts";
 
 const corsHeaders = {
@@ -312,17 +312,19 @@ export async function handleInterviewParse(req: Request, deps: Deps = { createCl
         // R5: an item our OWN side said is not the client's evidence. It lands with its words, its
         // speaker and its pointer, and nothing derived — no converter, no judge, no model call.
         const side = sideOf(passage.speaker_label);
+        const scope: Scope = item.scope;
         const conv = side === "ours"
           ? { framework_statement: null, framework_form: null, judge_state: "annotated" as const, judge_reason: OURS_SIDE_REASON }
           : await convertItem({
               call, kind: item.kind as ItemKind, rawWords: item.raw_words,
               speaker: passage.speaker_label, jobExecutor, judgeModel: JUDGE_MODEL,
+              side, scope,   // R7: together these decide whether the means test applies at all
             });
         if (conv.judge_state === "annotated") annotated++;
         const identity = await itemContentIdentity({ kind: item.kind as ItemKind, raw_words: item.raw_words, passage_sha256: passage.passage_sha256 });
         const { error: insErr } = await db.from("interview_items").insert({
           company_id: companyId, interview_record_id: recordId, kind: item.kind,
-          raw_words: item.raw_words, speaker_label: passage.speaker_label, speaker_side: side,
+          raw_words: item.raw_words, speaker_label: passage.speaker_label, speaker_side: side, scope,
           framework_statement: conv.framework_statement, framework_form: conv.framework_form,
           pointer: { turn_index: passage.turn_index, line_start: passage.line_start, line_end: passage.line_end, passage_sha256: passage.passage_sha256 },
           record_text_sha256: storedSha, trace_state: loc.trace_state, landing: "unplaced",
@@ -359,10 +361,29 @@ export async function handleInterviewParse(req: Request, deps: Deps = { createCl
       model_calls: calls, ms: now() - startedAt, at: iso(now()),
     });
 
+    // ── R9: CONCEPT DEDUP, once, when the whole record has been parsed ──────────────────────────
+    // It runs on completion rather than per window because a duplicate can sit in window 1 and window
+    // 7. Nothing is dropped: the later row keeps its statement and is annotated with the id it
+    // repeats. judge_state is left alone — a near-duplicate of an ACCEPTED item is still accepted.
+    let dedupMarked = 0;
+    if (done) {
+      const { data: landedRows } = await db.from("interview_items")
+        .select("id, framework_statement, created_at")
+        .eq("interview_record_id", recordId).is("retracted_at", null)
+        .not("framework_statement", "is", null)
+        .order("created_at", { ascending: true });
+      const dups = findNearDuplicates((Array.isArray(landedRows) ? landedRows : []) as Array<{ id: string; framework_statement: string | null }>);
+      for (const d of dups) {
+        const { error: dErr } = await db.from("interview_items")
+          .update({ judge_reason: d.reason }).eq("id", d.id);
+        if (!dErr) dedupMarked++;
+      }
+    }
+
     if (done) {
       await db.from("integrity_runs").update({
         status: "completed", admitted: landed, ran_at: iso(now()),
-        excluded_by_rule: { ...payload, passes: passLog, cursor, landed, skipped, not_located: notLocated, annotated, ours_landed: oursLanded, retracted_superseded: retractedOlder, retracted_side_changed: retractedSide, our_speakers_count: ourSpeakers.size },
+        excluded_by_rule: { ...payload, passes: passLog, cursor, landed, skipped, not_located: notLocated, annotated, ours_landed: oursLanded, near_duplicates: dedupMarked, retracted_superseded: retractedOlder, retracted_side_changed: retractedSide, our_speakers_count: ourSpeakers.size },
       }).eq("id", runId);
       // parsed_at also LOCKS THE SPEAKER (the existing rule on this record).
       await db.from("interview_records").update({ parsed_at: iso(now()), rules_version: PARSER_RULES_VERSION, parse_level: PARSE_LEVEL }).eq("id", recordId);
@@ -377,7 +398,7 @@ export async function handleInterviewParse(req: Request, deps: Deps = { createCl
     return json({
       ok: true, run_id: runId, done, cursor, windows: windows.length, windows_done: windowsDone,
       passages: passages.length, shape, landed, skipped, not_located: notLocated, annotated, model_calls: calls,
-      ours_landed: oursLanded, retracted_superseded: retractedOlder, retracted_side_changed: retractedSide,
+      ours_landed: oursLanded, near_duplicates: dedupMarked, retracted_superseded: retractedOlder, retracted_side_changed: retractedSide,
       self_fired: !done && windowsDone > 0, passes: passLog.length,
       elapsed_ms: now() - startedAt,
     });

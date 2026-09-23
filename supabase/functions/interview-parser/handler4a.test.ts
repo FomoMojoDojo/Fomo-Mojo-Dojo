@@ -51,8 +51,16 @@ function startStubOllama(): { port: number; close: () => void } {
     const user = body.messages?.[1]?.content ?? "";
     let content = "{}";
     if (system.includes("THE ITEM TEST")) {
-      const items = [...user.matchAll(/^\[(\d+)\] [^:]+: ([\s\S]*?)(?=\n\n\[|\n*$)/gm)]
-        .map((m) => ({ passage_index: Number(m[1]), kind: "pain_point", raw_words: m[2].trim().slice(0, 300) }));
+      // The quote must be what R1 asks for: a WHOLE SENTENCE from the passage BODY. This stub used to
+      // capture the passage header ("Client One | 00:00:04") and 4a accepted it; R1's fragment floor
+      // does not, and rightly so.
+      const items = user.split(/\n{2,}(?=\[\d+\] )/).flatMap((block) => {
+        const b = block.trim();
+        const head = b.match(/^\[(\d+)\]/);
+        if (!head) return [];
+        const sentence = b.split("\n").slice(1).join(" ").trim();
+        return sentence ? [{ passage_index: Number(head[1]), kind: "pain_point", scope: "internal", raw_words: sentence }] : [];
+      });
       content = JSON.stringify({ items });
     } else if (system.includes("strict ODI canonical form")) {
       content = JSON.stringify({ odi_canonical_statement: "Minimize the time spent on intake when reconciling records by hand" });

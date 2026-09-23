@@ -7,7 +7,7 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import { toPassages } from "./segment.ts";
 import { locateQuote } from "./locate.ts";
 import {
-  FAITHFUL_SYSTEM, FINDER_SYSTEM, JOB_FROM_WORDS_SYSTEM, NOT_BUILT_REASON, NO_EXECUTOR_GOAL_REASON,
+  FAITHFUL_SYSTEM, FINDER_SYSTEM, JOB_FROM_WORDS_SYSTEM, MAX_RAW_WORDS, NOT_BUILT_REASON, NO_EXECUTOR_GOAL_REASON,
   buildFaithfulUser, buildFinderUser, convertItem, inventedNumbers, judgeFaithful, numbersIn,
   numericInventionReason, parseFinderOutput, routeKind, type Call,
 } from "./convert.ts";
@@ -74,11 +74,13 @@ Deno.test("locator: an empty quote is not_located, not a crash", () => {
 
 // ── the finder's output ──────────────────────────────────────────────────────────────────────────
 Deno.test("finder: malformed entries are dropped, never guessed at", () => {
+  // R1 (4c): the quotes here are WHOLE SENTENCES of six words or more, because a fragment is now
+  // dropped in its own right — see the R1 tests in rulings4c.test.ts for that rule.
   const raw = JSON.stringify({ items: [
-    { passage_index: 0, kind: "pain_point", raw_words: "a real quote" },
-    { passage_index: 1, kind: "not_a_kind", raw_words: "x" },
+    { passage_index: 0, kind: "pain_point", raw_words: "Nobody owns the intake spreadsheet at all." },
+    { passage_index: 1, kind: "not_a_kind", raw_words: "This sentence is long enough to be an item." },
     { passage_index: 2, kind: "job" },
-    { kind: "desire", raw_words: "no index" },
+    { kind: "desire", raw_words: "This one has no passage index at all." },
     { passage_index: 3, kind: "outcome", raw_words: "  " },
   ] });
   assertEquals(parseFinderOutput(raw).length, 1);
@@ -86,9 +88,13 @@ Deno.test("finder: malformed entries are dropped, never guessed at", () => {
   assertEquals(parseFinderOutput(JSON.stringify({ items: "nope" })).length, 0);
 });
 
-Deno.test("finder: raw_words is capped, and the user prompt numbers passages from the window offset", () => {
-  const long = "x".repeat(900);
-  assertEquals(parseFinderOutput(JSON.stringify({ items: [{ passage_index: 0, kind: "job", raw_words: long }] }))[0].raw_words.length, 400);
+Deno.test("finder: raw_words is capped at the passage cap, and the user prompt numbers passages from the window offset", () => {
+  // R1 (4c): the cap rose from 400 to the passage cap, and a cut lands on a sentence boundary — an
+  // over-length quote made of whole sentences keeps as many as fit; see rulings4c.test.ts.
+  const long = ("This is a complete sentence with enough words in it to count. ").repeat(40);
+  const capped = parseFinderOutput(JSON.stringify({ items: [{ passage_index: 0, kind: "job", raw_words: long }] }))[0].raw_words;
+  assert(capped.length <= MAX_RAW_WORDS);
+  assert(capped.trim().endsWith("."));
   const user = buildFinderUser(passages.slice(0, 2), 7);
   assert(user.startsWith("[7] Ada Lovelace"));
   assert(user.includes("[8] Grace Hopper"));
@@ -349,23 +355,25 @@ Deno.test("RULING B: all eight kinds are defined in the prompt, in the schema li
   for (const k of ITEM_KINDS) {
     assert(FINDER_SYSTEM.includes(`(kind ${k})`), `the prompt must DEFINE the kind: ${k}`);
   }
-  assert(FINDER_SYSTEM.includes('"kind":"job|pain_point|desire|outcome|route|step|positioning|cascade"'), "the schema line must offer all eight");
-  const raw = JSON.stringify({ items: ITEM_KINDS.map((k, i) => ({ passage_index: i, kind: k, raw_words: `words for ${k}` })) });
-  assertEquals(parseFinderOutput(raw).map((i) => i.kind), [...ITEM_KINDS], "every one of the eight must survive parsing");
-  // and a kind that is not one of the eight is still dropped
-  assertEquals(parseFinderOutput(JSON.stringify({ items: [{ passage_index: 0, kind: "vision", raw_words: "x" }] })).length, 0);
+  // R4 (4c) added ask and hypothesis: the list is the store's, so this assertion moved with it.
+  assert(FINDER_SYSTEM.includes('"kind":"job|pain_point|desire|outcome|route|step|positioning|cascade|ask|hypothesis"'), "the schema line must offer every kind");
+  const raw = JSON.stringify({ items: ITEM_KINDS.map((k, i) => ({ passage_index: i, kind: k, raw_words: `This is a whole sentence about ${k} items.` })) });
+  assertEquals(parseFinderOutput(raw).map((i) => i.kind), [...ITEM_KINDS], "every kind must survive parsing");
+  // and a kind that is not on the list is still dropped
+  assertEquals(parseFinderOutput(JSON.stringify({ items: [{ passage_index: 0, kind: "vision", raw_words: "This is a whole sentence that is long enough." }] })).length, 0);
 });
 
 Deno.test({
   name: "RULING B (live): a planted POSITIONING phrase and a planted ROUTE phrase in one window are found under their kinds",
   ignore: !LIVE_JUDGE,
   fn: async () => {
+    // R1 (4c): the finder now returns WHOLE SENTENCES, so each planted phrase is its own sentence.
     const window = [
       "Ada Lovelace | 00:00:04",
-      "We are the only team in the county that takes referrals from schools directly, and that is what sets us apart from the hospital programme.",
+      "We are the only team in the county that takes referrals from schools directly. That is what sets us apart from the hospital programme.",
       "",
       "Grace Hopper | 00:01:12",
-      "The way we get a family seen is this: the school calls us, we triage that afternoon, and we book the first visit ourselves.",
+      "The way we get a family seen is this. The school calls us, we triage that afternoon, and we book the first visit ourselves.",
       "",
       "Ada Lovelace | 00:02:30",
       "We lose two days every month reconciling the intake spreadsheet by hand.",
@@ -463,7 +471,10 @@ Deno.test("R2: the writer's no_executor_goal answer lands the item annotated wit
 
 Deno.test("R2: the prompt asks for the actor-and-goal decision FIRST and offers the refusal shape", () => {
   assert(JOB_FROM_WORDS_SYSTEM.includes("FIRST decide whether the words name an ACTOR who is trying to GET SOMETHING DONE"));
-  assert(JOB_FROM_WORDS_SYSTEM.includes("A schedule, a headcount, a narrated fact"));
+  // 4c's R3 rewrote the sentence that follows: the list of things that are NOT an actor moved into
+  // the REFUSE ONLY clause. rulings4c.test.ts owns the widened wording; this pins what 3b signed —
+  // the decision comes first, the refusal has a shape, and an actor is never invented.
+  assert(JOB_FROM_WORDS_SYSTEM.includes("a bare schedule, a headcount, a date, a statistic standing alone"));
   assert(JOB_FROM_WORDS_SYSTEM.includes('{"no_executor_goal":true}'));
   assert(JOB_FROM_WORDS_SYSTEM.includes("do not invent an actor"));
 });

@@ -4,12 +4,12 @@
 import { describe, it, expect } from "vitest";
 import { MATCH_TOLERANCE, PARSER_RULES, PARSER_RULES_VERSION, POINTER_IS_CODE_COMPUTED, SIDE_CHANGED_REASON, STRICTNESS, supersededReason } from "../../../supabase/functions/interview-parser/rules.ts";
 
-describe("interview parser rules — signed 2026-09-22, version moved 2026-09-23 (R6)", () => {
+describe("interview parser rules — signed 2026-09-22, version moved twice on 2026-09-23 (4a R6, 4c R10)", () => {
   it("the version is stamped and is the one the migration writes", () => {
     // R6 (operator ruling, 2026-09-23): the version is no longer only a stamp. Parsing a record whose
     // live items carry an OLDER version now retracts them first, so moving this string re-parses every
     // record it touches. It moves only with a signed ruling.
-    expect(PARSER_RULES_VERSION).toBe("2026-09-23.1");
+    expect(PARSER_RULES_VERSION).toBe("2026-09-23.2");
   });
 
   it("R6: the supersession reason names the version, and the side reason is distinct from it", () => {

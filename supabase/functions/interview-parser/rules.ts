@@ -8,7 +8,7 @@
 // The version below is stamped on every row the parser writes. Bump it when any rule text changes:
 // a row then says which rules produced it, and rows written under an older version stand as history
 // rather than being re-interpreted under rules they never saw.
-export const PARSER_RULES_VERSION = "2026-09-23.1";
+export const PARSER_RULES_VERSION = "2026-09-23.2";
 
 /** R6 (operator ruling, 2026-09-23) — SUPERSESSION. Parsing a record whose live items carry an OLDER
  *  rules_version retracts every one of them first, with the reason below, then lands the new set; a

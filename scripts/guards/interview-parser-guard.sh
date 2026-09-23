@@ -3,6 +3,10 @@
 # ROLLED-BACK transaction over a throwaway company (never CB1 / CB2 / Edgewood / any live company).
 # Prints "guard: PASS" or "guard: FAIL …".
 #
+# Commit 4c adds: (k) the scope CHECK and its fixed-at-landing rule · (l) the two new kinds are
+# accepted and a kind outside the ten is not · (m) a near-duplicate annotation is an ordinary
+# judge_reason UPDATE — the row is KEPT and its statement is not touched.
+#
 # Commit 4a adds: (h) the speaker_side check constraint and its fixed-at-landing rule · (i) the
 # set_interview_our_speakers refusals (non-admin, withdrawn record, frozen company) and its audit row
 # with COUNT ONLY · (j) supersession and side-change retraction reasons are accepted by the pair
@@ -18,7 +22,8 @@
 # Plants (each removes ONE rule, inside the transaction where possible):
 #   PLANT=select (a) · PLANT=reach (b) · PLANT=identity (c) · PLANT=immutable (d) ·
 #   PLANT=validated (e) · PLANT=census (f, source) · PLANT=rules (g, source) ·
-#   PLANT=side (h, drops the speaker_side constraint) · PLANT=rpc (i, drops the admin check)
+#   PLANT=side (h, drops the speaker_side constraint) · PLANT=rpc (i, drops the admin check) ·
+#   PLANT=scope (k, drops the scope constraint) · PLANT=kinds (l, reverts the kind CHECK to eight)
 set -uo pipefail
 PGC=${PGC:-supabase_db_dzlgyxcvuwiulgifbmew}
 NA=${NONADMIN_ID:-}
@@ -46,6 +51,8 @@ fi
 [ "$PLANT" = "identity" ] && echo "drop index public.interview_items_one_live_per_identity;"
 [ "$PLANT" = "select" ] && echo "create policy \"PLANT members read items\" on public.interview_items for select using (true);"
 [ "$PLANT" = "side" ] && echo "alter table public.interview_items drop constraint interview_items_speaker_side_check;"
+[ "$PLANT" = "scope" ] && echo "alter table public.interview_items drop constraint interview_items_scope_check;"
+[ "$PLANT" = "kinds" ] && echo "alter table public.interview_items drop constraint interview_items_kind_check; alter table public.interview_items add constraint interview_items_kind_check check (kind in ('job','pain_point','desire','outcome','route','step','positioning','cascade'));"
 if [ "$PLANT" = "rpc" ]; then
   echo "create or replace function public.set_interview_our_speakers(p_record_id uuid, p_labels text[]) returns jsonb language plpgsql security definer set search_path=public as \$f\$ begin update public.interview_records set our_speakers=coalesce(p_labels,'{}') where id=p_record_id; return jsonb_build_object('ok',true); end; \$f\$;"
 fi
@@ -69,6 +76,25 @@ echo "savepoint e1; update interview_items set validated=true where id='$IT'; se
 echo "select 'H0 side='||(select speaker_side from interview_items where id='$IT');"
 echo "savepoint h1; update interview_items set speaker_side='ours' where id='$IT'; select 'H1 side_changed'; rollback to h1;"
 echo "savepoint h2; insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, speaker_side) values ('$CO','$REC','desire','FIXTURE bad side','{}'::jsonb,'$SHA','located','unplaced','annotated','r','2026-09-23.1','identity-bad-side','neither'); select 'H2 bad_side_accepted'; rollback to h2;"
+
+# ── (k) R5 of 4c: scope is constrained and fixed at landing ──
+echo "select 'K0 scope='||(select scope from interview_items where id='$IT');"
+echo "savepoint k1; update interview_items set scope='internal' where id='$IT'; select 'K1 scope_changed'; rollback to k1;"
+echo "savepoint k2; insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','desire','FIXTURE bad scope','{}'::jsonb,'$SHA','located','unplaced','annotated','r','2026-09-23.2','identity-bad-scope','elsewhere'); select 'K2 bad_scope_accepted'; rollback to k2;"
+
+# ── (l) R4: the two new kinds land; a kind outside the ten does not ──
+echo "savepoint l1;"
+echo "insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','ask','FIXTURE could you send the slides before Friday','{}'::jsonb,'$SHA','located','unplaced','annotated','ask items are recorded, not converted','2026-09-23.2','identity-ask','internal');"
+echo "insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','hypothesis','FIXTURE we never told our own story well','{}'::jsonb,'$SHA','located','unplaced','annotated','hypothesis items are recorded, not converted','2026-09-23.2','identity-hyp','market');"
+echo "select 'L2 new_kinds='||(select count(*) from interview_items where kind in ('ask','hypothesis') and interview_record_id='$REC')||' forms_null='||(select count(*) from interview_items where kind in ('ask','hypothesis') and framework_form is null and interview_record_id='$REC');"
+echo "rollback to l1;"
+echo "savepoint l3; insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','vision','FIXTURE not a kind','{}'::jsonb,'$SHA','located','unplaced','annotated','r','2026-09-23.2','identity-vision','market'); select 'L3 bad_kind_accepted'; rollback to l3;"
+
+# ── (m) R9: a near-duplicate annotation is an ordinary reason UPDATE; the row and its statement stay ──
+echo "savepoint m1;"
+echo "update interview_items set judge_reason='near-duplicate of 1234abcd' where id='$IT';"
+echo "select 'M1 kept='||(select count(*) from interview_items where id='$IT' and retracted_at is null)||' reason='||(select judge_reason from interview_items where id='$IT')||' state='||(select judge_state from interview_items where id='$IT');"
+echo "rollback to m1;"
 
 # ── (j) R6/R7: both retraction reasons are legal, and the retracted row is KEPT ──
 echo "savepoint j1;"
@@ -119,16 +145,25 @@ chk "(c) the refusal names the live-identity index" "interview_items_one_live_pe
 no  "(d) raw_words UPDATE refused" "D1 raw_words_changed"
 no  "(d) pointer UPDATE refused" "D2 pointer_changed"
 no  "(d) content_identity UPDATE refused" "D3 identity_changed"
-chk "(d) the refusal names the fixed-at-landing rule" "the words, the speaker side, the pointer, the identity and the rules version are fixed at landing"
+chk "(d) the refusal names the fixed-at-landing rule" "the words, the speaker side, the scope, the pointer, the identity and the rules version are fixed at landing"
 chk "(d) review_state IS updatable" "D4 review=reviewed"
 no  "(e) validated cannot be set by an UPDATE" "E1 validated_set"
 chk "(e) the refusal names the RPC rule" "validated is set only by its own RPC"
 chk "(a) member SELECT = 0" "A1 member_items=0"
 chk "(a) admin SELECT sees the row" "A2 admin_items=1"
 chk "(b) retraction reaches items AND needs, with the ruled reason" "B1 items_retracted=1 needs_retracted=1 reason=source interview withdrawn"
+chk "(k) R5-4c scope defaults to market at landing" "K0 scope=market"
+no  "(k) R5-4c scope is fixed at landing — an UPDATE is refused" "K1 scope_changed"
+chk "(k) the refusal names the scope" "the words, the speaker side, the scope, the pointer"
+no  "(k) R5-4c a scope outside market|internal is refused" "K2 bad_scope_accepted"
+chk "(k) the refusal names the scope constraint" "interview_items_scope_check"
+chk "(l) R4 ask and hypothesis land, both with framework_form NULL" "L2 new_kinds=2 forms_null=2"
+no  "(l) R4 a kind outside the ten is refused" "L3 bad_kind_accepted"
+chk "(l) the refusal names the kind constraint" "interview_items_kind_check"
+chk "(m) R9 a near-duplicate annotation keeps the row, the state and the statement" "M1 kept=1 reason=near-duplicate of 1234abcd state=accepted"
 chk "(h) R5 speaker_side defaults to client at landing" "H0 side=client"
 no  "(h) R5 speaker_side is fixed at landing — an UPDATE is refused" "H1 side_changed"
-chk "(h) the refusal names the speaker side" "the words, the speaker side, the pointer"
+chk "(h) the refusal names the speaker side" "the words, the speaker side, the scope, the pointer"
 no  "(h) R5 a speaker_side outside client|ours is refused" "H2 bad_side_accepted"
 chk "(h) the refusal names the side constraint" "interview_items_speaker_side_check"
 chk "(j) R6 a superseded item KEEPS its row, with the signed reason" "J1 kept=1 reason=superseded by rules 2026-09-23.1"
@@ -148,7 +183,7 @@ if npx vitest run src/lib/interviewParser/interviewItems.census.test.ts >/dev/nu
   echo "  ok   (f) the interview_items census is green"
 else echo "  FAIL (f) the interview_items census"; fail=1; fi
 RULES=supabase/functions/interview-parser/rules.ts
-if grep -q 'PARSER_RULES_VERSION = "2026-09-23.1"' "$RULES" && [ "$(grep -c '^  "' "$RULES")" = 5 ]; then
+if grep -q 'PARSER_RULES_VERSION = "2026-09-23.2"' "$RULES" && [ "$(grep -c '^  "' "$RULES")" = 5 ]; then
   echo "  ok   (g) the rules file exports the version and all five rules"
 else echo "  FAIL (g) the rules file version / rule count"; fail=1; fi
 

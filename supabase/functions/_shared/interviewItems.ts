@@ -12,7 +12,9 @@ import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 /** The table, named once. Every caller takes it from here rather than spelling it. */
 export const INTERVIEW_ITEMS_TABLE = "interview_items";
 
-export const ITEM_KINDS = ["job", "pain_point", "desire", "outcome", "route", "step", "positioning", "cascade"] as const;
+/** R4 (operator review, 2026-09-23): `ask` and `hypothesis` join the eight. Neither converts yet —
+ *  both land with their raw words, framework_form NULL and a reason naming the kind. */
+export const ITEM_KINDS = ["job", "pain_point", "desire", "outcome", "route", "step", "positioning", "cascade", "ask", "hypothesis"] as const;
 export const FRAMEWORK_FORMS = ["odi_need", "job_statement", "route", "step", "positioning", "cascade"] as const;
 export const TRACE_STATES = ["located", "not_located"] as const;
 export const LANDINGS = ["market", "step", "unplaced"] as const;
@@ -22,6 +24,10 @@ export const JUDGE_STATES = ["accepted", "annotated"] as const;
  *  record's our_speakers as they stood at that moment; never in the content identity, so R7's
  *  retract-and-re-land shows the SAME identity landing twice rather than two different items. */
 export const SPEAKER_SIDES = ["client", "ours"] as const;
+/** R5 (operator review, 2026-09-23): what the item is ABOUT. market = donors, funders, the outside
+ *  world; internal = Edgewood's own organization, team or process. Assigned by the finder, checked by
+ *  the judge, and — like speaker_side — never in the content identity. */
+export const SCOPES = ["market", "internal"] as const;
 
 export type ItemKind = (typeof ITEM_KINDS)[number];
 export type FrameworkForm = (typeof FRAMEWORK_FORMS)[number];
@@ -30,6 +36,7 @@ export type Landing = (typeof LANDINGS)[number];
 export type ReviewState = (typeof REVIEW_STATES)[number];
 export type JudgeState = (typeof JUDGE_STATES)[number];
 export type SpeakerSide = (typeof SPEAKER_SIDES)[number];
+export type Scope = (typeof SCOPES)[number];
 
 /** The code-computed pointer (rule 2). The model never supplies any of these. */
 export type ItemPointer = {
@@ -51,6 +58,7 @@ export type InterviewItem = {
   raw_words: string;
   speaker_label: string | null;
   speaker_side: SpeakerSide;
+  scope: Scope;
   framework_statement: string | null;
   framework_form: FrameworkForm | null;
   pointer: ItemPointer;
@@ -73,6 +81,12 @@ export type InterviewItem = {
 /** R5: an item spoken by our own side lands with its words and its pointer and nothing derived — no
  *  converter runs, no judge call is spent, and this is the reason it carries. */
 export const OURS_SIDE_REASON = "spoken by our side";
+
+/** R4: the reason an ask or a hypothesis carries — it names the kind, so the row says why it has no
+ *  statement rather than looking like a conversion that failed. */
+export const NO_CONVERTER_REASON = (kind: ItemKind): string => `${kind} items are recorded, not converted`;
+/** R9: the later of two near-duplicate statements on one record keeps its row and says which. */
+export const NEAR_DUPLICATE_REASON = (otherId: string): string => `near-duplicate of ${otherId}`;
 
 /**
  * The identity a landing is keyed by (rule 5): the KIND, the normalized raw words, and the passage's
