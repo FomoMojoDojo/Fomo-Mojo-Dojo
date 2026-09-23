@@ -50,20 +50,27 @@ function startStubOllama(): { port: number; close: () => void } {
     const system = body.messages?.[0]?.content ?? "";
     const user = body.messages?.[1]?.content ?? "";
     let content = "{}";
-    if (system.includes("THE ITEM TEST")) {
+    if (system.includes("WORK IN TWO STEPS")) {   // 4d R4 replaced "THE ITEM TEST" as the finder prompt marker
       // The quote must be what R1 asks for: a WHOLE SENTENCE from the passage BODY. This stub used to
       // capture the passage header ("Client One | 00:00:04") and 4a accepted it; R1's fragment floor
       // does not, and rightly so.
-      const items = user.split(/\n{2,}(?=\[\d+\] )/).flatMap((block) => {
+      // 4d R3 renders the window as one line per passage; 4d R4 wants an OBJECT drawn from the
+      // passage alongside the quote, so the stub takes the first few words of the sentence as the
+      // object — which is exactly what the two-step check then verifies against the transcript.
+      const items = user.split("\n\n").flatMap((block) => {
         const b = block.trim();
-        const head = b.match(/^\[(\d+)\]/);
+        const head = b.match(/^\[(\d+)\]\s+\[(?:client|ours)\][^:]*:\s*([\s\S]+)$/);
         if (!head) return [];
-        const sentence = b.split("\n").slice(1).join(" ").trim();
-        return sentence ? [{ passage_index: Number(head[1]), kind: "pain_point", scope: "internal", raw_words: sentence }] : [];
+        const sentence = head[2].trim();
+        if (!sentence) return [];
+        const object = sentence.replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/).slice(0, 4).join(" ");
+        return [{ passage_index: Number(head[1]), kind: "pain_point", scope: "internal", object, raw_words: sentence }];
       });
       content = JSON.stringify({ items });
     } else if (system.includes("strict ODI canonical form")) {
-      content = JSON.stringify({ odi_canonical_statement: "Minimize the time spent on intake when reconciling records by hand" });
+      // 4d R1: an interview need carries no when-clause — the old stub statement had one and the
+      // clarifier gate now refuses it before any judge call, which is the rule working.
+      content = JSON.stringify({ odi_canonical_statement: "Minimize the time spent on manual intake reconciliation" });
     } else if (system.includes("FAITHFUL IN SUBSTANCE")) {
       content = JSON.stringify({ ok: true, reason: "the statement keeps what the words were about" });
     }

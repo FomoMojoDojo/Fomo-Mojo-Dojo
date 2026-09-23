@@ -93,11 +93,14 @@ Deno.test("R1: a quote in NO passage is still not_located — the rungs widen, t
 // ── R2: the ODI writer's context rule ────────────────────────────────────────────────────────────
 Deno.test("R2: the context rule is appended to the shared formula prompt, which is left untouched", () => {
   assert(ODI_CANONICAL_SYSTEM_R2.endsWith(ODI_CONTEXT_RULE));
-  assert(ODI_CONTEXT_RULE.includes("THE DIMENSION AND THE CONTEXT COME FROM THE SPEAKER"));
+  assert(ODI_CONTEXT_RULE.includes("THE DIMENSION AND THE OBJECT COME FROM THE SPEAKER"));   // 4d R1: the context slot is gone, so the clause names the object
   // 4c's R8 replaced that sentence with a stronger pair (the when-clause is conditional, and the
   // executor is never named anywhere). rulings4c.test.ts owns the new wording; what 4a signed — the
   // dimension and the context come from the speaker, and there is a refusal shape — is pinned here.
-  assert(ODI_CONTEXT_RULE.includes("NEVER name the executor anywhere in the statement"));
+  // 4d R1 rewrote this clause: the when-slot is gone from the form entirely, so the sentence that
+  // forbade filling it was replaced by one that forbids writing it at all. rulings4d.test.ts owns the
+  // new wording; what 4a signed — the executor never appears — is pinned here.
+  assert(ODI_CONTEXT_RULE.includes("NEVER name the executor"));
   assert(ODI_CONTEXT_RULE.includes('{"no_context":true}'));
   assert(ODI_CANONICAL_SYSTEM_R2.includes("[Minimize/Maximize/Reduce/Increase]"), "the formula itself survives");
 });
@@ -159,7 +162,7 @@ Deno.test("R5: the two sides, and the signed reason an ours item carries", () =>
 });
 
 Deno.test("R6/R7: the version moved, and the two retraction reasons are the signed ones", () => {
-  assertEquals(PARSER_RULES_VERSION, "2026-09-23.2");   // moved by 4c R10
+  assertEquals(PARSER_RULES_VERSION, "2026-09-23.3");   // moved by 4c R10, then 4d R7
   assertEquals(supersededReason(), `superseded by rules ${PARSER_RULES_VERSION}`);
   assertEquals(supersededReason("2026-10-01.1"), "superseded by rules 2026-10-01.1");
   assertEquals(SIDE_CHANGED_REASON, "speaker side changed");

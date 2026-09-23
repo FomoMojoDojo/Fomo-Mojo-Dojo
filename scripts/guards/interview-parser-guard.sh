@@ -80,15 +80,15 @@ echo "savepoint h2; insert into interview_items (company_id, interview_record_id
 # ── (k) R5 of 4c: scope is constrained and fixed at landing ──
 echo "select 'K0 scope='||(select scope from interview_items where id='$IT');"
 echo "savepoint k1; update interview_items set scope='internal' where id='$IT'; select 'K1 scope_changed'; rollback to k1;"
-echo "savepoint k2; insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','desire','FIXTURE bad scope','{}'::jsonb,'$SHA','located','unplaced','annotated','r','2026-09-23.2','identity-bad-scope','elsewhere'); select 'K2 bad_scope_accepted'; rollback to k2;"
+echo "savepoint k2; insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','desire','FIXTURE bad scope','{}'::jsonb,'$SHA','located','unplaced','annotated','r','2026-09-23.3','identity-bad-scope','elsewhere'); select 'K2 bad_scope_accepted'; rollback to k2;"
 
 # ── (l) R4: the two new kinds land; a kind outside the ten does not ──
 echo "savepoint l1;"
-echo "insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','ask','FIXTURE could you send the slides before Friday','{}'::jsonb,'$SHA','located','unplaced','annotated','ask items are recorded, not converted','2026-09-23.2','identity-ask','internal');"
-echo "insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','hypothesis','FIXTURE we never told our own story well','{}'::jsonb,'$SHA','located','unplaced','annotated','hypothesis items are recorded, not converted','2026-09-23.2','identity-hyp','market');"
+echo "insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','ask','FIXTURE could you send the slides before Friday','{}'::jsonb,'$SHA','located','unplaced','annotated','ask items are recorded, not converted','2026-09-23.3','identity-ask','internal');"
+echo "insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','hypothesis','FIXTURE we never told our own story well','{}'::jsonb,'$SHA','located','unplaced','annotated','hypothesis items are recorded, not converted','2026-09-23.3','identity-hyp','market');"
 echo "select 'L2 new_kinds='||(select count(*) from interview_items where kind in ('ask','hypothesis') and interview_record_id='$REC')||' forms_null='||(select count(*) from interview_items where kind in ('ask','hypothesis') and framework_form is null and interview_record_id='$REC');"
 echo "rollback to l1;"
-echo "savepoint l3; insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','vision','FIXTURE not a kind','{}'::jsonb,'$SHA','located','unplaced','annotated','r','2026-09-23.2','identity-vision','market'); select 'L3 bad_kind_accepted'; rollback to l3;"
+echo "savepoint l3; insert into interview_items (company_id, interview_record_id, kind, raw_words, pointer, record_text_sha256, trace_state, landing, judge_state, judge_reason, rules_version, content_identity, scope) values ('$CO','$REC','vision','FIXTURE not a kind','{}'::jsonb,'$SHA','located','unplaced','annotated','r','2026-09-23.3','identity-vision','market'); select 'L3 bad_kind_accepted'; rollback to l3;"
 
 # ── (m) R9: a near-duplicate annotation is an ordinary reason UPDATE; the row and its statement stay ──
 echo "savepoint m1;"
@@ -183,7 +183,7 @@ if npx vitest run src/lib/interviewParser/interviewItems.census.test.ts >/dev/nu
   echo "  ok   (f) the interview_items census is green"
 else echo "  FAIL (f) the interview_items census"; fail=1; fi
 RULES=supabase/functions/interview-parser/rules.ts
-if grep -q 'PARSER_RULES_VERSION = "2026-09-23.2"' "$RULES" && [ "$(grep -c '^  "' "$RULES")" = 5 ]; then
+if grep -q 'PARSER_RULES_VERSION = "2026-09-23.3"' "$RULES" && [ "$(grep -c '^  "' "$RULES")" = 5 ]; then
   echo "  ok   (g) the rules file exports the version and all five rules"
 else echo "  FAIL (g) the rules file version / rule count"; fail=1; fi
 

@@ -32,50 +32,98 @@ export const MIN_RAW_WORDS = 6;
 // converting them is a later one.
 export const FINDER_SYSTEM =
   "You read one window of an interview transcript and list the TYPED ITEMS it contains. " +
-  "The window is given as numbered passages; each passage carries its speaker. " +
-  "THE ITEM TEST. An item is a passage where a speaker is " +
-  "trying to get something done (kind job); " +
-  "struggling with or losing something (kind pain_point); " +
-  "wanting something (kind desire); " +
-  "naming a result they judge by (kind outcome); " +
-  "stating how they reach customers (kind route); " +
-  "naming a step they take toward a job (kind step); " +
-  "saying what they stand for against the alternatives (kind positioning); " +
-  "laying out a chain of intent — where they will play, how they intend to win, what they will not do (kind cascade); " +
-  // R4 (operator review, 2026-09-23)
-  "making a request, handing over a task, or giving feedback on this work or this read (kind ask); " +
-  "or stating a belief about why something is the way it is, or about themselves (kind hypothesis). " +
-  "A NARRATED FACT IS NOT AN ITEM. A schedule, a headcount, a date, a piece of history, or a description of what the " +
-  "company does is not an item, however clearly it is stated. " +
-  "\"There is a handover meeting every fortnight\" is a schedule, not a step. " +
-  "\"The team has grown by three people since the spring\" is a headcount, not an item of any kind. " +
-  "If a passage contains no item, RETURN NOTHING FOR IT. Returning nothing for a whole window is a correct answer " +
-  "when the window is narration. Do not pad the list. " +
-  // R2 (operator review): the finder had been returning one item per passage and losing the rest.
-  "EVERY ITEM IN THE PASSAGE. A passage often carries more than one. If a speaker names three separate " +
-  "difficulties, that is THREE pain_point items with THREE different quotes — never one item covering all three, " +
-  "and never the same quote twice. Read the whole passage before you answer it. " +
-  // R1 (operator review): quotes had been clauses, unreadable on their own.
-  "WHOLE SENTENCES ONLY. raw_words is one or more COMPLETE SENTENCES copied verbatim from the passage — " +
-  "start at a capital letter and end at the full stop, question mark or exclamation mark. " +
-  "Never a clause, never a fragment, never a sentence with its beginning or its end cut off. " +
-  "If the thought runs across two sentences, quote both. " +
-  `At most ${MAX_RAW_WORDS} characters; if the sentences would exceed that, quote fewer whole sentences. ` +
-  "Copy exactly, including punctuation. " +
+  // 4d R3: the window now shows, for each passage, the two turns before it and whose side they were.
+  "Each passage is shown with the TWO TURNS BEFORE IT and whose side each was — [client] or [ours]. " +
+  "[ours] is the consultant running the session; [client] is the person being interviewed. " +
+  "Read the context before you judge the passage: the same sentence means different things as an " +
+  "unprompted statement and as an answer. " +
+  "AN ANSWER IS NOT AN ITEM. When a client passage answers a question our side just asked, confirms a " +
+  "fact, or asks a clarifying question back, it yields NOTHING — unless it ALSO states a want, a " +
+  "struggle, a goal or a result of its own, in which case that part is the item. " +
+  // 4d R4: the two-step output
+  "WORK IN TWO STEPS, per passage. " +
+  "STEP ONE: list the WANTS, STRUGGLES, GOALS and RESULTS the passage carries, each as an OBJECT of at " +
+  "most six words, using the passage's own words. If the passage carries none, list none and move on. " +
+  "STEP TWO: for each object, give the VERBATIM SENTENCE OR SENTENCES from that passage that carry it — " +
+  "complete sentences, copied exactly, and each one must actually contain the object's words. " +
+  "One entry per object. Two objects means two entries with two different quotes. " +
+  "kind, per object: " +
+  "job (something they are trying to get done); " +
+  "pain_point (something hard, slow, costly or frustrating); " +
+  "desire (something they want to be true); " +
+  "outcome (a result they judge by); " +
+  "route (how they reach customers); " +
+  "step (a stage of a process toward a job); " +
+  "positioning (what they stand for against the alternatives); " +
+  "cascade (where they will play, how they will win, what they will not do); " +
+  // 4d R3/R5
+  "ask (a request, a task, or feedback aimed at us, at this work, or at the document on screen); " +
+  "hypothesis (a belief about why something is the way it is, or about themselves). " +
+  "A CLIENT REQUEST AIMED AT US OR AT MOJOMAP IS AN ASK. So is a reaction to the read on screen — a " +
+  "comment on the first read, a paragraph, a claim or a chip is an ask, whether it agrees or disagrees. " +
+  "When such a reaction ALSO implies a need of their own, give a SECOND entry for that need under its " +
+  "own kind. " +
+  "A NARRATED FACT IS NOT AN ITEM. A schedule, a headcount, a date, a piece of history, or a " +
+  "description of what the company does is not an item, however clearly it is stated. " +
+  "SCOPE, per object: \"market\" when it is about donors, funders, clients, partners or the outside " +
+  "world; \"internal\" when it is about the speaker's own organization, team, staffing, process or tools. " +
+  `raw_words is one or more COMPLETE SENTENCES, at most ${MAX_RAW_WORDS} characters, copied exactly. ` +
   "passage_index is the number of the passage the quote came from. " +
-  // R5 (operator review)
-  "SCOPE. Every item says what it is ABOUT: \"market\" when it is about donors, funders, clients, partners or the " +
-  "outside world; \"internal\" when it is about the speaker's own organization, team, staffing, process or tools. " +
-  "Do not merge two items into one and do not invent items the words do not support. " +
-  'JSON only: {"items":[{"passage_index":<int>,"kind":"job|pain_point|desire|outcome|route|step|positioning|cascade|ask|hypothesis","scope":"market|internal","raw_words":"<one or more complete sentences, verbatim>"}]}.';
+  "Do not invent objects the passage does not carry, and do not reuse one quote for two objects. " +
+  'JSON only: {"items":[{"passage_index":<int>,"object":"<= 6 words from the passage>","kind":"job|pain_point|desire|outcome|route|step|positioning|cascade|ask|hypothesis","scope":"market|internal","raw_words":"<verbatim sentence(s) containing the object>"}]}.';
 
-export function buildFinderUser(passages: readonly Passage[], offset: number): string {
-  return passages
-    .map((p, i) => `[${offset + i}] ${p.speaker_label ?? "unknown speaker"}: ${p.text}`)
-    .join("\n\n");
+/** 4d R5: an ask that is a reaction to the document on screen carries this prefix on its reason, so
+ *  the operator can tell feedback on the read from a request for work. */
+export const READ_FEEDBACK_PREFIX = "read feedback:";
+
+/**
+ * 4d R3: the window is rendered as the CONVERSATION it is — each passage on its own line, tagged with
+ * whose side spoke it, in order. Every passage therefore already has its two preceding turns directly
+ * above it; the only ones that would not are the first two of a window, so up to two passages from
+ * BEFORE the window are prepended as context and marked as context.
+ *
+ * WHY NOT REPEAT THE TWO PREDECESSORS UNDER EACH PASSAGE: measured. That rendering turned a 12,000
+ * character window into a 47,698 character prompt — roughly 12,000 tokens against num_ctx 8192 — so
+ * Ollama silently truncated it and the finder returned 4 items for an 18k transcript that had been
+ * yielding a hundred. Linear rendering gives the model the same context at no size cost.
+ *
+ * `all` is the whole transcript's passages, `start` is where this window begins in it, and `sideOf`
+ * answers client|ours for a speaker label.
+ */
+export function buildFinderUser(
+  passages: readonly Passage[],
+  offset: number,
+  ctx?: { all: readonly Passage[]; start: number; sideOf: (label: string | null) => "client" | "ours" },
+): string {
+  if (!ctx) {
+    return passages.map((p, i) => `[${offset + i}] ${p.speaker_label ?? "unknown speaker"}: ${p.text}`).join("\n\n");
+  }
+  const body = (p: Passage) => {
+    // the passage text repeats its own header line; the tagged label above it is what the model reads
+    const lines = String(p.text).split("\n");
+    const first = lines[0] ?? "";
+    const rest = /\|\s*\d{1,2}:\d{2}/.test(first) ? lines.slice(1) : lines;
+    return rest.join("\n").trim() || String(p.text).trim();
+  };
+  const tagged = (p: Passage) => `[${ctx.sideOf(p.speaker_label)}] ${p.speaker_label ?? "unknown speaker"}: ${body(p)}`;
+  const lead = ctx.all.slice(Math.max(0, ctx.start - 2), ctx.start)
+    .map((p) => `(context, before this window — do not take items from it) ${tagged(p)}`);
+  const head = ctx.start === 0
+    ? ["(start of transcript)"]
+    : (lead.length ? lead : []);
+  return [...head, ...passages.map((p, i) => `[${offset + i}] ${tagged(p)}`)].join("\n\n");
 }
 
-export type FoundItem = { passage_index: number; kind: ItemKind; scope: Scope; raw_words: string };
+export type FoundItem = { passage_index: number; kind: ItemKind; scope: Scope; raw_words: string; object: string };
+
+/** 4d R4: why an entry was dropped, counted so a run can report how much the two-step check refused. */
+export type FinderDrops = {
+  object_not_in_passage: number; quote_without_object: number; fragment: number; malformed: number; duplicate: number;
+  /** Not a drop: the object was found, but in a DIFFERENT passage of the window than the model named.
+   *  Counted because it measures how often the model's index is wrong — which rule 2 already assumes. */
+  object_in_other_passage: number;
+};
+export const MAX_OBJECT_WORDS = 6;
 
 /** R1: cut only at a sentence boundary. Returns the longest run of WHOLE sentences that fits, or ""
  *  when even the first sentence does not — a half sentence is never a quote. */
@@ -100,7 +148,13 @@ export const normalizeQuote = (s: string): string =>
 export const wordCount = (text: string): number => String(text ?? "").trim().split(/\s+/).filter(Boolean).length;
 
 /** Parse the finder's answer defensively: a malformed entry is dropped, never guessed at. */
-export function parseFinderOutput(raw: string): FoundItem[] {
+/** `passageTexts` turns on R4's two-step check: without it (a unit test with no transcript) the
+ *  object rules are skipped and the rest of the parsing is unchanged. `drops` counts the refusals. */
+export function parseFinderOutput(
+  raw: string,
+  passageTexts?: ReadonlyMap<number, string>,
+  drops?: FinderDrops,
+): FoundItem[] {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { return []; }
   const items = (parsed as { items?: unknown })?.items;
@@ -109,24 +163,157 @@ export function parseFinderOutput(raw: string): FoundItem[] {
   const SCOPESET = new Set<string>(SCOPES);
   const out: FoundItem[] = [];
   const seen = new Set<string>();
+  const d = drops ?? { object_not_in_passage: 0, quote_without_object: 0, fragment: 0, malformed: 0, duplicate: 0, object_in_other_passage: 0 };
   for (const it of items) {
     const o = it as Record<string, unknown>;
     const kind = String(o?.kind ?? "");
     const idx = Number(o?.passage_index);
-    if (!KINDS.has(kind) || !Number.isFinite(idx)) continue;
-    // R1: whole sentences, cut at a boundary, and never a fragment.
+    if (!KINDS.has(kind) || !Number.isFinite(idx)) { d.malformed++; continue; }
+    // 4c R1: whole sentences, cut at a boundary, and never a fragment.
     const words = clampToSentences(String(o?.raw_words ?? ""));
-    if (!words || wordCount(words) < MIN_RAW_WORDS) continue;
-    // R2: three needs in a passage means three DIFFERENT quotes — the same quote twice is one item.
+    if (!words || wordCount(words) < MIN_RAW_WORDS) { d.fragment++; continue; }
+    // ── 4d R4: the two-step check. Both halves are decided by the CODE, never by the model. ──
+    const object = String(o?.object ?? "").trim();
+    const objNorm = normalizeQuote(object);
+    if (passageTexts) {
+      const objWords = objNorm.split(" ").filter(Boolean);
+      if (!objWords.length || objWords.length > MAX_OBJECT_WORDS) { d.object_not_in_passage++; continue; }
+      // (a) every word of the object must occur in the passage it was drawn from.
+      //
+      // RULE 2 APPLIES HERE TOO: the model's passage_index is a hint, never a pointer — measured, it
+      // comes back off by one often enough that keying the check on it alone dropped every item of a
+      // one-passage window. So the named passage is tried FIRST, and a miss falls back to the rest of
+      // the window the model was actually shown. An object that is in NO passage of the window is
+      // invented, which is what this rule exists to refuse.
+      const named = normalizeQuote(passageTexts.get(Math.trunc(idx)) ?? "");
+      const inNamed = named.length > 0 && objWords.every((w) => named.includes(w));
+      if (!inNamed) {
+        const elsewhere = [...passageTexts.values()].some((t) => {
+          const hay = normalizeQuote(t);
+          return objWords.every((w) => hay.includes(w));
+        });
+        if (!elsewhere) { d.object_not_in_passage++; continue; }
+        d.object_in_other_passage++;
+      }
+      // (b) the quote must carry the object it was given for — this one needs no index at all.
+      //
+      // WORD MEMBERSHIP, not a contiguous substring. Measured: asked for an object of six words or
+      // fewer, the model COMPRESSES — "rebuild funder report" for a sentence reading "The funder
+      // report takes a full week every quarter because we rebuild it by hand." Every word is there
+      // and the quote plainly carries the object; a substring test refuses it and refused every item
+      // of the fixture. The passage check above is worded the same way for the same reason.
+      const quoteNorm = normalizeQuote(words);
+      if (!objWords.every((w) => quoteNorm.includes(w))) { d.quote_without_object++; continue; }
+    }
+    // 4c R2: three needs in a passage means three DIFFERENT quotes — the same quote twice is one item.
     const key = `${Math.trunc(idx)}|${kind}|${normalizeQuote(words)}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) { d.duplicate++; continue; }
     seen.add(key);
-    // R5: an unusable scope is not guessed at — market is the reading the operator's own backfill took.
+    // 4c R5: an unusable scope is not guessed at — market is the reading the operator's backfill took.
     const scope = SCOPESET.has(String(o?.scope ?? "")) ? (String(o.scope) as Scope) : "market";
-    out.push({ passage_index: Math.trunc(idx), kind: kind as ItemKind, scope, raw_words: words });
+    out.push({ passage_index: Math.trunc(idx), kind: kind as ItemKind, scope, raw_words: words, object });
   }
   return out;
 }
+
+// ── 4d R1/R2/R6: the DETERMINISTIC STATEMENT GUARDS (operator review, 2026-09-23) ────────────────
+//
+// Three things the operator found reading all 57 client-side items at rules 2026-09-23.2, each of
+// which a machine can decide without a judge, so a machine decides it and no judge call is spent:
+//
+//   R1  NO CLARIFIER. An interview need is "[verb] the [dimension] of [object]" and stops there. The
+//       when-clause was still arriving — sometimes as the dangling "when the interviewee" — because
+//       the FORM invited one. There is no clause to invent if the form has no slot for it.
+//   R2  NO NAMES. A derived statement is about work, not about a person. A speaker's own name landing
+//       inside the statement makes it unusable as a market need and identifies a person besides.
+//   R6  BARE VERB. A job statement starts with the verb. "We need to do a better job of explaining X"
+//       is "Explain X"; the modal scaffolding is the speaker's hedging, not the job.
+//
+// All three follow the R3 shape: reject, re-prompt ONCE carrying the reason, then land annotated with
+// the signed reason and the statement kept beside it.
+
+export const CLARIFIER_REASON = "clarifier or executor named";
+export const NAMES_PERSON_REASON = "names a person";
+export const BARE_VERB_REASON = "starts with a modal or auxiliary, not a verb";
+
+/** R1: the words that may not appear in an interview need. "when"/"whenever" are the clarifier;
+ *  "interviewee"/"interviewer" are the executor arriving under another name. Whole word, any case. */
+export const CLARIFIER_TOKENS = ["when", "whenever", "interviewee", "interviewer"] as const;
+const CLARIFIER_RE = new RegExp(`\\b(${CLARIFIER_TOKENS.join("|")})\\b`, "i");
+
+/** Every clarifier token the statement carries, in list order — the retry's feedback. */
+export function clarifierHits(statement: string): string[] {
+  const t = String(statement ?? "");
+  return CLARIFIER_TOKENS.filter((w) => new RegExp(`\\b${w}\\b`, "i").test(t));
+}
+export const hasClarifier = (statement: string): boolean => CLARIFIER_RE.test(String(statement ?? ""));
+
+/** Capitalized tokens that are NOT names, however they look. Kept deliberately short: the reliable
+ *  signal is the speaker labels, and this list only stops the obvious false positives. */
+const NOT_A_NAME = new Set([
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+  "january", "february", "march", "april", "may", "june", "july",
+  "august", "september", "october", "november", "december",
+  "i", "we", "they", "it", "the", "a", "an",
+]);
+
+/** R2: the person-names to keep out of a statement — every word of every speaker label, plus every
+ *  capitalized token in the raw words that is not sentence-initial and is not on the stoplist. The
+ *  second half is a heuristic and is documented as one; the speaker labels are exact. */
+export function personNames(speakerLabels: readonly string[], rawWords: string): string[] {
+  const out = new Set<string>();
+  for (const label of speakerLabels ?? []) {
+    for (const w of String(label ?? "").split(/[^\p{L}'-]+/u)) {
+      const t = w.trim();
+      if (t.length >= 2 && !NOT_A_NAME.has(t.toLowerCase())) out.add(t.toLowerCase());
+    }
+  }
+  // a capitalized token mid-sentence in the speaker's own words
+  const text = String(rawWords ?? "");
+  for (const sentence of text.split(/(?<=[.?!])\s+/)) {
+    const tokens = sentence.trim().split(/\s+/);
+    for (let i = 1; i < tokens.length; i++) {           // skip the sentence-initial token
+      const bare = tokens[i].replace(/[^\p{L}'-]/gu, "");
+      if (bare.length < 2) continue;
+      if (bare !== bare.toUpperCase() && /^\p{Lu}/u.test(bare) && !NOT_A_NAME.has(bare.toLowerCase())) {
+        out.add(bare.toLowerCase());
+      }
+    }
+  }
+  return [...out];
+}
+
+/** The names the statement carries. Whole word, any case. */
+export function nameHits(statement: string, names: readonly string[]): string[] {
+  const t = String(statement ?? "");
+  return names.filter((n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(t));
+}
+
+/** R6: a job statement may not open with one of these. "need"/"want"/"try" are here because the
+ *  writer is told to strip exactly those hedges; a statement that still opens with one did not. */
+export const NON_VERB_OPENERS = [
+  "be", "am", "is", "are", "was", "were", "being", "been",
+  "have", "has", "had", "having",
+  "do", "does", "did", "doing",
+  "will", "would", "shall", "should", "can", "could", "may", "might", "must", "ought",
+  "need", "needs", "needing", "want", "wants", "wanting", "try", "tries", "trying",
+  "the", "a", "an", "our", "their", "we", "they", "i", "it", "there",
+] as const;
+const OPENERS = new Set<string>(NON_VERB_OPENERS);
+
+/** The opener a job statement starts with, when that opener is not a verb — else "". */
+export function badOpener(statement: string): string {
+  const first = String(statement ?? "").trim().split(/\s+/)[0] ?? "";
+  const bare = first.replace(/[^\p{L}'-]/gu, "").toLowerCase();
+  return OPENERS.has(bare) ? bare : "";
+}
+
+/** The hedges R6 tells the writer to strip, named once so the prompt and the test agree. */
+export const JOB_HEDGES = [
+  "do a better job of", "do a better job at", "get better at",
+  "need to", "needs to", "have to", "has to", "be able to", "want to", "wants to", "try to", "trying to",
+  "would like to", "should", "must",
+] as const;
 
 // ── R3: the NUMERIC INVENTION guard (operator ruling, 2026-09-22) ────────────────────────────────
 //
@@ -208,6 +395,15 @@ export const JOB_FROM_WORDS_SYSTEM =
   "The actor may be \"we\", \"I\", the team, or the organisation itself. " +
   "REFUSE ONLY when the words name NO actor at all — a bare schedule, a headcount, a date, a statistic standing alone. " +
   'If and only if there is no actor, answer {"no_executor_goal":true} and nothing else — do not invent an actor. ' +
+  // 4d R6 (operator review, 2026-09-23)
+  "START WITH THE VERB. The statement begins with the action itself — \"Explain the intake process to a new funder\", " +
+  "not \"We need to explain…\" and not \"Be able to explain…\". " +
+  `STRIP the speaker's hedging entirely: ${JOB_HEDGES.map((h) => `"${h}"`).join(", ")} and any variant of them. ` +
+  "\"We need to do a better job of explaining what we do\" is \"Explain what we do\". " +
+  "Never begin with a modal or an auxiliary (be, is, are, have, do, will, would, can, could, should, must, need, want, try) " +
+  "and never begin with an article or a pronoun. " +
+  // R2
+  "NEVER use a person's name in the statement. " +
   "A job statement names what the executor is trying to get done, in the executor's own words. " +
   "It never names a provider, program, service line, facility, treatment setting, or category of supplier the executor would shop for. " +
   "Form: transitive verb + object + contextual clarifier. " +
@@ -236,22 +432,26 @@ export const NO_CONTEXT_REASON = "no context in the words";
 /** Appended to ODI_CANONICAL_SYSTEM; the shared formula prompt itself is untouched, because three
  *  other callers depend on it byte-for-byte. */
 export const ODI_CONTEXT_RULE =
-  " R2 (2026-09-23) — THE DIMENSION AND THE CONTEXT COME FROM THE SPEAKER, NOT FROM YOU. " +
-  // R6 (operator review): a kickoff is mostly stories. The need a story implies IS in the words —
-  // it is simply not in any one clause of them.
+  // 4d R1 (operator review, 2026-09-23). The when-clause is GONE from this form. 4a/4c made it
+  // conditional and the writer kept reaching for it anyway — a form with a slot invites something to
+  // fill the slot. An interview need is the verb, the dimension and the object, and it stops.
+  " R1 (2026-09-23) — THE FORM FOR AN INTERVIEW NEED IS EXACTLY THIS, AND NOTHING MORE: " +
+  "\"[Minimize/Maximize/Reduce/Increase] the [dimension] of [object]\". " +
+  "There is NO \"when\" clause. Do not write one. Never use the words \"when\" or \"whenever\" anywhere in the statement. " +
+  "End the statement at the object. " +
+  "NEVER name the executor, and never write \"the interviewee\" or \"the interviewer\" — the statement says what is to be " +
+  "achieved, not who is achieving it. " +
+  // R2
+  "NEVER use a person's name. Not the speaker's, not anyone they mention. " +
+  // the dimension/object rule, carried forward from 4a R2
+  "THE DIMENSION AND THE OBJECT COME FROM THE SPEAKER, NOT FROM YOU. " +
+  "The [dimension] must be something the quoted words actually name or measure, and the [object] must be what the words " +
+  "are actually about. Never introduce a metric, a dimension or a thing the words do not carry. " +
+  // 4c R6 — the anecdote rule
   "WHEN THE WORDS TELL A STORY, state the need the story implies. What the speaker was up against, and " +
   "what they were trying to achieve, are carried by the story as a whole; you do not need a sentence that " +
   "states the need outright. Do not add anything the story does not support. " +
-  "The [dimension] must be something the quoted words actually name or measure, and the [context] after \"when\" " +
-  "must be a circumstance the quoted words actually describe. " +
-  // R8 (operator review, restated): the when-clause is OPTIONAL. A statement with no circumstance is
-  // complete without one; an invented circumstance is the defect the kickoff was full of.
-  "The \"when\" clause is present ONLY when the words carry a circumstance. If they carry none, leave it out " +
-  "entirely and end the statement at the object — a statement with no when-clause is correct and complete. " +
-  "NEVER name the executor anywhere in the statement: not as the object, not in the when-clause, not as \"when the " +
-  "interviewee\" or \"for the team\". The statement says what is to be achieved, not who is achieving it. " +
-  "Never introduce a metric, a dimension or a circumstance the words do not carry. " +
-  'If the quoted words carry NO circumstance you could put after "when", answer {"no_context":true} and nothing else — do not invent one.';
+  'If the quoted words carry no need you can state in this form, answer {"no_context":true} and nothing else.';
 
 export const ODI_CANONICAL_SYSTEM_R2 = ODI_CANONICAL_SYSTEM + ODI_CONTEXT_RULE;
 
@@ -346,6 +546,8 @@ export async function convertItem(args: {
   /** R7: whose side said it, and what it is about. Together they decide whether the MEANS test applies. */
   side?: "client" | "ours";
   scope?: Scope;
+  /** 4d R2: every speaker label on the record, so a person's name can be kept out of the statement. */
+  speakerLabels?: readonly string[];
   judgeModel?: string;
   /** Injected so the proof can vote without a model; defaults to the real 3-call majority. */
   solutionAgnostic?: (statement: string) => Promise<{ solutionFree: boolean; tally: string; reason: string }>;
@@ -366,8 +568,9 @@ export async function convertItem(args: {
     // R3 rides in the SAME loop as the format guard: whichever of the two fails, the one retry carries
     // its reason. A numeric violation is not a format error, so it keeps its own signed reason.
     let numericReason = "";
+    let guardReason = "";                                   // 4d R1/R2, sharing the one retry
     for (let attempt = 0; attempt < 2; attempt++) {
-      const prior = formatReason || numericReason;
+      const prior = formatReason || numericReason || guardReason;
       const user = buildOdiCanonicalUser(args.rawWords, args.jobExecutor) + (prior ? `\nYour previous attempt was rejected: ${prior}. Fix exactly that.\n` : "");
       const raw = await args.call({ stage: "convert:need", system: ODI_CANONICAL_SYSTEM_R2, user });
       let parsed: { odi_canonical_statement?: unknown; no_context?: unknown } = {};
@@ -386,6 +589,12 @@ export async function convertItem(args: {
       if (!check.ok && !isMissingWhenReject(check.reason)) { formatReason = check.reason ?? "invalid canonical form"; continue; }
       const invented = inventedNumbers(statement, args.rawWords);   // R3: decided by the code, no call
       if (invented.length) { numericReason = numericInventionReason(invented); continue; }
+      // 4d R1: no clarifier, no executor under another name.
+      const clar = clarifierHits(statement);
+      if (clar.length) { guardReason = `${CLARIFIER_REASON}: ${clar.join(", ")}`; continue; }
+      // 4d R2: no person's name.
+      const named = nameHits(statement, personNames(args.speakerLabels ?? [], args.rawWords));
+      if (named.length) { guardReason = `${NAMES_PERSON_REASON}: ${named.join(", ")}`; continue; }
       break;
     }
     if (formatReason) {
@@ -394,6 +603,9 @@ export async function convertItem(args: {
     if (numericReason) {
       return { framework_statement: statement || null, framework_form: "odi_need", judge_state: "annotated", judge_reason: numericReason };
     }
+    if (guardReason) {
+      return { framework_statement: statement || null, framework_form: "odi_need", judge_state: "annotated", judge_reason: guardReason };
+    }
     const j = await judgeFaithful(args.call, { rawWords: args.rawWords, statement, kind: args.kind, form: "odi_need", model: args.judgeModel });
     return { framework_statement: statement, framework_form: "odi_need", judge_state: j.ok ? "accepted" : "annotated", judge_reason: j.reason };
   }
@@ -401,9 +613,11 @@ export async function convertItem(args: {
   // job: write it, then the DETERMINISTIC means layer, then solution-agnostic v3, then faithfulness.
   let statement = "";
   let jobNumericReason = "";
+  let jobGuardReason = "";                                  // 4d R2/R6, sharing the one retry
   for (let attempt = 0; attempt < 2; attempt++) {
+    const prior = jobNumericReason || jobGuardReason;
     const user = buildJobFromWordsUser(args.rawWords, args.speaker) +
-      (jobNumericReason ? `\nYour previous attempt was rejected: ${jobNumericReason}. Fix exactly that.\n` : "");
+      (prior ? `\nYour previous attempt was rejected: ${prior}. Fix exactly that.\n` : "");
     const raw = await args.call({ stage: "convert:job", system: JOB_FROM_WORDS_SYSTEM, user });
     let parsed: { jtbd?: unknown; no_executor_goal?: unknown } = {};
     try { parsed = JSON.parse(raw) as typeof parsed; } catch { parsed = {}; }
@@ -413,15 +627,25 @@ export async function convertItem(args: {
     }
     statement = String(parsed.jtbd ?? "").trim();
     if (!statement) break;
+    jobNumericReason = ""; jobGuardReason = "";
     const invented = inventedNumbers(statement, args.rawWords);     // R3 again, same rule, no call
-    jobNumericReason = invented.length ? numericInventionReason(invented) : "";
-    if (!jobNumericReason) break;
+    if (invented.length) { jobNumericReason = numericInventionReason(invented); continue; }
+    // 4d R6: the statement starts with the verb, not with the speaker's hedging.
+    const opener = badOpener(statement);
+    if (opener) { jobGuardReason = `${BARE_VERB_REASON}: ${opener}`; continue; }
+    // 4d R2: no person's name.
+    const namedJ = nameHits(statement, personNames(args.speakerLabels ?? [], args.rawWords));
+    if (namedJ.length) { jobGuardReason = `${NAMES_PERSON_REASON}: ${namedJ.join(", ")}`; continue; }
+    break;
   }
   if (!statement) {
     return { framework_statement: null, framework_form: "job_statement", judge_state: "annotated", judge_reason: "the job writer returned nothing usable" };
   }
   if (jobNumericReason) {
     return { framework_statement: statement, framework_form: "job_statement", judge_state: "annotated", judge_reason: jobNumericReason };
+  }
+  if (jobGuardReason) {
+    return { framework_statement: statement, framework_form: "job_statement", judge_state: "annotated", judge_reason: jobGuardReason };
   }
   // ── R7 (operator review, 2026-09-23): the MEANS test is about a market executor shopping for a
   // supplier. A CLIENT-side item is the company talking about its OWN work, where "the programme",

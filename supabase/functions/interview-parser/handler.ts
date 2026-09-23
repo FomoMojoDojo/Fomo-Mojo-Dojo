@@ -30,7 +30,10 @@ import { OURS_SIDE_REASON, itemContentIdentity, type ItemKind, type Scope, type 
 import { PARSER_RULES_VERSION, SIDE_CHANGED_REASON, supersededReason, type MatchTolerance, type Strictness } from "./rules.ts";
 import { detectShape, toPassages, toWindows, type Passage } from "./segment.ts";
 import { locateQuote } from "./locate.ts";
-import { FINDER_SYSTEM, buildFinderUser, convertItem, findNearDuplicates, parseFinderOutput, type Call } from "./convert.ts";
+import {
+  FINDER_SYSTEM, READ_FEEDBACK_PREFIX, buildFinderUser, convertItem, findNearDuplicates,
+  parseFinderOutput, type Call, type FinderDrops,
+} from "./convert.ts";
 import { INTERNAL_CALL_HEADER, isInternalServiceCall } from "../_shared/internalCall.ts";
 
 const corsHeaders = {
@@ -161,7 +164,9 @@ export async function handleInterviewParse(req: Request, deps: Deps = { createCl
     let runId: number | null = null;
     let cursor = 0;
     let landed = 0, skipped = 0, notLocated = 0, annotated = 0;
-    let retractedOlder = 0, retractedSide = 0, oursLanded = 0;
+    let retractedOlder = 0, retractedSide = 0, oursLanded = 0, readFeedbackCount = 0;
+    // 4d R4: what the two-step check refused, carried on the run row so the cost of the rule is visible.
+    const drops: FinderDrops = { object_not_in_passage: 0, quote_without_object: 0, fragment: 0, malformed: 0, duplicate: 0, object_in_other_passage: 0 };
     const live = Array.isArray(existing) && existing.length ? existing[0] : null;
     if (live) {
       const age = startedAt - Date.parse(String(live.ran_at));
@@ -278,6 +283,22 @@ export async function handleInterviewParse(req: Request, deps: Deps = { createCl
     const { data: runRow } = await db.from("integrity_runs").select("excluded_by_rule").eq("id", runId).maybeSingle();
     const basePayload = ((runRow?.excluded_by_rule ?? {}) as Record<string, unknown>);
     const passLog: unknown[] = Array.isArray(basePayload.passes) ? [...(basePayload.passes as unknown[])] : [];
+    // 4d: the same carry-forward the pass log needs. A counter that starts at zero every pass records
+    // only the LAST pass — which is exactly how 4a's retracted_superseded ended up reading 0.
+    const priorDrops = (basePayload.finder_drops ?? {}) as Partial<FinderDrops>;
+    for (const k of Object.keys(drops) as Array<keyof FinderDrops>) drops[k] = Number(priorDrops[k] ?? 0);
+    readFeedbackCount = Number(basePayload.read_feedback ?? 0);
+
+    // 4d R5: what counts as a reaction to the document on screen. Deliberately narrow — the words
+    // the client uses when they are looking at the read, not any mention of a document.
+    const READ_FEEDBACK_RE = /\b(first read|the read|mojomap|mojo map|this (?:doc|document|deck|page|slide|report)|the (?:doc|document|deck|page|slide|report)|that paragraph|this paragraph|that claim|this claim|that chip|this chip|on (?:the )?screen|level \d)\b/i;
+    // 4d R2: every speaker label on this record, so a person's name can be kept out of a statement.
+    const { data: labelRows } = await db.from("interview_items").select("speaker_label").eq("interview_record_id", recordId).limit(1000);
+    const speakerLabels = [...new Set([
+      ...((Array.isArray(labelRows) ? labelRows : []) as Array<{ speaker_label: string | null }>).map((r) => String(r.speaker_label ?? "")),
+      ...passages.map((p) => String(p.speaker_label ?? "")),
+      ...(Array.isArray(rec.our_speakers) ? rec.our_speakers.map((l: unknown) => String(l ?? "")) : []),
+    ].filter((l) => l.trim().length > 0))];
 
     const strictness = (String(rec.strictness ?? "keep_and_mark") as Strictness);
     const tolerance = (String(rec.match_tolerance ?? "ws") as MatchTolerance);
@@ -293,9 +314,14 @@ export async function handleInterviewParse(req: Request, deps: Deps = { createCl
       const win = windows[w];
       const slice = passages.slice(win.start_passage, win.end_passage + 1);
       const t0 = now();
+      // 4d R4: the code's own copy of each passage's text, keyed by the index the model is shown, so
+      // the object and the quote are checked against the transcript rather than taken on trust.
+      const passageTexts = new Map<number, string>();
+      slice.forEach((p, i) => passageTexts.set(win.start_passage + i, p.text));
       let found: ReturnType<typeof parseFinderOutput>;
       try {
-        found = parseFinderOutput(await call({ stage: "finder", system: FINDER_SYSTEM, user: buildFinderUser(slice, win.start_passage) }));
+        const user = buildFinderUser(slice, win.start_passage, { all: passages, start: win.start_passage, sideOf });
+        found = parseFinderOutput(await call({ stage: "finder", system: FINDER_SYSTEM, user }), passageTexts, drops);
       } catch (e) {
         failure = { reason: "window_error", detail: `window ${w + 1}: ${String((e as Error)?.message ?? e).slice(0, 200)}` };
         break;
@@ -313,13 +339,20 @@ export async function handleInterviewParse(req: Request, deps: Deps = { createCl
         // speaker and its pointer, and nothing derived — no converter, no judge, no model call.
         const side = sideOf(passage.speaker_label);
         const scope: Scope = item.scope;
+        // 4d R5: an ask that reacts to the document on screen is marked as feedback on the read.
+        const readFeedback = item.kind === "ask" && READ_FEEDBACK_RE.test(item.raw_words);
         const conv = side === "ours"
           ? { framework_statement: null, framework_form: null, judge_state: "annotated" as const, judge_reason: OURS_SIDE_REASON }
           : await convertItem({
               call, kind: item.kind as ItemKind, rawWords: item.raw_words,
               speaker: passage.speaker_label, jobExecutor, judgeModel: JUDGE_MODEL,
               side, scope,   // R7: together these decide whether the means test applies at all
+              speakerLabels,  // 4d R2
             });
+        if (readFeedback && !conv.judge_reason.startsWith(READ_FEEDBACK_PREFIX)) {
+          conv.judge_reason = `${READ_FEEDBACK_PREFIX} ${conv.judge_reason}`;
+          readFeedbackCount++;
+        }
         if (conv.judge_state === "annotated") annotated++;
         const identity = await itemContentIdentity({ kind: item.kind as ItemKind, raw_words: item.raw_words, passage_sha256: passage.passage_sha256 });
         const { error: insErr } = await db.from("interview_items").insert({
@@ -343,7 +376,7 @@ export async function handleInterviewParse(req: Request, deps: Deps = { createCl
       cursor = w + 1; windowsDone++;
       await db.from("integrity_runs").update({
         ran_at: iso(now()),
-        excluded_by_rule: { ...basePayload, passes: passLog, shape, chars: verbatim.length, passages: passages.length, windows: windows.length, cursor, landed, skipped, not_located: notLocated, annotated, ours_landed: oursLanded, finder_model: FINDER_MODEL, judge_model: JUDGE_MODEL, num_ctx: NUM_CTX, rules_version: PARSER_RULES_VERSION, tolerance, strictness },
+        excluded_by_rule: { ...basePayload, passes: passLog, finder_drops: drops, read_feedback: readFeedbackCount, shape, chars: verbatim.length, passages: passages.length, windows: windows.length, cursor, landed, skipped, not_located: notLocated, annotated, ours_landed: oursLanded, finder_model: FINDER_MODEL, judge_model: JUDGE_MODEL, num_ctx: NUM_CTX, rules_version: PARSER_RULES_VERSION, tolerance, strictness },
         admitted: landed,
       }).eq("id", runId);
     }
@@ -383,7 +416,7 @@ export async function handleInterviewParse(req: Request, deps: Deps = { createCl
     if (done) {
       await db.from("integrity_runs").update({
         status: "completed", admitted: landed, ran_at: iso(now()),
-        excluded_by_rule: { ...payload, passes: passLog, cursor, landed, skipped, not_located: notLocated, annotated, ours_landed: oursLanded, near_duplicates: dedupMarked, retracted_superseded: retractedOlder, retracted_side_changed: retractedSide, our_speakers_count: ourSpeakers.size },
+        excluded_by_rule: { ...payload, passes: passLog, cursor, landed, skipped, not_located: notLocated, annotated, ours_landed: oursLanded, near_duplicates: dedupMarked, read_feedback: readFeedbackCount, finder_drops: drops, retracted_superseded: retractedOlder, retracted_side_changed: retractedSide, our_speakers_count: ourSpeakers.size },
       }).eq("id", runId);
       // parsed_at also LOCKS THE SPEAKER (the existing rule on this record).
       await db.from("interview_records").update({ parsed_at: iso(now()), rules_version: PARSER_RULES_VERSION, parse_level: PARSE_LEVEL }).eq("id", recordId);
@@ -398,7 +431,7 @@ export async function handleInterviewParse(req: Request, deps: Deps = { createCl
     return json({
       ok: true, run_id: runId, done, cursor, windows: windows.length, windows_done: windowsDone,
       passages: passages.length, shape, landed, skipped, not_located: notLocated, annotated, model_calls: calls,
-      ours_landed: oursLanded, near_duplicates: dedupMarked, retracted_superseded: retractedOlder, retracted_side_changed: retractedSide,
+      ours_landed: oursLanded, near_duplicates: dedupMarked, read_feedback: readFeedbackCount, finder_drops: drops, retracted_superseded: retractedOlder, retracted_side_changed: retractedSide,
       self_fired: !done && windowsDone > 0, passes: passLog.length,
       elapsed_ms: now() - startedAt,
     });
