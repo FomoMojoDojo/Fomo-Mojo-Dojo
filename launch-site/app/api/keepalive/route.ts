@@ -49,7 +49,9 @@ const pingHealthcheck = async (suffix: "" | "/fail") => {
     return `ping ${suffix || "(ok)"} -> ${response.status}`;
   } catch (error) {
     // A ping failure is never fatal: it must not turn a healthy mailbox into an alarm.
-    const message = error instanceof Error ? error.message : "unknown ping error";
+    // NAME ONLY, never the message: undici embeds the whole URL in its parse error, and
+    // this string is returned in the response body and written to the runtime logs.
+    const message = error instanceof Error ? error.name : "unknown ping error";
     console.warn("[keepalive] healthcheck ping failed (non-fatal)", { suffix, message });
     return `ping ${suffix || "(ok)"} failed: ${message}`;
   }
