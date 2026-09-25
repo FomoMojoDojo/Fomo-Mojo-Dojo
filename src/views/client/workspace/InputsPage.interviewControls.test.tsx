@@ -65,7 +65,7 @@ describe("Inputs — withdraw and speaker controls (R11 / R14)", () => {
     fireEvent.click(confirm.querySelector("[data-testid=inputs-withdraw-go]")!);
     expect(HOOK.withdraw).toEqual(["r-1"]);
   });
-  it("(o) P1 → listbox P3 with Stakeholder / Customer → correctSpeaker once; a collision renders P2; not offered when parsed", async () => {
+  it("(o) P1 → listbox P3 with Stakeholder / Customer / Working session → correctSpeaker once; a collision renders P2; not offered when parsed", async () => {
     FILES.rows = [file("iv-1", true), file("iv-p", true)];
     HOOK.records = [rec("r-1", "iv-1"), rec("r-p", "iv-p", { parsed_at: "2026-09-20T00:00:00Z" })]; HOOK.correct.length = 0; HOOK.collision = false;
     const c = mount();
@@ -76,10 +76,17 @@ describe("Inputs — withdraw and speaker controls (R11 / R14)", () => {
     fireEvent.click(btn);
     const list = iv.querySelector("[data-testid=inputs-speaker-list]")!;
     expect(list.getAttribute("aria-label")).toBe("Choose the speaker");
-    expect([...list.querySelectorAll("[data-testid=inputs-speaker-option]")].map((o) => o.textContent)).toEqual(["Stakeholder", "Customer"]);
+    // 4f-1: the list gains the third record type; the first two keep their words and their order.
+    expect([...list.querySelectorAll("[data-testid=inputs-speaker-option]")].map((o) => o.textContent)).toEqual(["Stakeholder", "Customer", "Working session"]);
     fireEvent.click(list.querySelector('[data-fr-speaker-role="client_stakeholder"]')!);
     await new Promise((r) => setTimeout(r, 0));
     expect(HOOK.correct).toEqual([["r-1", "client_stakeholder"]]);
+    // 4f-1: and picking it re-types the record through the same RPC call as the other two.
+    HOOK.correct = [];
+    fireEvent.click(iv.querySelector("[data-testid=inputs-change-speaker]")!);
+    fireEvent.click(iv.querySelector('[data-fr-speaker-role="working_session"]')!);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(HOOK.correct).toEqual([["r-1", "working_session"]]);
     HOOK.collision = true;
     fireEvent.click(iv.querySelector("[data-testid=inputs-change-speaker]")!);
     fireEvent.click(iv.querySelector('[data-fr-speaker-role="client_stakeholder"]')!);

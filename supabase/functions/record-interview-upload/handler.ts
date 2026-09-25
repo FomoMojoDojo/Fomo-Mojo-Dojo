@@ -29,7 +29,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-export const SPEAKER_ROLES = new Set(["client_stakeholder", "market_participant"]);
+// 4f-1: "working session" is the third record type — a first-read review meeting, where our side
+// and theirs are in the room together. It is placed PER ITEM, like a stakeholder transcript.
+export const SPEAKER_ROLES = new Set(["client_stakeholder", "market_participant", "working_session"]);
 export const TEXT_EXTENSIONS = new Set(["txt", "md", "vtt", "srt"]);
 export const PARSER_EXTENSIONS = new Set(["pdf", "docx"]);
 /** F3 — the exact text-reader rule, recorded on every text record: strict UTF-8 (fatal on invalid bytes),
@@ -71,7 +73,10 @@ export function decodeTranscriptBytes(bytes: ArrayBuffer): string {
   return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(view);
 }
 export function marketStateFor(speakerRole: string): "per_item" | "unplaced" {
-  return speakerRole === "client_stakeholder" ? "per_item" : "unplaced";
+  // Only a CUSTOMER transcript is placed as a whole, against the one market its speaker belongs
+  // to. A stakeholder transcript and a working session both carry items about several markets
+  // (or none), so both are per_item and are placed after parsing.
+  return speakerRole === "market_participant" ? "unplaced" : "per_item";
 }
 export function extractionVersionFrom(source: string, versions: Record<string, string> | null | undefined): string {
   if (source === "local_text_reader") return TEXT_READER_VERSION;
@@ -100,7 +105,7 @@ export async function handleRecordInterviewUpload(req: Request, deps: Deps = { c
     const inputFileId = text(body.input_file_id);
     if (!inputFileId) return json({ ok: false, error: "input_file_id required" }, 400);
     const speakerRole = text(body.speaker_role);
-    if (!SPEAKER_ROLES.has(speakerRole)) return json({ ok: false, error: "speaker_role must be client_stakeholder or market_participant" }, 400);
+    if (!SPEAKER_ROLES.has(speakerRole)) return json({ ok: false, error: "speaker_role must be client_stakeholder, market_participant or working_session" }, 400);
     const claimedSha = text(body.file_sha256).toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(claimedSha)) return json({ ok: false, error: "file_sha256 required (64 hex chars)" }, 400);
     if (typeof body.transcript_text === "string" || typeof body.text === "string") return json({ ok: false, error: "the client never sends transcript text (A4)" }, 400);

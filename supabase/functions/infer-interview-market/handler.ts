@@ -33,6 +33,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+/** 4f-1 (signed 2026-09-24): the one refusal for any record that is not a customer interview.
+ *  Rendered verbatim; src/lib/interviewUploadStrings.ts mirrors it for the client-side pre-check. */
+export const INFER_NON_CUSTOMER_REFUSAL = "Market inference runs only on customer interviews.";
 export const INFERENCE_MODEL = "qwen2.5:14b-instruct";
 /** R38 (2026-09-21): measured — no 12,000-char window exceeded 7,000 prompt tokens (max 6,457 for .srt cues with 18
  *  candidates), so 8192 stays. */
@@ -226,7 +229,9 @@ export async function handleInferInterviewMarket(req: Request, deps: Deps = { cr
     if (!rec) return json({ ok: false, error: "no_record", message: `interview record ${recordId} not found for this company.` }, 404);
     if (!rec.input_file_id) return json({ ok: false, error: "not_upload_record", message: "Only an uploaded transcript is inferred — nothing was inferred." }, 409);
     if (rec.retracted_at) return json({ ok: false, error: "record_withdrawn", message: "This interview was withdrawn — nothing was inferred." }, 409);
-    if (rec.speaker_role !== "market_participant") return json({ ok: false, error: "stakeholder_record", message: "A stakeholder transcript is placed per item after parsing — nothing was inferred." }, 409);
+    // 4f-1: the fence is unchanged in effect — only a customer transcript is inferred — but it now
+    // refuses more than one kind of record, so the message names the rule rather than the caller.
+    if (rec.speaker_role !== "market_participant") return json({ ok: false, error: "not_customer_record", message: INFER_NON_CUSTOMER_REFUSAL }, 409);
     if (isOperatorPlaced(rec)) return json({ ok: false, error: "operator_placed", message: "This record was placed by an operator — inference never changes it." }, 409);
 
     // ── the text: the stored verbatim, hash-verified before use ──

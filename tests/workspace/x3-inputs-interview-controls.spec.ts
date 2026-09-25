@@ -107,7 +107,7 @@ test("(o) W1 on interview rows only, Archive × on ordinary rows only; confirm �
   expect(captured.filter((c) => !/\/rpc\//.test(c.url))).toHaveLength(0);
 });
 
-test("(o) P1 → listbox P3 (Stakeholder / Customer) → one correct_interview_speaker RPC; a stubbed collision → P2", async ({ page }) => {
+test("(o) P1 → listbox P3 (Stakeholder / Customer / Working session) → one correct_interview_speaker RPC; a stubbed collision → P2", async ({ page }) => {
   const captured = await guard(page, { collision: true });
   await openWorkspace(page, "inputs");
   await operatorOn(page);
@@ -116,7 +116,8 @@ test("(o) P1 → listbox P3 (Stakeholder / Customer) → one correct_interview_s
   await row.locator("[data-testid=inputs-change-speaker]").click();
   const list = row.locator("[data-testid=inputs-speaker-list]");
   await expect(list).toHaveAttribute("aria-label", "Choose the speaker");
-  await expect(list.locator("[data-testid=inputs-speaker-option]")).toHaveText(["Stakeholder", "Customer"]);
+  // 4f-1: the list gains the third record type; the first two keep their words and their order.
+  await expect(list.locator("[data-testid=inputs-speaker-option]")).toHaveText(["Stakeholder", "Customer", "Working session"]);
   await list.scrollIntoViewIfNeeded();
   await shot(page, "102-interview-speaker-listbox");
   const other = "client_stakeholder"; // fixture-rec-1 is a customer record

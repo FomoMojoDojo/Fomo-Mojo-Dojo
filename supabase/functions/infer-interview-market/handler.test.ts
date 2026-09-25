@@ -3,7 +3,7 @@
 // script and records what it was asked; the clock is injected (R32). Fixtures are throwaway strings written
 // here — never a real transcript. Every guard below has a named plant in the comments of its test.
 import { assert, assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { buildPrompt, CALL_SITE, COMPONENT, cutWindows, handleInferInterviewMarket, INFERENCE_MODEL, isOperatorPlaced, type ModelReply, NUM_CTX, promptNotFullyRead, sha256HexText, tally, truncationSize, VERIFIED_OLLAMA_VERSIONS, WINDOW_CHARS } from "./handler.ts";
+import { buildPrompt, CALL_SITE, COMPONENT, cutWindows, handleInferInterviewMarket, INFER_NON_CUSTOMER_REFUSAL, INFERENCE_MODEL, isOperatorPlaced, type ModelReply, NUM_CTX, promptNotFullyRead, sha256HexText, tally, truncationSize, VERIFIED_OLLAMA_VERSIONS, WINDOW_CHARS } from "./handler.ts";
 
 type Row = Record<string, unknown>;
 const CO = "co-2b"; const ADMIN = "user-admin"; const MEMBER = "user-member"; const SR = "service-role-key";
@@ -148,7 +148,8 @@ Deno.test("(b) a frozen company → 403 before any model call (companies.frozen 
 
 Deno.test("(c) a stakeholder record → 409; (d) a retracted record → 409; no model call, no rows", async () => {
   const s = fake({ records: [await seeded({ speaker_role: "client_stakeholder", market_state: "per_item" })] }); const t = transport([{ key: "mkt-a" }]);
-  const a = await run(s, t); assertEquals(a.status, 409); assertEquals(a.json.error, "stakeholder_record");
+  const a = await run(s, t); assertEquals(a.status, 409); assertEquals(a.json.error, "not_customer_record");
+  assertEquals(a.json.message, INFER_NON_CUSTOMER_REFUSAL);
   const w = fake({ records: [await seeded({ retracted_at: "2026-09-20T15:23:49Z" })] });
   const b = await run(w, t); assertEquals(b.status, 409); assertEquals(b.json.error, "record_withdrawn");
   const h = fake({ records: [await seeded({ input_file_id: null })] }); // a hand-entered (capture-form) record is never inferred
@@ -381,4 +382,17 @@ Deno.test("(v) R45: a deferred-lens market and a definition with no lens row are
   const schemaEnum = (buildPrompt([{ market_key: "mkt-a", title: "t", job_executor: "", jtbd: "" }], "w").schema as { properties: { market_key: { anyOf: Array<{ enum?: string[] }> } } }).properties.market_key.anyOf[0].enum;
   assertEquals(schemaEnum, ["mkt-a"]); // the schema only ever enumerates the offered keys
   assertEquals((runsOf(f)[0].excluded_by_rule as Row).candidates, 3);
+});
+
+Deno.test("4f-1: a WORKING SESSION is refused by the same fence, with the signed words", async () => {
+  // The fence never changed in effect — only a customer transcript is inferred. What changed is that
+  // it now refuses two kinds of record, so the message names the rule instead of the caller.
+  const s = fake({ records: [await seeded({ speaker_role: "working_session", market_state: "per_item" })] });
+  const t = transport([{ key: "mkt-a" }]);
+  const r = await run(s, t);
+  assertEquals(r.status, 409);
+  assertEquals(r.json.error, "not_customer_record");
+  assertEquals(r.json.message, INFER_NON_CUSTOMER_REFUSAL);
+  assertEquals(t.calls.length, 0, "no model call");
+  assertEquals(s.writes.length, 0, "and nothing written");
 });

@@ -94,6 +94,31 @@ Deno.test("R7 customer → unplaced, journey_key NULL", async () => {
   const r = await run(f, { company_id: CO, input_file_id: "f-1", speaker_role: "market_participant", file_sha256: await sha256HexBytes(enc(FIXTURE).buffer as ArrayBuffer) });
   assertEquals(r.status, 200); assertEquals(f.tables.interview_records[0].market_state, "unplaced"); assertEquals(f.tables.interview_records[0].journey_key, null);
   assertEquals(marketStateFor("market_participant"), "unplaced"); assertEquals(marketStateFor("client_stakeholder"), "per_item");
+  // 4f-1: only a CUSTOMER transcript is placed as a whole. A working session carries items about
+  // several markets or none, so it is per_item exactly like a stakeholder transcript.
+  assertEquals(marketStateFor("working_session"), "per_item");
+});
+
+Deno.test("4f-1: a WORKING SESSION upload records the third role, per_item, journey_key NULL", async () => {
+  const s = seeded(); const f = fake(s);
+  const r = await run(f, { company_id: CO, input_file_id: "f-1", speaker_role: "working_session", file_sha256: await sha256HexBytes(enc(FIXTURE).buffer as ArrayBuffer) });
+  assertEquals(r.status, 200);
+  const rec = f.tables.interview_records[0];
+  assertEquals(rec.speaker_role, "working_session");
+  assertEquals(rec.market_state, "per_item");
+  assertEquals(rec.journey_key, null);
+  assertEquals(r.json.speaker_role, "working_session");
+  assertEquals(r.json.market_state, "per_item");
+});
+
+Deno.test("4f-1: the role refusal names all three, and an unknown role is still refused", async () => {
+  const s = seeded(); const f = fake(s);
+  const r = await run(f, { company_id: CO, input_file_id: "f-1", speaker_role: "board_meeting", file_sha256: await sha256HexBytes(enc(FIXTURE).buffer as ArrayBuffer) });
+  assertEquals(r.status, 400);
+  assertStringIncludes(String(r.json.error), "client_stakeholder");
+  assertStringIncludes(String(r.json.error), "market_participant");
+  assertStringIncludes(String(r.json.error), "working_session");
+  assertEquals(f.tables.interview_records.length, 0, "nothing recorded");
 });
 
 Deno.test("(f) sha mismatch → 422 S6, zero records, the object and the row rolled back, a rejected audit row", async () => {

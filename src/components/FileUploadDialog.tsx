@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import { mapInputToAreaKey } from '@/lib/areaMapping';
 import { makeAreaSupportTag } from '@/lib/fileTags';
 import { FILE_TOO_LARGE_CAP_BYTES, fileTooLargeMessage, refusalFromInvoke, type FileTooLargeRefusal } from '@/lib/fileTooLarge';
-import { INTERVIEW_UPLOAD_STRINGS, isTranscriptFileName, resolveInterviewHome, sha256HexOfFile, speakerRoleFor, type InterviewSpeaker } from '@/lib/interviewUploadStrings';
+import { INTERVIEW_SPEAKERS, INTERVIEW_UPLOAD_STRINGS, isTranscriptFileName, resolveInterviewHome, sha256HexOfFile, speakerLabelFor, speakerRoleFor, type InterviewSpeaker, type InterviewSpeakerRole } from '@/lib/interviewUploadStrings';
 
 interface Props {
   open: boolean;
@@ -55,7 +55,7 @@ type UploadSummary = {
   source: AssignmentSource;
   error?: string;
   /** Gate B: an interview transcript — saved and recorded only (no analysis, no corpus, no needs). */
-  interview?: { speakerRole: 'client_stakeholder' | 'market_participant'; marketState: string };
+  interview?: { speakerRole: InterviewSpeakerRole; marketState: string };
 };
 
 type UploadProgress = {
@@ -1014,10 +1014,10 @@ export default function FileUploadDialog({
                 <fieldset className="mt-2" data-testid="upload-interview-speaker">
                   <legend className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: '#6e847f' }}>{INTERVIEW_UPLOAD_STRINGS.whoIsSpeaking}</legend>
                   <div className="mt-1 flex gap-2">
-                    {(["stakeholder", "customer"] as const).map((who) => (
+                    {INTERVIEW_SPEAKERS.map((who) => (
                       <label key={who} className="border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={interviewSpeaker === who ? { background: '#233c4b', color: '#faf7f6', borderColor: '#233c4b' } : { background: '#ffffff', color: '#46606d', borderColor: '#dde6d1' }}>
                         <input type="radio" name="interview-speaker" className="sr-only" value={who} checked={interviewSpeaker === who} onChange={() => setInterviewSpeaker(who)} data-testid={`upload-interview-${who}`} />
-                        {who === "stakeholder" ? INTERVIEW_UPLOAD_STRINGS.stakeholder : INTERVIEW_UPLOAD_STRINGS.customer}
+                        {speakerLabelFor(who)}
                       </label>
                     ))}
                   </div>

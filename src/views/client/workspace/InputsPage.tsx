@@ -51,7 +51,7 @@ import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useRoutes } from "@/hooks/useRoutes";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { canChangeSpeaker, canInferMarket, lastRunFailed, lastRunFoundNoMajority, placedByInference, useInterviewUploads, type InterviewUploadRecord } from "@/hooks/useInterviewUploads";
-import { INTERVIEW_UPLOAD_STRINGS } from "@/lib/interviewUploadStrings";
+import { INTERVIEW_UPLOAD_STRINGS, type InterviewSpeakerRole } from "@/lib/interviewUploadStrings";
 import { readAreaSupportTags } from "@/lib/fileTags";
 import FileUploadDialog from "@/components/FileUploadDialog";
 import { DeleteConfirmPanel, ProposalReviewPanel, fileProposalProcessingBadgeText, proposalPriority, type FoundationArea, type SourceRow } from "@/views/client/workshop/inputsShared";
@@ -188,7 +188,7 @@ export default function InputsPage() {
     setWithdrawingId(rec.id); setSaveFailedId(null);
     try { const r = await interviews.withdraw(rec); if (r.ok) { setWithdrawId(null); await files.refetch(); } else setSaveFailedId(rec.id); } finally { setWithdrawingId(null); }
   };
-  const pickSpeaker = async (rec: InterviewUploadRecord, role: "client_stakeholder" | "market_participant") => {
+  const pickSpeaker = async (rec: InterviewUploadRecord, role: InterviewSpeakerRole) => {
     setSpeakerPickerId(null); setSpeakerCollisionId(null); setSaveFailedId(null);
     if (role === rec.speaker_role) return;
     const r = await interviews.correctSpeaker(rec, role);
@@ -329,7 +329,7 @@ export default function InputsPage() {
                                       </button>
                                       {speakerPickerId === rec.id ? (
                                         <span role="listbox" aria-label={INTERVIEW_UPLOAD_STRINGS.chooseSpeaker} className="fr-ws-switcher-list" data-testid="inputs-speaker-list">
-                                          {([["client_stakeholder", INTERVIEW_UPLOAD_STRINGS.stakeholder], ["market_participant", INTERVIEW_UPLOAD_STRINGS.customer]] as const).map(([role, label]) => (
+                                          {([["client_stakeholder", INTERVIEW_UPLOAD_STRINGS.stakeholder], ["market_participant", INTERVIEW_UPLOAD_STRINGS.customer], ["working_session", INTERVIEW_UPLOAD_STRINGS.workingSession]] as const).map(([role, label]) => (
                                             <button key={role} type="button" role="option" aria-selected={rec.speaker_role === role} className="fr-ws-switcher-option" data-fr-speaker-role={role} data-testid="inputs-speaker-option" onClick={() => { void pickSpeaker(rec, role); }}>{label}</button>
                                           ))}
                                         </span>

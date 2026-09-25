@@ -17,11 +17,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { readLiveDefinitionKeys } from "@/lib/liveDefinitionKeys";
+import type { InterviewSpeakerRole } from "@/lib/interviewUploadStrings";
 
 export type InterviewUploadRecord = {
   id: string;
   input_file_id: string;
-  speaker_role: "client_stakeholder" | "market_participant" | string;
+  speaker_role: InterviewSpeakerRole | string;
   market_state: "placed" | "unplaced" | "per_item" | string;
   journey_key: string | null;
   market_basis: unknown[];
@@ -191,7 +192,7 @@ export function useInterviewUploads(companyId?: string | null, refreshKey = 0) {
   }, [refetch]);
 
   /** Change speaker (R14/R24): the RPC recomputes the identity and appends the history; a collision → P2. */
-  const correctSpeaker = useCallback(async (record: InterviewUploadRecord, speakerRole: "client_stakeholder" | "market_participant"): Promise<{ ok: boolean; collision?: boolean; error?: string }> => {
+  const correctSpeaker = useCallback(async (record: InterviewUploadRecord, speakerRole: InterviewSpeakerRole): Promise<{ ok: boolean; collision?: boolean; error?: string }> => {
     const { error } = await loose().rpc("correct_interview_speaker", { p_record_id: record.id, p_speaker_role: speakerRole });
     if (error) {
       const text = `${error.message ?? ""} ${error.details ?? ""}`;
