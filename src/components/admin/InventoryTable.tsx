@@ -6,7 +6,7 @@
 // FROZEN ROWS ARE PROTECTED. `companies.frozen` (plus the enforce_company_freeze trigger) is the DB
 // authority. Until now this page did not even select the column, so CB1 rendered like any other row
 // with a live Delete — a click the trigger would refuse and the UI would surface as a raw error.
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { Company } from "@/hooks/useCompany";
 import type { CompanyInventoryRow } from "@/lib/admin/companiesInventory";
@@ -87,6 +87,10 @@ export type InventoryTableProps = {
   navigate?: (to: string) => void;
   /** readonly + frontDoor variants: the whole row is the affordance. */
   onRowClick?: (id: string) => void;
+  /** 4g-1: an EXTRA affordance under the company name, rendered by the caller. The table stays dumb
+   *  about where it points — the front door owns the route, the label and the company hand-off — so
+   *  the admin variants, which pass nothing, render exactly what they rendered before. */
+  renderRowLink?: (id: string) => ReactNode;
 };
 
 export function InventoryTable(props: InventoryTableProps) {
@@ -136,6 +140,7 @@ export function InventoryTable(props: InventoryTableProps) {
                 c={c}
                 readOnly={readOnly}
                 onRowClick={props.onRowClick}
+                renderRowLink={props.renderRowLink}
                 company={company}
                 inv={inv}
                 frozen={frozen}
@@ -163,6 +168,7 @@ export function InventoryTable(props: InventoryTableProps) {
 function FragmentRow(p: {
   c: Palette;
   readOnly?: boolean; onRowClick?: (id: string) => void;
+  renderRowLink?: (id: string) => ReactNode;
   company: InventoryCompany; inv: CompanyInventoryRow | null; frozen: boolean; busy: boolean;
   isActive: boolean; open: boolean; loading: boolean;
   lock?: { operation: string; started_by: string };
@@ -194,6 +200,9 @@ function FragmentRow(p: {
             {company.name}
           </button>
           <div className="font-mono text-[10px]" style={{ color: c.muted }}>{company.website ?? "—"}</div>
+          {p.renderRowLink ? (
+            <div className="mt-1" data-testid={`row-link-${company.id}`}>{p.renderRowLink(company.id)}</div>
+          ) : null}
           {p.lock ? (
             <div className="font-mono text-[10px] mt-1" style={{ color: c.amber }}>
               {p.lock.operation} running · started by {p.labelForUser(p.lock.started_by)}

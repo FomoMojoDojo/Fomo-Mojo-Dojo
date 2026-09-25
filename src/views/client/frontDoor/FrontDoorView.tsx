@@ -22,7 +22,8 @@ import {
   type CompanyInventoryRow,
 } from "@/lib/admin/companiesInventory";
 import { useCompany } from "@/hooks/useCompany";
-import { clientRefineFirstReadPath } from "@/lib/clientRefinePreview";
+import { clientRefineFirstReadPath, clientRefineWorkspacePath } from "@/lib/clientRefinePreview";
+import { FRONT_DOOR_STRINGS } from "./frontDoorStrings";
 import "../firstReadPreview/firstRead.css";
 
 /** The legacy door. Explicit, not via "/" — the bare path now lands back here. */
@@ -67,7 +68,7 @@ export default function FrontDoorView() {
       <header className="fr-shell-header">
         <div className="fr-shell-header-inner">
           <div className="fr-shell-id fr-mono">
-            <span className="fr-shell-title">All companies</span>
+            <span className="fr-shell-title">{FRONT_DOOR_STRINGS.allCompanies}</span>
             {/* The identity slot carries the count, in the wording the old page's footer already
                 used — the First Read header's "{company} · {host}" has no meaning on a fleet page. */}
             <span className="fr-shell-identity" data-testid="front-door-count">
@@ -77,7 +78,7 @@ export default function FrontDoorView() {
           <div className="fr-shell-progress">
             {/* The right-hand slot is where First Read puts its counter; here it is the legacy door. */}
             <Link to={LEGACY_SITE_ROUTE} className="fr-shell-link fr-mono" data-testid="legacy-door">
-              Legacy site
+              {FRONT_DOOR_STRINGS.legacySite}
             </Link>
           </div>
         </div>
@@ -87,7 +88,7 @@ export default function FrontDoorView() {
         <div className="fr-beat">
           {loadFailed ? (
             <p className="fr-front-door-banner fr-mono" data-testid="front-door-banner">
-              Couldn't load companies — try reloading.
+              {FRONT_DOOR_STRINGS.loadFailed}
             </p>
           ) : null}
 
@@ -108,6 +109,22 @@ export default function FrontDoorView() {
               setActiveCompanyId(id);
               navigate(clientRefineFirstReadPath(id));
             }}
+            // 4g-1: the row's SECOND way in. The workspace takes its company from CompanyProvider
+            // and never from a URL param, so the link must SET the active company before it
+            // navigates — the same hand-off the row click already makes, to a different door. A
+            // real <Link>, so it is keyboard reachable and opens in a new tab like any other.
+            renderRowLink={(id) => (
+              <Link
+                to={clientRefineWorkspacePath()}
+                className="font-mono text-[10px] uppercase tracking-wide"
+                // The page palette is tokens only (FRONT_DOOR_PALETTE.secondary) — never a raw hex.
+                style={{ color: "hsl(var(--fr-slate))" }}
+                data-testid={`front-door-workspace-${id}`}
+                onClick={() => setActiveCompanyId(id)}
+              >
+                {FRONT_DOOR_STRINGS.workspace}
+              </Link>
+            )}
           />
         </div>
       </div>
