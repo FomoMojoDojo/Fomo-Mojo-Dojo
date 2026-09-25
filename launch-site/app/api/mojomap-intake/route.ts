@@ -12,6 +12,8 @@ type IntakeRequest = {
   desired_outcome?: string;
   desired_outcome_other?: string;
   success_definition?: string;
+  contact_name?: string;
+  contact_email?: string;
   company_name?: string;
   website_url?: string;
   industry?: string;
@@ -40,6 +42,16 @@ const DEFAULT_ALLOWED_ORIGINS = [
 const present = (value?: string) => {
   const trimmed = value?.trim();
   return trimmed ? trimmed : "Not provided";
+};
+
+// Shape check only. A malformed address is KEPT and flagged — an optional field must
+// never cost us the whole submission.
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+
+const contactEmailDisplay = (value?: string) => {
+  const trimmed = value?.trim();
+  if (!trimmed) return "Not provided";
+  return EMAIL_SHAPE.test(trimmed) ? trimmed : `${trimmed} (unverified)`;
 };
 
 const escapeHtml = (value: string) =>
@@ -103,7 +115,11 @@ const jsonWithCors = (
     },
   });
 
-type AutorunResult = {
+// R4: every intake is forwarded to the hosted receiver. `requested` records whether the
+// person ticked the optional public-signal pass — it is a STORED FIELD, never the gate on
+// whether the mailbox row gets written. (Before this, unticking the box silently threw the
+// row away while the email still went out.)
+type ForwardResult = {
   requested: boolean;
   attempted: boolean;
   triggered: boolean;
@@ -111,26 +127,27 @@ type AutorunResult = {
   message: string;
 };
 
-const triggerMojoMapAutorun = async (payload: IntakeRequest): Promise<AutorunResult> => {
+const forwardToIntakeReceiver = async (payload: IntakeRequest): Promise<ForwardResult> => {
   const requested = Boolean(payload.run_initial_public_signal_pass);
-  if (!requested) {
-    return {
-      requested: false,
-      attempted: false,
-      triggered: false,
-      status: null,
-      message: "Not requested by intake payload.",
-    };
-  }
 
   const webhookUrl = normalizeWebhookUrl(process.env.MOJOMAP_AUTORUN_WEBHOOK_URL);
   if (!webhookUrl) {
+    // Loud, because the operator gets an email and no mailbox row — a state that used to
+    // pass in silence.
+    console.warn(
+      "[mojomap-intake] MOJOMAP_AUTORUN_WEBHOOK_URL is not configured — this submission was EMAILED but NOT stored in the intake mailbox.",
+      {
+        company: payload.company_name || null,
+        submitted_at: payload.submitted_at || null,
+      },
+    );
     return {
-      requested: true,
+      requested,
       attempted: false,
       triggered: false,
       status: null,
-      message: "MOJOMAP_AUTORUN_WEBHOOK_URL is not configured.",
+      message:
+        "MOJOMAP_AUTORUN_WEBHOOK_URL is not configured; submission emailed but not stored.",
     };
   }
 
@@ -155,6 +172,9 @@ const triggerMojoMapAutorun = async (payload: IntakeRequest): Promise<AutorunRes
         website_url: present(payload.website_url),
         industry: present(payload.industry),
         explicit_strategic_problem: present(payload.explicit_strategic_problem),
+        contact_name: payload.contact_name?.trim() || "",
+        contact_email: payload.contact_email?.trim() || "",
+        run_initial_public_signal_pass: requested,
         mojo_snapshot: payload.mojo_snapshot || null,
         intake: payload,
       }),
@@ -173,7 +193,7 @@ const triggerMojoMapAutorun = async (payload: IntakeRequest): Promise<AutorunRes
 
     if (!response.ok) {
       return {
-        requested: true,
+        requested,
         attempted: true,
         triggered: false,
         status: response.status,
@@ -192,7 +212,7 @@ const triggerMojoMapAutorun = async (payload: IntakeRequest): Promise<AutorunRes
 
     if (parsedBody?.success === false || (nestedAutorun && !nestedTriggered)) {
       return {
-        requested: true,
+        requested,
         attempted: true,
         triggered: false,
         status: nestedStatus,
@@ -201,16 +221,19 @@ const triggerMojoMapAutorun = async (payload: IntakeRequest): Promise<AutorunRes
     }
 
     return {
-      requested: true,
+      requested,
       attempted: true,
       triggered: true,
       status: nestedStatus,
-      message: "Autorun job accepted.",
+      message:
+        parsedBody?.duplicate === true
+          ? "Receiver reported this submission as a duplicate."
+          : "Submission stored by the intake receiver.",
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown webhook error";
     return {
-      requested: true,
+      requested,
       attempted: true,
       triggered: false,
       status: null,
@@ -228,6 +251,10 @@ const buildPlainTextEmailBody = (payload: IntakeRequest) => {
 
   return [
     `New MojoMap Pre-Diagnosis — ${present(payload.company_name)}`,
+    "",
+    "CONTACT",
+    `Name: ${present(payload.contact_name)}`,
+    `Work email: ${contactEmailDisplay(payload.contact_email)}`,
     "",
     "COMPANY",
     `Company: ${present(payload.company_name)}`,
@@ -284,7 +311,15 @@ const buildHtmlEmailBody = (payload: IntakeRequest) => {
         <div style="padding:20px 24px;">
           <table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 18px 0;">
             <tr>
-              <td style="padding:8px 0;border-bottom:1px solid #e5e7eb;font-weight:600;width:180px;">Company</td>
+              <td style="padding:8px 0;border-bottom:1px solid #e5e7eb;font-weight:600;width:180px;">Name</td>
+              <td style="padding:8px 0;border-bottom:1px solid #e5e7eb;">${escapeHtml(present(payload.contact_name))}</td>
+            </tr>
+            <tr>
+              <td style="padding:8px 0;border-bottom:1px solid #e5e7eb;font-weight:600;">Work email</td>
+              <td style="padding:8px 0;border-bottom:1px solid #e5e7eb;">${escapeHtml(contactEmailDisplay(payload.contact_email))}</td>
+            </tr>
+            <tr>
+              <td style="padding:8px 0;border-bottom:1px solid #e5e7eb;font-weight:600;">Company</td>
               <td style="padding:8px 0;border-bottom:1px solid #e5e7eb;">${escapeHtml(present(payload.company_name))}</td>
             </tr>
             <tr>
@@ -497,8 +532,12 @@ export async function POST(request: Request) {
       company: payload.company_name || null,
     });
 
-    const autorun = await triggerMojoMapAutorun(payload);
-    console.log("[mojomap-intake] autorun", autorun);
+    const autorun = await forwardToIntakeReceiver(payload);
+    if (autorun.attempted && !autorun.triggered) {
+      console.warn("[mojomap-intake] forward to intake receiver FAILED", autorun);
+    } else {
+      console.log("[mojomap-intake] forward to intake receiver", autorun);
+    }
 
     return jsonWithCors(
       {
