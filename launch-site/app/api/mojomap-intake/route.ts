@@ -30,7 +30,9 @@ type IntakeRequest = {
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const FALLBACK_FROM_EMAIL = "FomoMojoDojo Intake <onboarding@resend.dev>";
-const AUTORUN_TIMEOUT_MS = 12000;
+// R7: the forward now runs BEFORE the email, so this timeout is latency the person waits
+// through on the quiz. 6s still clears a cold Supabase Edge Function.
+const AUTORUN_TIMEOUT_MS = 6000;
 const DEFAULT_RECEIVER_EMAIL = "dojocho@fomomojodojo.com";
 const DEFAULT_ALLOWED_ORIGINS = [
   "https://fomomojodojo-launch.vercel.app",
@@ -123,8 +125,21 @@ type ForwardResult = {
   requested: boolean;
   attempted: boolean;
   triggered: boolean;
+  timedOut: boolean;
   status: number | null;
   message: string;
+};
+
+// R7: the banner asks one question — is this submission in the mailbox? Anything that is not
+// `triggered` is not stored, including the case where we never even tried because the webhook
+// URL is unconfigured. A receiver answering `duplicate: true` reports triggered:true, so a
+// deduped retry is stored, not flagged.
+const forwardFailed = (forward: ForwardResult) => !forward.triggered;
+
+const forwardFailureReason = (forward: ForwardResult) => {
+  if (forward.timedOut) return "timed out";
+  if (forward.status !== null) return `receiver returned ${forward.status}`;
+  return forward.message || "unknown error";
 };
 
 const forwardToIntakeReceiver = async (payload: IntakeRequest): Promise<ForwardResult> => {
@@ -145,6 +160,7 @@ const forwardToIntakeReceiver = async (payload: IntakeRequest): Promise<ForwardR
       requested,
       attempted: false,
       triggered: false,
+      timedOut: false,
       status: null,
       message:
         "MOJOMAP_AUTORUN_WEBHOOK_URL is not configured; submission emailed but not stored.",
@@ -196,6 +212,7 @@ const forwardToIntakeReceiver = async (payload: IntakeRequest): Promise<ForwardR
         requested,
         attempted: true,
         triggered: false,
+        timedOut: false,
         status: response.status,
         message: `Webhook rejected request.${rawBody ? ` ${rawBody.slice(0, 240)}` : ""}`,
       };
@@ -215,6 +232,7 @@ const forwardToIntakeReceiver = async (payload: IntakeRequest): Promise<ForwardR
         requested,
         attempted: true,
         triggered: false,
+        timedOut: false,
         status: nestedStatus,
         message: nestedMessage || "Autorun did not complete successfully.",
       };
@@ -224,6 +242,7 @@ const forwardToIntakeReceiver = async (payload: IntakeRequest): Promise<ForwardR
       requested,
       attempted: true,
       triggered: true,
+      timedOut: false,
       status: nestedStatus,
       message:
         parsedBody?.duplicate === true
@@ -232,24 +251,38 @@ const forwardToIntakeReceiver = async (payload: IntakeRequest): Promise<ForwardR
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown webhook error";
+    // controller.signal.aborted is OUR timeout firing, not a network error.
+    const timedOut = controller.signal.aborted;
     return {
       requested,
       attempted: true,
       triggered: false,
+      timedOut,
       status: null,
-      message,
+      message: timedOut ? `Timed out after ${AUTORUN_TIMEOUT_MS}ms.` : message,
     };
   } finally {
     clearTimeout(timeoutId);
   }
 };
 
-const buildPlainTextEmailBody = (payload: IntakeRequest) => {
+const buildPlainTextEmailBody = (payload: IntakeRequest, forward: ForwardResult) => {
   const focusAreas = (payload.mojo_snapshot?.top_focus_areas ?? [])
     .map((item, index) => `${index + 1}. ${item}`)
     .join("\n");
 
+  // R7: the banner is the FIRST thing in the body when the row did not land, because the
+  // operator has to import this submission by hand.
+  const banner = forwardFailed(forward)
+    ? [
+        "*** NOT STORED IN THE INTAKE MAILBOX — IMPORT BY HAND ***",
+        `Reason: ${forwardFailureReason(forward)}`,
+        "",
+      ]
+    : [];
+
   return [
+    ...banner,
     `New MojoMap Pre-Diagnosis — ${present(payload.company_name)}`,
     "",
     "CONTACT",
@@ -289,15 +322,28 @@ const buildPlainTextEmailBody = (payload: IntakeRequest) => {
   ].join("\n");
 };
 
-const buildHtmlEmailBody = (payload: IntakeRequest) => {
+const buildHtmlEmailBody = (payload: IntakeRequest, forward: ForwardResult) => {
   const focusAreas = (payload.mojo_snapshot?.top_focus_areas ?? [])
     .map((item) => `<li style="margin:0 0 6px 0;">${escapeHtml(item)}</li>`)
     .join("");
 
   const submittedAt = payload.submitted_at || new Date().toISOString();
 
+  const banner = forwardFailed(forward)
+    ? `<div style="max-width:760px;margin:0 auto 16px auto;padding:16px 20px;background:#fee2e2;border:2px solid #b91c1c;color:#7f1d1d;">
+          <p style="margin:0 0 6px 0;font-size:15px;font-weight:700;letter-spacing:0.01em;">
+            NOT STORED IN THE INTAKE MAILBOX — IMPORT BY HAND
+          </p>
+          <p style="margin:0;font-size:13px;line-height:1.5;">
+            Reason: ${escapeHtml(forwardFailureReason(forward))}
+          </p>
+        </div>`
+    : "";
+
   return `
+    <meta charset="utf-8" />
     <div style="margin:0;padding:24px;background:#0b1220;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+      ${banner}
       <div style="max-width:760px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;">
         <div style="padding:20px 24px;border-bottom:1px solid #e5e7eb;background:#f8fafc;">
           <p style="margin:0 0 6px 0;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#0f766e;font-weight:700;">
@@ -446,9 +492,19 @@ export async function POST(request: Request) {
       );
     }
 
+    // R7: forward BEFORE the email is built, so the email can state plainly whether the
+    // submission actually landed in the mailbox. Storing is the durable half; the email is
+    // the operator's copy, and a copy that claims more than it knows is worse than none.
+    const autorun = await forwardToIntakeReceiver(payload);
+    if (forwardFailed(autorun)) {
+      console.warn("[mojomap-intake] forward to intake receiver FAILED", autorun);
+    } else {
+      console.log("[mojomap-intake] forward to intake receiver", autorun);
+    }
+
     const subject = `New MojoMap Pre-Diagnosis — ${present(payload.company_name)}`;
-    const text = buildPlainTextEmailBody(payload);
-    const html = buildHtmlEmailBody(payload);
+    const text = buildPlainTextEmailBody(payload, autorun);
+    const html = buildHtmlEmailBody(payload, autorun);
 
     const sendEmail = async (sender: string) => {
       const response = await fetch(RESEND_ENDPOINT, {
@@ -532,18 +588,21 @@ export async function POST(request: Request) {
       company: payload.company_name || null,
     });
 
-    const autorun = await forwardToIntakeReceiver(payload);
-    if (autorun.attempted && !autorun.triggered) {
-      console.warn("[mojomap-intake] forward to intake receiver FAILED", autorun);
-    } else {
-      console.log("[mojomap-intake] forward to intake receiver", autorun);
-    }
-
     return jsonWithCors(
       {
         success: true,
         email_sent: true,
         email_id: responseBody?.id || null,
+        // R7: `stored` is the plain answer to "is it in the mailbox?". `autorun` is kept
+        // unchanged for the existing client type.
+        stored: autorun.triggered,
+        storage: {
+          attempted: autorun.attempted,
+          stored: autorun.triggered,
+          duplicate: autorun.message.toLowerCase().includes("duplicate"),
+          status: autorun.status,
+          reason: forwardFailed(autorun) ? forwardFailureReason(autorun) : null,
+        },
         autorun,
       },
       {},
