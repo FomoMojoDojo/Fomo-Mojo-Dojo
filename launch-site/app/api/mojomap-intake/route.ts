@@ -19,6 +19,16 @@ type IntakeRequest = {
   industry?: string;
   notes?: string;
   run_initial_public_signal_pass?: boolean;
+  // V2 (2026-09-25): exactly what the person saw on finishing, recorded by the quiz rather than
+  // re-derived here. OPTIONAL: submissions made before the quiz built it, and the PHP fallback
+  // path, carry none — a missing view is reported as "Not recorded", never an error.
+  completion_view?: {
+    copy_version?: string;
+    told_us?: string[];
+    where_you_want_to_go?: Array<{ label?: string; value?: string }>;
+    questions?: string[];
+    next?: { heading?: string; line?: string };
+  } | null;
   submitted_at?: string;
   mojo_snapshot?: {
     starting_mode?: string;
@@ -49,6 +59,21 @@ const present = (value?: string) => {
 // Shape check only. A malformed address is KEPT and flagged — an optional field must
 // never cost us the whole submission.
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+
+type CompletionViewShape = NonNullable<IntakeRequest["completion_view"]>;
+
+/** The recorded screen, flattened for an email. Returns null when nothing was recorded. */
+const completionViewLines = (view?: CompletionViewShape | null) => {
+  if (!view || typeof view !== "object") return null;
+  const told = (view.told_us ?? []).map((l) => String(l || "").trim()).filter(Boolean);
+  const goals = (view.where_you_want_to_go ?? [])
+    .filter((g) => g && (g.label || g.value))
+    .map((g) => ({ label: String(g.label || "").trim(), value: String(g.value || "").trim() }));
+  const questions = (view.questions ?? []).map((q) => String(q || "").trim()).filter(Boolean);
+  const version = String(view.copy_version || "").trim();
+  if (!told.length && !goals.length && !questions.length) return null;
+  return { told, goals, questions, version };
+};
 
 const contactEmailDisplay = (value?: string) => {
   const trimmed = value?.trim();
@@ -191,6 +216,7 @@ const forwardToIntakeReceiver = async (payload: IntakeRequest): Promise<ForwardR
         contact_name: payload.contact_name?.trim() || "",
         contact_email: payload.contact_email?.trim() || "",
         run_initial_public_signal_pass: requested,
+        completion_view: payload.completion_view ?? null,
         mojo_snapshot: payload.mojo_snapshot || null,
         intake: payload,
       }),
@@ -308,6 +334,20 @@ const buildPlainTextEmailBody = (payload: IntakeRequest, forward: ForwardResult)
     `Last customer input: ${present(payload.last_customer_input)}`,
     `Biggest drag: ${present(payload.momentum_drag)}${payload.momentum_drag_other ? ` (${payload.momentum_drag_other})` : ""}`,
     "",
+    "WHAT THEY SAW",
+    ...(() => {
+      const view = completionViewLines(payload.completion_view);
+      if (!view) return ["Not recorded."];
+      const out = [...view.told];
+      if (view.goals.length) out.push("", ...view.goals.map((g) => `${g.label}: ${g.value}`));
+      if (view.questions.length) {
+        out.push("", "Questions shown for the call:");
+        view.questions.forEach((q, i) => out.push(`${i + 1}. ${q}`));
+      }
+      if (view.version) out.push("", `Copy version: ${view.version}`);
+      return out;
+    })(),
+    "",
     "MOJOMAP™",
     `Starting mode: ${present(payload.mojo_snapshot?.starting_mode)}`,
     `Primary friction: ${present(payload.mojo_snapshot?.primary_friction)}`,
@@ -411,6 +451,35 @@ const buildHtmlEmailBody = (payload: IntakeRequest, forward: ForwardResult) => {
               `${present(payload.momentum_drag)}${payload.momentum_drag_other ? ` (${payload.momentum_drag_other})` : ""}`,
             )}</li>
           </ul>
+
+          <h2 style="margin:0 0 10px 0;font-size:16px;color:#0f172a;">What they saw</h2>
+          ${(() => {
+            const view = completionViewLines(payload.completion_view);
+            if (!view) {
+              return `<p style="margin:0 0 18px 0;line-height:1.5;color:#6b7280;">Not recorded.</p>`;
+            }
+            const told = view.told
+              .map((l) => `<p style="margin:0 0 6px 0;line-height:1.6;">${escapeHtml(l)}</p>`)
+              .join("");
+            const goals = view.goals.length
+              ? `<ul style="margin:10px 0 0 18px;padding:0;line-height:1.6;">${view.goals
+                  .map(
+                    (g) =>
+                      `<li><strong>${escapeHtml(g.label)}:</strong> ${escapeHtml(g.value)}</li>`,
+                  )
+                  .join("")}</ul>`
+              : "";
+            const questions = view.questions.length
+              ? `<p style="margin:12px 0 6px 0;font-weight:600;">Questions shown for the call</p>
+                 <ol style="margin:0 0 0 18px;padding:0;line-height:1.6;">${view.questions
+                   .map((q) => `<li>${escapeHtml(q)}</li>`)
+                   .join("")}</ol>`
+              : "";
+            const version = view.version
+              ? `<p style="margin:10px 0 0 0;font-size:11px;color:#9ca3af;">Copy version: ${escapeHtml(view.version)}</p>`
+              : "";
+            return `<div style="margin:0 0 18px 0;padding:14px;border:1px solid #e5e7eb;background:#f9fafb;">${told}${goals}${questions}${version}</div>`;
+          })()}
 
           <h2 style="margin:0 0 10px 0;font-size:16px;color:#0f172a;">MOJOMAP™</h2>
           <ul style="margin:0 0 18px 18px;padding:0;line-height:1.6;">

@@ -31,6 +31,25 @@ function Field({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
+// V2 (2026-09-25): completion_view is what the person actually saw on finishing — recorded by
+// the quiz, not re-derived here. Rendered as the screen, not as JSON, so the operator reads what
+// the client read. Shape-tolerant: anything that does not match falls back to the raw JSON view.
+type CompletionView = {
+  copy_version?: string;
+  told_us?: string[];
+  where_you_want_to_go?: Array<{ label?: string; value?: string }>;
+  questions?: string[];
+  next?: { heading?: string; line?: string };
+};
+
+function readCompletionView(value: unknown): CompletionView | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as CompletionView;
+  const hasShape =
+    Array.isArray(v.told_us) || Array.isArray(v.where_you_want_to_go) || Array.isArray(v.questions);
+  return hasShape ? v : null;
+}
+
 type MojoSnapshot = { starting_mode?: string; primary_friction?: string; customer_truth_signal?: string; top_focus_areas?: string[] };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -49,6 +68,7 @@ function SubmissionBody({ r, companyId }: { r: IntakeResponseRow; companyId: str
   const focus = (snap.top_focus_areas ?? []).filter(Boolean);
   const slowdowns = (r.decision_slowdowns ?? []).filter(Boolean);
   const completion = r.completion_view as Record<string, unknown> | null;
+  const completionView = readCompletionView(completion);
   // C4: the contact is OPTIONAL on the quiz. Render the section only when the person actually
   // gave something — an empty "Who sent this" would imply we asked and they refused.
   const contactName = String(r.contact_name ?? "").trim();
@@ -109,7 +129,39 @@ function SubmissionBody({ r, companyId }: { r: IntakeResponseRow; companyId: str
       )}
 
       <Section title="Completion context">
-        {completion && Object.keys(completion).length > 0 ? (
+        {completionView ? (
+          <div>
+            {(completionView.told_us ?? []).map((line, i) => (
+              <p key={i} style={{ ...VAL, marginBottom: 6 }}>{line}</p>
+            ))}
+
+            {(completionView.where_you_want_to_go ?? []).length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                {(completionView.where_you_want_to_go ?? []).map((item, i) => (
+                  <div key={i} style={{ marginBottom: 10 }}>
+                    <div style={LABEL}>{item?.label}</div>
+                    <p style={VAL}>{item?.value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {(completionView.questions ?? []).length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div style={LABEL}>Questions shown for the call</div>
+                <ol style={{ ...VAL, paddingLeft: 18, margin: "6px 0 0" }}>
+                  {(completionView.questions ?? []).map((q, i) => <li key={i}>{q}</li>)}
+                </ol>
+              </div>
+            )}
+
+            {completionView.copy_version && (
+              <p style={{ ...MONO, fontSize: 10, color: "#bbb", marginTop: 14 }}>
+                Copy version: {completionView.copy_version}
+              </p>
+            )}
+          </div>
+        ) : completion && Object.keys(completion).length > 0 ? (
           <pre style={{ ...MONO, fontSize: 12, background: "#faf9f7", border: "1px solid #eee", borderRadius: 4, padding: 12, overflowX: "auto", color: "#444" }}>
             {JSON.stringify(completion, null, 2)}
           </pre>
