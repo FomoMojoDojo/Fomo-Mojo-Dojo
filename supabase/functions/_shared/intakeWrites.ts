@@ -373,6 +373,52 @@ async function upsertStrategicProblem(args: {
   }
 }
 
+// W3 (operator ruling 2026-09-25) — the intake's stated assumption as a first-class row.
+//
+// "What would have to be true for that to work?" is already stored verbatim on the submission
+// (intake_responses.what_would_have_to_be_true, W1). This additionally makes it an ASSUMPTION the
+// team can work with: it shows on the Strategy page and the client-refine preview, and it can be
+// moved untested -> validating -> validated/invalidated.
+//
+// ADD, NEVER OVERWRITE. A human may have moved the status or written a note; a re-import must not
+// undo that. The guard is (company_id, source='intake', assumption) — the same existence check
+// upsertStrategicProblem uses, for the same reason: this table has no submission_key, and the
+// verbatim text is the identity.
+//
+// The operator has ruled that client-stated intake content may reach OpenAI on the
+// refresh-positioning / refresh-cascade / propose-positioning-changes paths, which read this table
+// and call OpenAI directly (not through the provenance router). That is the point of promoting it.
+async function upsertIntakeAssumption(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  userId: string;
+  assumption: string;
+}): Promise<"inserted" | "already_present" | "skipped_empty"> {
+  const assumption = String(args.assumption || "").trim();
+  if (!assumption) return "skipped_empty";
+
+  const { data: existing } = await args.supabase
+    .from("strategy_assumptions")
+    .select("id")
+    .eq("company_id", args.companyId)
+    .eq("source", "intake")
+    .eq("assumption", assumption)
+    .limit(1)
+    .maybeSingle();
+
+  if (existing?.id) return "already_present"; // whatever status a human gave it, it stays
+
+  const { error } = await args.supabase.from("strategy_assumptions").insert({
+    company_id: args.companyId,
+    user_id: args.userId,
+    assumption,
+    source: "intake",
+    status: "untested",
+  });
+  if (error) throw new Error(error.message || "Failed to store intake assumption.");
+  return "inserted";
+}
+
 // Gate S — store the quiz answers as structured data (one row per submission). Upsert on
 // (company_id, submission_key) so a re-import is idempotent; a NULL submission_key is distinct in
 // the UNIQUE, so multiple NULL-keyed submissions coexist. completion_view is stored when present.
@@ -524,6 +570,7 @@ export {
   ensureIntakeInput,
   createIntakeFile,
   upsertStrategicProblem,
+  upsertIntakeAssumption,
   insertIntakeResponse,
   stampStrategicProblemBrief,
   invokeRunAgentFlow,

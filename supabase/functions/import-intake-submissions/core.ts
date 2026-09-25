@@ -18,6 +18,7 @@ import {
   invokeRunAgentFlow,
   normalizeWebsite,
   stampStrategicProblemBrief,
+  upsertIntakeAssumption,
   upsertStrategicProblem,
   type IntakeRequest,
 } from "../_shared/intakeWrites.ts";
@@ -188,6 +189,15 @@ export async function processPendingRows(args: {
         statement: String(payload.explicit_strategic_problem || ""),
       });
 
+      // W3 — the stated assumption becomes a first-class, workable assumption. Additive and
+      // idempotent: a re-import never touches a status a human has moved.
+      const assumptionOutcome = await upsertIntakeAssumption({
+        supabase: local,
+        companyId,
+        userId: actingUser.userId,
+        assumption: String(payload.what_would_have_to_be_true || ""),
+      });
+
       // Gate S — structured capture (keyed to the hosted submission id, idempotent on re-import)
       await insertIntakeResponse({
         supabase: local,
@@ -235,6 +245,7 @@ export async function processPendingRows(args: {
         company_created: match.created,
         input_id: inputId,
         file_id: intakeFile.fileId,
+        intake_assumption: assumptionOutcome,
         pipeline: automation.triggered ? "triggered" : "skipped",
       });
     } catch (err) {
