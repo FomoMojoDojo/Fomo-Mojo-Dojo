@@ -4,16 +4,12 @@
 // supabase/functions/launch-site-intake/index.ts, so that the importer
 // (import-intake-submissions) reproduced its writes exactly.
 //
-// THE TWO HAVE DIVERGED as of this commit (intake contact, C1-C4): IntakeRequest
-// here carries contact_name/contact_email, buildIntakeMarkdown prints them, and
-// insertIntakeResponse writes them to intake_responses. launch-site-intake still
-// has the older copy and drops those fields. Do NOT treat the two as identical,
-// and do not assume a check enforces it — no verbatim-slice test was ever
-// implemented; the claim that one existed lived only in this comment.
+// launch-site-intake was RETIRED on 2026-09-25 (R8) and deleted: it was the older direct-submit
+// path with no caller, and the copy it carried lacked the Fix-A frozen-company guard. This module
+// is now the only home for these helpers — not a slice of anything. (There was never a
+// verbatim-slice test; that claim lived only in an earlier version of this comment.)
 //
-// launch-site-intake is the OLDER, BYPASSED path: today a submission goes
-// quiz → Vercel relay → hosted mailbox (receive-intake) → this importer.
-// It is left untouched deliberately; reconciling or retiring it is its own gate.
+// Today a submission goes quiz → Vercel relay → hosted mailbox (receive-intake) → this importer.
 //
 // Deliberately NOT copied: findOrCreateCompany (the importer replaces it with a
 // Fix-A frozen-excluding, deterministic-tiebreaker match), and the handler-only

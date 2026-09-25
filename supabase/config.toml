@@ -32,12 +32,6 @@ verify_jwt = true
 [functions.public-companies]
 verify_jwt = true
 
-[functions.launch-site-intake]
-# 2026-08-12 AMENDED RULING: there is no hosted Supabase project, so the public marketing site cannot
-# reach this (local) function — it has no public caller. Flipped to require a JWT with the rest of the
-# former-anon set; no exceptions remain. A public-intake path and its own gate are a separate future item.
-verify_jwt = true
-
 [functions.run-agent-flow]
 verify_jwt = true
 
@@ -82,7 +76,7 @@ OLLAMA_SYNDICATION_BASE_URL = "http://host.docker.internal:11434"
 OLLAMA_MODEL = "env(OLLAMA_MODEL)"
 INTERNAL_AI_FILE_ANALYSIS_ENABLED = "env(INTERNAL_AI_FILE_ANALYSIS_ENABLED)"
 INTERNAL_AI_DEEP_DIVE_ENABLED = "env(INTERNAL_AI_DEEP_DIVE_ENABLED)"
-# Shared secret for the public launch-site-intake gate (x-intake-token header). Reference only —
+# Shared secret for the hosted mailbox's receive-intake gate (x-intake-token header). Reference only —
 # the VALUE lives in the shell env / gitignored .env locally and `supabase secrets set` on hosted;
 # never committed. (Legacy MOJOMAP_AUTORUN_WEBHOOK_TOKEN is still accepted for backward compat.)
 INTAKE_SHARED_TOKEN = "env(INTAKE_SHARED_TOKEN)"

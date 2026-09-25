@@ -10,6 +10,13 @@ Target project for migration:
 
 This document is the prep checklist for moving the app from the current project to the target project without losing track of required database schema, edge functions, storage, or deployment config.
 
+> **Retired 2026-09-25 (R8): `launch-site-intake`.** It was the older direct-submit path and had no
+> caller — undeployed on the hosted project, JWT-gated locally, referenced only by this checklist.
+> Intake now flows **quiz → Vercel relay → hosted mailbox (`receive-intake`) → `import-intake-submissions`**,
+> so `MOJOMAP_AUTORUN_WEBHOOK_URL` points at the mailbox's `receive-intake`, never at a function in
+> this project. Its write helpers live on in `supabase/functions/_shared/intakeWrites.ts`, which the
+> importer uses; the deleted copy lacked the Fix-A frozen-company guard and must not be restored as-is.
+
 ## Recommendation
 
 Use this migration path only if `ddfmxxrrlzufqbtpsbks` is the long-term home for the product.
@@ -78,7 +85,6 @@ These functions exist in the repo and should be deployed to the target project:
 - `analyze-file`
 - `council-review`
 - `generate-deep-dive`
-- `launch-site-intake`
 - `local-alignment`
 - `maps`
 - `public-baseline`
@@ -212,7 +218,7 @@ Keep:
 
 Update:
 
-- `MOJOMAP_AUTORUN_WEBHOOK_URL=https://ddfmxxrrlzufqbtpsbks.supabase.co/functions/v1/launch-site-intake`
+- `MOJOMAP_AUTORUN_WEBHOOK_URL=<the hosted mailbox's receive-intake URL>`
 - `MOJOMAP_AUTORUN_WEBHOOK_TOKEN=<shared secret also set in target Supabase>`
 
 ## Safe Migration Order
@@ -250,7 +256,6 @@ Deploy all functions the app relies on:
 supabase functions deploy analyze-file --project-ref ddfmxxrrlzufqbtpsbks --use-api
 supabase functions deploy council-review --project-ref ddfmxxrrlzufqbtpsbks --use-api
 supabase functions deploy generate-deep-dive --project-ref ddfmxxrrlzufqbtpsbks --use-api
-supabase functions deploy launch-site-intake --project-ref ddfmxxrrlzufqbtpsbks --use-api
 supabase functions deploy local-alignment --project-ref ddfmxxrrlzufqbtpsbks --use-api
 supabase functions deploy maps --project-ref ddfmxxrrlzufqbtpsbks --use-api
 supabase functions deploy public-baseline --project-ref ddfmxxrrlzufqbtpsbks --use-api
@@ -323,7 +328,7 @@ npx vercel --prod --yes
 
 ```bash
 cd /Users/fomomojodojo/Downloads/happy-file-hugger-main/launch-site
-npx vercel env add MOJOMAP_AUTORUN_WEBHOOK_URL production --value "https://ddfmxxrrlzufqbtpsbks.supabase.co/functions/v1/launch-site-intake" --yes --force
+npx vercel env add MOJOMAP_AUTORUN_WEBHOOK_URL production --value "<the hosted mailbox's receive-intake URL>" --yes --force
 npx vercel env add MOJOMAP_AUTORUN_WEBHOOK_TOKEN production --value "<shared_secret>" --yes --force
 npx vercel --prod --yes
 ```

@@ -45,21 +45,22 @@ Notes:
 If you want submissions to automatically trigger a MojoMap run, set:
 
 ```bash
-MOJOMAP_AUTORUN_WEBHOOK_URL=https://YOUR_PROJECT_REF.supabase.co/functions/v1/launch-site-intake
-MOJOMAP_AUTORUN_WEBHOOK_TOKEN=your_shared_secret_token
+MOJOMAP_AUTORUN_WEBHOOK_URL=https://YOUR_MAILBOX_PROJECT_REF.supabase.co/functions/v1/receive-intake
+INTAKE_SHARED_TOKEN=your_shared_secret_token
 ```
 
 Behavior:
 
 - After a successful intake email send, `/api/mojomap-intake` will POST intake data to the webhook.
-- The recommended Supabase Edge Function target is `launch-site-intake`.
-- That function can create or find the company, write the quiz submission into client files as an intake brief, store the strategic problem statement, and trigger the existing MojoMap generation flow.
+- The target is `receive-intake` on the hosted mailbox project. It is a dumb mailbox: it authorizes with `x-intake-token`, stores the raw submission in `intake_submissions`, and returns. It writes nothing else and calls nothing.
+- Company matching and every pipeline write happen later and locally, in `import-intake-submissions`, which the operator runs by hand.
+- `launch-site-intake` was the older direct-submit path and was retired on 2026-09-25 (R8); do not point this webhook at it.
 - The payload includes `company_name`, `website_url`, strategic problem, `mojo_snapshot`, and full intake context.
 - Intake success is not blocked if the autorun webhook fails; the route returns `autorun` status for observability.
 
-### Supabase function secrets for `launch-site-intake`
+### Supabase function secrets for `receive-intake`
 
-Set these in the Supabase project that hosts the edge function:
+Set these in the hosted mailbox project:
 
 ```bash
 MOJOMAP_AUTORUN_WEBHOOK_TOKEN=your_shared_secret_token
