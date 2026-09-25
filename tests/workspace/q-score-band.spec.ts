@@ -5,6 +5,7 @@
 // on either page load, and the guard proves it.
 import { expect, test, type Page } from "playwright/test";
 import { open, openWorkspace } from "./helpers";
+import { freezeScoreClock } from "./frozenScoreTime";
 
 // REACHABLE 46 (2026-09-14): the earlier 47 was produced by the struck-inclusive live path — REACHABLE derives
 // from NOW, so a wrong NOW propagated into what we tested against. The live score now honours the strike law.
@@ -27,6 +28,7 @@ async function operatorOn(page: Page) {
 
 for (const operator of [false, true]) {
   test(`workspace /routes — no EVIDENCE UNLOCK banner; band 28 / 46 / 84 (operator ${operator ? "ON" : "OFF"})`, async ({ page }) => {
+    await freezeScoreClock(page);
     const writes = await guardNoWrites(page);
     await openWorkspace(page, "routes");
     if (operator) await operatorOn(page);
@@ -48,6 +50,7 @@ for (const operator of [false, true]) {
 }
 
 test("older routes view — no KEY MOVE stripe; strip NOW 28 · REACHABLE 46 · UNLOCKABLE 84", async ({ page }) => {
+  await freezeScoreClock(page);
   const writes = await guardNoWrites(page);
   await open(page, "/preview/client-refine/routes");
   // The hierarchy strip renders three ScoreChips (value span above a label span) NOW / REACHABLE / UNLOCKABLE.

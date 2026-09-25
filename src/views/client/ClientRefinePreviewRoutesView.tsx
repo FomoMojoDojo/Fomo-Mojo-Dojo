@@ -63,7 +63,7 @@ import type { EngagementPhase } from "@/lib/engagementPhase";
 import { useDesiredOutcomes } from "@/lib/desiredOutcomes";
 import type { DesiredOutcomeRow } from "@/lib/desiredOutcomes";
 import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
-import { excludeStruck } from "@/views/client/workspace/useLiveMojoScore";
+import { excludeStruck, scoreComputedAt } from "@/views/client/workspace/useLiveMojoScore";
 import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { SignalBasisChip } from "@/components/design-system/SignalBasisChip";
@@ -1114,7 +1114,10 @@ export function RoutesOrgPanel({
         service_state: n.service_state,
         updated_at: n.updated_at ?? null,
       })),
-      computedAt: new Date().toISOString(),
+      // The score's clock, through the one door — the same dev-only override useLiveMojoScore reads.
+      // This view computes the strip inline rather than through that hook, so without this line the
+      // two surfaces that render the SAME three numbers would disagree the moment either is pinned.
+      computedAt: scoreComputedAt(),
     });
   }, [hasHierarchy, activeCompany?.id, claimsMap, routes, needs]);
 

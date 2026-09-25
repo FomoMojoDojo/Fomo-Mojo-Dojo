@@ -9,6 +9,42 @@ import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { MojoScoreResult } from "@/lib/mojoScore/types";
 import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
 
+/** ── THE SCORE'S CLOCK, AND THE ONE DOOR TESTS MAY OPEN IN IT ──────────────────────────────────
+ *  The score is computed live, and one contributor — evidence_freshness — is a STEP FUNCTION on
+ *  days-since-update (7 / 30 / 90 / 180 / 365). That is correct product behaviour: a score standing
+ *  on stale evidence SHOULD fall on its own. It also means the number changes with no code and no
+ *  data change, which no pinned test can survive: on 2026-09-24, 27 of Edgewood's 117 scored items
+ *  crossed the 7-day step together and the pinned 28 became 27.
+ *
+ *  Freezing the BROWSER's clock was tried first and cannot work here: the page authenticates with a
+ *  short-lived token validated against the real clock, so a fixed timestamp falls outside the usable
+ *  window within about an hour and the page loads with no session at all.
+ *
+ *  So the score — and only the score — takes its `now` from a test-only override, and ONLY in a
+ *  DEVELOPMENT BUILD. `import.meta.env.DEV` is the estate's development-build flag (already the
+ *  gate on the window.supabase handle, the localhost auth door and the preview flag), and Vite
+ *  replaces it with a literal `false` at build time, so in any built artefact the branch below is
+ *  dead code and the real clock is the only clock. Auth, DAY and every other clock stay real even
+ *  in dev; this decides `computedAt` and nothing else.
+ *
+ *  Precedent for both halves: strikePreview.ts takes `computedAt` as a parameter for exactly this
+ *  determinism, and useJobMapGeneration.ts reads window.__FR_JOBMAP_GEN_BOUND_MS the same way. */
+export const SCORE_NOW_OVERRIDE_KEY = "__FR_SCORE_NOW";
+
+/** The instant the score is computed at. The override is honoured only in a development build, and
+ *  only when it parses to a real date — a typo falls back to the real clock rather than to 1970. */
+export function scoreComputedAt(): string {
+  if (!import.meta.env.DEV) return new Date().toISOString();
+  const raw = typeof window === "undefined"
+    ? undefined
+    : (window as unknown as Record<string, unknown>)[SCORE_NOW_OVERRIDE_KEY];
+  if (typeof raw === "string" || typeof raw === "number") {
+    const t = new Date(raw).getTime();
+    if (Number.isFinite(t)) return new Date(t).toISOString();
+  }
+  return new Date().toISOString();
+}
+
 /** The live score's claim set: the server's rule, verbatim — struck out, minimized in. */
 export function excludeStruck<T extends { status?: string | null }>(claims: T[]): T[] {
   return claims.filter((c) => c.status !== "struck");
@@ -51,7 +87,7 @@ export function useLiveMojoScore(
         satisfaction: n.satisfaction, opportunity_score: n.opportunity_score,
         service_state: n.service_state, updated_at: n.updated_at ?? null,
       })),
-      computedAt: new Date().toISOString(),
+      computedAt: scoreComputedAt(),
     });
   }, [companyId, claimsMap, routes, needs]);
 }

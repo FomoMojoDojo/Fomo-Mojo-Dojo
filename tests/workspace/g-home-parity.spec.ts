@@ -13,10 +13,12 @@ import fs from "node:fs";
 import { expect, test } from "playwright/test";
 import { HOME_DOM_BASELINE } from "../../playwright.config";
 import { open } from "./helpers";
+import { freezeScoreClock } from "./frozenScoreTime";
 
 test("home DOM text is byte-identical before and after", async ({ page }) => {
   test.skip(!fs.existsSync(HOME_DOM_BASELINE), `no baseline at ${HOME_DOM_BASELINE}`);
   const before = fs.readFileSync(HOME_DOM_BASELINE, "utf8");
+  await freezeScoreClock(page);
   await open(page, "/preview/client-refine/home");
   await expect(page.getByTestId("home-fr-root")).toBeVisible({ timeout: 60_000 });
   await page.waitForTimeout(1500);
