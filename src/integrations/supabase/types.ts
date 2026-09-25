@@ -2897,6 +2897,8 @@ export type Database = {
         Row: {
           company_id: string
           completion_view: Json | null
+          contact_email: string | null
+          contact_name: string | null
           created_at: string
           customer_confidence: string | null
           decision_slowdowns: string[]
@@ -2921,6 +2923,8 @@ export type Database = {
         Insert: {
           company_id: string
           completion_view?: Json | null
+          contact_email?: string | null
+          contact_name?: string | null
           created_at?: string
           customer_confidence?: string | null
           decision_slowdowns?: string[]
@@ -2945,6 +2949,8 @@ export type Database = {
         Update: {
           company_id?: string
           completion_view?: Json | null
+          contact_email?: string | null
+          contact_name?: string | null
           created_at?: string
           customer_confidence?: string | null
           decision_slowdowns?: string[]

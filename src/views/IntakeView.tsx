@@ -49,6 +49,11 @@ function SubmissionBody({ r, companyId }: { r: IntakeResponseRow; companyId: str
   const focus = (snap.top_focus_areas ?? []).filter(Boolean);
   const slowdowns = (r.decision_slowdowns ?? []).filter(Boolean);
   const completion = r.completion_view as Record<string, unknown> | null;
+  // C4: the contact is OPTIONAL on the quiz. Render the section only when the person actually
+  // gave something — an empty "Who sent this" would imply we asked and they refused.
+  const contactName = String(r.contact_name ?? "").trim();
+  const contactEmail = String(r.contact_email ?? "").trim();
+  const hasContact = !!contactName || !!contactEmail;
 
   const openFile = async () => {
     if (!intakeFile) return;
@@ -58,6 +63,13 @@ function SubmissionBody({ r, companyId }: { r: IntakeResponseRow; companyId: str
 
   return (
     <>
+      {hasContact && (
+        <Section title="Who sent this">
+          <Field label="Name" value={contactName} />
+          <Field label="Work email" value={contactEmail} />
+        </Section>
+      )}
+
       <Section title="The problem you brought to us">
         <Field label="Strategic problem" value={r.explicit_strategic_problem} />
       </Section>

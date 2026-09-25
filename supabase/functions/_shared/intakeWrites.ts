@@ -1,10 +1,19 @@
 // ============================================================================
-// intakeWrites — VERBATIM slice of launch-site-intake's reusable write helpers
-// (design gate 2026-08-12, R6). These functions are copied byte-for-byte from
-// supabase/functions/launch-site-intake/index.ts so the new importer
-// (import-intake-submissions) reproduces its writes EXACTLY. launch-site-intake
-// itself is the untouched original — it still defines these inline; this module
-// is a copy, and a verbatim-slice check asserts the two match.
+// intakeWrites — the importer's write helpers for launch-site intake submissions
+// (design gate 2026-08-12, R6). Originally a byte-for-byte slice of
+// supabase/functions/launch-site-intake/index.ts, so that the importer
+// (import-intake-submissions) reproduced its writes exactly.
+//
+// THE TWO HAVE DIVERGED as of this commit (intake contact, C1-C4): IntakeRequest
+// here carries contact_name/contact_email, buildIntakeMarkdown prints them, and
+// insertIntakeResponse writes them to intake_responses. launch-site-intake still
+// has the older copy and drops those fields. Do NOT treat the two as identical,
+// and do not assume a check enforces it — no verbatim-slice test was ever
+// implemented; the claim that one existed lived only in this comment.
+//
+// launch-site-intake is the OLDER, BYPASSED path: today a submission goes
+// quiz → Vercel relay → hosted mailbox (receive-intake) → this importer.
+// It is left untouched deliberately; reconciling or retiring it is its own gate.
 //
 // Deliberately NOT copied: findOrCreateCompany (the importer replaces it with a
 // Fix-A frozen-excluding, deterministic-tiebreaker match), and the handler-only
@@ -24,6 +33,11 @@ type IntakeRequest = {
   desired_outcome?: string;
   desired_outcome_other?: string;
   success_definition?: string;
+  // Optional contact the launch-site quiz collects (R1). Both may be absent, blank, or — for
+  // the email — malformed: the quiz shape-checks client-side only and the relay deliberately
+  // keeps a malformed address rather than rejecting the submission.
+  contact_name?: string;
+  contact_email?: string;
   company_name?: string;
   website_url?: string;
   industry?: string;
@@ -107,6 +121,8 @@ function buildIntakeMarkdown(payload: IntakeRequest, companyName: string, websit
   return [
     "# Launch-Site Intake Brief",
     "",
+    `- Name: ${present(payload.contact_name)}`,
+    `- Work email: ${present(payload.contact_email)}`,
     `- Company: ${companyName}`,
     `- Website: ${present(website)}`,
     `- Industry: ${present(payload.industry)}`,
@@ -386,6 +402,8 @@ async function insertIntakeResponse(args: {
       desired_outcome_other: p.desired_outcome_other || null,
       success_definition: p.success_definition || null,
       notes: p.notes || null,
+      contact_name: String(p.contact_name || "").trim() || null,
+      contact_email: String(p.contact_email || "").trim() || null,
       run_initial_public_signal_pass:
         typeof p.run_initial_public_signal_pass === "boolean" ? p.run_initial_public_signal_pass : null,
       mojo_snapshot: p.mojo_snapshot ?? null,
