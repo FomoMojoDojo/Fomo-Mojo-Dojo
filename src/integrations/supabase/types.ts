@@ -2917,6 +2917,7 @@ export type Database = {
           submitted_at: string | null
           success_definition: string | null
           user_id: string
+          what_would_have_to_be_true: string | null
           where_stuck: string | null
           where_stuck_other: string | null
         }
@@ -2943,6 +2944,7 @@ export type Database = {
           submitted_at?: string | null
           success_definition?: string | null
           user_id: string
+          what_would_have_to_be_true?: string | null
           where_stuck?: string | null
           where_stuck_other?: string | null
         }
@@ -2969,6 +2971,7 @@ export type Database = {
           submitted_at?: string | null
           success_definition?: string | null
           user_id?: string
+          what_would_have_to_be_true?: string | null
           where_stuck?: string | null
           where_stuck_other?: string | null
         }

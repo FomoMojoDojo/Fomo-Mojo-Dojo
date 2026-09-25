@@ -110,6 +110,9 @@ function SubmissionBody({ r, companyId }: { r: IntakeResponseRow; companyId: str
       <Section title="Where you're headed">
         <Field label="Desired outcome" value={[r.desired_outcome, r.desired_outcome_other].filter(Boolean).join(" — ")} />
         <Field label="Success definition" value={r.success_definition} />
+        {String(r.what_would_have_to_be_true ?? "").trim() && (
+          <Field label="What would have to be true" value={r.what_would_have_to_be_true} />
+        )}
       </Section>
 
       <Section title="MojoMap™ snapshot">

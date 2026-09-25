@@ -33,6 +33,10 @@ type IntakeRequest = {
   desired_outcome?: string;
   desired_outcome_other?: string;
   success_definition?: string;
+  // The client's stated assumption: "What would have to be true for that to work?" The quiz has
+  // sent this since the 8-beat port; until W1 (2026-09-25) this type did not carry it, so every
+  // import dropped it. A stated assumption, not a validated one.
+  what_would_have_to_be_true?: string;
   // Optional contact the launch-site quiz collects (R1). Both may be absent, blank, or — for
   // the email — malformed: the quiz shape-checks client-side only and the relay deliberately
   // keeps a malformed address rather than rejecting the submission.
@@ -134,6 +138,7 @@ function buildIntakeMarkdown(payload: IntakeRequest, companyName: string, websit
     "## Desired Outcome",
     `- Outcome: ${present(payload.desired_outcome)}${payload.desired_outcome_other ? ` (${payload.desired_outcome_other})` : ""}`,
     `- Success definition: ${present(payload.success_definition)}`,
+    `- What would have to be true: ${present(payload.what_would_have_to_be_true)}`,
     "",
     "## Intake Signals",
     `- Where stuck: ${present(payload.where_stuck)}${payload.where_stuck_other ? ` (${payload.where_stuck_other})` : ""}`,
@@ -401,6 +406,7 @@ async function insertIntakeResponse(args: {
       desired_outcome: p.desired_outcome || null,
       desired_outcome_other: p.desired_outcome_other || null,
       success_definition: p.success_definition || null,
+      what_would_have_to_be_true: String(p.what_would_have_to_be_true || "").trim() || null,
       notes: p.notes || null,
       contact_name: String(p.contact_name || "").trim() || null,
       contact_email: String(p.contact_email || "").trim() || null,
