@@ -18,7 +18,7 @@ const db = live ? createClient(URL_, KEY) : (null as never);
 const LONG_TRANSCRIPT = (() => {
   const lines: string[] = [];
   for (let t = 0; t < 60; t++) {
-    lines.push(`Client ${t % 2 === 0 ? "One" : "Two"} | 00:${String(t).padStart(2, "0")}:00`);
+    lines.push(`${t % 2 === 0 ? "Ada Lovelace" : "Grace Hopper"} | 00:${String(t).padStart(2, "0")}:00`);
     lines.push("We lose two whole days every month reconciling the intake spreadsheet by hand, and that is before the funder report.");
     lines.push("What I want is to see the entire waitlist in one place before the Monday meeting every single week without fail.");
     lines.push("");
@@ -26,14 +26,18 @@ const LONG_TRANSCRIPT = (() => {
   return lines.join("\n");
 })();
 
+// 4d R2 keeps a person's name out of a derived statement, and 4e N2 makes the statement's OBJECT come
+// from the quote — so a fixture speaker called "Client Two" collides with the word "two" in the words
+// and every statement built from them lands annotated on the name guard instead of reaching the judge.
+// The labels are ordinary names for that reason.
 const TRANSCRIPT = [
-  "Client One | 00:00:04",
+  "Ada Lovelace | 00:00:04",
   "We lose two whole days every month reconciling the intake spreadsheet by hand.",
   "",
   "Our Consultant | 00:01:12",
   "What we usually see at this stage is that the intake is the bottleneck for everyone.",
   "",
-  "Client Two | 00:02:30",
+  "Grace Hopper | 00:02:30",
   "What I want is to see the entire waitlist in one place before the Monday meeting.",
 ].join("\n");
 
@@ -52,7 +56,7 @@ function startStubOllama(): { port: number; close: () => void } {
     let content = "{}";
     if (system.includes("WORK IN TWO STEPS")) {   // 4d R4 replaced "THE ITEM TEST" as the finder prompt marker
       // The quote must be what R1 asks for: a WHOLE SENTENCE from the passage BODY. This stub used to
-      // capture the passage header ("Client One | 00:00:04") and 4a accepted it; R1's fragment floor
+      // capture the passage header ("Ada Lovelace | 00:00:04") and 4a accepted it; R1's fragment floor
       // does not, and rightly so.
       // 4d R3 renders the window as one line per passage; 4d R4 wants an OBJECT drawn from the
       // passage alongside the quote, so the stub takes the first few words of the sentence as the
@@ -70,9 +74,17 @@ function startStubOllama(): { port: number; close: () => void } {
     } else if (system.includes("strict ODI canonical form")) {
       // 4d R1: an interview need carries no when-clause — the old stub statement had one and the
       // clarifier gate now refuses it before any judge call, which is the rule working.
-      content = JSON.stringify({ odi_canonical_statement: "Minimize the time spent on manual intake reconciliation" });
+      // 4e N2: the OBJECT must be the speaker's, so a single fixed statement can no longer serve every
+      // passage. The stub now builds the object out of the quote it was handed, which is exactly what
+      // the writer is being told to do.
+      const quote = (user.match(/desired_outcome:\s*([\s\S]*?)(?:\njob_executor:|$)/)?.[1] ?? "").trim();
+      const object = quote.replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/)
+        .filter((w) => !/^(when|whenever|interviewee|interviewer)$/i.test(w))
+        .slice(2, 7).join(" ").toLowerCase();
+      content = JSON.stringify({ odi_canonical_statement: `Minimize the time of ${object}` });
     } else if (system.includes("FAITHFUL IN SUBSTANCE")) {
-      content = JSON.stringify({ ok: true, reason: "the statement keeps what the words were about" });
+      // 4e N3: the judge answers with TYPED OBJECTIONS; an empty list is a pass.
+      content = JSON.stringify({ ok: true, objections: [] });
     }
     return new Response(JSON.stringify({ message: { content }, prompt_eval_count: 10, eval_count: 5 }), { headers: { "Content-Type": "application/json" } });
   });

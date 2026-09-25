@@ -122,6 +122,9 @@ Deno.test("router: a not-built kind lands ANNOTATED with the signed reason and n
 // 4d R1: an interview need is "[verb] the [dimension] of [object]" and carries NO when-clause — the
 // old fixture had one and the clarifier gate now refuses it, which is the rule working.
 const GOOD_CANONICAL = "Minimize the time to reconcile intake records";
+/** 4e N2: the object must come from the speaker's words, so the fixture's words now carry it. Before
+ *  N2 any raw words would do, because nothing checked the object against them. */
+const GOOD_WORDS = "We lose two days every month reconciling intake records by hand.";
 
 function stubCall(map: Record<string, string>): Call {
   return ({ stage }) => Promise.resolve(map[stage] ?? map[stage.split(":")[0]] ?? "{}");
@@ -132,7 +135,7 @@ Deno.test("need: a valid canonical statement is judged and lands accepted with t
     "convert:need": JSON.stringify({ odi_canonical_statement: GOOD_CANONICAL }),
     judge: JSON.stringify({ ok: true, reason: "the statement keeps what the words were about" }),
   });
-  const c = await convertItem({ call, kind: "pain_point", rawWords: "We lose two days every month reconciling by hand.", speaker: "Ada", jobExecutor: "families" });
+  const c = await convertItem({ call, kind: "pain_point", rawWords: GOOD_WORDS, speaker: "Ada", jobExecutor: "families", passageText: GOOD_WORDS });
   assertEquals(c.framework_form, "odi_need");
   assertEquals(c.judge_state, "accepted");
   assertEquals(c.framework_statement, GOOD_CANONICAL);
@@ -153,13 +156,16 @@ Deno.test("need: a FORMAT reject re-prompts once, then lands annotated carrying 
 });
 
 Deno.test("need: a judge REJECT lands annotated with the judge's reason, never dropped", async () => {
+  // 4e N3: the judge lists TYPED objections and the CODE builds the reason from type + term. The
+  // model's own sentence is no longer the reason, because a sentence cannot be checked against the
+  // passage and a term can.
   const call = stubCall({
     "convert:need": JSON.stringify({ odi_canonical_statement: GOOD_CANONICAL }),
-    judge: JSON.stringify({ ok: false, reason: "the statement adds a deadline the words never mention" }),
+    judge: JSON.stringify({ ok: false, objections: [{ type: "added_quantity", term: "deadline" }] }),
   });
-  const c = await convertItem({ call, kind: "outcome", rawWords: "We measure call-backs.", speaker: "Ada", jobExecutor: "families" });
+  const c = await convertItem({ call, kind: "outcome", rawWords: GOOD_WORDS, speaker: "Ada", jobExecutor: "families", passageText: GOOD_WORDS });
   assertEquals(c.judge_state, "annotated");
-  assertEquals(c.judge_reason, "the statement adds a deadline the words never mention");
+  assertEquals(c.judge_reason, 'adds the quantity "deadline"');
   assertEquals(c.framework_statement, GOOD_CANONICAL, "the statement is KEPT beside the annotation");
 });
 
@@ -262,7 +268,7 @@ Deno.test("RULING A: the judge is TOLD the kind and the form, and the exemption 
     if (stage === "convert:job") return Promise.resolve(JSON.stringify({ jtbd: "Getting a young person seen quickly after a referral." }));
     return Promise.resolve(JSON.stringify({ ok: true, reason: "r" }));
   };
-  await convertItem({ call, kind: "pain_point", rawWords: "We lose two days.", speaker: "Ada", jobExecutor: "families" });
+  await convertItem({ call, kind: "pain_point", rawWords: GOOD_WORDS, speaker: "Ada", jobExecutor: "families", passageText: GOOD_WORDS });
   await convertItem({
     call, kind: "job", rawWords: "We need them seen quickly.", speaker: "Ada", jobExecutor: "families",
     solutionAgnostic: () => Promise.resolve({ solutionFree: true, tally: "3-0 accepted", reason: "ok" }),
@@ -274,12 +280,14 @@ Deno.test("RULING A: the judge is TOLD the kind and the form, and the exemption 
   assert(FAITHFUL_SYSTEM.includes("FAITHFUL IN SUBSTANCE"));
   assert(FAITHFUL_SYSTEM.includes("JUDGE SUBSTANCE, NOT WORDING"));
   assert(FAITHFUL_SYSTEM.includes("Minimize, Maximize, Reduce, Increase"));
-  assert(FAITHFUL_SYSTEM.includes("[verb] the [dimension] of [object] when [context]"));
+  // 4e N2 took the when-clause out of the frame the judge is shown and put the METRIC in, and 4e N3
+  // replaced the free-sentence reason with typed objections. Both are pinned in rulings4e.test.ts.
+  assert(FAITHFUL_SYSTEM.includes("[verb] the [metric] of [object]"));
   assert(FAITHFUL_SYSTEM.includes("verb + object + contextual clarifier"));
   assert(FAITHFUL_SYSTEM.includes("ADDS an object, a metric, a quantity, a context or a solution"));
   assert(FAITHFUL_SYSTEM.includes("LOSES the object or the context"));
-  // rule 4 is unchanged: the reason is still mandatory on BOTH outcomes
-  assert(FAITHFUL_SYSTEM.includes("ALWAYS state your reason"));
+  // rule 4 is unchanged in substance: an outcome still carries a reason, now built from the objections
+  assert(FAITHFUL_SYSTEM.includes("WHEN YOU REJECT, LIST YOUR OBJECTIONS"));
 });
 
 Deno.test("RULING A: the user prompt reminds the judge whose scaffolding the form is", () => {
@@ -407,7 +415,9 @@ Deno.test("R1: the item test and the not-an-item examples are in the finder prom
   assert(FINDER_SYSTEM.includes("A NARRATED FACT IS NOT AN ITEM"));
   assert(FINDER_SYSTEM.includes("A schedule, a headcount, a date, a piece of history"));
   assert(FINDER_SYSTEM.includes("AN ANSWER IS NOT AN ITEM"));   // 4d R3
-  assert(FINDER_SYSTEM.includes("If the passage carries none, list none and move on"));   // 4d R4
+  // 4e N7 enumerated the slots, 4e-2 N9 made them a checklist, 4e-3 N14 put the enumeration back.
+  // The "yields nothing" default survives every one of them, which is what this test is about.
+  assert(FINDER_SYSTEM.includes("If the passage carries none of the eight, list none and move on"));
   // the eight kinds keep their test clauses
   // 4d R4 moved the per-kind definitions into the two-step prompt's kind list; the clauses were
   // reworded with them. Every kind is still defined — that is what this pins — and rulings4d.test.ts

@@ -292,7 +292,7 @@ Deno.test("R9: a duplicate is not itself a yardstick — three of a kind pair to
 
 // ── R10 ──────────────────────────────────────────────────────────────────────────────────────────
 Deno.test("R10: the rules version moved", () => {
-  assertEquals(PARSER_RULES_VERSION, "2026-09-23.3");   // 4c set .2, 4d R7 set .3
+  assertEquals(PARSER_RULES_VERSION, "2026-09-24.4");   // 4c .2, 4d R7 .3, 4e 09-24.1, N9 .2, N14 .3
 });
 
 // ── the live finder, on synthetic fixtures ───────────────────────────────────────────────────────

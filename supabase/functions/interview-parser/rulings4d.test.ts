@@ -25,7 +25,9 @@ const SIDES = (ours: string[]) => (label: string | null) => (label && ours.inclu
 
 // ── R1: no clarifier on an interview need ────────────────────────────────────────────────────────
 Deno.test("R1: the form has no when-slot, and the four banned tokens are named", () => {
-  assert(ODI_CONTEXT_RULE.includes('"[Minimize/Maximize/Reduce/Increase] the [dimension] of [object]"'));
+  // 4e N2 replaced [dimension] with a CLOSED METRIC SET. What 4d R1 signed — the form ends at the
+  // object and has no when-slot — is unchanged and is what this test pins.
+  assert(ODI_CONTEXT_RULE.includes('"[Minimize/Maximize/Reduce/Increase] the [metric] of [object]"'));
   assert(ODI_CONTEXT_RULE.includes('There is NO "when" clause. Do not write one.'));
   assert(ODI_CONTEXT_RULE.includes("End the statement at the object."));
   assert(ODI_CONTEXT_RULE.includes('never write "the interviewee" or "the interviewer"'));
@@ -63,9 +65,14 @@ Deno.test("R1: a clean two-part need passes the gate and reaches the judge", asy
   let writes = 0, judged = 0;
   const call: Call = ({ stage }) => {
     if (stage === "convert:need") { writes++; return Promise.resolve(JSON.stringify({ odi_canonical_statement: "Minimize the time of intake reconciliation" })); }
-    judged++; return Promise.resolve(JSON.stringify({ ok: true, reason: "faithful" }));
+    judged++; return Promise.resolve(JSON.stringify({ ok: true, objections: [] }));
   };
-  const c = await convertItem({ call, kind: "pain_point", rawWords: "Intake takes us far too long every single month.", speaker: "A", jobExecutor: "" });
+  // 4e N2: the object's words must be the speaker's, so the fixture says "reconciliation" as well as
+  // "intake". Before N2 nothing compared the object to the words at all.
+  const c = await convertItem({
+    call, kind: "pain_point", rawWords: "Intake reconciliation takes us far too long every single month.",
+    speaker: "A", jobExecutor: "", passageText: "Intake reconciliation takes us far too long every single month.",
+  });
   assertEquals(writes, 1); assertEquals(judged, 1);
   assertEquals(c.judge_state, "accepted");
 });
@@ -165,8 +172,10 @@ Deno.test("R3: without the context option the prompt is the old flat shape — n
 // ── R4: the two-step finder ──────────────────────────────────────────────────────────────────────
 Deno.test("R4: the prompt asks for objects first, then the sentence carrying each", () => {
   assert(FINDER_SYSTEM.includes("WORK IN TWO STEPS, per passage"));
-  assert(FINDER_SYSTEM.includes("STEP ONE: list the WANTS, STRUGGLES, GOALS and RESULTS"));
-  assert(FINDER_SYSTEM.includes("at most six words, using the passage's own words"));
+  // 4e N7 replaced the four-noun step one; 4e-2 N9 made the slots a checklist. The SHAPE 4d R4 signed
+  // — objects first, then the sentence carrying each — is what this test pins, and it survives both.
+  assert(FINDER_SYSTEM.includes("STEP ONE: go through EVERY SLOT BELOW, IN ORDER"));
+  assert(FINDER_SYSTEM.includes("an OBJECT of at most six words, using the"));
   assert(FINDER_SYSTEM.includes("STEP TWO: for each object, give the VERBATIM SENTENCE"));
   assert(FINDER_SYSTEM.includes("Two objects means two entries with two different quotes"));
   assert(FINDER_SYSTEM.includes('"object":"<= 6 words from the passage>"'));
@@ -292,16 +301,18 @@ Deno.test("R6: a job that opens with a modal re-prompts once, then lands annotat
 Deno.test("R6: a bare-verb job passes the gate", async () => {
   let writes = 0;
   const call: Call = ({ stage }) => {
-    if (stage === "convert:job") { writes++; return Promise.resolve(JSON.stringify({ jtbd: "Explain what we do to a new funder." })); }
-    return Promise.resolve(JSON.stringify({ ok: true, reason: "faithful" }));
+    // 4e-3 N20: the old fixture statement carried "we", which is now a gate. The RULE this test pins
+    // — a statement that starts with the verb passes R6 — is unchanged.
+    if (stage === "convert:job") { writes++; return Promise.resolve(JSON.stringify({ jtbd: "Explain the work to a new funder." })); }
+    return Promise.resolve(JSON.stringify({ ok: true, objections: [] }));
   };
-  const c = await convertItem({ call, kind: "job", rawWords: "We need to do a better job of explaining what we do.", speaker: "A", jobExecutor: "", side: "client", scope: "internal" });
+  const c = await convertItem({ call, kind: "job", rawWords: "We need to do a better job of explaining what we do.", speaker: "A", jobExecutor: "", side: "client", scope: "internal", passageText: "We need to do a better job of explaining what we do." });
   assertEquals(writes, 1);
   assertEquals(c.judge_state, "accepted");
 });
 
 // ── R7 ───────────────────────────────────────────────────────────────────────────────────────────
-Deno.test("R7: the rules version moved", () => assertEquals(PARSER_RULES_VERSION, "2026-09-23.3"));
+Deno.test("R7: the rules version moved", () => assertEquals(PARSER_RULES_VERSION, "2026-09-24.4"));
 
 // ── live ─────────────────────────────────────────────────────────────────────────────────────────
 Deno.test({ name: "R1 (live): a written need never contains 'when' or 'interviewee'", ignore: !LIVE, fn: async () => {

@@ -42,8 +42,20 @@ export const FINDER_SYSTEM =
   "struggle, a goal or a result of its own, in which case that part is the item. " +
   // 4d R4: the two-step output
   "WORK IN TWO STEPS, per passage. " +
-  "STEP ONE: list the WANTS, STRUGGLES, GOALS and RESULTS the passage carries, each as an OBJECT of at " +
-  "most six words, using the passage's own words. If the passage carries none, list none and move on. " +
+  // 4e-3 N14 (operator ruling, 2026-09-24): STEP ONE RETURNS TO THE N7 ENUMERATION.
+  //
+  // N9 rewrote these eight slots as a checklist to stop the finder looping, and it worked — but the
+  // replay measured what it cost: under N9 the finder returns NO OUTPUT AT ALL for kickoff turns 62
+  // and 226, where the N7 wording found both and N4 fired on 226. The recall loss was entirely at the
+  // finder, not at any gate. N8's cap is now the backstop the loop needed, and N15 makes a capped
+  // finder a SPLIT rather than a failure, so the enumeration can come back and pay its own way.
+  "STEP ONE: go through EVERY SLOT BELOW, IN ORDER, and list what this passage carries for it — each " +
+  "as an OBJECT of at most six words, using the passage's own words: " +
+  "(1) what they WANT; (2) what they STRUGGLE WITH; (3) what they are TRYING TO GET DONE; " +
+  "(4) how they JUDGE RESULTS; (5) what they BELIEVE; (6) how they REACH PEOPLE; " +
+  "(7) what they STAND FOR against the alternatives; (8) what they ASK OF US. " +
+  "A slot this passage says nothing about yields nothing for that slot — go to the next one. " +
+  "If the passage carries none of the eight, list none and move on. " +
   "STEP TWO: for each object, give the VERBATIM SENTENCE OR SENTENCES from that passage that carry it — " +
   "complete sentences, copied exactly, and each one must actually contain the object's words. " +
   "One entry per object. Two objects means two entries with two different quotes. " +
@@ -61,20 +73,34 @@ export const FINDER_SYSTEM =
   "hypothesis (a belief about why something is the way it is, or about themselves). " +
   "A CLIENT REQUEST AIMED AT US OR AT MOJOMAP IS AN ASK. So is a reaction to the read on screen — a " +
   "comment on the first read, a paragraph, a claim or a chip is an ask, whether it agrees or disagrees. " +
+  // 4e-4 R2 (operator ruling, 2026-09-24): N17(b) IS REMOVED. The ablation measured it: telling the
+  // finder about the on-screen walkthrough SUPPRESSED turn 226 on its own — the archetypal read
+  // reaction it was written to catch — and removing it alone took kept items from 34 to 45 and
+  // accepted client jobs from 1 to 7. Read reactions are captured by CODE instead (N4, N17(a) and
+  // N21), which needs no instruction and cannot be talked out of firing.
   "When such a reaction ALSO implies a need of their own, give a SECOND entry for that need under its " +
   "own kind. " +
   "A NARRATED FACT IS NOT AN ITEM. A schedule, a headcount, a date, a piece of history, or a " +
   "description of what the company does is not an item, however clearly it is stated. " +
+  // 4e-3 N18: run 3456 landed meeting logistics as asks on turns 173 and 178.
+  "MEETING LOGISTICS ARE NOT ITEMS. Sharing or pulling up a page, the screen, the font size, reading " +
+  "along, who can see what, scheduling the next session, and audio or connection trouble are how the " +
+  "meeting is being run — never a want, a struggle, a goal, or a request about the work. " +
   "SCOPE, per object: \"market\" when it is about donors, funders, clients, partners or the outside " +
   "world; \"internal\" when it is about the speaker's own organization, team, staffing, process or tools. " +
   `raw_words is one or more COMPLETE SENTENCES, at most ${MAX_RAW_WORDS} characters, copied exactly. ` +
   "passage_index is the number of the passage the quote came from. " +
+  // 4e-4 R1 (operator ruling, 2026-09-24): N19 IS REMOVED. The ablation measured it: asking for one
+  // sentence per quote strips the executor framing the job writer keys on ("we need to…"), and the
+  // "no executor goal in the words" refusal rate went 90% with it to 22% without it, accepted client
+  // jobs 1 to 6. One item per goal is not worth nine jobs in ten.
   "Do not invent objects the passage does not carry, and do not reuse one quote for two objects. " +
   'JSON only: {"items":[{"passage_index":<int>,"object":"<= 6 words from the passage>","kind":"job|pain_point|desire|outcome|route|step|positioning|cascade|ask|hypothesis","scope":"market|internal","raw_words":"<verbatim sentence(s) containing the object>"}]}.';
 
-/** 4d R5: an ask that is a reaction to the document on screen carries this prefix on its reason, so
- *  the operator can tell feedback on the read from a request for work. */
-export const READ_FEEDBACK_PREFIX = "read feedback:";
+/** 4d R5 / 4e N4: an item that reacts to the document on screen carries this prefix, so the operator
+ *  can tell feedback on the read from a request for work. The string lives in rules.ts now — N4 makes
+ *  it a signed rule rather than a prompt detail — and is re-exported here for the callers that had it. */
+export { READ_FEEDBACK_STATEMENT_PREFIX as READ_FEEDBACK_PREFIX } from "./rules.ts";
 
 /**
  * 4d R3: the window is rendered as the CONVERSATION it is — each passage on its own line, tagged with
@@ -289,6 +315,23 @@ export function nameHits(statement: string, names: readonly string[]): string[] 
   return names.filter((n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(t));
 }
 
+// ── N20: NO FIRST-PERSON WORDS IN A DERIVED STATEMENT (operator ruling, 2026-09-24) ─────────────
+//
+// Measured on run 3456: need statement 364fbe10 copied the speaker's first-person words straight into
+// the derived form. A framework statement says what is to be achieved, not who is speaking — the same
+// reason R2 keeps a person's NAME out of it. This is decidable, so the code decides it: one re-prompt
+// carrying the reason, then the item lands annotated with the statement kept beside it.
+export const FIRST_PERSON_REASON = "first-person words in the statement";
+export const FIRST_PERSON_WORDS = ["i", "me", "my", "mine", "we", "us", "our", "ours"] as const;
+const FIRST_PERSON_RE = new RegExp(`\\b(${FIRST_PERSON_WORDS.join("|")})\\b`, "i");
+
+/** Every first-person word the statement carries, in list order — the retry's feedback. */
+export function firstPersonHits(statement: string): string[] {
+  const t = String(statement ?? "");
+  return FIRST_PERSON_WORDS.filter((w) => new RegExp(`\\b${w}\\b`, "i").test(t));
+}
+export const hasFirstPerson = (statement: string): boolean => FIRST_PERSON_RE.test(String(statement ?? ""));
+
 /** R6: a job statement may not open with one of these. "need"/"want"/"try" are here because the
  *  writer is told to strip exactly those hedges; a statement that still opens with one did not. */
 export const NON_VERB_OPENERS = [
@@ -351,6 +394,60 @@ export function numericInventionReason(invented: readonly string[]): string {
   return `${NUMERIC_INVENTION_REASON}: ${invented.join(", ")}`;
 }
 
+// ── N6: A STORY IS NOT A PAIN POINT (operator ruling, 2026-09-24) ───────────────────────────────
+//
+// Two of the eleven live client needs on the 2026-09-23.3 run were STORIES — a past event narrated —
+// landed as pain_point. A story is evidence, and it is often evidence OF a pain; it is not itself a
+// thing the speaker struggles with, and reading it as one produces a "need" that is really a summary
+// of an anecdote. N6: a story yields ONLY THE ITEM IT IMPLIES, judged against the story, or nothing.
+//
+// Detection is deliberately conservative and entirely in code — two independent signals must both be
+// present, so a present-tense complaint that happens to contain one past-tense verb ("the report took
+// a week again this quarter" is still a complaint) is untouched:
+//   (a) a NARRATIVE ANCHOR — a moment in time the speaker is placing the events at, or an explicit
+//       past-habit marker; and
+//   (b) at least two PAST-TENSE VERBS, so a single "said" inside a present-tense sentence is not a story.
+export const STORY_NOT_PAIN_REASON = "a story is not a pain point — only the item it implies stands";
+
+/** Phrases that place a narrative at a moment, or mark a habit the speaker has left behind. */
+export const NARRATIVE_ANCHORS = [
+  "last week", "last month", "last year", "last night", "last friday", "last monday",
+  "last tuesday", "last wednesday", "last thursday", "last saturday", "last sunday",
+  "years ago", "months ago", "weeks ago", "days ago", "a while back", "back in", "back then",
+  "used to", "at the time", "that day", "one day", "the other day", "this one time",
+  "when we were", "when i was", "when they were", "ended up", "had just", "a few years",
+  "a couple of years", "there was a time", "we had a", "i had a", "a family called",
+] as const;
+
+/** Irregular past forms that no "-ed" test would catch. Short and common on purpose. */
+const IRREGULAR_PAST = new Set([
+  "was", "were", "had", "did", "went", "came", "got", "said", "told", "took", "gave", "made",
+  "saw", "found", "left", "kept", "sent", "brought", "thought", "knew", "ran", "began", "felt",
+  "put", "held", "lost", "won", "paid", "sat", "stood", "spoke", "wrote", "drove", "called",
+]);
+
+/** How many past-tense verbs the words carry, counting "-ed" forms and the irregulars above. */
+export function pastTenseCount(text: string): number {
+  const words = String(text ?? "").toLowerCase().split(/[^\p{L}\p{N}']+/u).filter(Boolean);
+  let n = 0;
+  for (const w of words) {
+    if (IRREGULAR_PAST.has(w)) { n++; continue; }
+    if (/[a-z]{3,}ed$/.test(w) && !/(need|speed|indeed|exceed|proceed|succeed|agreed|embed)$/.test(w)) n++;
+  }
+  return n;
+}
+
+/** The narrative anchors the words carry, in list order. */
+export function narrativeAnchors(text: string): string[] {
+  const t = String(text ?? "").toLowerCase();
+  return NARRATIVE_ANCHORS.filter((a) => t.includes(a));
+}
+
+/** N6: is this a past event narrated? Both signals must fire. */
+export function isNarratedStory(rawWords: string): boolean {
+  return narrativeAnchors(rawWords).length > 0 && pastTenseCount(rawWords) >= 2;
+}
+
 // ── the kind router (PR9) ────────────────────────────────────────────────────────────────────────
 export const NEED_KINDS: ReadonlySet<ItemKind> = new Set(["pain_point", "desire", "outcome"]);
 export const JOB_KINDS: ReadonlySet<ItemKind> = new Set(["job"]);
@@ -367,6 +464,9 @@ export type Conversion = {
   framework_form: FrameworkForm | null;
   judge_state: "accepted" | "annotated";
   judge_reason: string;
+  /** N3: what survived the term check, and what it threw away. Both travel to the run's audit row. */
+  objections_kept?: Objection[];
+  objections_dropped?: Array<Objection & { why: string }>;
 };
 
 /** Which converter a kind takes. */
@@ -404,6 +504,9 @@ export const JOB_FROM_WORDS_SYSTEM =
   "and never begin with an article or a pronoun. " +
   // R2
   "NEVER use a person's name in the statement. " +
+  // 4e-3 N20
+  "NEVER use I, me, my, mine, we, us, our or ours. The statement says what is to be achieved, not who " +
+  "is speaking. " +
   "A job statement names what the executor is trying to get done, in the executor's own words. " +
   "It never names a provider, program, service line, facility, treatment setting, or category of supplier the executor would shop for. " +
   "Form: transitive verb + object + contextual clarifier. " +
@@ -415,19 +518,140 @@ export function buildJobFromWordsUser(rawWords: string, speaker: string | null):
   return `SPEAKER: ${speaker ?? "unknown"}\nTHEIR WORDS, verbatim:\n"""${rawWords}"""\nState the job they are trying to get done.`;
 }
 
-// ── R2: the ODI writer's CONTEXT rule (operator ruling, 2026-09-23) ──────────────────────────────
+// ── N1/N2: the ODI writer for an INTERVIEW NEED (operator rulings, 2026-09-24) ───────────────────
 //
-// Measured on Edgewood's kickoff: 40 of 43 need items landed annotated, and 35 of those 40 rejections
-// were the writer ADDING a dimension or a context the words never carried — "when the interviewee",
-// "when handling inquiries", "the visibility of". The writer had been handed a job_executor string to
-// fill the when-clause with, and when the record carried no journey_key that string was the literal
-// fallback "the interviewee", which is not a context at all.
+// N1 REMOVES the 4a "no context in the words" refusal. It was written when the form still had a
+// when-clause and the writer needed a way out of inventing one; 4d took the clause away, and the
+// branch outlived its reason. Measured on the 2026-09-23.3 run it refused 5 of the 11 live client
+// needs — including needs whose object was sitting in the passage — so the escape hatch had become
+// the single largest cause of a need never being written at all. There is no no_context answer now.
 //
-// R2: the dimension and the when-context must both come from the RAW WORDS. If the words carry no
-// context, the writer says so instead of inventing one, and the item lands annotated with the signed
-// reason. The refusal rides on the call the writer already makes — the same shape as R2 of commit 3b —
-// so it costs nothing, and the "the interviewee" fallback is gone from handler.ts.
-export const NO_CONTEXT_REASON = "no context in the words";
+// N2 gives the form a CLOSED METRIC SET. An ODI need is direction + metric + object; the object must
+// come from the passage's words, and the metric is chosen from {time, likelihood, effort, number}.
+// The metric is FORM SCAFFOLDING — the writer picks the one that fits, the same way it picks the
+// direction verb — so it is exempt from the judge exactly as the direction verb is. That amends the
+// Sep 22 ruling A for interview needs only. What it stops is what the operator read on 0aa2ab49:
+// the writer reaching for "ambiguity" and "clarity", metric words nobody said, which then read as the
+// speaker's own measure.
+
+// ── N2/N3: STEM MATCHING, the one notion of "this word is in the text" ──────────────────────────
+//
+// Both new rules ask the same question — does this word occur in the speaker's words? — and both must
+// answer it the same way, or an objection N3 drops would be a violation N2 raises. So the test lives
+// once. It is deliberately crude: lowercase, strip a short list of English suffixes, compare stems.
+// "retention" matches "retain" and "retaining"; "placements" matches "placement". It does NOT do
+// synonyms, and it is not meant to: the rule is that the WORD is there, not that the idea is.
+const SUFFIXES = ["ization", "isation", "ations", "ation", "ments", "ment", "ness", "ities", "ity",
+  "ingly", "edly", "ing", "ies", "ied", "ers", "er", "ors", "or", "ed", "es", "s", "ly", "al"];
+
+/** The crude stem of one word. Never shorter than 3 characters — trimming past that turns unrelated
+ *  words into the same stem, which is how a term check starts forgiving inventions. */
+export function stemOf(word: string): string {
+  let w = String(word ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  for (const suf of SUFFIXES) {
+    if (w.length - suf.length >= 3 && w.endsWith(suf)) { w = w.slice(0, -suf.length); break; }
+  }
+  // The silent e, which is what separates "reconcile" from "reconciling" once "ing" is gone. Without
+  // this the two are different stems and the term check calls the speaker's own verb an invention.
+  if (w.length >= 4 && w.endsWith("e")) w = w.slice(0, -1);
+  return w;
+}
+
+/** Every stem in a text, as a set. */
+export function stemsOf(text: string): Set<string> {
+  return new Set(String(text ?? "").split(/[^\p{L}\p{N}]+/u).filter(Boolean).map(stemOf).filter(Boolean));
+}
+
+/** Does `term` occur in `text`? Every word of the term must be there, stem-matched, case-insensitive. */
+export function termOccursIn(term: string, text: string): boolean {
+  const words = String(term ?? "").split(/[^\p{L}\p{N}]+/u).filter(Boolean).map(stemOf).filter(Boolean);
+  if (!words.length) return false;
+  const hay = stemsOf(text);
+  return words.every((w) => hay.has(w));
+}
+
+// ── N2: the closed metric set and the guards that hold the form to it ───────────────────────────
+
+/** N2: the four measures an interview need may use. Form scaffolding — the writer chooses one the way
+ *  it chooses the direction verb, and the judge is told both are the form's, not the speaker's. */
+export const NEED_METRICS = ["time", "likelihood", "effort", "number"] as const;
+export type NeedMetric = (typeof NEED_METRICS)[number];
+const METRIC_SET = new Set<string>(NEED_METRICS);
+
+/** The direction verbs the form allows, named here so the prompt, the guard and the judge agree. */
+export const NEED_DIRECTIONS = ["minimize", "minimise", "maximize", "maximise", "reduce", "increase"] as const;
+
+/** N2: measure words the writer reaches for when it is inventing one. Not exhaustive and not meant to
+ *  be — it is the list the operator actually read coming out of the writer, plus the near neighbours
+ *  of those. A term here is a violation only when the SPEAKER did not say it. */
+export const OFF_SET_METRIC_TERMS = [
+  "ambiguity", "clarity", "quality", "accuracy", "visibility", "efficiency", "effectiveness",
+  "speed", "frequency", "cost", "level", "degree", "extent", "amount", "rate", "ease", "burden",
+  "complexity", "consistency", "reliability", "satisfaction", "transparency", "alignment",
+  "confusion", "uncertainty", "difficulty", "readiness", "strength", "depth", "breadth",
+] as const;
+
+export const NEED_FORM_REASON = "not in the interview need form";
+export const OFF_SET_METRIC_REASON = "metric outside the closed set";
+export const INVENTED_METRIC_REASON = "adds a measure the words do not carry";
+export const OBJECT_NOT_IN_WORDS_REASON = "the object is not in the speaker's words";
+
+/** The connector the shared ODI form allows between the metric and the object. N2 closes the METRIC;
+ *  it does not touch the connector, which stays exactly as odiCanonical.ts has always spelled it —
+ *  and the form is often written with none at all ("the time SPENT reconciling…"), so the parse takes
+ *  the head noun after "the" as the metric and everything after it as the object. */
+export const NEED_CONNECTORS = ["to", "of", "in"] as const;
+const NEED_FORM_RE = new RegExp(
+  `^\\s*(${NEED_DIRECTIONS.join("|")})\\s+the\\s+([\\p{L}]+)\\b\\s*(.*?)\\s*\\.?\\s*$`, "iu");
+
+export type NeedParts = { direction: string; metric: string; object: string };
+
+/** Split a statement into the form's three slots, or null when it is not in the form at all. */
+export function needParts(statement: string): NeedParts | null {
+  const m = NEED_FORM_RE.exec(String(statement ?? ""));
+  if (!m) return null;
+  return { direction: m[1].toLowerCase(), metric: m[2].toLowerCase(), object: m[3].trim() };
+}
+
+/** N2, decided by the CODE: the metric slot is one of the four, the object's words are the speaker's,
+ *  and no other measure word appears unless the speaker said it. Returns "" when the statement is
+ *  clean, else the reason to re-prompt with. No model call is spent on any of it. */
+export function needFormViolation(statement: string, rawWords: string): string {
+  const st = String(statement ?? "").trim();
+  if (!st) return NEED_FORM_REASON;
+  const parts = needParts(st);
+  if (!parts) return `${NEED_FORM_REASON}: expected "[Minimize/Maximize/Reduce/Increase] the [${NEED_METRICS.join("/")}] of [object]"`;
+  if (!METRIC_SET.has(parts.metric)) {
+    return `${OFF_SET_METRIC_REASON}: ${parts.metric} (use one of ${NEED_METRICS.join(", ")})`;
+  }
+  // every content word of the object must be the speaker's
+  if (!String(parts.object).trim()) return `${NEED_FORM_REASON}: the statement names no object`;
+  // No other measure word anywhere in the statement, unless the speaker used it. This runs BEFORE the
+  // object check because an invented measure almost always sits INSIDE the object slot, and "the
+  // object is not in the speaker's words: clarity" buries the rule that actually fired. N2's whole
+  // point is that the writer reached for a measure nobody offered it, so the reason says that.
+  const invented = OFF_SET_METRIC_TERMS
+    .filter((t) => termOccursIn(t, st) && !termOccursIn(t, rawWords));
+  if (invented.length) return `${INVENTED_METRIC_REASON}: ${invented.join(", ")}`;
+  const missing = String(parts.object).split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+    .filter((w) => !OBJECT_STOPWORDS.has(w.toLowerCase()))
+    .filter((w) => !termOccursIn(w, rawWords));
+  if (missing.length) return `${OBJECT_NOT_IN_WORDS_REASON}: ${[...new Set(missing)].join(", ")}`;
+  return "";
+}
+
+/** Function words and FORM GLUE inside an object slot. The rule is that the speaker owns what the
+ *  statement is ABOUT — the nouns — not that they uttered every connective the form needs to hang
+ *  them on. "Reduce the time SPENT reconciling the intake spreadsheet" is the speaker's object with
+ *  the form's own participle in front of it; demanding "spent" be in the quoted words would reject a
+ *  faithful statement, and that is the failure mode this list exists to avoid. */
+const OBJECT_STOPWORDS = new Set([
+  "the", "a", "an", "of", "for", "to", "in", "on", "at", "by", "with", "and", "or", "from", "into", "per",
+  "our", "their", "its", "his", "her", "your", "my", "we", "they", "it", "that", "this", "these", "those",
+  // form glue: the participles and light verbs the ODI frame hangs an object on
+  "spent", "spend", "spending", "taken", "take", "takes", "taking", "needed", "required", "involved",
+  "getting", "doing", "making", "having", "being", "used", "given", "when", "while", "each", "every",
+]);
 
 /** Appended to ODI_CANONICAL_SYSTEM; the shared formula prompt itself is untouched, because three
  *  other callers depend on it byte-for-byte. */
@@ -435,23 +659,36 @@ export const ODI_CONTEXT_RULE =
   // 4d R1 (operator review, 2026-09-23). The when-clause is GONE from this form. 4a/4c made it
   // conditional and the writer kept reaching for it anyway — a form with a slot invites something to
   // fill the slot. An interview need is the verb, the dimension and the object, and it stops.
-  " R1 (2026-09-23) — THE FORM FOR AN INTERVIEW NEED IS EXACTLY THIS, AND NOTHING MORE: " +
-  "\"[Minimize/Maximize/Reduce/Increase] the [dimension] of [object]\". " +
+  " N2 (2026-09-24) — THE FORM FOR AN INTERVIEW NEED IS EXACTLY THIS, AND NOTHING MORE: " +
+  "\"[Minimize/Maximize/Reduce/Increase] the [metric] of [object]\". " +
+  `THE [metric] IS ONE OF EXACTLY FOUR WORDS AND NOTHING ELSE: ${NEED_METRICS.join(", ")}. ` +
+  "Choose the one that fits what the speaker wants more or less of: " +
+  "time (how long something takes or how long they wait), " +
+  "likelihood (how often something happens, or the chance that it does), " +
+  "effort (how much work, hassle or cost it takes), " +
+  "number (how many of something there are). " +
+  "NEVER write any other measure word in the statement — not \"ambiguity\", not \"clarity\", not " +
+  "\"quality\", not \"visibility\", not \"accuracy\", not \"level\", not \"degree\" — unless the speaker " +
+  "said that word themselves. The four words above are the form's, and they are the only measures you have. " +
+  "THE [object] IS THE SPEAKER'S, IN THE SPEAKER'S OWN WORDS, taken from the quoted words in front of you. " +
   "There is NO \"when\" clause. Do not write one. Never use the words \"when\" or \"whenever\" anywhere in the statement. " +
   "End the statement at the object. " +
   "NEVER name the executor, and never write \"the interviewee\" or \"the interviewer\" — the statement says what is to be " +
   "achieved, not who is achieving it. " +
   // R2
   "NEVER use a person's name. Not the speaker's, not anyone they mention. " +
+  // 4e-3 N20
+  "NEVER use I, me, my, mine, we, us, our or ours. " +
   // the dimension/object rule, carried forward from 4a R2
-  "THE DIMENSION AND THE OBJECT COME FROM THE SPEAKER, NOT FROM YOU. " +
-  "The [dimension] must be something the quoted words actually name or measure, and the [object] must be what the words " +
-  "are actually about. Never introduce a metric, a dimension or a thing the words do not carry. " +
+  "THE OBJECT COMES FROM THE SPEAKER, NOT FROM YOU. " +
+  "The [object] must be what the words are actually about, and its words must be the speaker's. " +
+  "Never introduce a thing the words do not carry. " +
   // 4c R6 — the anecdote rule
   "WHEN THE WORDS TELL A STORY, state the need the story implies. What the speaker was up against, and " +
   "what they were trying to achieve, are carried by the story as a whole; you do not need a sentence that " +
   "states the need outright. Do not add anything the story does not support. " +
-  'If the quoted words carry no need you can state in this form, answer {"no_context":true} and nothing else.';
+  "ALWAYS answer with a statement. There is no refusal: every set of words handed to you carries " +
+  "something the speaker wants more of or less of, and your job is to say what it is in this form.";
 
 export const ODI_CANONICAL_SYSTEM_R2 = ODI_CANONICAL_SYSTEM + ODI_CONTEXT_RULE;
 
@@ -482,9 +719,13 @@ export const FAITHFUL_SYSTEM =
   "or names a provider, program, service line, facility, treatment setting or category of supplier as the thing being sought. " +
   "ok=true otherwise. " +
   "JUDGE SUBSTANCE, NOT WORDING. The FORM's own scaffolding is never an addition. " +
-  "For FORM odi_need the direction verb (Minimize, Maximize, Reduce, Increase) and the frame " +
-  "\"[verb] the [dimension] of [object] when [context]\" belong to the form, not to the speaker: they can never on their own make a statement unfaithful, " +
-  "even when the speaker never said a direction verb and never said \"when\". " +
+  // 4e N2 amends ruling A for interview needs: the METRIC is scaffolding too. The writer picks one of
+  // four words the way it picks the direction verb, so objecting to it is objecting to the form.
+  "For FORM odi_need the direction verb (Minimize, Maximize, Reduce, Increase), THE METRIC WORD " +
+  '(time, likelihood, effort, number) and the frame "[verb] the [metric] of [object]" belong to the FORM, ' +
+  "not to the speaker: none of them can on their own make a statement unfaithful, even when the speaker " +
+  "never said a direction verb and never said the metric word. " +
+  "NEVER object to time, likelihood, effort or number as an added metric — they are the only four the form has. " +
   "For FORM job_statement the verb + object + contextual clarifier shape belongs to the form in the same way. " +
   // R6 (operator review, 2026-09-23). The judge was reading a story clause by clause: given "a family
   // called on a Friday and waited the whole weekend", it called "time to respond" an added metric,
@@ -501,11 +742,27 @@ export const FAITHFUL_SYSTEM =
   // so the rule is now explicit in both directions — never cite it, and if it is the ONLY thing you
   // could object to, the verdict is ok=true.
   "NEVER CITE THE EXEMPT SCAFFOLDING AS AN OBJECTION. Do not write that the statement 'adds' or " +
-  "'introduces' the direction verb (Minimize, Maximize, Reduce, Increase), the formula frame, or the " +
-  "verb + object + clarifier shape — those are the form's and are never a fault. " +
-  "If the ONLY thing you could object to is the direction verb or the form's shape, answer ok=true. " +
-  "ALWAYS state your reason — on pass (why it is faithful) and on reject (what it added, lost or named). " +
-  'JSON only: {"ok":true|false,"reason":"one sentence — always present"}.';
+  "'introduces' the direction verb (Minimize, Maximize, Reduce, Increase), the metric word (time, " +
+  "likelihood, effort, number), the formula frame, or the verb + object + clarifier shape — those are " +
+  "the form's and are never a fault. " +
+  "If the ONLY thing you could object to is the direction verb, the metric word, or the form's shape, answer ok=true. " +
+  // 4e N3 (operator ruling, 2026-09-24): the objection is TYPED and NAMES ITS TERM, because the code
+  // then checks that term against the passage itself. Measured on the 2026-09-23.3 run, three of the
+  // eleven client needs were rejected for a word that is sitting in the passage — the judge asserting
+  // "not mentioned" about words the speaker said. A free-sentence reason cannot be checked; a term can.
+  "WHEN YOU REJECT, LIST YOUR OBJECTIONS ONE BY ONE. Each objection has a TYPE and a TERM. " +
+  "The TERM is the exact word or short phrase you are objecting to, copied from the DERIVED STATEMENT. " +
+  "Never put a whole sentence in the term, and never put a word that is not in the statement. " +
+  "The types: " +
+  "added_object (the statement names a thing the words do not carry); " +
+  "added_metric (it measures something the words do not measure); " +
+  "added_context (it adds a circumstance the words do not carry); " +
+  "added_quantity (it adds a number or amount the words do not carry); " +
+  "lost_object (the speaker's own subject is gone); " +
+  "lost_context (the circumstance the speaker gave is gone); " +
+  "wrong_meaning (the statement says something the words do not mean). " +
+  "ok=true means NO objections: answer with an empty list. " +
+  'JSON only: {"ok":true|false,"objections":[{"type":"<one of the seven>","term":"<word or short phrase from the statement>"}]}.';
 
 export function buildFaithfulUser(args: { rawWords: string; statement: string; kind: ItemKind; form: FrameworkForm }): string {
   return `KIND: ${args.kind}\nFORM: ${args.form}\n` +
@@ -520,16 +777,136 @@ const parseOkReason = (raw: string): { ok: boolean; reason: string } => {
   } catch { return { ok: false, reason: "the judge's answer could not be parsed" }; }
 };
 
+// ── N3: TYPED OBJECTIONS (operator ruling, 2026-09-24) ──────────────────────────────────────────
+//
+// The judge no longer writes a sentence; it lists objections, each with a TYPE and the TERM it is
+// objecting to. That one change makes the verdict CHECKABLE: an `added_*` objection is a claim that a
+// word is not in the speaker's words, and the code can simply look. Measured on the 2026-09-23.3 run,
+// three of eleven client needs (90d8c7ef, 065ee3a0, e3c24524) were rejected for a term the passage
+// plainly contains, and nothing downstream could tell that from a real rejection.
+//
+// The check is against the PASSAGE, not the quote: the quote is a sentence or two cut out of a turn,
+// and a speaker who names the object in one sentence and states the want in the next is not adding
+// anything. Every dropped objection is counted on the run row, so the rule's effect is legible.
+export const OBJECTION_TYPES = [
+  "added_object", "added_metric", "added_context", "added_quantity",
+  "lost_object", "lost_context", "wrong_meaning",
+] as const;
+export type ObjectionType = (typeof OBJECTION_TYPES)[number];
+export type Objection = { type: ObjectionType; term: string };
+const OBJECTION_SET = new Set<string>(OBJECTION_TYPES);
+/** Only an `added_*` objection is a claim about what the words contain, so only those are checkable. */
+export const isAddedObjection = (t: ObjectionType): boolean => t.startsWith("added_");
+
+const OBJECTION_PHRASE: Record<ObjectionType, string> = {
+  added_object: "adds the object",
+  added_metric: "adds the measure",
+  added_context: "adds the context",
+  added_quantity: "adds the quantity",
+  lost_object: "loses the object",
+  lost_context: "loses the context",
+  wrong_meaning: "changes the meaning of",
+};
+
+/** The reason a surviving objection set becomes. Built from type + term, never from model prose. */
+export function objectionReason(kept: readonly Objection[]): string {
+  return kept.map((o) => `${OBJECTION_PHRASE[o.type]} "${o.term}"`).join("; ");
+}
+
+/** N16: the CLOSED METRIC SET is the only scaffolding the term check may drop an objection for, and
+ *  only when the objection is `added_metric`. The direction verbs are deliberately NOT here: the judge
+ *  is already told never to object to them, and N16 says the drop rule is the metric set. */
+const CLOSED_METRICS = new Set<string>(NEED_METRICS);
+
+export type Sifted = { kept: Objection[]; dropped: Array<Objection & { why: string }> };
+
+/**
+ * N3, decided by the CODE. An `added_*` objection whose term is in the passage is dropped — the judge
+ * asserted the words do not carry it and the words do. An objection about the form's own scaffolding
+ * is dropped for the same reason ruling A exempted it. Everything else survives and annotates.
+ */
+export function siftObjections(
+  objections: readonly Objection[],
+  passageText: string,
+  form: FrameworkForm | null,
+): Sifted {
+  const kept: Objection[] = [];
+  const dropped: Array<Objection & { why: string }> = [];
+  for (const o of objections) {
+    const term = String(o.term ?? "").trim();
+    if (!term) { dropped.push({ ...o, term, why: "the objection named no term" }); continue; }
+    // ── N16 (operator ruling, 2026-09-24): ONLY an added_* objection may be dropped ───────────────
+    // Measured on run 3456: item c35a6aba was ACCEPTED because a wrong_meaning objection was thrown
+    // away for naming a scaffolding term. That is outside N3 as signed. A wrong_meaning says the
+    // statement does not mean what the words mean, and a lost_* says the speaker's own subject is
+    // gone — neither is a claim about what the passage CONTAINS, so neither is checkable by a term
+    // and neither may be dropped, whatever term it happens to name.
+    if (!isAddedObjection(o.type)) { kept.push({ type: o.type, term }); continue; }
+    if (o.type === "added_metric" && form === "odi_need" && CLOSED_METRICS.has(term.toLowerCase())) {
+      dropped.push({ ...o, term, why: "the term is one of the form's four metrics" });
+      continue;
+    }
+    if (termOccursIn(term, passageText)) {
+      dropped.push({ ...o, term, why: "the term occurs in the passage" });
+      continue;
+    }
+    kept.push({ type: o.type, term });
+  }
+  return { kept, dropped };
+}
+
+/** Read the judge's answer. A malformed answer is not a pass: it survives as one wrong_meaning
+ *  objection, so rule 1 still lands the item and rule 4 still gives it a reason. */
+export function parseObjections(raw: string): { ok: boolean; objections: Objection[]; parsed: boolean } {
+  let p: { ok?: unknown; objections?: unknown };
+  try { p = JSON.parse(raw) as typeof p; } catch {
+    return { ok: false, objections: [{ type: "wrong_meaning", term: "the judge's answer could not be parsed" }], parsed: false };
+  }
+  const list = Array.isArray(p?.objections) ? p.objections : [];
+  const objections: Objection[] = [];
+  for (const raw2 of list) {
+    const o = raw2 as Record<string, unknown>;
+    const type = String(o?.type ?? "");
+    const term = String(o?.term ?? "").trim();
+    if (!OBJECTION_SET.has(type) || !term) continue;
+    objections.push({ type: type as ObjectionType, term });
+  }
+  return { ok: p?.ok === true, objections, parsed: true };
+}
+
+export type FaithfulVerdict = { ok: boolean; reason: string; kept: Objection[]; dropped: Array<Objection & { why: string }> };
+
 /** The judge, on every converted statement. Nothing is dropped — a reject lands annotated. The kind
  *  and the form travel with the call (ruling A): without the form the judge cannot know which
- *  scaffolding is exempt, and the exemption is the whole of the ruling. */
+ *  scaffolding is exempt, and the exemption is the whole of the ruling. N3: the VERDICT is the code's,
+ *  taken from the objections that survive the term check, not from the model's ok flag. */
 export async function judgeFaithful(
   call: Call,
-  args: { rawWords: string; statement: string; kind: ItemKind; form: FrameworkForm; model?: string },
-): Promise<{ ok: boolean; reason: string }> {
+  args: {
+    rawWords: string; statement: string; kind: ItemKind; form: FrameworkForm; model?: string;
+    /** N3: the whole passage the quote was cut from — what an `added_*` term is checked against. */
+    passageText?: string;
+  },
+): Promise<FaithfulVerdict> {
   const raw = await call({ stage: "judge", system: FAITHFUL_SYSTEM, user: buildFaithfulUser(args), model: args.model });
-  const v = parseOkReason(raw);
-  return { ok: v.ok, reason: v.reason || (v.ok ? "the judge passed it without a stated reason" : "the judge rejected it without a stated reason") };
+  const v = parseObjections(raw);
+  // The model said ok with objections listed, or not-ok with none: the OBJECTIONS are the verdict.
+  const asserted = v.ok && v.objections.length === 0 ? [] : v.objections;
+  const haystack = args.passageText && args.passageText.trim() ? args.passageText : args.rawWords;
+  const { kept, dropped } = siftObjections(asserted, haystack, args.form);
+  // A judge that rejects but names no checkable term has given us nothing to check — and nothing to
+  // drop either. It is not a pass: rule 1 lands the item, rule 4 gives it a reason, and the reason
+  // says exactly what happened rather than borrowing a verdict the model never supported.
+  if (!v.ok && asserted.length === 0 && v.parsed) {
+    return { ok: false, reason: "the judge rejected it without naming a term", kept, dropped };
+  }
+  if (kept.length === 0) {
+    const note = dropped.length
+      ? `every objection was about words the passage carries (${dropped.length} dropped)`
+      : "the statement is faithful to the words";
+    return { ok: true, reason: note, kept, dropped };
+  }
+  return { ok: false, reason: objectionReason(kept), kept, dropped };
 }
 
 // ── conversion ───────────────────────────────────────────────────────────────────────────────────
@@ -548,6 +925,8 @@ export async function convertItem(args: {
   scope?: Scope;
   /** 4d R2: every speaker label on the record, so a person's name can be kept out of the statement. */
   speakerLabels?: readonly string[];
+  /** N3: the whole passage the quote was cut from — an `added_*` term is checked against this. */
+  passageText?: string;
   judgeModel?: string;
   /** Injected so the proof can vote without a model; defaults to the real 3-call majority. */
   solutionAgnostic?: (statement: string) => Promise<{ solutionFree: boolean; tally: string; reason: string }>;
@@ -573,28 +952,36 @@ export async function convertItem(args: {
       const prior = formatReason || numericReason || guardReason;
       const user = buildOdiCanonicalUser(args.rawWords, args.jobExecutor) + (prior ? `\nYour previous attempt was rejected: ${prior}. Fix exactly that.\n` : "");
       const raw = await args.call({ stage: "convert:need", system: ODI_CANONICAL_SYSTEM_R2, user });
-      let parsed: { odi_canonical_statement?: unknown; no_context?: unknown } = {};
+      let parsed: { odi_canonical_statement?: unknown } = {};
       try { parsed = JSON.parse(raw) as typeof parsed; } catch { parsed = {}; }
-      // R2: the writer was asked to decide this on the call it was already making.
-      if (parsed.no_context === true) {
-        return { framework_statement: null, framework_form: "odi_need", judge_state: "annotated", judge_reason: NO_CONTEXT_REASON };
-      }
+      // N1: there is no no_context branch. The writer always answers with a statement.
       statement = String(parsed.odi_canonical_statement ?? "").trim();
-      formatReason = ""; numericReason = "";
+      // Every reason is cleared at the top of the attempt. guardReason was NOT, so a retry that fixed
+      // the clarifier still landed annotated carrying the reason it had just fixed — the job loop
+      // below always reset both of its own. N2 makes the retry load-bearing, so the reset matters.
+      formatReason = ""; numericReason = ""; guardReason = "";
       // R8: the shared guard still checks empty / identical / missing formula verb. Its "missing when"
       // reject is OFF for interview items: the when-clause is conditional now, so demanding one is
       // exactly what drove the writer to invent circumstances. The shared module is untouched — three
       // other callers depend on it — and the reject is filtered here, where the rule applies.
       const check = isValidCanonical(statement, args.rawWords);
       if (!check.ok && !isMissingWhenReject(check.reason)) { formatReason = check.reason ?? "invalid canonical form"; continue; }
-      const invented = inventedNumbers(statement, args.rawWords);   // R3: decided by the code, no call
-      if (invented.length) { numericReason = numericInventionReason(invented); continue; }
-      // 4d R1: no clarifier, no executor under another name.
+      // 4d R1: no clarifier, no executor under another name. This runs BEFORE N2 so a statement that
+      // still carries a when-clause is told exactly that, rather than told its object is not in the
+      // words because the trailing clause was read as part of the object.
       const clar = clarifierHits(statement);
       if (clar.length) { guardReason = `${CLARIFIER_REASON}: ${clar.join(", ")}`; continue; }
       // 4d R2: no person's name.
       const named = nameHits(statement, personNames(args.speakerLabels ?? [], args.rawWords));
       if (named.length) { guardReason = `${NAMES_PERSON_REASON}: ${named.join(", ")}`; continue; }
+      // 4e-3 N20: no first-person words.
+      const fp = firstPersonHits(statement);
+      if (fp.length) { guardReason = `${FIRST_PERSON_REASON}: ${fp.join(", ")}`; continue; }
+      const invented = inventedNumbers(statement, args.rawWords);   // R3: decided by the code, no call
+      if (invented.length) { numericReason = numericInventionReason(invented); continue; }
+      // 4e N2: the closed metric set, the speaker's own object, no invented measure. All code, no call.
+      const n2 = needFormViolation(statement, args.rawWords);
+      if (n2) { guardReason = n2; continue; }
       break;
     }
     if (formatReason) {
@@ -606,8 +993,8 @@ export async function convertItem(args: {
     if (guardReason) {
       return { framework_statement: statement || null, framework_form: "odi_need", judge_state: "annotated", judge_reason: guardReason };
     }
-    const j = await judgeFaithful(args.call, { rawWords: args.rawWords, statement, kind: args.kind, form: "odi_need", model: args.judgeModel });
-    return { framework_statement: statement, framework_form: "odi_need", judge_state: j.ok ? "accepted" : "annotated", judge_reason: j.reason };
+    const j = await judgeFaithful(args.call, { rawWords: args.rawWords, statement, kind: args.kind, form: "odi_need", model: args.judgeModel, passageText: args.passageText });
+    return { framework_statement: statement, framework_form: "odi_need", judge_state: j.ok ? "accepted" : "annotated", judge_reason: j.reason, objections_kept: j.kept, objections_dropped: j.dropped };
   }
 
   // job: write it, then the DETERMINISTIC means layer, then solution-agnostic v3, then faithfulness.
@@ -636,6 +1023,9 @@ export async function convertItem(args: {
     // 4d R2: no person's name.
     const namedJ = nameHits(statement, personNames(args.speakerLabels ?? [], args.rawWords));
     if (namedJ.length) { jobGuardReason = `${NAMES_PERSON_REASON}: ${namedJ.join(", ")}`; continue; }
+    // 4e-3 N20: no first-person words, on a job statement as on a need.
+    const fpJ = firstPersonHits(statement);
+    if (fpJ.length) { jobGuardReason = `${FIRST_PERSON_REASON}: ${fpJ.join(", ")}`; continue; }
     break;
   }
   if (!statement) {
@@ -655,8 +1045,8 @@ export async function convertItem(args: {
   // executor; internal-scope and client-side items skip them and go straight to faithfulness.
   const meansApplies = args.scope !== "internal" && args.side !== "client";
   if (!meansApplies) {
-    const jc = await judgeFaithful(args.call, { rawWords: args.rawWords, statement, kind: args.kind, form: "job_statement", model: args.judgeModel });
-    return { framework_statement: statement, framework_form: "job_statement", judge_state: jc.ok ? "accepted" : "annotated", judge_reason: jc.reason };
+    const jc = await judgeFaithful(args.call, { rawWords: args.rawWords, statement, kind: args.kind, form: "job_statement", model: args.judgeModel, passageText: args.passageText });
+    return { framework_statement: statement, framework_form: "job_statement", judge_state: jc.ok ? "accepted" : "annotated", judge_reason: jc.reason, objections_kept: jc.kept, objections_dropped: jc.dropped };
   }
   const hits = marketMeansHits(statement);
   if (hits.length) {
@@ -675,8 +1065,8 @@ export async function convertItem(args: {
   if (!sa.solutionFree) {
     return { framework_statement: statement, framework_form: "job_statement", judge_state: "annotated", judge_reason: `solution-agnostic v${CRITERION_VERSION} rejected (${sa.tally}): ${sa.reason}` };
   }
-  const j = await judgeFaithful(args.call, { rawWords: args.rawWords, statement, kind: args.kind, form: "job_statement", model: args.judgeModel });
-  return { framework_statement: statement, framework_form: "job_statement", judge_state: j.ok ? "accepted" : "annotated", judge_reason: j.reason };
+  const j = await judgeFaithful(args.call, { rawWords: args.rawWords, statement, kind: args.kind, form: "job_statement", model: args.judgeModel, passageText: args.passageText });
+  return { framework_statement: statement, framework_form: "job_statement", judge_state: j.ok ? "accepted" : "annotated", judge_reason: j.reason, objections_kept: j.kept, objections_dropped: j.dropped };
 }
 
 // ── R9: CONCEPT DEDUP (operator review, 2026-09-23) ──────────────────────────────────────────────

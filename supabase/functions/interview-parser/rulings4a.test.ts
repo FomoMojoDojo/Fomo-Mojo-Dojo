@@ -6,7 +6,7 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import { toPassages } from "./segment.ts";
 import { bestLocalSimilarity, locateQuote, looseNormalize } from "./locate.ts";
 import {
-  FAITHFUL_SYSTEM, NO_CONTEXT_REASON, ODI_CANONICAL_SYSTEM_R2, ODI_CONTEXT_RULE, convertItem, judgeFaithful, type Call,
+  FAITHFUL_SYSTEM, ODI_CANONICAL_SYSTEM_R2, ODI_CONTEXT_RULE, convertItem, judgeFaithful, type Call,
 } from "./convert.ts";
 import { PARSER_RULES_VERSION, SIDE_CHANGED_REASON, supersededReason } from "./rules.ts";
 import { OURS_SIDE_REASON, SPEAKER_SIDES } from "../_shared/interviewItems.ts";
@@ -93,7 +93,9 @@ Deno.test("R1: a quote in NO passage is still not_located — the rungs widen, t
 // ── R2: the ODI writer's context rule ────────────────────────────────────────────────────────────
 Deno.test("R2: the context rule is appended to the shared formula prompt, which is left untouched", () => {
   assert(ODI_CANONICAL_SYSTEM_R2.endsWith(ODI_CONTEXT_RULE));
-  assert(ODI_CONTEXT_RULE.includes("THE DIMENSION AND THE OBJECT COME FROM THE SPEAKER"));   // 4d R1: the context slot is gone, so the clause names the object
+  // 4e N2 replaced the dimension with a CLOSED METRIC SET, so the clause is now about the object
+  // alone. What 4a signed — the speaker owns what the statement is about — is what is pinned.
+  assert(ODI_CONTEXT_RULE.includes("THE OBJECT COMES FROM THE SPEAKER, NOT FROM YOU"));
   // 4c's R8 replaced that sentence with a stronger pair (the when-clause is conditional, and the
   // executor is never named anywhere). rulings4c.test.ts owns the new wording; what 4a signed — the
   // dimension and the context come from the speaker, and there is a refusal shape — is pinned here.
@@ -101,31 +103,48 @@ Deno.test("R2: the context rule is appended to the shared formula prompt, which 
   // forbade filling it was replaced by one that forbids writing it at all. rulings4d.test.ts owns the
   // new wording; what 4a signed — the executor never appears — is pinned here.
   assert(ODI_CONTEXT_RULE.includes("NEVER name the executor"));
-  assert(ODI_CONTEXT_RULE.includes('{"no_context":true}'));
+  // 4e N1 REPEALED the no_context answer. The refusal is not weakened, it is gone: the writer is told
+  // it always answers with a statement, and the branch that consumed the flag is deleted.
+  assert(!ODI_CONTEXT_RULE.includes('{"no_context":true}'), "N1: the refusal is gone from the prompt");
+  assert(ODI_CONTEXT_RULE.includes("There is no refusal"), "N1: and the writer is told so");
   assert(ODI_CANONICAL_SYSTEM_R2.includes("[Minimize/Maximize/Reduce/Increase]"), "the formula itself survives");
 });
 
-Deno.test("R2: a no_context answer lands the need annotated with the signed reason and no judge call", async () => {
+Deno.test("N1 repeals 4a R2: a no_context answer is no longer a refusal — the need is written", async () => {
+  // The rule 4a signed is REPEALED by N1 (2026-09-24), so what is pinned here is the repeal. A writer
+  // that still answers no_context is simply a writer that returned no statement; the retry runs, and
+  // an item that ends with no statement lands annotated on the format reason, never on "no context".
   let writes = 0;
   const call: Call = ({ stage }) => {
-    if (stage === "convert:need") { writes++; return Promise.resolve(JSON.stringify({ no_context: true })); }
-    throw new Error("no judge call may be spent once the words carry no context");
+    if (stage === "convert:need") {
+      writes++;
+      // first attempt: the old refusal shape. second: a statement in the N2 form.
+      return Promise.resolve(writes === 1
+        ? JSON.stringify({ no_context: true })
+        : JSON.stringify({ odi_canonical_statement: "Minimize the effort of getting it done" }));
+    }
+    return Promise.resolve(JSON.stringify({ ok: true, objections: [] }));
   };
-  const c = await convertItem({ call, kind: "desire", rawWords: "We just want it to be easier.", speaker: "Dana", jobExecutor: "" });
-  assertEquals(writes, 1, "the refusal rides on the call the writer already makes");
-  assertEquals(c.judge_state, "annotated");
-  assertEquals(c.judge_reason, NO_CONTEXT_REASON);
-  assertEquals(c.judge_reason, "no context in the words");
-  assertEquals(c.framework_statement, null);
-  assertEquals(c.framework_form, "odi_need", "the item still lands, with its form (rule 1)");
+  const c = await convertItem({
+    call, kind: "desire", rawWords: "We just want getting it done to be easier, less effort every time.",
+    speaker: "Dana", jobExecutor: "", passageText: "We just want getting it done to be easier, less effort every time.",
+  });
+  assert(writes >= 1, "the writer is still called");
+  assertEquals(c.framework_form, "odi_need");
+  assert(c.judge_reason !== "no context in the words", "N1: the reason string is gone");
+  assertEquals(c.framework_statement, "Minimize the effort of getting it done", "the retry produced the need");
+  assertEquals(c.judge_state, "accepted");
 });
 
 // ── R3: the judge never cites the exempt scaffolding ─────────────────────────────────────────────
 Deno.test("R3: the citation rule is in the judge, in both directions", () => {
   assert(FAITHFUL_SYSTEM.includes("NEVER CITE THE EXEMPT SCAFFOLDING AS AN OBJECTION"));
-  assert(FAITHFUL_SYSTEM.includes("If the ONLY thing you could object to is the direction verb or the form's shape, answer ok=true"));
+  // 4e N2 widened the exemption to the metric word; 4e N3 replaced the free-sentence reason with
+  // typed objections. Both are pinned in rulings4e.test.ts; what 4a signed survives in both.
+  assert(FAITHFUL_SYSTEM.includes("If the ONLY thing you could object to is the direction verb"));
+  assert(FAITHFUL_SYSTEM.includes("answer ok=true"));
   assert(FAITHFUL_SYSTEM.includes("those are the form's and are never a fault"));
-  assert(FAITHFUL_SYSTEM.includes("ALWAYS state your reason"), "rule 4 is untouched");
+  assert(FAITHFUL_SYSTEM.includes("WHEN YOU REJECT, LIST YOUR OBJECTIONS"), "rule 4's reason is now typed");
 });
 
 Deno.test({
@@ -162,7 +181,7 @@ Deno.test("R5: the two sides, and the signed reason an ours item carries", () =>
 });
 
 Deno.test("R6/R7: the version moved, and the two retraction reasons are the signed ones", () => {
-  assertEquals(PARSER_RULES_VERSION, "2026-09-23.3");   // moved by 4c R10, then 4d R7
+  assertEquals(PARSER_RULES_VERSION, "2026-09-24.4");   // moved by 4c R10, 4d R7, 4e, 4e-2 (N9), then 4e-3 (N14)
   assertEquals(supersededReason(), `superseded by rules ${PARSER_RULES_VERSION}`);
   assertEquals(supersededReason("2026-10-01.1"), "superseded by rules 2026-10-01.1");
   assertEquals(SIDE_CHANGED_REASON, "speaker side changed");
