@@ -22,7 +22,10 @@ const activeCompanyRef: { value: Record<string, unknown> | null } = {
   },
 };
 
-vi.mock("react-router-dom", () => ({ useNavigate: () => () => {} }));
+// N1 (2026-09-26): the view is mounted at /company/:companyId and reads the param. This mount
+// exercises the NO-PARAM path, which is what it has always exercised — the page then falls back
+// to the provider, exactly as before N1. The assertions below are untouched.
+vi.mock("react-router-dom", () => ({ useNavigate: () => () => {}, useParams: () => ({}) }));
 // Universal chainable query builder: every method returns the builder, and the
 // builder is awaitable (thenable) resolving to an empty result — so any
 // .select().eq().eq().order().limit().maybeSingle() chain works.
@@ -48,7 +51,17 @@ vi.mock("@/integrations/supabase/client", () => ({
   },
 }));
 vi.mock("@/hooks/useCompany", () => ({
-  useCompany: () => ({ activeCompany: activeCompanyRef.value, refetch: async () => {} }),
+  // N1: the view now also reads companies/loading/fetchError (to tell "unknown id" from "not
+  // loaded yet") and setActiveCompanyId. With no route param none of them is consulted for the
+  // render under test; they are supplied so the destructure does not throw.
+  useCompany: () => ({
+    activeCompany: activeCompanyRef.value,
+    companies: activeCompanyRef.value ? [activeCompanyRef.value] : [],
+    loading: false,
+    fetchError: null,
+    setActiveCompanyId: () => {},
+    refetch: async () => {},
+  }),
   useCompanyIfAvailable: () => ({ refetch: async () => {} }),
 }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u-1" }, isAdmin: true }) }));

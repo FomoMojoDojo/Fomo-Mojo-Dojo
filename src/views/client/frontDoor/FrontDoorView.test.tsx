@@ -8,7 +8,9 @@
 //   (c) a failed companies query renders the banner over an EMPTY table, selects nothing and writes
 //       nothing — an empty read is not a selection;
 //   (d) the legacy door is present and points at /admin/companies;
-//   (e) the header carries the two signed strings and the count, and no action column is drawn.
+//   (e) the header carries the two signed strings and the count, and no action column is drawn;
+//   (f) N2 — every row carries a "Company" link whose href NAMES that company, so it is right
+//       when bookmarked, pasted or opened in a new tab, and the click still hands the company off.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -150,5 +152,37 @@ describe("(e) the front door acts on nothing", () => {
       expect((container.textContent ?? "").toLowerCase()).not.toContain(banned);
     }
     expect(container.querySelectorAll("button[disabled]")).toHaveLength(0);
+  });
+});
+
+describe("(f) N2 — every row links to that company's Company view", () => {
+  it("one Company link per row, each href naming ITS OWN company", async () => {
+    const { getByTestId, container } = mount();
+    await waitFor(() => expect(getByTestId("company-row-live1")).toBeTruthy());
+
+    for (const id of ["live1", "live2", CB1]) {
+      const link = getByTestId(`front-door-company-${id}`);
+      expect(link.textContent).toBe("Company"); // byte-exact, reused from the sidebar's own label
+      // the href carries the id: this is what makes it survive a bookmark, a paste, or a new tab
+      expect(link.getAttribute("href")).toBe(`/preview/client-refine/company/${id}`);
+    }
+    // every row, not just the first — and a frozen company is reachable too (a read, not a write)
+    expect(container.querySelectorAll('[data-testid^="front-door-company-"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-testid^="company-row-"]')).toHaveLength(3);
+  });
+
+  it("clicking it also hands the company off, so the rest of the session follows", async () => {
+    const { getByTestId } = mount();
+    await waitFor(() => expect(getByTestId("company-row-live2")).toBeTruthy());
+    fireEvent.click(getByTestId("front-door-company-live2"));
+    expect(setActiveCompanyIdSpy).toHaveBeenCalledWith("live2");
+  });
+
+  it("the Workspace link beside it is untouched", async () => {
+    const { getByTestId } = mount();
+    await waitFor(() => expect(getByTestId("company-row-live1")).toBeTruthy());
+    const ws = getByTestId("front-door-workspace-live1");
+    expect(ws.textContent).toBe("Workspace");
+    expect(ws.getAttribute("href")).toBe("/preview/client-refine/workspace");
   });
 });

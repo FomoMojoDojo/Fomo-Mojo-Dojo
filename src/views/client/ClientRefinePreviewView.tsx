@@ -26,7 +26,7 @@ import { selectBestProposal, normalizeToDiagnostic } from "@/lib/mojoMapDiagnost
 import { stageLabel } from "@/lib/phaseDisplay";
 import { useDiagnoseReadiness } from "@/lib/phaseReadiness";
 import type { MojoMapDiagnostic } from "@/lib/mojoMapDiagnostic";
-import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, clientRefineCompanyPath, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
 import { useDriftScan } from "@/hooks/useDriftScan";
 import { formatDistanceToNow } from "date-fns";
@@ -3486,7 +3486,7 @@ export default function ClientRefinePreviewView() {
                         activeTab={null}
                         onTabClick={(tab) => navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=${tab}`)}
                         onHome={() => {}}
-                        onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
+                        onCompany={() => navigate(clientRefineCompanyPath(activeCompany?.id))}
                         onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
                         onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
                         onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}

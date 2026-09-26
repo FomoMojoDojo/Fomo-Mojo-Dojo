@@ -31,7 +31,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
 import { captureBaseline } from "@/lib/baselineCapture";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
-import { CLIENT_REFINE_PREVIEW_HOME_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_HOME_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, clientRefineCompanyPath, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
 import { useRoutes } from "@/hooks/useRoutes";
 import { useDriftScan, type ScanAllStatus } from "@/hooks/useDriftScan";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
@@ -2250,7 +2250,7 @@ export default function ClientRefinePreviewWorkshopView() {
           <button
             type="button"
             className="btn"
-            onClick={() => navigate(`${CLIENT_REFINE_PREVIEW_COMPANY_ROUTE}?advance=diagnose`)}
+            onClick={() => navigate(`${clientRefineCompanyPath(activeCompany?.id)}?advance=diagnose`)}
           >
             Review &amp; confirm
           </button>
@@ -2477,7 +2477,7 @@ export default function ClientRefinePreviewWorkshopView() {
         onTabClick={(tab) => setActiveTab(tab as WorkshopTab)}
         onHome={goToRefineHome}
         onAddClient={isAdmin ? () => setShowCreateClient((v) => !v) : undefined}
-        onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
+        onCompany={() => navigate(clientRefineCompanyPath(activeCompany?.id))}
         onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
         onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
         onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}

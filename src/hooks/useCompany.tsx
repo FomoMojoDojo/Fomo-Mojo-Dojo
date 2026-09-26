@@ -95,14 +95,26 @@ const PUBLIC_CAFE_BARRA_FALLBACK: Company = {
   engagement_started_at: null,
 };
 
-function pickDefaultCompanyId(companies: Company[]): string | null {
+// N4 (2026-09-26) — THE DEFAULT SKIPS FROZEN COMPANIES. The preferred name is "cafe barra", which
+// on the live fleet is CB1 — the frozen reference fixture. So a browser with no stored selection
+// opened every provider-driven surface on the one company whose write controls are all refused:
+// the Company page's own sections, the freeze trigger on 96 tables, the lot. A first-ever visit
+// landing on a read-only fixture is not a useful default.
+//
+// IF EVERY COMPANY IS FROZEN the old answer stands (preferred, else the first row) — a fleet with
+// nothing writable still has to resolve to something, and refusing to pick would leave the whole
+// app with no company at all.
+export function pickDefaultCompanyId(companies: Company[]): string | null {
   if (companies.length === 0) return null;
 
-  const preferred = companies.find((company) =>
+  const selectable = companies.filter((company) => company.frozen !== true);
+  const pool = selectable.length > 0 ? selectable : companies;
+
+  const preferred = pool.find((company) =>
     company.name.trim().toLowerCase() === PREFERRED_COMPANY_NAME,
   );
 
-  return preferred?.id ?? companies[0].id;
+  return preferred?.id ?? pool[0].id;
 }
 
 import {

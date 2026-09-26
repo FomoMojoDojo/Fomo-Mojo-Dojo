@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useCompany, type Company, type ExcludedSignal } from "@/hooks/useCompany";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
@@ -17,7 +17,7 @@ import {
   CLIENT_REFINE_PREVIEW_HOME_ROUTE,
   CLIENT_REFINE_PREVIEW_INBOX_ROUTE,
   CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE,
-  CLIENT_REFINE_PREVIEW_COMPANY_ROUTE,
+  clientRefineCompanyPath,
   CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE,
   CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE,
 } from "@/lib/clientRefinePreview";
@@ -1278,8 +1278,35 @@ function sourceLabel(raw: string | null | undefined): string {
 
 export default function ClientRefinePreviewCompanyView() {
   const navigate = useNavigate();
-  const { activeCompany, refetch } = useCompany() as { activeCompany: Company | null; refetch: () => Promise<void> };
-  const companyId = activeCompany?.id;
+  // N1 — THE URL NAMES THE COMPANY. This page is mounted at /company/:companyId; the bare path
+  // redirects here with the active company's id (App.tsx). The route id is the authority, and the
+  // provider is written from it on load, so every sidebar link out of this page — and the
+  // provider-driven pages they lead to — stay on the company the operator actually opened.
+  const { companyId: routeCompanyId } = useParams<{ companyId: string }>();
+  const { activeCompany, companies, loading: companiesLoading, fetchError: companiesFetchError, setActiveCompanyId, refetch } =
+    useCompany() as {
+      activeCompany: Company | null;
+      companies: Company[];
+      loading: boolean;
+      fetchError?: string | null;
+      setActiveCompanyId: (id: string) => void;
+      refetch: () => Promise<void>;
+    };
+  const routeCompany = routeCompanyId ? companies.find((c) => c.id === routeCompanyId) ?? null : null;
+
+  useEffect(() => {
+    // Only for an id this operator actually has: writing an unknown id would persist it to
+    // localStorage and follow them to every other surface. The not-found render below is the
+    // answer to an unknown id, not a selection.
+    if (routeCompany && activeCompany?.id !== routeCompany.id) setActiveCompanyId(routeCompany.id);
+  }, [routeCompany, activeCompany?.id, setActiveCompanyId]);
+
+  // What the page DISPLAYS. The route's company wins from the first render, so the page never shows
+  // the previously-active company's name for the tick before the effect above lands. With no id in
+  // the route (a render that somehow reached the view without one) it falls back to the provider,
+  // which is exactly what this page did before N1.
+  const company = routeCompany ?? (routeCompanyId ? null : activeCompany);
+  const companyId = company?.id;
   const [provenanceRefreshKey, setProvenanceRefreshKey] = useState(0);
 
   const { item: positioning } = usePositioningCanvas(companyId);
@@ -1300,6 +1327,44 @@ export default function ClientRefinePreviewCompanyView() {
     navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=${tab}`);
   }
 
+  // N1 — AN ID THIS OPERATOR DOES NOT HOLD. A pasted or bookmarked link can name a company that was
+  // since deleted, or one this account cannot see. Both strings are REUSED BYTE-EXACT from
+  // AdminCompanyDetail.tsx:73,76 — the estate's existing answer to a company id that does not
+  // resolve, and the only one that explains a stale LINK, which is the case this route creates.
+  // No new string is minted here.
+  //
+  // Only claimed once the answer is actually known: while the list is loading, and when the list
+  // FAILED to load, "not found" would be a guess. Both of those render the page's normal frame with
+  // an empty company, which is what it did before N1 when no company was selected.
+  const companyListAnswered = !companiesLoading && !companiesFetchError && companies.length > 0;
+  if (routeCompanyId && !routeCompany && companyListAnswered) {
+    return (
+      <div className="crpv-page" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
+        <div className="crpv-ws-body" style={{ flex: 1 }}>
+          <WorkshopSidebar
+            activeTab="__company__"
+            onTabClick={goTab}
+            onHome={() => navigate(CLIENT_REFINE_PREVIEW_HOME_ROUTE)}
+            onCompany={() => navigate(clientRefineCompanyPath(activeCompany?.id))}
+            onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
+            onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
+            onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
+          />
+          <div className="crpv-ws-content-col" style={{ overflowY: "auto" }}>
+            <div style={{ padding: "32px 36px", maxWidth: 860 }} data-testid="company-not-found">
+              <p style={{ fontFamily: C.inter, fontSize: 18, fontWeight: 600, color: C.ink, margin: "0 0 8px" }}>
+                Company not found
+              </p>
+              <p style={{ fontFamily: C.inter, fontSize: 14, color: C.inkSoft, margin: 0 }}>
+                This company may have been deleted or the link is no longer valid.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="crpv-page" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
       <div className="crpv-ws-body" style={{ flex: 1 }}>
@@ -1307,7 +1372,7 @@ export default function ClientRefinePreviewCompanyView() {
           activeTab="__company__"
           onTabClick={goTab}
           onHome={() => navigate(CLIENT_REFINE_PREVIEW_HOME_ROUTE)}
-          onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
+          onCompany={() => navigate(clientRefineCompanyPath(company?.id ?? activeCompany?.id))}
           onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
           onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
           onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
@@ -1326,30 +1391,30 @@ export default function ClientRefinePreviewCompanyView() {
                   committing the edit IS the confirmation. Admin gating is route-level
                   (AdminModeRoute); frozen refusal comes from the DB trigger, verbatim. */}
               <div style={{ margin: "0 0 10px" }}>
-                {activeCompany?.id && activeCompany?.name ? (
+                {company?.id && company?.name ? (
                   <CompanyRenameControl
-                    companyId={activeCompany.id}
-                    companyName={activeCompany.name}
+                    companyId={company.id}
+                    companyName={company.name}
                     headerStyle={{ fontFamily: C.inter, fontSize: 28, fontWeight: 700, color: C.ink, lineHeight: 1.2 }}
                   />
                 ) : (
                   <h1 style={{ margin: 0, fontFamily: C.inter, fontSize: 28, fontWeight: 700, color: C.ink, lineHeight: 1.2 }}>
-                    {activeCompany?.name ?? "—"}
+                    {company?.name ?? "—"}
                   </h1>
                 )}
               </div>
               <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-                {activeCompany?.website && (
+                {company?.website && (
                   <a
-                    href={activeCompany.website}
+                    href={company.website}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{ fontSize: 13, color: C.inkSoft, textDecoration: "underline", fontFamily: C.inter }}
                   >
-                    {activeCompany.website}
+                    {company.website}
                   </a>
                 )}
-                {activeCompany && <PhaseBadge phase={activeCompany.engagement_phase} />}
+                {company && <PhaseBadge phase={company.engagement_phase} />}
                 {provenance?.lastRunAt && (
                   <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkFaint, textTransform: "uppercase", letterSpacing: "0.10em" }}>
                     Ran {relativeTime(provenance.lastRunAt)}
@@ -1362,7 +1427,7 @@ export default function ClientRefinePreviewCompanyView() {
             {companyId && (
               <EngagementStartSection
                 companyId={companyId}
-                currentValue={activeCompany?.engagement_started_at}
+                currentValue={company?.engagement_started_at}
                 onSaved={refetch}
               />
             )}
@@ -1377,8 +1442,8 @@ export default function ClientRefinePreviewCompanyView() {
             {companyId && (
               <ExclusionFiltersSection
                 companyId={companyId}
-                filtersJson={activeCompany?.public_source_filters_json ?? null}
-                excluded={activeCompany?.excluded_signals_json ?? []}
+                filtersJson={company?.public_source_filters_json ?? null}
+                excluded={company?.excluded_signals_json ?? []}
                 onSaved={refetch}
               />
             )}
@@ -1386,9 +1451,9 @@ export default function ClientRefinePreviewCompanyView() {
             {/* ── Engagement phase ── */}
             {companyId && (
               <EngagementPhaseSection
-                phaseIsSet={activeCompany.engagement_phase_set === true}
+                phaseIsSet={company.engagement_phase_set === true}
                 companyId={companyId}
-                currentPhase={activeCompany.engagement_phase}
+                currentPhase={company.engagement_phase}
                 onSaved={refetch}
               />
             )}
@@ -1401,7 +1466,7 @@ export default function ClientRefinePreviewCompanyView() {
             {companyId && (
               <ClientPortalSection
                 companyId={companyId}
-                frozen={activeCompany?.frozen === true}
+                frozen={company?.frozen === true}
               />
             )}
 

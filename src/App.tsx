@@ -70,6 +70,8 @@ import {
   CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE,
   CLIENT_REFINE_PREVIEW_PATH_ROUTE,
   CLIENT_REFINE_PREVIEW_COMPANY_ROUTE,
+  CLIENT_REFINE_PREVIEW_COMPANY_ID_ROUTE,
+  bareCompanyRedirect,
   CLIENT_REFINE_PREVIEW_INBOX_ROUTE,
   CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE,
   CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE,
@@ -262,6 +264,34 @@ function ClientRefinePreviewCompanyRoute() {
   );
 }
 
+// N1 — the BARE /preview/client-refine/company, kept as a redirect so nothing that already points
+// at it breaks. It sends the operator to the active company's own address, preserving the query
+// string (the Workshop's phase banner arrives here as ?advance=diagnose and the confirm flow on the
+// far side reads it). `replace` so Back does not bounce through the redirect.
+//
+// NO ACTIVE COMPANY → the front door, not a guess. This route used to answer "whichever company
+// this browser last selected", which on a fresh profile was pickDefaultCompanyId's choice; sending
+// someone to a company they never picked is exactly the behaviour N1 exists to end.
+//
+// WHILE THE COMPANY LIST IS LOADING the answer is not yet knowable, so this renders nothing rather
+// than bouncing to the front door on a race — activeCompany is null during the first fetch.
+function ClientRefinePreviewCompanyRedirect() {
+  const { activeCompany, loading } = useCompany();
+  const location = useLocation();
+  const to = bareCompanyRedirect({ loading, activeCompanyId: activeCompany?.id, search: location.search });
+  return to ? <Navigate to={to} replace /> : null;
+}
+
+function ClientRefinePreviewCompanyBareRoute() {
+  return (
+    <AdminModeRoute>
+      <InternalViewOnlyRoute>
+        <ClientRefinePreviewCompanyRedirect />
+      </InternalViewOnlyRoute>
+    </AdminModeRoute>
+  );
+}
+
 function ClientRefinePreviewInboxRoute() {
   return (
     <AdminModeRoute>
@@ -309,7 +339,8 @@ const App = () => (
                 <Route path={CLIENT_REFINE_PREVIEW_ROUTES_ROUTE} element={<ClientRefinePreviewRoutesRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE} element={<ClientRefinePreviewWorkshopRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_PATH_ROUTE} element={<ClientRefinePreviewPathRoute />} />
-                <Route path={CLIENT_REFINE_PREVIEW_COMPANY_ROUTE} element={<ClientRefinePreviewCompanyRoute />} />
+                <Route path={CLIENT_REFINE_PREVIEW_COMPANY_ROUTE} element={<ClientRefinePreviewCompanyBareRoute />} />
+                <Route path={CLIENT_REFINE_PREVIEW_COMPANY_ID_ROUTE} element={<ClientRefinePreviewCompanyRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_INBOX_ROUTE} element={<ClientRefinePreviewInboxRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE} element={<ClientRefinePreviewMembersRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE} element={<ClientRefinePreviewExtractsRoute />} />

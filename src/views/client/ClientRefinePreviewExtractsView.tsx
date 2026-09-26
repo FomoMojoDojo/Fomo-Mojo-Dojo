@@ -19,7 +19,7 @@ import {
   CLIENT_REFINE_PREVIEW_HOME_ROUTE,
   CLIENT_REFINE_PREVIEW_INBOX_ROUTE,
   CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE,
-  CLIENT_REFINE_PREVIEW_COMPANY_ROUTE,
+  clientRefineCompanyPath,
   CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE,
   CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE,
 } from "@/lib/clientRefinePreview";
@@ -76,7 +76,7 @@ export default function ClientRefinePreviewExtractsView() {
           activeTab="__extracts__"
           onTabClick={goTab}
           onHome={() => navigate(CLIENT_REFINE_PREVIEW_HOME_ROUTE)}
-          onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
+          onCompany={() => navigate(clientRefineCompanyPath(activeCompany?.id))}
           onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
           onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
           onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}

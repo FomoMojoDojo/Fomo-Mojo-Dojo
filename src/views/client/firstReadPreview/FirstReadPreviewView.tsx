@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import "./firstRead.css";
+import { useCompany } from "@/hooks/useCompany";
+import { routeCompanyToActivate } from "@/lib/clientRefinePreview";
 import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -93,6 +95,25 @@ function useOptionalQueryClient() {
 
 export default function FirstReadPreviewView() {
   const { companyId } = useParams<{ companyId: string }>();
+  // N3 (2026-09-26) — POINT THE PROVIDER AT THIS ROUTE'S COMPANY, exactly as the legacy
+  // /first-read/:companyId has always done (FirstReadView/index.tsx:70-72). This view is entirely
+  // URL-driven and used to leave CompanyProvider untouched, so opening a company's First Read from
+  // the front door showed that company while the rest of the session still pointed at the
+  // previously-selected one — and every provider-driven page you moved to next (Company, Workspace,
+  // Workshop) silently disagreed with the page you came from.
+  //
+  // NOTHING VISIBLE CHANGES: no render reads this, and it adds no [data-fr-operator] node.
+  // Skipped when the id is not a company this operator holds — an unknown id must never be
+  // persisted to localStorage, from where it would follow them onto every other surface.
+  const { companies, activeCompany, setActiveCompanyId } = useCompany();
+  useEffect(() => {
+    const next = routeCompanyToActivate({
+      routeCompanyId: companyId,
+      activeCompanyId: activeCompany?.id,
+      knownCompanyIds: companies.map((c) => c.id),
+    });
+    if (next) setActiveCompanyId(next);
+  }, [companyId, companies, activeCompany?.id, setActiveCompanyId]);
   // OPERATOR OVERRIDE (stage 3, 2026-09-03): the preview re-reads after a decision (refreshKey — this
   // hook is plain state, not react-query) and invalidates the react-query readers of claim_deltas so no
   // surface holds a stale verdict. This view is the ONLY provider of OperatorControlsContext: it mounts

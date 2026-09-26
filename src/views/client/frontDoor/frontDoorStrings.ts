@@ -14,4 +14,9 @@ export const FRONT_DOOR_STRINGS = {
   /** 4g-1 (signed 2026-09-25) — the row's second link: that company's workspace home. The row's own
    *  click still opens the First Read; this is the only way into the workspace from anywhere. */
   workspace: "Workspace",
+  /** N2 (2026-09-26) — the row's third link: that company's Company operator view. NOT A NEW STRING:
+   *  byte-exact reuse of the label the sidebar has always used for this destination
+   *  (WorkshopSidebar.tsx:205). Before N2 neither "All companies" mount linked to the Company view
+   *  at all, so reaching a named company's took four steps and a typed URL. */
+  company: "Company",
 } as const;

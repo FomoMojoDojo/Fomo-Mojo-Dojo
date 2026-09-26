@@ -12,7 +12,7 @@ import DriftDetailPanel from "@/components/drift/DriftDetailPanel";
 import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
 import {
   CLIENT_REFINE_PREVIEW_HOME_ROUTE,
-  CLIENT_REFINE_PREVIEW_COMPANY_ROUTE,
+  clientRefineCompanyPath,
   CLIENT_REFINE_PREVIEW_INBOX_ROUTE,
   CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE,
   CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE,
@@ -402,7 +402,7 @@ export default function DriftInboxView() {
         activeTab={null}
         onTabClick={(tab) => navigate(`/preview/client-refine/workshop?tab=${tab}`)}
         onHome={() => navigate(CLIENT_REFINE_PREVIEW_HOME_ROUTE)}
-        onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
+        onCompany={() => navigate(clientRefineCompanyPath(activeCompany?.id))}
         onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
         onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
         onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}

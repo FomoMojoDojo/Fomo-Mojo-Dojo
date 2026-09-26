@@ -22,7 +22,7 @@ import {
   type CompanyInventoryRow,
 } from "@/lib/admin/companiesInventory";
 import { useCompany } from "@/hooks/useCompany";
-import { clientRefineFirstReadPath, clientRefineWorkspacePath } from "@/lib/clientRefinePreview";
+import { clientRefineCompanyPath, clientRefineFirstReadPath, clientRefineWorkspacePath } from "@/lib/clientRefinePreview";
 import { FRONT_DOOR_STRINGS } from "./frontDoorStrings";
 import "../firstReadPreview/firstRead.css";
 
@@ -114,16 +114,32 @@ export default function FrontDoorView() {
             // navigates — the same hand-off the row click already makes, to a different door. A
             // real <Link>, so it is keyboard reachable and opens in a new tab like any other.
             renderRowLink={(id) => (
-              <Link
-                to={clientRefineWorkspacePath()}
-                className="font-mono text-[10px] uppercase tracking-wide"
-                // The page palette is tokens only (FRONT_DOOR_PALETTE.secondary) — never a raw hex.
-                style={{ color: "hsl(var(--fr-slate))" }}
-                data-testid={`front-door-workspace-${id}`}
-                onClick={() => setActiveCompanyId(id)}
-              >
-                {FRONT_DOOR_STRINGS.workspace}
-              </Link>
+              <span className="inline-flex gap-3">
+                <Link
+                  to={clientRefineWorkspacePath()}
+                  className="font-mono text-[10px] uppercase tracking-wide"
+                  // The page palette is tokens only (FRONT_DOOR_PALETTE.secondary) — never a raw hex.
+                  style={{ color: "hsl(var(--fr-slate))" }}
+                  data-testid={`front-door-workspace-${id}`}
+                  onClick={() => setActiveCompanyId(id)}
+                >
+                  {FRONT_DOOR_STRINGS.workspace}
+                </Link>
+                {/* N2: the row's third door — that company's Company operator view. Unlike the
+                    Workspace link beside it, this href NAMES the company (N1), so it is correct
+                    when bookmarked, pasted or opened in a new tab, and it does not depend on the
+                    click having set the active company first. The click still sets it, so the rest
+                    of the session follows the company the operator just opened. */}
+                <Link
+                  to={clientRefineCompanyPath(id)}
+                  className="font-mono text-[10px] uppercase tracking-wide"
+                  style={{ color: "hsl(var(--fr-slate))" }}
+                  data-testid={`front-door-company-${id}`}
+                  onClick={() => setActiveCompanyId(id)}
+                >
+                  {FRONT_DOOR_STRINGS.company}
+                </Link>
+              </span>
             )}
           />
         </div>

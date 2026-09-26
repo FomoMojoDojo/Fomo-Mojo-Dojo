@@ -303,3 +303,42 @@ describe("frontDoor variant — the read-only law holds on the new ground", () =
     expect(seen).toEqual(["live1", CB1]);
   });
 });
+
+// N2 (2026-09-26) — the row-link SLOT. The table stays dumb about where the extra affordances point
+// (the front door owns the route, the label and the hand-off), so what is asserted here is the slot
+// itself: it renders exactly what the caller returns, once per row, under that row's company name —
+// and the admin mount, which passes no renderRowLink, still renders exactly what it rendered before.
+describe("the renderRowLink slot carries the caller's links, per row", () => {
+  it("renders the caller's node once per row, keyed to that row's id", () => {
+    const companies = [co("a", "Alpha", false), co("b", "Beta", false)];
+    const { getByTestId, container } = render(
+      <MemoryRouter>
+        <InventoryTable
+          variant="frontDoor"
+          companies={companies}
+          inventory={new Map([inv("a"), inv("b")].map((r) => [r.id, r]))}
+          inventoryLoading={false}
+          activeCompanyId={null}
+          runLocksByCompany={{}}
+          userId={null}
+          labelForUser={(id) => id}
+          busyIds={{ researchingId: null, baselineId: null, comboId: null }}
+          onSelect={() => {}}
+          onCancelLock={() => {}}
+          onRowClick={() => {}}
+          renderRowLink={(id) => <a href={`/preview/client-refine/company/${id}`} data-testid={`co-${id}`}>Company</a>}
+        />
+      </MemoryRouter>,
+    );
+    expect(getByTestId("row-link-a")).toBeTruthy();
+    expect(getByTestId("row-link-b")).toBeTruthy();
+    expect(getByTestId("co-a").getAttribute("href")).toBe("/preview/client-refine/company/a");
+    expect(getByTestId("co-b").getAttribute("href")).toBe("/preview/client-refine/company/b");
+    expect(container.querySelectorAll('[data-testid^="row-link-"]')).toHaveLength(2);
+  });
+
+  it("the admin mount passes none, and renders no row-link slot at all", () => {
+    const { container } = renderTable([co("a", "Alpha", false)], [inv("a")]);
+    expect(container.querySelectorAll('[data-testid^="row-link-"]')).toHaveLength(0);
+  });
+});

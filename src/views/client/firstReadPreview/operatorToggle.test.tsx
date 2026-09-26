@@ -42,6 +42,13 @@ vi.mock("react-router-dom", () => ({
     ({ type: "a", props: { href: to, ...rest, children }, key: null, ref: null, $$typeof: Symbol.for("react.element") }) as any,
 }));
 vi.mock("./useFirstReadPreviewData", () => ({ useFirstReadPreviewData: () => ({ data: READ, loading: false, error: null }) }));
+// N3 (2026-09-26): the view now points CompanyProvider at its own :companyId on load. No render
+// reads it, so the assertions below are untouched — this mock exists so the hook resolves outside a
+// provider. `companies` is empty, so routeCompanyToActivate declines to write at all: this file
+// therefore also proves the unknown-id refusal does not disturb the render.
+vi.mock("@/hooks/useCompany", () => ({
+  useCompany: () => ({ companies: [], activeCompany: null, setActiveCompanyId: () => {} }),
+}));
 vi.mock("@/hooks/useFirstReadOpenQuestions", () => ({ useFirstReadOpenQuestions: () => ({ questions: [] }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn(), functions: { invoke: vi.fn() } } }));
 
