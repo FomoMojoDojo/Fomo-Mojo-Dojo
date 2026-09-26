@@ -22,21 +22,18 @@ import { supabase } from "@/integrations/supabase/client";
 const sb = supabase as any;
 
 // ── R-status: exactly the seven Notion single-select values, in Notion's own option order ───────
-export const CLIENT_PORTAL_STATUSES = [
-  "Cold Intake",
-  "Web Intake",
-  "Map Created",
-  "In Progress",
-  "Completed",
-  "On Hold",
-  "Ongoing",
-] as const;
-
-export type ClientStatus = (typeof CLIENT_PORTAL_STATUSES)[number];
-
-export function isClientStatus(value: unknown): value is ClientStatus {
-  return typeof value === "string" && (CLIENT_PORTAL_STATUSES as readonly string[]).includes(value);
-}
+// B2a moved the three of these into ./clientPortalStatuses, which imports nothing, so B2a's sync
+// runner can compare them against the live Notion options from Node — this module imports the
+// browser Supabase client and cannot run there. Re-exported here so every importer is unchanged and
+// there is still exactly ONE definition of the seven.
+// Imported for this module's own use AND re-exported: a bare `export … from` would not bring
+// ClientStatus into scope here, and this file's own signatures are written in terms of it.
+import {
+  CLIENT_PORTAL_STATUSES,
+  isClientStatus,
+  type ClientStatus,
+} from "./clientPortalStatuses";
+export { CLIENT_PORTAL_STATUSES, isClientStatus, type ClientStatus };
 
 /** Dates render in the VIEWER's local time (signed). Both timestamp strings go through this. */
 export function formatLocalDateTime(iso: string): string {
