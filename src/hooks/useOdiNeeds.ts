@@ -130,6 +130,14 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: str
       // Lens-reads law: when a focus key is passed, needs are scoped server-side to
       // that journey — a focused lens must never receive another market's needs.
       // No key ⇒ legacy company-wide list (pre-lens consumers filter client-side).
+      // 4f-6 (ruling F9): BOTH paths are market-keyed surfaces, so both exclude COMPANY-HELD needs
+      // (holder='company', journey_key NULL). The keyed path already excludes them by its
+      // .eq("journey_key", key); the no-key path did NOT, and every unscoped consumer — the home,
+      // the shell, the score, the Opportunities and Needs panels — would have rendered or counted a
+      // company-held need under a market it does not belong to. `journey_key IS NOT NULL` is the
+      // test, not holder, because the paired CHECK binds them and the key is what these surfaces
+      // actually group and label by. A surface FOR company-held needs is client-view work; until it
+      // exists they render nowhere.
       // Gate 3 (2026-09-16): the KEYED read embeds the interview record an interview-sourced need
       // points at (speaker role, name, date, verbatim — the frame's inputs) and excludes rows whose
       // record was retracted (status='retracted', set by the retraction trigger). The no-key path
@@ -149,6 +157,7 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: str
             .from("odi_needs")
             .select("*")
             .eq("company_id", companyId)
+            .not("journey_key", "is", null)
             .neq("status", "retracted")
             .order("tier", { ascending: true })
             .order("sort_order", { ascending: true, nullsFirst: false })

@@ -277,8 +277,12 @@ export async function writeReconciledNeeds(args: {
 
     const { data: existingNeedRows } = await supabase
       .from("odi_needs")
+      // 4f-6 (F9): reconcile keys on (journey_key, step_number); a company-held need has no key and
+      // is not a public-research row in any case. Excluded at the read so it can never be a
+      // reconcile candidate.
       .select("id, desired_outcome, odi_canonical_statement, content_identity, journey_key, step_number")
       .eq("company_id", company_id)
+      .not("journey_key", "is", null)
       .eq("provenance_type", "public_research")
       .eq("status", "active");
     const needPlan = await planReconcile(

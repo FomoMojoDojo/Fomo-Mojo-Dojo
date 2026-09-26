@@ -15,6 +15,9 @@ import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
 
+// 4f-6 (F9): the one refusal for a company-held need reaching a market-framed proposal.
+export const OPP_IS_COMPANY_HELD = "This need is held by the company, not a market — an opportunity proposal needs a market.";
+
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "*",
@@ -114,6 +117,12 @@ Deno.serve(async (req: Request) => {
 
   if (oppError || !oppData) {
     return jsonResponse({ error: oppError?.message ?? "Opportunity not found" }, 404);
+  }
+
+  // 4f-6 (F9): an opportunity proposal is framed by its market. A company-held need (journey_key
+  // NULL) has none, so it is refused here rather than rendered under a Journey it does not have.
+  if (oppData.journey_key === null || oppData.journey_key === undefined) {
+    return jsonResponse({ error: "company_held_need", message: OPP_IS_COMPANY_HELD }, 409);
   }
   const opp = oppData as OpportunityRow;
   const currentState = buildCurrentSnapshot(opp);

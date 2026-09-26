@@ -813,8 +813,11 @@ Deno.serve(async (req) => {
           .maybeSingle(),
         supabase
           .from("odi_needs")
+          // 4f-6 (F9): alignment is judged against the markets; a company-held need (journey_key
+          // NULL) belongs to none of them and never enters this context.
           .select("id,desired_outcome,importance,satisfaction,opportunity_score,journey_key,step_label,source_path,created_at")
           .eq("company_id", companyId)
+          .not("journey_key", "is", null)
           .order("opportunity_score", { ascending: false })
           .limit(120),
         supabase

@@ -299,8 +299,11 @@ Deno.serve(async (req: Request) => {
   // don't flow into cascade proposals for B2B-pivoted companies.
   const { data: opportunityRows } = await db
     .from("odi_needs")
+    // 4f-6 (F9): a company-held need (journey_key NULL) is not of any market, so it never enters a
+    // market-framed proposal context — the prompt would print it under a Journey it does not have.
     .select("desired_outcome as outcome, journey_key, step_number, step_label, importance, satisfaction, opportunity_score, tier as priority_tier, provenance_type")
     .eq("company_id", company_id)
+    .not("journey_key", "is", null)
     .neq("strategy_alignment", "off_strategy")
     .order("opportunity_score", { ascending: false })
     .limit(30);

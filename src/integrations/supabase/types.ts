@@ -4384,7 +4384,8 @@ export type Database = {
           id: string
           importance: number
           interview_record_id: string | null
-          journey_key: string
+          holder: string
+          journey_key: string | null
           last_confirmed_run_id: string | null
           last_reviewed_at: string | null
           notes: string | null
@@ -4427,7 +4428,8 @@ export type Database = {
           id?: string
           importance?: number
           interview_record_id?: string | null
-          journey_key?: string
+          holder?: string
+          journey_key?: string | null
           last_confirmed_run_id?: string | null
           last_reviewed_at?: string | null
           notes?: string | null
@@ -4470,7 +4472,8 @@ export type Database = {
           id?: string
           importance?: number
           interview_record_id?: string | null
-          journey_key?: string
+          holder?: string
+          journey_key?: string | null
           last_confirmed_run_id?: string | null
           last_reviewed_at?: string | null
           notes?: string | null

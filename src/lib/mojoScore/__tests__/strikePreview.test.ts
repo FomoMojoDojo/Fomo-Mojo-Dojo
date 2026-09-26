@@ -21,6 +21,8 @@ function fakeDb(tables: Record<string, Row[]>) {
             _rows: tables[table] ?? [],
             eq(col: string, v: unknown) { captured.push({ table, method: "eq", col, v }); this._rows = this._rows.filter((r) => r[col] === v); return chain; },
             neq(col: string, v: unknown) { captured.push({ table, method: "neq", col, v }); this._rows = this._rows.filter((r) => r[col] !== v); return chain; },
+            // 4f-6 (F9): the needs read excludes the empty market — not("journey_key","is",null).
+            not(col: string, op: string, v: unknown) { captured.push({ table, method: "not", col, v: `${op} ${v}` }); this._rows = this._rows.filter((r) => (op === "is" && v === null ? r[col] !== null && r[col] !== undefined : true)); return chain; },
             then(resolve: (v: { data: Row[]; error: null }) => void) { resolve({ data: chain._rows, error: null }); },
           };
           return chain;

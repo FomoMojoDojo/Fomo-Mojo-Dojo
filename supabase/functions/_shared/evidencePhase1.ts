@@ -460,10 +460,14 @@ async function rebuildFoundationDependenciesForCompany(supabase: SupabaseClient,
       .select("id, journey_key, step_number, step_label, description")
       .eq("company_id", companyId)
       .limit(1000),
+    // 4f-6 (F9): dependencies pair a need to a job_step BY journey_key. A company-held need
+    // (journey_key NULL) matches no step, so it produced no dependency anyway — the filter says so
+    // at the read instead of relying on a downstream string compare against "".
     supabase
       .from("odi_needs")
       .select("id, journey_key, step_number, desired_outcome")
       .eq("company_id", companyId)
+      .not("journey_key", "is", null)
       .limit(1000),
   ]);
 

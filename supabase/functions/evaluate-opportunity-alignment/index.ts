@@ -14,6 +14,9 @@ import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate
 import { gateSubjectForExternal, gateSubjectForLocal } from "../_shared/driftExternalGate.ts";
 import { judgeOpportunityAlignmentLocal } from "../_shared/localAlignmentJudge.ts";
 
+// 4f-6 (F9): the one refusal for a company-held need reaching a market-framed judgement.
+export const NEED_IS_COMPANY_HELD = "This need is held by the company, not a market — there is no market to align it to.";
+
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "*",
@@ -75,6 +78,13 @@ Deno.serve(async (req: Request) => {
 
   if (needError || !needData) {
     return jsonResponse({ error: needError?.message ?? "Need not found" }, 404);
+  }
+
+  // 4f-6 (F9): alignment is judged against a MARKET. A company-held need (journey_key NULL) belongs
+  // to none, so there is nothing to align it to — refuse rather than prompt the model with a null
+  // Journey. A surface for company-held needs is client-view work; this path is not it.
+  if (needData.journey_key === null || needData.journey_key === undefined) {
+    return jsonResponse({ error: "company_held_need", message: NEED_IS_COMPANY_HELD }, 409);
   }
 
   // DECL-OPP 1a.1 — Option-B subject gate: an internal (declared/manual/NULL-

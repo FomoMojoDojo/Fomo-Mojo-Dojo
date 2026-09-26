@@ -12,6 +12,8 @@ type QueryResult = { data: unknown; error: { message: string } | null };
 type Query = PromiseLike<QueryResult> & {
   eq(col: string, v: unknown): Query;
   neq(col: string, v: unknown): Query;
+  /** 4f-6 (F9): the needs read excludes the empty market — not("journey_key", "is", null). */
+  not(col: string, op: string, v: unknown): Query;
 };
 type Db = { from(table: string): { select(cols: string): Query } };
 
@@ -39,9 +41,12 @@ export async function previewStrikeScoreDelta(
     db.from("routes")
       .select("id, category, level, parent_id, claim_id, steps_json, evidence_json, why_this_matters_json, rejected_alternatives, what_would_have_to_be_true, linked_need_ids, updated_at")
       .eq("company_id", companyId),
+    // 4f-6 (F9): the preview must match snapshotMojoScore exactly — company-held needs
+    // (journey_key NULL) are outside every market and outside the score.
     db.from("odi_needs")
       .select("id, desired_outcome, importance, satisfaction, opportunity_score, service_state, updated_at")
-      .eq("company_id", companyId),
+      .eq("company_id", companyId)
+      .not("journey_key", "is", null),
   ]);
   for (const r of [claimsRes, routesRes, needsRes]) {
     if (r.error) throw new Error(r.error.message);

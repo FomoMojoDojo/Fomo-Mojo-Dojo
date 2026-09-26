@@ -54,10 +54,14 @@ export async function snapshotMojoScore(
         .from("routes")
         .select("id, category, level, parent_id, claim_id, steps_json, evidence_json, why_this_matters_json, rejected_alternatives, what_would_have_to_be_true, linked_need_ids, updated_at")
         .eq("company_id", companyId),
+      // 4f-6 (F9): the mojo score is a MARKET score — company-held needs (journey_key NULL) are
+      // not part of any market and must not move it. The filter is server-side so no caller can
+      // forget it.
       supabase
         .from("odi_needs")
         .select("id, desired_outcome, importance, satisfaction, opportunity_score, service_state, updated_at")
-        .eq("company_id", companyId),
+        .eq("company_id", companyId)
+        .not("journey_key", "is", null),
     ]);
 
     const claims = (claimsResult.data ?? []) as ClaimInput[];
