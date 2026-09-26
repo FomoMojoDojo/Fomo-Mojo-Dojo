@@ -114,24 +114,43 @@ export function emptyLink(companyId: string): ClientPortalLinkRow {
 const SELECT_COLS =
   "company_id,enabled,client_status,status_changed_at,notion_page_id,last_notion_status_seen,map_created_set_at,last_synced_at,last_sync_error,last_sync_error_at";
 
-/** Outcome of a compare-and-set status write. `stale` carries what the row actually holds now. */
-export type StatusSaveResult =
-  | { kind: "saved" }
+/**
+ * What one Confirm asks for. The tri-states mirror the component's staging model exactly:
+ * `enabled: null` = the switch was not touched; `setStatus: false` = the select was not touched.
+ * `expectedStatus` is R-cas — the value the operator READ, which the RPC compares under a row lock.
+ */
+export type SaveLinkArgs = {
+  enabled: boolean | null;
+  setStatus: boolean;
+  expectedStatus: ClientStatus | null;
+  nextStatus: ClientStatus | null;
+};
+
+/**
+ * Outcome of one Confirm. `stale` carries what the row actually holds now.
+ *
+ * B1a (R4): `saved` means the row change AND its integrity_runs audit row committed together.
+ * `stale` means a lost compare-and-set, and — changed from B1 — means NOTHING was written: B1
+ * committed the `enabled` half before the status leg ran, so a lost race left half an operator
+ * decision stored. One RPC, one transaction, so a lost race now leaves the row exactly as it was.
+ */
+export type SaveLinkResult =
+  | { kind: "saved"; audit_id: number | null }
   | { kind: "stale"; stored: ClientStatus | null }
   | { kind: "error"; message: string };
+
+/** Kept for callers that still name the old result type. */
+export type StatusSaveResult = SaveLinkResult;
 
 export type ClientPortalDeps = {
   /** null = no row yet. */
   readLink: (companyId: string) => Promise<{ row: ClientPortalLinkRow | null; error: string | null }>;
-  /** Insert the default row if absent; never touches client_status or a sync-owned column. */
-  ensureRow: (companyId: string) => Promise<string | null>;
-  saveEnabled: (companyId: string, enabled: boolean) => Promise<string | null>;
-  /** R-cas. Updates only while the stored status still equals what the writer read. */
-  saveStatus: (
-    companyId: string,
-    expected: ClientStatus | null,
-    next: ClientStatus | null,
-  ) => Promise<StatusSaveResult>;
+  /**
+   * B1a (R4/R6/R7): the ONE write path. Replaces ensureRow + saveEnabled + saveStatus, which were
+   * three separate PostgREST calls in three separate transactions. Refuses a non-admin, a frozen
+   * company and a no-op; on success writes one integrity_runs audit row in the same transaction.
+   */
+  saveLink: (companyId: string, args: SaveLinkArgs) => Promise<SaveLinkResult>;
 };
 
 export const defaultClientPortalDeps: ClientPortalDeps = {
@@ -145,40 +164,30 @@ export const defaultClientPortalDeps: ClientPortalDeps = {
     return { row: (data as ClientPortalLinkRow | null) ?? null, error: null };
   },
 
-  // ON CONFLICT DO NOTHING. The payload is the key alone, so an existing row — its status, its
-  // sync bookkeeping — is left exactly as it was. This is the "upsert on first save" step; the
-  // status itself is only ever set by the compare-and-set below.
-  ensureRow: async (companyId) => {
-    const { error } = await sb
-      .from("client_portal_links")
-      .upsert({ company_id: companyId }, { onConflict: "company_id", ignoreDuplicates: true });
-    return error ? error.message || "Could not create the portal link row." : null;
-  },
-
-  saveEnabled: async (companyId, enabled) => {
-    const { error } = await sb
-      .from("client_portal_links")
-      .update({ enabled })
-      .eq("company_id", companyId);
-    return error ? error.message || "Could not save the switch." : null;
-  },
-
-  // R-cas: `AND client_status IS NOT DISTINCT FROM <expected>`, spelled through PostgREST as
-  // .is(null) or .eq(value) — the two halves of IS NOT DISTINCT FROM. status_changed_at is NOT in
-  // the payload: the DB trigger stamps it with server now() (a browser clock must never date a
-  // status change). A returned empty set means another writer moved first.
-  saveStatus: async (companyId, expected, next) => {
-    let q = sb
-      .from("client_portal_links")
-      .update({ client_status: next })
-      .eq("company_id", companyId);
-    q = expected === null ? q.is("client_status", null) : q.eq("client_status", expected);
-    const { data, error } = await q.select("client_status");
-    if (error) return { kind: "error", message: error.message || "Could not save the status." };
-    if (!Array.isArray(data) || data.length === 0) {
-      const fresh = await defaultClientPortalDeps.readLink(companyId);
-      return { kind: "stale", stored: fresh.row?.client_status ?? null };
+  // ONE RPC, ONE TRANSACTION (B1a, R4). The row is created if absent, both columns move together,
+  // and the audit row lands with them. Nothing here names the actor: the RPC takes it from
+  // auth.uid() and requires the admin role, so a caller cannot write an audit row as someone else.
+  // No sync-owned column and no status_changed_at appears in any argument — status_changed_at is
+  // still stamped by the DB trigger, because a browser clock must never date a status change.
+  saveLink: async (companyId, args) => {
+    const { data, error } = await sb.rpc("set_client_portal_link", {
+      p_company_id: companyId,
+      p_enabled: args.enabled,
+      p_set_status: args.setStatus,
+      p_expected_status: args.expectedStatus,
+      p_next_status: args.nextStatus,
+    });
+    if (error) return { kind: "error", message: error.message || "Could not save the portal link." };
+    const row = (data ?? {}) as {
+      ok?: boolean;
+      kind?: string;
+      stored_status?: ClientStatus | null;
+      audit_id?: number | null;
+    };
+    if (row.ok === false && row.kind === "stale") {
+      return { kind: "stale", stored: row.stored_status ?? null };
     }
-    return { kind: "saved" };
+    if (row.ok !== true) return { kind: "error", message: "Could not save the portal link." };
+    return { kind: "saved", audit_id: row.audit_id ?? null };
   },
 };

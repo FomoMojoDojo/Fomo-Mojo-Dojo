@@ -105,45 +105,40 @@ export function ClientPortalSection({
     setStaleNotice(false); // C3 — clears on Cancel
   };
 
+  // B1a (R4): ONE call, ONE transaction. B1 sent three — an ensureRow upsert, an `enabled` UPDATE
+  // and a compare-and-set status UPDATE — each its own implicit transaction, so there was no single
+  // change for an audit row to belong to and a failure part-way left half a decision stored. The
+  // RPC creates the row if absent, moves both columns and writes the integrity_runs audit row
+  // together. The three branches below are the same three B1 had; only the number of round trips
+  // changed.
   const confirm = async () => {
     setSaving(true);
     setError(null);
 
-    const ensureError = await deps.ensureRow(companyId);
-    if (ensureError) {
-      setError(ensureError);
+    const result = await deps.saveLink(companyId, {
+      enabled: pendingEnabled,
+      setStatus: pendingStatus !== undefined,
+      expectedStatus: stored.client_status,
+      nextStatus: pendingStatus === undefined ? null : pendingStatus,
+    });
+
+    if (result.kind === "error") {
+      setError(result.message);
       setSaving(false);
+      await load();
       return;
     }
 
-    if (pendingEnabled !== null) {
-      const enabledError = await deps.saveEnabled(companyId, pendingEnabled);
-      if (enabledError) {
-        setError(enabledError);
-        setSaving(false);
-        await load();
-        return;
-      }
-    }
-
-    if (pendingStatus !== undefined) {
-      const result = await deps.saveStatus(companyId, stored.client_status, pendingStatus);
-      if (result.kind === "error") {
-        setError(result.message);
-        setSaving(false);
-        await load();
-        return;
-      }
-      // R-cas lost race: the stored value wins. Refetch, show it, and say so (C3) — the snap-back
-      // on its own reads as "my click didn't register", which is the wrong thing to have learned.
-      if (result.kind === "stale") {
-        setPendingEnabled(null);
-        setPendingStatus(undefined);
-        setStaleNotice(true);
-        setSaving(false);
-        await load();
-        return;
-      }
+    // R-cas lost race: the stored value wins. Refetch, show it, and say so (C3) — the snap-back
+    // on its own reads as "my click didn't register", which is the wrong thing to have learned.
+    // B1a: nothing at all was written, so the refetch shows the other writer's row whole.
+    if (result.kind === "stale") {
+      setPendingEnabled(null);
+      setPendingStatus(undefined);
+      setStaleNotice(true);
+      setSaving(false);
+      await load();
+      return;
     }
 
     setPendingEnabled(null);

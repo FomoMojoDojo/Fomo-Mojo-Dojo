@@ -16,7 +16,8 @@ import {
   type ClientPortalDeps,
   type ClientPortalLinkRow,
   type ClientStatus,
-  type StatusSaveResult,
+  type SaveLinkArgs,
+  type SaveLinkResult,
 } from "./clientPortalLink";
 
 // ── the signed strings, written out here as the operator signed them ────────────────────────────
@@ -51,45 +52,52 @@ const CO = "3dd2cfbb-0792-4bf1-9cd4-15db9646874b"; // Edgewood
 const CB1 = "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc"; // frozen
 
 type Calls = {
-  ensure: string[];
-  enabled: Array<{ companyId: string; enabled: boolean }>;
-  status: Array<{ companyId: string; expected: ClientStatus | null; next: ClientStatus | null }>;
+  save: Array<{ companyId: string } & SaveLinkArgs>;
   reads: number;
 };
 
-/** Deps over a mutable fake row, recording every payload so "the UI writes two columns" is testable. */
+/**
+ * Deps over a mutable fake row, recording every argument so "the UI writes two columns" stays
+ * testable. B1a: one saveLink stands in for set_client_portal_link — it creates the row if absent,
+ * moves both columns together, and on a lost compare-and-set writes NOTHING (B1's three separate
+ * calls could leave the `enabled` half stored; one transaction cannot).
+ */
 function fakeDeps(initial: ClientPortalLinkRow | null, opts: { staleOnce?: boolean } = {}) {
   let row: ClientPortalLinkRow | null = initial;
   let stalePending = opts.staleOnce === true;
-  const calls: Calls = { ensure: [], enabled: [], status: [], reads: 0 };
+  const calls: Calls = { save: [], reads: 0 };
+  let nextAuditId = 6000;
 
   const deps: ClientPortalDeps = {
     readLink: async (companyId) => {
       calls.reads += 1;
       return { row: row ? { ...row } : null, error: null };
     },
-    ensureRow: async (companyId) => {
-      calls.ensure.push(companyId);
-      if (!row) row = emptyLink(companyId);
-      return null;
-    },
-    saveEnabled: async (companyId, enabled) => {
-      calls.enabled.push({ companyId, enabled });
-      if (row) row = { ...row, enabled };
-      return null;
-    },
-    saveStatus: async (companyId, expected, next): Promise<StatusSaveResult> => {
-      calls.status.push({ companyId, expected, next });
-      // A stale compare-and-set: another writer moved first, so the stored value stands.
-      if (stalePending) {
-        stalePending = false;
-        return { kind: "stale", stored: row?.client_status ?? null };
+    saveLink: async (companyId, args): Promise<SaveLinkResult> => {
+      calls.save.push({ companyId, ...args });
+      const before = row;
+      // R-cas, evaluated before anything is written — the RPC does this under a row lock.
+      if (args.setStatus) {
+        const storedStatus = before?.client_status ?? null;
+        if (stalePending) {
+          stalePending = false;
+          return { kind: "stale", stored: storedStatus };
+        }
+        if (storedStatus !== args.expectedStatus) {
+          return { kind: "stale", stored: storedStatus };
+        }
       }
-      if (row && row.client_status !== expected) {
-        return { kind: "stale", stored: row.client_status };
-      }
-      if (row) row = { ...row, client_status: next, status_changed_at: "2026-09-25T18:00:00.000Z" };
-      return { kind: "saved" };
+      const base = before ?? emptyLink(companyId);
+      row = {
+        ...base,
+        enabled: args.enabled === null ? base.enabled : args.enabled,
+        client_status: args.setStatus ? args.nextStatus : base.client_status,
+        status_changed_at: args.setStatus && args.nextStatus !== base.client_status
+          ? "2026-09-25T18:00:00.000Z"
+          : base.status_changed_at,
+      };
+      nextAuditId += 1;
+      return { kind: "saved", audit_id: nextAuditId };
     },
   };
   return { deps, calls, current: () => row };
@@ -221,16 +229,16 @@ describe("R1 + first save — the switch and the status, confirm-then-save", () 
 
     // staged, nothing written
     expect(screen.getByTestId("client-portal-confirm")).toBeTruthy();
-    expect(calls.ensure).toEqual([]);
-    expect(calls.enabled).toEqual([]);
-    expect(calls.status).toEqual([]);
+    expect(calls.save).toEqual([]);
 
     await user.click(within(screen.getByTestId("client-portal-confirm")).getByText("Confirm"));
 
     await waitFor(() => expect(screen.queryByTestId("client-portal-confirm")).toBeNull());
-    expect(calls.ensure).toEqual([CO]); // upsert the row on first save
-    expect(calls.enabled).toEqual([{ companyId: CO, enabled: true }]);
-    expect(calls.status).toEqual([{ companyId: CO, expected: null, next: "In Progress" }]);
+    // B1a: ONE call carries the whole decision — the row's creation, both columns, and the
+    // compare-and-set the RPC evaluates under a lock.
+    expect(calls.save).toEqual([
+      { companyId: CO, enabled: true, setStatus: true, expectedStatus: null, nextStatus: "In Progress" },
+    ]);
 
     const saved = current()!;
     expect(saved.enabled).toBe(true);
@@ -257,9 +265,7 @@ describe("R1 + first save — the switch and the status, confirm-then-save", () 
     expect(screen.queryByTestId("client-portal-confirm")).toBeNull();
     expect((screen.getByTestId("client-portal-track-switch") as HTMLInputElement).checked).toBe(false);
     expect((screen.getByTestId("client-portal-status-select") as HTMLSelectElement).value).toBe("");
-    expect(calls.ensure).toEqual([]);
-    expect(calls.enabled).toEqual([]);
-    expect(calls.status).toEqual([]);
+    expect(calls.save).toEqual([]);
   });
 
   it("the empty choice saves a NULL status (not set) through the same compare-and-set", async () => {
@@ -271,7 +277,9 @@ describe("R1 + first save — the switch and the status, confirm-then-save", () 
     await user.click(within(screen.getByTestId("client-portal-confirm")).getByText("Confirm"));
 
     await waitFor(() => expect(screen.queryByTestId("client-portal-confirm")).toBeNull());
-    expect(calls.status).toEqual([{ companyId: CO, expected: "Completed", next: null }]);
+    expect(calls.save).toEqual([
+      { companyId: CO, enabled: null, setStatus: true, expectedStatus: "Completed", nextStatus: null },
+    ]);
     expect(current()!.client_status).toBeNull();
   });
 });
@@ -292,8 +300,10 @@ describe("R-cas — a stale compare-and-set leaves the stored value unchanged", 
     await user.click(within(screen.getByTestId("client-portal-confirm")).getByText("Confirm"));
 
     // the attempt was made with what this view had read
-    await waitFor(() => expect(calls.status.length).toBe(1));
-    expect(calls.status[0]).toEqual({ companyId: CO, expected: "On Hold", next: "Completed" });
+    await waitFor(() => expect(calls.save.length).toBe(1));
+    expect(calls.save[0]).toEqual({
+      companyId: CO, enabled: null, setStatus: true, expectedStatus: "On Hold", nextStatus: "Completed",
+    });
 
     // ...and the stored value stands, shown in the select
     await waitFor(() =>
@@ -458,27 +468,60 @@ describe("source guards — the column ownership the UI must never break", () =>
   const src = fs.readFileSync(path.join(__dirname, "clientPortalLink.ts"), "utf8");
   const componentSrc = fs.readFileSync(path.join(__dirname, "ClientPortalSection.tsx"), "utf8");
 
-  it("no sync-owned column and no status_changed_at ever appears in an update/upsert payload", () => {
-    // Every payload literal the module sends. Only `enabled`, `client_status` and the bare key.
-    const payloads = src.match(/\.(?:update|upsert|insert)\(\s*\{[^}]*\}/g) ?? [];
-    expect(payloads.length).toBeGreaterThan(0);
-    for (const p of payloads) {
-      for (const owned of [
-        "map_created_set_at",
-        "last_synced_at",
-        "last_sync_error",
-        "last_sync_error_at",
-        "status_changed_at",
-        "notion_page_id",
-        "last_notion_status_seen",
-      ]) {
-        expect(p).not.toContain(owned);
-      }
+  // B1a (R7) REPLACES the B1 form of this guard, it does not drop it. B1 asserted the law over the
+  // module's `.update(` / `.upsert(` payload literals; after B1a there are no such literals — every
+  // write goes through set_client_portal_link — so the old form would not weaken, it would FAIL on
+  // its own `payloads.length > 0` precondition. The law is unchanged and is now asserted over the
+  // RPC's argument list, plus the absence of any direct write. The SQL half of the same law (the
+  // function's own UPDATE touches only these two columns) lives in
+  // scripts/guards/client-portal-audit-guard.sh, check (s).
+  const SYNC_OWNED = [
+    "map_created_set_at",
+    "last_synced_at",
+    "last_sync_error",
+    "last_sync_error_at",
+    "status_changed_at",
+    "notion_page_id",
+    "last_notion_status_seen",
+  ];
+
+  it("no RPC argument names a sync-owned column or status_changed_at", () => {
+    const args = src.match(/\.rpc\(\s*"set_client_portal_link"\s*,\s*\{[^}]*\}/g) ?? [];
+    expect(args.length).toBe(1); // exactly one write path
+    for (const owned of SYNC_OWNED) expect(args[0]).not.toContain(owned);
+    // and the five arguments it does send, named
+    for (const p of ["p_company_id", "p_enabled", "p_set_status", "p_expected_status", "p_next_status"]) {
+      expect(args[0]).toContain(p);
     }
   });
 
-  it("the compare-and-set predicate is present in both halves of IS NOT DISTINCT FROM", () => {
-    expect(src).toMatch(/expected === null \? q\.is\("client_status", null\) : q\.eq\("client_status", expected\)/);
+  it("the client sends no update / upsert / insert against client_portal_links", () => {
+    for (const s of [src, componentSrc]) {
+      expect(s).not.toMatch(/\.(?:update|upsert|insert)\(/);
+    }
+    // the only table access left in the module is the read
+    expect(src.match(/\.from\("client_portal_links"\)/g)?.length).toBe(1);
+    expect(src).toContain(".select(SELECT_COLS)");
+  });
+
+  it("the three B1 write deps are gone and saveLink is the only write dep", () => {
+    for (const gone of ["ensureRow:", "saveEnabled:", "saveStatus:"]) {
+      expect(src).not.toContain(gone);
+      expect(componentSrc).not.toContain(`deps.${gone.replace(":", "")}`);
+    }
+    expect(componentSrc).toContain("deps.saveLink(");
+  });
+
+  // B1a REPLACES this guard too. B1 asserted the compare-and-set as a PostgREST spelling of IS NOT
+  // DISTINCT FROM (.is(null) / .eq(value)); the predicate has moved into the RPC, where the row is
+  // locked first, so the client's remaining duty is narrower and sharper: it must hand the RPC the
+  // status IT READ, never the value it is about to write. The predicate itself is asserted in SQL
+  // by scripts/guards/client-portal-audit-guard.sh, plant PLANT=stale.
+  it("the component sends the status it READ as the compare-and-set expectation", () => {
+    expect(componentSrc).toMatch(/expectedStatus:\s*stored\.client_status/);
+    // never the staged value — that would compare-and-set against itself and always win
+    expect(componentSrc).not.toMatch(/expectedStatus:\s*pendingStatus/);
+    expect(componentSrc).not.toMatch(/expectedStatus:\s*shownStatus/);
   });
 
   it("the component returns null for a frozen company before rendering anything", () => {

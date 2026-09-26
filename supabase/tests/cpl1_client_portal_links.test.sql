@@ -27,6 +27,10 @@ declare
   v_n         int;
   v_status    text;
   v_changed   timestamptz;
+  -- B1a (R4/R6/R7), tests 5f–5g
+  v_audit_before int;
+  v_enabled      boolean;
+  v_actor_seen   text;
 begin
   -- Fixture preconditions: if these drift the tests below would pass for the wrong reason.
   if not (select frozen from public.companies where id = v_cb1) then
@@ -257,19 +261,75 @@ begin
   end if;
   raise notice 'CPL1 PASS 5 — non-admin: 0 rows visible, INSERT refused, UPDATE/DELETE touch nothing';
 
-  -- FALSIFICATION of test 5: the SAME session as an ADMIN sees the rows, so the 0s above are
+  -- FALSIFICATION of test 5: the SAME session as an ADMIN sees the rows, so the 0 SELECT above is
   -- the admin clause and not a blanket denial of `authenticated`.
   perform set_config('request.jwt.claims', json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
   select count(*) into v_n from public.client_portal_links;
   if v_n < 2 then
     raise exception 'CPL1-FAIL 5e: an admin authenticated user saw only % row(s)', v_n;
   end if;
-  update public.client_portal_links set enabled = true where company_id = v_edgewood;
+  raise notice 'CPL1 PASS 5e — the same role as an admin reads (test 5''s 0 is the admin clause)';
+
+  -- ── TEST 5f REVISED — B1a (R7): an admin may only SELECT. ────────────────────
+  -- B1 asserted here that an admin authenticated UPDATE touched exactly 1 row, under the FOR ALL
+  -- policy. R7 narrowed that policy to SELECT, so the same UPDATE must now touch 0 — a direct write
+  -- is how a change escapes the audit trail, which is the whole point of B1a. The admin write path
+  -- has not gone away, it has moved: TEST 5g calls it.
+  update public.client_portal_links set enabled = false where company_id = v_edgewood;
   get diagnostics v_n = ROW_COUNT;
-  if v_n <> 1 then
-    raise exception 'CPL1-FAIL 5f: an admin UPDATE touched % row(s), expected 1', v_n;
+  if v_n <> 0 then
+    raise exception 'CPL1-FAIL 5f: an admin authenticated UPDATE touched % row(s) — R7 narrowed the policy to SELECT', v_n;
   end if;
-  raise notice 'CPL1 PASS 5e/5f — the same role as an admin reads and writes (test 5 is the admin clause)';
+  v_fired := false;
+  begin
+    insert into public.client_portal_links (company_id, enabled) values (v_fmd, true);
+  exception when others then v_fired := true;
+  end;
+  if not v_fired then
+    raise exception 'CPL1-FAIL 5f2: an admin authenticated INSERT was NOT refused — R7 narrowed the policy to SELECT';
+  end if;
+  raise notice 'CPL1 PASS 5f — R7: an admin authenticated UPDATE touches nothing and INSERT is refused';
+
+  -- ── TEST 5g — B1a (R4): the admin write path is set_client_portal_link, and it audits. ──
+  -- Same session, same admin, still `authenticated`: the RPC is SECURITY DEFINER so it is not
+  -- subject to the policies above, but it takes the actor from auth.uid() and requires the admin
+  -- role, so this proves the door R7 closed has an audited replacement and not a dead end.
+  select count(*) into v_n from public.integrity_runs
+    where component = 'client_portal_operator_set' and surface_id = v_edgewood;
+  v_audit_before := v_n;
+  select client_status into v_status from public.client_portal_links where company_id = v_edgewood;
+  perform public.set_client_portal_link(v_edgewood, true, true, v_status, 'On Hold');
+  select enabled, client_status into v_enabled, v_status
+    from public.client_portal_links where company_id = v_edgewood;
+  if v_enabled is not true or v_status <> 'On Hold' then
+    raise exception 'CPL1-FAIL 5g: the RPC did not store enabled/On Hold (got %/%)', v_enabled, v_status;
+  end if;
+  select count(*) into v_n from public.integrity_runs
+    where component = 'client_portal_operator_set' and surface_id = v_edgewood;
+  if v_n <> v_audit_before + 1 then
+    raise exception 'CPL1-FAIL 5g2: the RPC wrote % audit row(s), expected exactly 1', v_n - v_audit_before;
+  end if;
+  select excluded_by_rule ->> 'actor' into v_actor_seen from public.integrity_runs
+    where component = 'client_portal_operator_set' and surface_id = v_edgewood
+    order by id desc limit 1;
+  if v_actor_seen is distinct from v_admin then
+    raise exception 'CPL1-FAIL 5g3: the audit row names actor %, expected the admin %', v_actor_seen, v_admin;
+  end if;
+  -- R6: the same call again would change nothing, and must be refused with no second audit row.
+  v_fired := false;
+  begin
+    perform public.set_client_portal_link(v_edgewood, true, true, 'On Hold', 'On Hold');
+  exception when others then v_fired := true;
+  end;
+  if not v_fired then
+    raise exception 'CPL1-FAIL 5g4: R6 — a no-op call was NOT refused';
+  end if;
+  select count(*) into v_n from public.integrity_runs
+    where component = 'client_portal_operator_set' and surface_id = v_edgewood;
+  if v_n <> v_audit_before + 1 then
+    raise exception 'CPL1-FAIL 5g5: R6 — the refused no-op still wrote an audit row';
+  end if;
+  raise notice 'CPL1 PASS 5g — R4/R6: the RPC writes both columns + ONE audit row naming the admin; a no-op is refused and audits nothing';
 
   perform set_config('role', 'postgres', true);
   perform set_config('request.jwt.claims', '', true);
