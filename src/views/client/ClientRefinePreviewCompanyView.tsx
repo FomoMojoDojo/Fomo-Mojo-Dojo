@@ -10,6 +10,7 @@ import { useDirectionEvidence } from "@/hooks/useDirectionEvidence";
 import { useFoundationStatus, type FoundationStatus } from "@/hooks/useFoundationStatus";
 import { WorkshopSidebar, type SidebarTabKey } from "@/components/client/WorkshopSidebar";
 import CompanyRenameControl from "@/views/client/workshop/CompanyRenameControl";
+import { ClientPortalSection } from "@/views/client/workshop/ClientPortalSection";
 import { getPhaseDefinition, type EngagementPhase } from "@/lib/engagementPhase";
 import { relativeTime } from "@/views/client/workshop/helpers";
 import {
@@ -1389,6 +1390,18 @@ export default function ClientRefinePreviewCompanyView() {
                 companyId={companyId}
                 currentPhase={activeCompany.engagement_phase}
                 onSaved={refetch}
+              />
+            )}
+
+            {/* ── Client portal (Notion) — B1 ──
+                Storage lives in client_portal_links; companies is never altered and
+                program_phase above is a different concept, never read or written here.
+                R-frozen: the section returns null for a frozen company, and the DB's
+                enforce_company_freeze trigger refuses a frozen row independently. */}
+            {companyId && (
+              <ClientPortalSection
+                companyId={companyId}
+                frozen={activeCompany?.frozen === true}
               />
             )}
 
