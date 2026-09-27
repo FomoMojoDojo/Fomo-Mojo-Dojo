@@ -34,7 +34,9 @@
 //
 // SECRETS: NOTION_TOKEN and SUPABASE_SERVICE_ROLE_KEY come from backups/client-sync.env (gitignored,
 // mode 600). Neither is printed, logged, echoed, or put in a URL.
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createReadOnlyNotionClient,
   allCallsWereReads,
@@ -54,9 +56,17 @@ import {
   type MojoSide,
   type NotionSide,
 } from "@/lib/notionClientSync/decide";
+import { acquireLock, releaseLock, type LockDeps } from "@/lib/notionClientSync/lock";
 import type { ClientStatus } from "@/views/client/workshop/clientPortalStatuses";
 
-const ENV_PATH = "backups/client-sync.env";
+// Resolved from THIS FILE's location, not from the cwd. launchd runs a job with cwd = "/", so a
+// relative path here meant the scheduled run could not find its secrets — the exact trap B3's brief
+// names, and it was live in this file until now. scripts/notion-client-sync/sync.ts → ../../ is the
+// repo root.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const ENV_PATH = resolve(REPO_ROOT, "backups/client-sync.env");
+/** R17/R18: one --live run at a time, manual or scheduled. */
+const LOCK_DIR = resolve(REPO_ROOT, "local-db-backups/.client-sync.lock");
 const NOTION_DATABASE_ID = "75df0a3f617182c6beb101a61c145212";
 const NOTION_DATA_SOURCE_ID = "31af0a3f-6171-83a0-9da8-87337f0ffc6d";
 
@@ -111,6 +121,32 @@ async function sbRpc<T>(base: string, key: string, fn: string, args: unknown, lo
 
 const LIVE = process.argv.includes("--live");
 
+// R18: the lock is taken HERE, so a hand-typed --live is serialised with the scheduled one. mkdir is
+// the atomic primitive; the pid and start time live in a file inside the directory.
+const lockDeps: LockDeps = {
+  mkdir: (dir) => mkdirSync(dir),                       // throws EEXIST when it already exists
+  readInfo: (dir) => {
+    try {
+      const raw = JSON.parse(readFileSync(resolve(dir, "info.json"), "utf8")) as { pid?: unknown; startedAt?: unknown };
+      if (typeof raw.pid !== "number" || typeof raw.startedAt !== "string") return null;
+      return { pid: raw.pid, startedAt: raw.startedAt };
+    } catch {
+      return null;
+    }
+  },
+  writeInfo: (dir, info) => writeFileSync(resolve(dir, "info.json"), JSON.stringify(info), "utf8"),
+  remove: (dir) => rmSync(dir, { recursive: true, force: true }),
+  isAlive: (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  now: () => Date.now(),
+};
+
 // R14 — --only=<company-id> narrows the run to ONE flagged company. Everything else about the run is
 // unchanged, so a --live --only is the smallest possible first write: one company, one plan.
 function parseOnly(): string | null {
@@ -145,7 +181,7 @@ function fmt(v: string | null | undefined, dash = "—"): string {
   return v === null || v === undefined || v === "" ? dash : v;
 }
 
-async function main() {
+async function runSync() {
   const ONLY = parseOnly(); // before any read, so a malformed id costs nothing
   const env = loadEnv();
   const notion = createReadOnlyNotionClient({ token: env.notionToken });
@@ -404,6 +440,45 @@ async function main() {
   console.log("── NOTION WRITE CALLS MADE ───────────────────────────────────────────────────────────");
   for (const c of writer.calls) console.log(`  ${c.method.padEnd(5)} ${String(c.status).padEnd(4)} ${c.path}`);
   console.log(`  ${writer.calls.length} calls · ${outcome.filter((o) => o.result === "FAILED").length} companies failed · ${outcome.filter((o) => o.result === "STALE").length} stale`);
+}
+
+/**
+ * R17/R18 — the lock wraps every --live run, manual or scheduled, and is released on EVERY exit path.
+ *
+ * It is taken before runSync(), i.e. before the first read, because those reads are what the write
+ * decisions are built from: two runs reading the same state and then both writing is exactly the
+ * interleaving this prevents. A dry run takes no lock — it cannot write, so there is nothing to
+ * serialise, and a dry run must never be blocked by a live one.
+ *
+ * A HELD lock exits 0. Being politely skipped is not a failure: it must not fail the launchd job and
+ * it must not trip the dead-man's switch into alarm (R16/R17).
+ */
+async function main() {
+  if (!LIVE) {
+    await runSync();
+    return;
+  }
+
+  const got = acquireLock(LOCK_DIR, lockDeps, process.pid);
+  if (got.kind === "held") {
+    const who = got.by === null ? "an unidentified holder" : `pid ${got.by.pid} (started ${got.by.startedAt})`;
+    console.log(`another --live run holds the lock — ${who}. ${got.reason}`);
+    console.log("EXITING 0 WITHOUT WRITING. A skipped run is not a failure.");
+    return;
+  }
+  if (got.kind === "reclaimed") {
+    console.log(
+      `reclaimed a stale lock from dead pid ${got.from.pid}, ${Math.round(got.ageMs / 60000)} min old ` +
+        `(R17: dead AND older than 30 min). Continuing as pid ${process.pid}.`,
+    );
+  }
+
+  try {
+    await runSync();
+  } finally {
+    const rel = releaseLock(LOCK_DIR, lockDeps, process.pid);
+    if (!rel.released) console.log(`lock not released: ${rel.reason}`);
+  }
 }
 
 main().catch((e) => {

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  B3 (R21–R24, 2026-09-26) — the MojoMap ↔ Notion client sync, daily.
+
+  __REPO__ is substituted by scripts/launchd/install.sh from `git rev-parse --show-toplevel`. The
+  template is committed rather than a finished plist because every other job in ~/Library/LaunchAgents
+  hard-codes /Users/fomomojodojo/… , which is exactly why none of them is in the repo (R23).
+
+  R21 — RunAtLoad is FALSE, and this is the load-bearing choice in the file. The backup job next door
+  sets it true because a backup is idempotent and harmless; this job WRITES TO NOTION. RunAtLoad fires
+  on every load — every login, every reboot, and the install itself — so `true` would mean installing
+  the job performs a live sync, and so would every reboot, at a moment nobody is watching.
+
+  R22 — TWO calendar entries, 06:00 and 12:00. 06:00 is the signed schedule; 12:00 closes the
+  power-off gap, because launchd's catch-up promise covers sleep only ("launchd will start the job the
+  next time the computer wakes up … coalesced into one event upon wake from sleep" — man launchd.plist)
+  and says nothing about a cold boot. The wrapper checks a local-date marker first, so on a normal day
+  the 12:00 firing exits 0 immediately having written nothing and sent no ping.
+
+  R23 — no timezone key. launchd evaluates the calendar in LOCAL time; this Mac is
+  America/Los_Angeles, so Hour 6 IS 06:00 America/Los_Angeles, and local time follows DST where a
+  fixed UTC offset would drift by an hour twice a year.
+
+  WorkingDirectory is set AND the wrapper cds itself. Both, because the cd is load-bearing: vite-node
+  resolves the "@/…" alias from vite.config.ts relative to the cwd, so from anywhere but the repo root
+  every @/ import fails. Belt and braces on the trap that actually bites.
+
+  PATH is spelled out because launchd hands a job almost nothing — node/npx live in /opt/homebrew/bin
+  (Homebrew symlinks, not a version manager) and docker in /usr/local/bin.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.fomomojodojo.mojomap-client-sync</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/notion-client-sync/run-scheduled.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict>
+      <key>Hour</key><integer>6</integer>
+      <key>Minute</key><integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key><integer>12</integer>
+      <key>Minute</key><integer>0</integer>
+    </dict>
+  </array>
+
+  <key>StandardOutPath</key>
+  <string>__REPO__/local-db-backups/client-sync.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/local-db-backups/client-sync.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
