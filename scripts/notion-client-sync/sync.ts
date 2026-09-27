@@ -1,11 +1,20 @@
-// ── B2a DRY RUN — MojoMap ↔ Notion "Client Portals" status sync. READ-ONLY. WRITES NOTHING. ──────
+// ── B2 — MojoMap ↔ Notion "Client Portals" status sync. DRY RUN BY DEFAULT. ──────────────────────
 //
-//   npx vite-node scripts/notion-client-sync/dry-run.ts
+//   npx vite-node scripts/notion-client-sync/sync.ts            dry run: reads, plans, prints, writes NOTHING
+//   npx vite-node scripts/notion-client-sync/sync.ts -- --live   executes the plan
 //
-// There is NO --apply and no write code anywhere in B2a. The Notion client is an ALLOW-LIST of
-// Notion's read endpoints (src/lib/notionClientSync/readOnlyFetch.ts) and throws on anything else
-// before it reaches the network; the Supabase side is read with a service-role client and only ever
-// SELECTs. B2b adds the write path, after the operator has read this output.
+// The default is the safe one on purpose: a run with no flag cannot write, and the write path is
+// reached only by typing --live. In dry run the Notion client is the READ client, whose allow-list
+// (src/lib/notionClientSync/readOnlyFetch.ts) throws on anything but a read before it reaches the
+// network; the write client (writeFetch.ts, R9) is not even constructed. In --live it is constructed
+// and carries its own allow-list: POST /v1/pages only with the Client Portals data source as parent,
+// PATCH /v1/pages/{id} only after a re-read confirms that parent and only with a Status-only payload.
+//
+// R11 ordering, per company: a `planned` integrity row → the Notion write → one DB RPC that writes
+// the sync-owned columns, the audit row and the closure of the planned row, in one transaction. A
+// failure records itself against that company and the run CARRIES ON. A `planned` row left open by an
+// earlier run means a Notion write may already have landed: that company is RE-READ and acted on next
+// run, never re-pushed blindly.
 //
 // Language and location: TypeScript run through `npx vite-node`, matching the repo's existing
 // operator runners (scripts/rf-channels-dry-run.ts, scripts/first-read-fill.ts,
@@ -32,6 +41,9 @@ import {
   NOTION_API_VERSION,
   type RecordedCall,
 } from "@/lib/notionClientSync/readOnlyFetch";
+import { createNotionWriteClient } from "@/lib/notionClientSync/writeFetch";
+import { planSteps, reconcilePlan, type PlanStep, type PlannedRow } from "@/lib/notionClientSync/plan";
+import { executePlan } from "@/lib/notionClientSync/execute";
 import { compareStatusOptions } from "@/lib/notionClientSync/statusOptions";
 import {
   decide,
@@ -84,6 +96,33 @@ async function sbSelect<T>(base: string, key: string, pathAndQuery: string, log:
   return JSON.parse(text) as T;
 }
 
+/** The ONLY non-GET the DB side may send, and only under --live: a named RPC. */
+async function sbRpc<T>(base: string, key: string, fn: string, args: unknown, log: RecordedCall[]): Promise<T> {
+  const res = await fetch(`${base}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: { apikey: key, Authorization: `Bearer ${key}`, "content-type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(args),
+  });
+  log.push({ method: "POST", path: `/rest/v1/rpc/${fn}`, status: res.status });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Supabase rpc ${fn} -> ${res.status}: ${text.slice(0, 300)}`);
+  return (text ? JSON.parse(text) : null) as T;
+}
+
+const LIVE = process.argv.includes("--live");
+
+// R14 — --only=<company-id> narrows the run to ONE flagged company. Everything else about the run is
+// unchanged, so a --live --only is the smallest possible first write: one company, one plan.
+function parseOnly(): string | null {
+  const a = process.argv.find((x) => x.startsWith("--only="));
+  if (!a) return null;
+  const v = a.slice("--only=".length).trim();
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v)) {
+    throw new Error(`--only takes one company uuid; got ${JSON.stringify(v)}`);
+  }
+  return v.toLowerCase();
+}
+
 type CplRow = {
   company_id: string;
   enabled: boolean;
@@ -107,12 +146,15 @@ function fmt(v: string | null | undefined, dash = "—"): string {
 }
 
 async function main() {
+  const ONLY = parseOnly(); // before any read, so a malformed id costs nothing
   const env = loadEnv();
   const notion = createReadOnlyNotionClient({ token: env.notionToken });
   const sbCalls: RecordedCall[] = [];
   const S = <T,>(q: string) => sbSelect<T>(env.supabaseUrl, env.serviceKey, q, sbCalls);
 
-  console.log("B2a DRY RUN — MojoMap ↔ Notion Client Portals.  READ-ONLY, NO WRITE PATH EXISTS.");
+  console.log(LIVE
+    ? "B2 SYNC — --live: THIS RUN WRITES to Notion and to client_portal_links."
+    : "B2 SYNC — DRY RUN (default). Reads, plans and prints. Writes nothing on either side.");
   console.log(`Notion-Version ${NOTION_API_VERSION} · database ${NOTION_DATABASE_ID} · data source ${NOTION_DATA_SOURCE_ID}`);
   console.log("");
 
@@ -196,11 +238,41 @@ async function main() {
     ignored.push({ pageId: p.id, name, mojoId: mojoId || "(none)", why: reasonText });
   }
 
+  // R11 — any client_status_sync row still 'planned' means an earlier run's Notion write may have
+  // landed while its DB write did not. Those companies are re-read, not re-pushed.
+  const planned = await S<Array<{ id: number; surface_id: string; ran_at: string; excluded_by_rule: { action?: string; to?: string | null } | null }>>(
+    "integrity_runs?select=id,surface_id,ran_at,excluded_by_rule&component=eq.client_status_sync&status=eq.planned&order=id.desc",
+  );
+  const openPlanned = new Map<string, PlannedRow>();
+  for (const p of planned) {
+    if (openPlanned.has(p.surface_id)) continue; // ordered desc, so the first is the newest
+    openPlanned.set(p.surface_id, {
+      id: p.id,
+      action: p.excluded_by_rule?.action ?? "(unknown)",
+      to: p.excluded_by_rule?.to ?? null,
+    });
+  }
+
   // ── 3. one row per flagged company ─────────────────────────────────────────────────────────────
   console.log("── FLAGGED COMPANIES (enabled = true) ────────────────────────────────────────────────");
   console.log("");
   const actionCount = new Map<string, number>();
-  const sorted = [...inScope].sort((a, b) => (byId.get(a.company_id)?.name ?? "").localeCompare(byId.get(b.company_id)?.name ?? ""));
+  const work: Array<{ m: MojoSide; n: NotionSide | null; action: string; rule: string; steps: PlanStep[] }> = [];
+  let sorted = [...inScope].sort((a, b) => (byId.get(a.company_id)?.name ?? "").localeCompare(byId.get(b.company_id)?.name ?? ""));
+  if (ONLY !== null) {
+    const hit = sorted.filter((r) => r.company_id.toLowerCase() === ONLY);
+    if (hit.length === 0) {
+      const co = byId.get(ONLY);
+      throw new Error(
+        `--only=${ONLY} is not a flagged company` +
+          (co ? ` (${co.name} exists but has no client_portal_links row with enabled = true)` : " (no such company)") +
+          ". The sync only ever acts on flagged companies; --only narrows that set, it cannot widen it.",
+      );
+    }
+    sorted = hit;
+    console.log(`** --only=${ONLY} — ${byId.get(ONLY)?.name ?? "?"} alone. The other ${inScope.length - 1} flagged companies are untouched. **`);
+    console.log("");
+  }
   for (const r of sorted) {
     const co = byId.get(r.company_id);
     const m: MojoSide = {
@@ -211,14 +283,21 @@ async function main() {
       lastNotionStatusSeen: r.last_notion_status_seen,
       lastSyncedAt: r.last_synced_at,
       mapCreatedSetAt: r.map_created_set_at,
+      notionPageId: r.notion_page_id,
     };
     const p = notionByMojoId.get(r.company_id) ?? null;
     const n: NotionSide | null = p
       ? { pageId: p.id, status: p.properties["Status"]?.select?.name ?? null, lastEditedTime: p.last_edited_time }
       : null;
     const b = baselineOf(r.company_id);
-    const d = decide(m, n, b);
+    // R13: a company carrying an open planned row is RECONCILED against the Notion row found by
+    // MojoMap ID — completed if the write landed, closed as failed otherwise. Never re-pushed.
+    const pendingRow = openPlanned.get(r.company_id);
+    const pending = pendingRow === undefined ? null : reconcilePlan(m, n, pendingRow);
+    const d = pending ? { action: pending.action, rule: pending.rule } : decide(m, n, b);
+    const steps = pending ? pending.steps : planSteps(decide(m, n, b), m, n);
     actionCount.set(d.action, (actionCount.get(d.action) ?? 0) + 1);
+    work.push({ m, n, action: d.action, rule: d.rule, steps });
 
     const a = actorOf.get(r.company_id);
     console.log(`${m.companyName}  [${m.companyId}]${co?.frozen ? "  ** FROZEN **" : ""}`);
@@ -234,6 +313,16 @@ async function main() {
     console.log(`  finished baseline   ${b.finished}  (long_runner_runs [${b.longRunnerRunIds.join(", ") || "none"}], public_baseline_runs ok [${b.publicBaselineRunIds.join(", ") || "none"}])`);
     console.log(`  ACTION              ${d.action.toUpperCase()}`);
     console.log(`  rule                ${d.rule}`);
+    if (steps.length === 0) {
+      console.log(`  planned calls       (none)`);
+    } else {
+      console.log(`  planned calls       ${steps.length}, in this order:`);
+      steps.forEach((st, i) => {
+        const what = st.kind === "notion" ? `NOTION ${st.op}` : `RPC    ${st.fn}`;
+        console.log(`    ${i + 1}. ${what}   ${st.label}`);
+        console.log(`       args ${JSON.stringify(st.args)}`);
+      });
+    }
     console.log("");
   }
 
@@ -270,17 +359,54 @@ async function main() {
   console.log("── ACTIONS SUMMARY ───────────────────────────────────────────────────────────────────");
   for (const [a, c] of [...actionCount].sort()) console.log(`  ${a.padEnd(16)} ${c}`);
   console.log("");
-  console.log("── HTTP CALLS MADE (every one must be a read) ────────────────────────────────────────");
+  console.log(LIVE
+    ? "── READ CALLS MADE ──────────────────────────────────────────────────────────────────"
+    : "── HTTP CALLS MADE (every one must be a read) ────────────────────────────────────────");
   const all = [...notion.calls, ...sbCalls];
   for (const c of all) console.log(`  ${c.method.padEnd(5)} ${String(c.status).padEnd(4)} ${c.path}`);
   console.log(`  notion calls ${notion.calls.length} · supabase calls ${sbCalls.length}`);
   console.log(`  all Notion calls were allow-listed reads: ${allCallsWereReads(notion.calls)}`);
   console.log(`  all Supabase calls were GET:              ${sbCalls.every((c) => c.method === "GET")}`);
   console.log("");
-  console.log("NO WRITE WAS ATTEMPTED — B2a contains no write code. B2b adds it.");
+
+  if (!LIVE) {
+    const would = work.reduce((acc, w) => acc + w.steps.length, 0);
+    console.log("── THE CALL SEQUENCE --live WOULD EXECUTE, IN ORDER ──────────────────────────────────");
+    let i = 0;
+    for (const w of work) {
+      for (const st of w.steps) {
+        i += 1;
+        const what = st.kind === "notion" ? `NOTION ${st.op}` : `RPC    ${st.fn}`;
+        console.log(`  ${String(i).padStart(3)}. ${w.m.companyName.padEnd(32)} ${what}`);
+      }
+    }
+    console.log(`  ${would} calls across ${work.filter((w) => w.steps.length > 0).length} companies`);
+    console.log("");
+    console.log("DRY RUN — NOTHING WAS WRITTEN. The write client was never constructed. Re-run with -- --live to execute.");
+    return;
+  }
+
+  // ── --live ─────────────────────────────────────────────────────────────────────────────────────
+  // The loop itself lives in src/lib/notionClientSync/execute.ts with both sides injected, so R11's
+  // failure isolation is exercised by the guard against fakes rather than only in production.
+  const writer = createNotionWriteClient({ token: env.notionToken, dataSourceId: NOTION_DATA_SOURCE_ID });
+  const outcome = await executePlan(
+    work.map((w) => ({ companyId: w.m.companyId, companyName: w.m.companyName, action: w.action, steps: w.steps })),
+    {
+      writer,
+      rpc: (fn, args) => sbRpc(env.supabaseUrl, env.serviceKey, fn, args, sbCalls),
+    },
+  );
+
+  console.log("── LIVE RUN OUTCOME ──────────────────────────────────────────────────────────────────");
+  for (const o of outcome) console.log(`  ${o.company.padEnd(32)} ${o.result.padEnd(8)} ${o.action.padEnd(24)} ${o.detail}`);
+  console.log("");
+  console.log("── NOTION WRITE CALLS MADE ───────────────────────────────────────────────────────────");
+  for (const c of writer.calls) console.log(`  ${c.method.padEnd(5)} ${String(c.status).padEnd(4)} ${c.path}`);
+  console.log(`  ${writer.calls.length} calls · ${outcome.filter((o) => o.result === "FAILED").length} companies failed · ${outcome.filter((o) => o.result === "STALE").length} stale`);
 }
 
 main().catch((e) => {
-  console.error(`dry run failed: ${e instanceof Error ? e.message : String(e)}`);
+  console.error(`sync failed: ${e instanceof Error ? e.message : String(e)}`);
   process.exit(1);
 });

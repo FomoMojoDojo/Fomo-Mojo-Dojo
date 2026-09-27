@@ -23,6 +23,7 @@ const mojo = (over: Partial<MojoSide> = {}): MojoSide => ({
   lastNotionStatusSeen: null,
   lastSyncedAt: null,
   mapCreatedSetAt: null,
+  notionPageId: null,
   ...over,
 });
 const notion = (over: Partial<NotionSide> = {}): NotionSide => ({
@@ -42,8 +43,34 @@ describe("CB1 and creation", () => {
     expect(decide(mojo(), null, NO_BASELINE).action).toBe("create");
   });
 
-  it("create wins over the Map Created promotion — the row must exist first", () => {
+  // CHANGED BY R10. B2a asserted the opposite — that create won and the promotion waited for the
+  // next run. R10 reverses it: the promotion is decided first, so an eligible new company is born at
+  // Map Created and never passes through a Cold Intake row.
+  it("R10: an eligible new company is created directly AT Map Created, not at its current status", () => {
     const d = decide(mojo({ clientStatus: "Cold Intake" }), null, BASELINE);
+    expect(d.action).toBe("create-at-map-created");
+    expect(d.rule).toMatch(/R10/);
+    expect(d.rule).toMatch(/SAME run/);
+  });
+
+  it("R10 applies from an empty status and from Web Intake too", () => {
+    for (const from of [null, "Web Intake"] as const) {
+      expect(decide(mojo({ clientStatus: from }), null, BASELINE).action).toBe("create-at-map-created");
+    }
+  });
+
+  it("without a finished baseline a new company is still a plain create", () => {
+    expect(decide(mojo({ clientStatus: "Cold Intake" }), null, NO_BASELINE).action).toBe("create");
+  });
+
+  it("a new company already past Cold Intake / Web Intake is a plain create even with a baseline", () => {
+    for (const from of ["In Progress", "Completed", "On Hold", "Ongoing", "Map Created"] as const) {
+      expect(decide(mojo({ clientStatus: from }), null, BASELINE).action).toBe("create");
+    }
+  });
+
+  it("a new company whose map_created_set_at is already set is a plain create — never promoted twice", () => {
+    const d = decide(mojo({ clientStatus: "Cold Intake", mapCreatedSetAt: "2026-09-01T00:00:00Z" }), null, BASELINE);
     expect(d.action).toBe("create");
   });
 });
@@ -135,9 +162,16 @@ describe("newest wins (not reachable from today's data — only here)", () => {
     expect(d.action).toBe("needs-operator");
   });
 
-  it("agreed statuses after a first sync are none", () => {
-    const d = decide(mojo({ ...seen }), notion({ status: "In Progress" }), NO_BASELINE);
+  // CHANGED with the link fix (2026-09-27): a row whose statuses agree is only `none` once the LINK
+  // is recorded. With notion_page_id still NULL it is link-only — see the link-only tests in plan.test.
+  it("agreed statuses after a first sync, with the link recorded, are none", () => {
+    const d = decide(mojo({ ...seen, notionPageId: "pg-1" }), notion({ status: "In Progress" }), NO_BASELINE);
     expect(d.action).toBe("none");
+  });
+
+  it("agreed statuses with the link NOT recorded are link-only, not none", () => {
+    const d = decide(mojo({ ...seen, notionPageId: null }), notion({ status: "In Progress" }), NO_BASELINE);
+    expect(d.action).toBe("link-only");
   });
 });
 
