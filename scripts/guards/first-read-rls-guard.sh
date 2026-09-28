@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# CV3 (2026-09-27) — ROW SECURITY on first_read_sessions and first_read_responses (migration
-# 20260927120000). Guards against the REAL local database. Every check runs inside ONE ROLLED-BACK
+# ROW SECURITY on the three first-read tables:
+#   first_read_sessions, first_read_responses      — CV3, migration 20260927120000 (2026-09-27)
+#   first_read_session_reopens (the reopen audit)  — migration 20260928120000 (2026-09-28)
+# Guards against the REAL local database. Every check runs inside ONE ROLLED-BACK
 # transaction; the only rows read or written belong to THROWAWAY companies. Edgewood's first-read rows
 # are READ in exactly one check — c6, which asserts a member sees ZERO of them — and are never written.
 # Prints "guard: PASS" or "guard: FAIL …".
@@ -28,8 +30,18 @@
 #   (g2) generate-first-read-proposal and feed-first-read-corrections still boot ({} -> 400, their own
 #        validation — 404 means the name is wrong, 503 means the module did not load) — run over HTTP,
 #        outside the transaction
-#   (a2) LAST: the policy set equals the spec EXACTLY — four policies, their commands, their roles, and
-#        the normalised text of every USING / WITH CHECK expression. No fifth policy, no anon policy.
+#   (h1) row level security is ENABLED on first_read_session_reopens
+#   (h2) the reopen RPC wrote its audit row under an admin JWT, and the admin reads it back
+#   (h3) member JWT reads 0 audit rows
+#   (h4) member JWT INSERT into the audit table is refused
+#   (h5) non-admin NON-MEMBER JWT reads 0 audit rows
+#   (h6) anon reads nothing from the audit table
+#   (h7) anon INSERT into the audit table is refused
+#   (h8) TRUNCATE of the audit table is refused for anon
+#   (h9) TRUNCATE of the audit table is refused for authenticated
+#   (a2) LAST: the policy set equals the spec EXACTLY — FIVE policies across the THREE tables, their
+#        commands, their roles, and the normalised text of every USING / WITH CHECK expression. No
+#        sixth policy, no anon policy, and no member policy on the audit table.
 #
 # ORDER NOTES. The checks abort on the first failure, so the order is chosen to make each plant below
 # report against its OWN target:
@@ -51,7 +63,14 @@
 #   PLANT=nomember       the member SELECT policy dropped from both tables     ⇒ (c1) red
 #   PLANT=reopenopen     the has_role admin check stripped from
 #                        reopen_first_read_session (restored by the ROLLBACK;
-#                        the caller re-checks its md5 afterwards)              ⇒ (c5) red
+#                        the caller re-checks its md5 afterwards), PLUS a
+#                        permissive INSERT policy on first_read_session_reopens.
+#                        The second half is required, not padding: since
+#                        20260928120000 the audit table is admin-only, so the
+#                        RPC's own audit INSERT refuses a member reopen even
+#                        with the admin check gone. Without opening that, (c5)
+#                        would go green for a reason it is not testing and the
+#                        plant would falsify nothing                           ⇒ (c5) red
 #   PLANT=memberwrite    member INSERT/UPDATE/DELETE policies added to both    ⇒ (c2) red
 #   PLANT=memberwide     the member SELECT policy on first_read_responses
 #                        reverted to the RLS-1 tautology (cm.company_id =
@@ -81,12 +100,30 @@
 #   PLANT=anoninsert     INSERT granted to anon + an anon INSERT policy. No
 #                        SELECT grant, so (e1) stays green                     ⇒ (e2) red
 #   PLANT=anontrunc      TRUNCATE granted to anon on both tables               ⇒ (f2) red
+#   PLANT=reopensnowrite the audit table's admin policy narrowed to SELECT, so
+#                        the RPC's own audit INSERT is refused and the reopen
+#                        raises. (b4)'s second, independent failure mode —
+#                        `nobump` breaks the session half, this the audit half  ⇒ (b4) red
+#   PLANT=reopensrlsoff  RLS disabled again on first_read_session_reopens       ⇒ (h1) red
+#   PLANT=reopensnoread  the audit table's admin policy narrowed to INSERT: the
+#                        row still lands, the admin cannot read it back         ⇒ (h2) red
+#   PLANT=reopensmemberread    a `USING (true)` SELECT policy on the audit table ⇒ (h3) red
+#   PLANT=reopensmemberwrite   a `WITH CHECK (true)` INSERT policy on it        ⇒ (h4) red
+#   PLANT=reopensnonmemberread an INVERTED membership predicate — only a caller
+#                        with NO company_members row reads. Narrow on purpose,
+#                        so (h3) stays green and this lands on (h5)             ⇒ (h5) red
+#   PLANT=reopensanonread      SELECT granted to anon + an anon SELECT policy   ⇒ (h6) red
+#   PLANT=reopensanoninsert    INSERT granted to anon + an anon INSERT policy   ⇒ (h7) red
+#   PLANT=reopenstruncanon     TRUNCATE granted to anon on the audit table      ⇒ (h8) red
+#   PLANT=reopenstruncauth     TRUNCATE granted to authenticated on it          ⇒ (h9) red
 #
-# COVERAGE LAW. Every one of the 22 checks above has a plant here, and each plant makes its OWN check
-# the first failure. A check no plant can break is not a check. (z) is the one exception and cannot be
-# otherwise: it verifies that the ROLLBACK restored the function, so every plant leaves it green by
-# construction — its falsification is the documented predicate demonstration (capture the def's md5,
-# leave a planted function in place, capture again: the two differ and the comparison reports FAIL).
+# COVERAGE LAW. Every one of the 31 checks above has a plant here, and each plant makes its OWN check
+# the first failure. A check no plant can break is not a check. (b4) carries two plants because it now
+# has two independent failure modes — the session half and the audit half. (z) is the one exception and
+# cannot be otherwise: it verifies that the ROLLBACK restored the function AND the three tables' RLS
+# flags, policies and grants, so every plant leaves it green by construction — its falsification is the
+# documented predicate demonstration (capture the md5, leave a planted object in place, capture again:
+# the two differ and the comparison reports FAIL).
 #
 # Run:  source backups/fr-nonadmin.env && source backups/fr-member.env && bash scripts/guards/first-read-rls-guard.sh
 #       PLANT=memberwide source backups/fr-nonadmin.env && source backups/fr-member.env && bash scripts/guards/first-read-rls-guard.sh
@@ -103,6 +140,13 @@ MEMCO=${MEMBER_COMPANY_ID:-}
 
 psqlq() { docker exec -i "$PGC" psql -U postgres -d postgres -At -c "$1"; }
 reopendef() { psqlq "select pg_get_functiondef('public.reopen_first_read_session'::regproc)"; }
+# (z) also covers the three tables' own shape: RLS flag, every policy expression, every grant. A plant
+# that somehow committed instead of rolling back shows up here even if no check above noticed.
+tableshape() {
+  psqlq "select relname||' rls='||relrowsecurity::text from pg_class where oid in ('first_read_sessions'::regclass,'first_read_responses'::regclass,'first_read_session_reopens'::regclass) order by 1"
+  psqlq "select tablename||'|'||policyname||'|'||cmd||'|'||roles::text||'|'||coalesce(qual,'-')||'|'||coalesce(with_check,'-') from pg_policies where schemaname='public' and tablename in ('first_read_sessions','first_read_responses','first_read_session_reopens') order by 1"
+  psqlq "select table_name||'|'||grantee||'|'||privilege_type from information_schema.role_table_grants where table_schema='public' and table_name in ('first_read_sessions','first_read_responses','first_read_session_reopens') order by 1"
+}
 
 ADMIN=$(psqlq "select user_id from user_roles where role='admin' order by user_id limit 1")
 [ -n "$ADMIN" ] || { echo "guard: FAIL no user_roles admin row"; exit 1; }
@@ -128,7 +172,8 @@ case "${PLANT:-}" in
   extrapolicy)   P="create policy \"plant redundant admin select s\" on public.first_read_sessions for select to authenticated using (has_role(auth.uid(), 'admin'::app_role));";;
   noadmin)       P="drop policy \"Admins manage all first_read_sessions\" on public.first_read_sessions; drop policy \"Admins manage all first_read_responses\" on public.first_read_responses;";;
   nomember)      P="drop policy \"Members read own company first_read_sessions\" on public.first_read_sessions; drop policy \"Members read own company first_read_responses\" on public.first_read_responses;";;
-  reopenopen)    P="$(psqlq "select replace(pg_get_functiondef('public.reopen_first_read_session'::regproc), 'if not public.has_role(auth.uid(), ''admin'') then', 'if false then')");";;
+  reopenopen)    P="$(psqlq "select replace(pg_get_functiondef('public.reopen_first_read_session'::regproc), 'if not public.has_role(auth.uid(), ''admin'') then', 'if false then')");
+                    create policy \"plant reopens insert for c5\" on public.first_read_session_reopens for insert to authenticated with check (true);";;
   memberwrite)   P="create policy \"plant member insert s\" on public.first_read_sessions for insert to authenticated with check (true);
                     create policy \"plant member update s\" on public.first_read_sessions for update to authenticated using (true) with check (true);
                     create policy \"plant member delete s\" on public.first_read_sessions for delete to authenticated using (true);
@@ -155,6 +200,20 @@ case "${PLANT:-}" in
   anoninsert)    P="grant insert on public.first_read_sessions to anon;
                     create policy \"plant anon insert s\" on public.first_read_sessions for insert to anon with check (true);";;
   anontrunc)     P="grant truncate on public.first_read_sessions to anon; grant truncate on public.first_read_responses to anon;";;
+  reopensnowrite) P="drop policy \"Admins manage all first_read_session_reopens\" on public.first_read_session_reopens;
+                    create policy \"Admins manage all first_read_session_reopens\" on public.first_read_session_reopens for select to authenticated using (has_role(auth.uid(), 'admin'::app_role));";;
+  reopensrlsoff) P="alter table public.first_read_session_reopens disable row level security;";;
+  reopensnoread) P="drop policy \"Admins manage all first_read_session_reopens\" on public.first_read_session_reopens;
+                    create policy \"Admins manage all first_read_session_reopens\" on public.first_read_session_reopens for insert to authenticated with check (has_role(auth.uid(), 'admin'::app_role));";;
+  reopensmemberread) P="create policy \"plant reopens member read\" on public.first_read_session_reopens for select to authenticated using (true);";;
+  reopensmemberwrite) P="create policy \"plant reopens member write\" on public.first_read_session_reopens for insert to authenticated with check (true);";;
+  reopensnonmemberread) P="create policy \"plant reopens nonmember read\" on public.first_read_session_reopens for select to authenticated using (not exists (select 1 from public.company_members cm where cm.user_id = auth.uid()));";;
+  reopensanonread) P="grant select on public.first_read_session_reopens to anon;
+                    create policy \"plant reopens anon read\" on public.first_read_session_reopens for select to anon using (true);";;
+  reopensanoninsert) P="grant insert on public.first_read_session_reopens to anon;
+                    create policy \"plant reopens anon insert\" on public.first_read_session_reopens for insert to anon with check (true);";;
+  reopenstruncanon) P="grant truncate on public.first_read_session_reopens to anon;";;
+  reopenstruncauth) P="grant truncate on public.first_read_session_reopens to authenticated;";;
   boot)          P="";;
   "")            P="";;
   *)             echo "guard: FAIL unknown PLANT '${PLANT:-}'"; exit 1;;
@@ -162,12 +221,14 @@ esac
 
 # ── (a2) the exact expected policy set. Normalised text, as pg_policies renders it. ───────────────
 MD5_REOPEN_BEFORE=$(reopendef | md5)
+MD5_SHAPE_BEFORE=$(tableshape | md5)
 
 EXPECT_POLICIES=$(cat <<'EOF'
 first_read_responses|Admins manage all first_read_responses|ALL|{authenticated}|has_role(auth.uid(), 'admin'::app_role)|has_role(auth.uid(), 'admin'::app_role)
 first_read_responses|Members read own company first_read_responses|SELECT|{authenticated}|(company_id IN ( SELECT company_members.company_id
    FROM company_members
   WHERE (company_members.user_id = auth.uid())))|-
+first_read_session_reopens|Admins manage all first_read_session_reopens|ALL|{authenticated}|has_role(auth.uid(), 'admin'::app_role)|has_role(auth.uid(), 'admin'::app_role)
 first_read_sessions|Admins manage all first_read_sessions|ALL|{authenticated}|has_role(auth.uid(), 'admin'::app_role)|has_role(auth.uid(), 'admin'::app_role)
 first_read_sessions|Members read own company first_read_sessions|SELECT|{authenticated}|(company_id IN ( SELECT company_members.company_id
    FROM company_members
@@ -249,7 +310,14 @@ BEGIN
   END IF;
   RAISE NOTICE '  ok   (b3) admin JWT updates the session over the lawful edge (open -> proposal_issued)';
 
-  PERFORM public.reopen_first_read_session(v_new_sess, 'guard check b4');
+  -- Caught, not bare: the RPC also INSERTs its audit row into first_read_session_reopens, which is
+  -- itself under RLS. A refusal there must report as (b4), not as a raw Postgres error.
+  v_fired := false;
+  BEGIN PERFORM public.reopen_first_read_session(v_new_sess, 'guard check b4');
+  EXCEPTION WHEN others THEN v_fired := true; v_msg := SQLERRM; END;
+  IF v_fired THEN
+    RAISE EXCEPTION 'GUARD-FAIL (b4) admin reopen was REFUSED: %', v_msg;
+  END IF;
   SELECT count(*) INTO v_n FROM public.first_read_sessions
    WHERE id = v_new_sess AND status='open' AND reopen_generation = 1;
   IF v_n <> 1 THEN
@@ -424,6 +492,97 @@ BEGIN
   PERFORM set_config('role', 'postgres', true);
   RAISE NOTICE '  ok   (g1) service_role reads the throwaway session and response with RLS on and no service_role policy';
 
+  -- ══ (h) THE REOPEN AUDIT TABLE — first_read_session_reopens ════════════════════════════════
+  -- Admin only, deliberately narrower than the other two: `reason` is the operator's own words about
+  -- why a client's issued read was pulled back, and `reopened_by` names who decided. Neither has ever
+  -- been client-facing. The audit row read here is the one the (b4) reopen wrote, in this transaction.
+  SELECT count(*) INTO v_n FROM pg_class
+   WHERE oid = 'public.first_read_session_reopens'::regclass AND relrowsecurity;
+  IF v_n <> 1 THEN
+    RAISE EXCEPTION 'GUARD-FAIL (h1) row level security is NOT enabled on first_read_session_reopens';
+  END IF;
+  RAISE NOTICE '  ok   (h1) row level security is enabled on first_read_session_reopens';
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+  PERFORM set_config('role', 'authenticated', true);
+  SELECT count(*) INTO v_n FROM public.first_read_session_reopens WHERE session_id = v_new_sess;
+  IF v_n <> 1 THEN
+    RAISE EXCEPTION 'GUARD-FAIL (h2) admin reads % audit rows for the reopened session, expected the 1 the (b4) reopen wrote', v_n;
+  END IF;
+  RAISE NOTICE '  ok   (h2) the reopen RPC wrote its audit row under an admin JWT and the admin reads it back';
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_member, 'role', 'authenticated')::text, true);
+  SELECT count(*) INTO v_n FROM public.first_read_session_reopens;
+  IF v_n <> 0 THEN
+    RAISE EXCEPTION 'GUARD-FAIL (h3) member read % audit rows, expected 0', v_n;
+  END IF;
+  RAISE NOTICE '  ok   (h3) member JWT reads 0 audit rows';
+
+  v_fired := false;
+  BEGIN
+    INSERT INTO public.first_read_session_reopens
+      (session_id, company_id, status_at_reopen, generation_after, reopened_by, reason)
+      VALUES (v_sessfix, v_memco, 'proposal_issued', 1, v_member, 'guard check h4');
+  EXCEPTION WHEN others THEN v_fired := true; v_msg := SQLERRM; END;
+  IF NOT v_fired THEN
+    RAISE EXCEPTION 'GUARD-FAIL (h4) member INSERT into the audit table SUCCEEDED';
+  END IF;
+  RAISE NOTICE '  ok   (h4) member JWT INSERT into the audit table refused (%)', left(v_msg, 55);
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_nonmember, 'role', 'authenticated')::text, true);
+  SELECT count(*) INTO v_n FROM public.first_read_session_reopens;
+  IF v_n <> 0 THEN
+    RAISE EXCEPTION 'GUARD-FAIL (h5) non-member read % audit rows, expected 0', v_n;
+  END IF;
+  RAISE NOTICE '  ok   (h5) non-admin non-member JWT reads 0 audit rows';
+
+  PERFORM set_config('role', 'postgres', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('role','anon')::text, true);
+  PERFORM set_config('role', 'anon', true);
+  v_mode := '';
+  BEGIN
+    SELECT count(*) INTO v_n FROM public.first_read_session_reopens;
+    v_mode := 'select allowed, rows=' || v_n;
+  EXCEPTION WHEN insufficient_privilege THEN v_n := 0; v_mode := 'permission denied';
+  END;
+  IF v_n <> 0 THEN
+    RAISE EXCEPTION 'GUARD-FAIL (h6) anon read % audit rows', v_n;
+  END IF;
+  RAISE NOTICE '  ok   (h6) anon reads nothing from the audit table (%)', v_mode;
+
+  v_fired := false;
+  BEGIN
+    INSERT INTO public.first_read_session_reopens
+      (session_id, company_id, status_at_reopen, generation_after, reopened_by, reason)
+      VALUES (v_sessfix, v_memco, 'proposal_issued', 1, 'anon', 'guard check h7');
+  EXCEPTION WHEN others THEN v_fired := true; v_msg := SQLERRM; END;
+  IF NOT v_fired THEN
+    RAISE EXCEPTION 'GUARD-FAIL (h7) anon INSERT into the audit table SUCCEEDED';
+  END IF;
+  RAISE NOTICE '  ok   (h7) anon INSERT into the audit table refused (%)', left(v_msg, 55);
+
+  -- TRUNCATE is not subject to RLS — only the grant stops it, and it fires no row triggers, so an
+  -- emptied audit would leave no trace of having been emptied. anon first: we are already anon here.
+  v_fired := false;
+  BEGIN TRUNCATE public.first_read_session_reopens;
+  EXCEPTION WHEN others THEN v_fired := true; END;
+  IF NOT v_fired THEN
+    RAISE EXCEPTION 'GUARD-FAIL (h8) anon TRUNCATE of the audit table SUCCEEDED';
+  END IF;
+  RAISE NOTICE '  ok   (h8) TRUNCATE of the audit table refused for anon';
+
+  PERFORM set_config('role', 'postgres', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_member, 'role', 'authenticated')::text, true);
+  PERFORM set_config('role', 'authenticated', true);
+  v_fired := false;
+  BEGIN TRUNCATE public.first_read_session_reopens;
+  EXCEPTION WHEN others THEN v_fired := true; v_msg := SQLERRM; END;
+  IF NOT v_fired THEN
+    RAISE EXCEPTION 'GUARD-FAIL (h9) authenticated TRUNCATE of the audit table SUCCEEDED';
+  END IF;
+  RAISE NOTICE '  ok   (h9) TRUNCATE of the audit table refused for authenticated (%)', left(v_msg, 45);
+  PERFORM set_config('role', 'postgres', true);
+
   -- ══ (a2) LAST — the policy set equals the spec exactly ══════════════════════════════════════
   -- Runs last on purpose: it catches every policy-shaped plant, so ahead of the behavioural checks
   -- it would mask them. See the ORDER NOTES in the header.
@@ -432,13 +591,13 @@ BEGIN
            coalesce(qual,'-')||'|'||coalesce(with_check,'-') AS line
       FROM pg_policies
      WHERE schemaname='public'
-       AND tablename IN ('first_read_sessions','first_read_responses')
+       AND tablename IN ('first_read_sessions','first_read_responses','first_read_session_reopens')
   ) t;
   v_want := \$want\$$EXPECT_POLICIES\$want\$;
   IF coalesce(v_got,'') IS DISTINCT FROM v_want THEN
     RAISE EXCEPTION E'GUARD-FAIL (a2) the policy set does not equal the spec.\n--- got ---\n%\n--- want ---\n%', coalesce(v_got,'(none)'), v_want;
   END IF;
-  RAISE NOTICE '  ok   (a2) exactly four policies, commands, roles and expressions equal the spec — no fifth policy, no anon policy';
+  RAISE NOTICE '  ok   (a2) exactly five policies across the three tables, commands, roles and expressions equal the spec — no sixth policy, no anon policy, no member policy on the audit table';
 
   RAISE NOTICE 'GUARD DB GREEN';
 END
@@ -456,7 +615,12 @@ if [ "$MD5_REOPEN_BEFORE" != "$MD5_REOPEN_AFTER" ]; then
   echo "guard: FAIL (z) reopen_first_read_session was NOT restored by the ROLLBACK ($MD5_REOPEN_BEFORE -> $MD5_REOPEN_AFTER)"
   exit 1
 fi
-echo "  ok   (z) reopen_first_read_session is restored md5-identical after the ROLLBACK"
+MD5_SHAPE_AFTER=$(tableshape | md5)
+if [ "$MD5_SHAPE_BEFORE" != "$MD5_SHAPE_AFTER" ]; then
+  echo "guard: FAIL (z) the three tables' RLS flags, policies or grants were NOT restored by the ROLLBACK ($MD5_SHAPE_BEFORE -> $MD5_SHAPE_AFTER)"
+  exit 1
+fi
+echo "  ok   (z) reopen_first_read_session and all three tables' RLS, policies and grants are restored md5-identical after the ROLLBACK"
 
 if ! echo "$OUT" | grep -q 'GUARD DB GREEN'; then
   echo "$OUT" | grep -E 'GUARD-FAIL|ERROR|FATAL' | head -20
