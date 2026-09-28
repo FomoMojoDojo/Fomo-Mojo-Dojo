@@ -134,12 +134,47 @@ These files are long — search within them rather than reading top-to-bottom:
   source backups/fr-login.env && npx playwright test --retries=0
   ```
 
+### Guard fixtures — the two non-admin accounts (2026-09-27)
+
+Guards that name a non-admin caller read their ids from gitignored env files, and abort with
+`guard: FAIL <VAR> not set` rather than passing vacuously. **Source them before the run**:
+
+- `backups/fr-nonadmin.env` → `NONADMIN_ID` (+ email / password). A non-admin with **no `user_roles`
+  row and no `company_members` row** — the no-membership fixture. Needed by `interview-parser`,
+  `first-read-marks`, `interview-segments`, `client-portal-audit`, `first-read-rls`. It must stay
+  membership-less: several guards use it as the caller who belongs to nothing.
+- `backups/fr-member.env` → `MEMBER_ID`, `MEMBER_COMPANY_ID` (+ email / password). A non-admin with
+  **no `user_roles` row and exactly one `company_members` row**, on the throwaway company
+  `66666666-6666-4666-8666-666666666601` and nowhere else. Needed by `first-read-rls`. That company
+  also carries the kept first-read fixture rows (session `…a1`, response `…b1`), so no check ever
+  writes a live company and only one check reads Edgewood — to assert it returns zero rows.
+- Both were created via the service-role auth admin API; their passwords exist nowhere else. Never
+  use the operator's own login. `first-read-rls` asserts the shape of both fixtures before it starts.
+
+  ```bash
+  source backups/fr-nonadmin.env && source backups/fr-member.env && bash scripts/guards/first-read-rls-guard.sh
+  ```
+
+---
+
+## Baselines — the two that are easy to run wrong
+
+- **tsc is `npx tsc -p tsconfig.app.json --noEmit` → 232 errors.** The root `tsconfig.json` is
+  solution-style (`"files": []` plus `references`), so a bare `npx tsc --noEmit` compiles **nothing**
+  and reports a clean **0** — a false green that looks like a 232-error improvement.
+  `tsconfig.node.json` is 0.
+- **The boot-sweep bearer is the LEGACY JWT service-role key**, from
+  `npx supabase status --output env` (`SERVICE_ROLE_KEY=eyJ…`). The `sb_secret_…` value printed in
+  `supabase status`'s Authentication Keys panel is **not** accepted by the functions gateway: every
+  terminal answers `401 {"msg":"Error: Missing authorization header"}`, which reads like a dead stack
+  rather than a wrong key.
+
 ---
 
 ## Session-open ritual — terminal boot list
 
-Empty-body / `{}` POST with a service-role bearer to each; expect `400 company_id required` (or that
-terminal's own 4xx), never `503 Module not found`. A NEW function directory or `_shared` file is not
+Empty-body / `{}` POST with a service-role bearer to each (the legacy JWT one — see Baselines above);
+expect `400 company_id required` (or that terminal's own 4xx), never `503 Module not found`. A NEW function directory or `_shared` file is not
 served until the stack is recreated (`source supabase/functions/.env.local` → `supabase stop` →
 `supabase start`; volumes kept, NEVER `db reset`) — an operator-approved step, reported first.
 
