@@ -2,6 +2,7 @@
 # ROW SECURITY on the three first-read tables:
 #   first_read_sessions, first_read_responses      — CV3, migration 20260927120000 (2026-09-27)
 #   first_read_session_reopens (the reopen audit)  — migration 20260928120000 (2026-09-28)
+#   first_read_session_removals (the removal audit) — migration 20260930090000 (2026-09-30)
 # Guards against the REAL local database. Every check runs inside ONE ROLLED-BACK
 # transaction; the only rows read or written belong to THROWAWAY companies. Edgewood's first-read rows
 # are READ in exactly one check — c6, which asserts a member sees ZERO of them — and are never written.
@@ -39,9 +40,24 @@
 #   (h7) anon INSERT into the audit table is refused
 #   (h8) TRUNCATE of the audit table is refused for anon
 #   (h9) TRUNCATE of the audit table is refused for authenticated
-#   (a2) LAST: the policy set equals the spec EXACTLY — FIVE policies across the THREE tables, their
+#   (r1) row level security is ENABLED on first_read_session_removals
+#   (r2) its policy set is EXACTLY one admin SELECT — no write policy for any role, no member policy,
+#        no anon policy. Append-only is a policy fact here, not only a grant fact.
+#   (r3) anon holds NO privilege on it at all, and an anon SELECT is refused
+#   (r4) authenticated holds SELECT and nothing else — no INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER
+#   (r7) first_read_sessions_delete_audit is SECURITY DEFINER with a fixed search_path. This is what
+#        keeps the delete working now that no app role holds INSERT: without it every session delete
+#        would fail on the audit insert.
+#   -- over PostgREST, with REAL user JWTs, outside the transaction (see the HTTP section at the end):
+#   (r5) the member and the non-admin each read 0 rows; the admin reads all of them
+#   (r6) admin INSERT, UPDATE and DELETE on the table are all refused (403 / 42501)
+#   (r8) an admin DELETE of a throwaway first read session lands EXACTLY ONE removal row for that
+#        session id — the end-to-end proof that the DEFINER trigger still writes the audit. The row is
+#        removed again as postgres and the count returns to its starting value.
+#   (a2) LAST: the policy set equals the spec EXACTLY — SIX policies across the FOUR tables, their
 #        commands, their roles, and the normalised text of every USING / WITH CHECK expression. No
-#        sixth policy, no anon policy, and no member policy on the audit table.
+#        seventh policy, no anon policy, no member policy on either audit table, and no write policy
+#        of any kind on first_read_session_removals.
 #
 # ORDER NOTES. The checks abort on the first failure, so the order is chosen to make each plant below
 # report against its OWN target:
@@ -116,8 +132,27 @@
 #   PLANT=reopensanoninsert    INSERT granted to anon + an anon INSERT policy   ⇒ (h7) red
 #   PLANT=reopenstruncanon     TRUNCATE granted to anon on the audit table      ⇒ (h8) red
 #   PLANT=reopenstruncauth     TRUNCATE granted to authenticated on it          ⇒ (h9) red
+#   -- first_read_session_removals (20260930090000). In-transaction, undone by the ROLLBACK:
+#   PLANT=removalsrlsoff       RLS disabled again on the removal audit          ⇒ (r1) red
+#   PLANT=removalsmemberpolicy a member SELECT policy added to it               ⇒ (r2) red
+#   PLANT=removalsinsertpolicy an authenticated INSERT policy added to it —
+#                              append-only breached at the policy layer         ⇒ (r2) red
+#   PLANT=removalsanongrant    SELECT re-granted to anon (grant only, no policy —
+#                              a policy would be caught by (r2) first)               ⇒ (r3) red
+#   PLANT=removalstruncauth    TRUNCATE granted to authenticated on it          ⇒ (r4) red
+#   PLANT=removalsinvoker      the audit trigger reverted to SECURITY INVOKER   ⇒ (r7) red
+#   -- COMMITTED plants, for the PostgREST checks. A separate transaction cannot see an uncommitted
+#      plant, so these are applied for real and restored by the script's EXIT trap, which also
+#      verifies the restore md5-identically. Each names its own inverse; none touches data.
+#   PLANT=removalsmemberread   a permissive member SELECT policy, committed     ⇒ (r5) red
+#   PLANT=removalsadminupdate  an admin UPDATE policy, committed                ⇒ (r6) red
+#   PLANT=removalsinvokerlive  the audit trigger reverted to SECURITY INVOKER,
+#                              committed — the delete must then fail outright or
+#                              land no removal row                              ⇒ (r8) red
 #
-# COVERAGE LAW. Every one of the 31 checks above has a plant here, and each plant makes its OWN check
+# COVERAGE LAW. 40 "ok" lines and 39 plants (a green run prints (g2) twice — once per edge function —
+# and (r2) and (b4) each carry two plants, so the two counts are not meant to be equal). Every check
+# above has a plant here, and each plant makes its OWN check
 # the first failure. A check no plant can break is not a check. (b4) carries two plants because it now
 # has two independent failure modes — the session half and the audit half. (z) is the one exception and
 # cannot be otherwise: it verifies that the ROLLBACK restored the function AND the three tables' RLS
@@ -125,8 +160,11 @@
 # documented predicate demonstration (capture the md5, leave a planted object in place, capture again:
 # the two differ and the comparison reports FAIL).
 #
-# Run:  source backups/fr-nonadmin.env && source backups/fr-member.env && bash scripts/guards/first-read-rls-guard.sh
-#       PLANT=memberwide source backups/fr-nonadmin.env && source backups/fr-member.env && bash scripts/guards/first-read-rls-guard.sh
+# Run:  set -a; source backups/fr-login.env; source backups/fr-nonadmin.env; source backups/fr-member.env; set +a
+#       bash scripts/guards/first-read-rls-guard.sh
+#       PLANT=removalsrlsoff bash scripts/guards/first-read-rls-guard.sh   (any plant, same three env files)
+# fr-login.env is needed from 20260930090000 on: the (r5/r6/r8) PostgREST checks mint a REAL admin JWT,
+# which the in-transaction request.jwt.claims trick cannot stand in for.
 set -uo pipefail
 PGC=${PGC:-supabase_db_dzlgyxcvuwiulgifbmew}
 FUNCTIONS_URL=${FUNCTIONS_URL:-http://127.0.0.1:54321/functions/v1}
@@ -137,15 +175,33 @@ MEM=${MEMBER_ID:-}
 [ -n "$MEM" ] || { echo "guard: FAIL MEMBER_ID not set (source backups/fr-member.env)"; exit 1; }
 MEMCO=${MEMBER_COMPANY_ID:-}
 [ -n "$MEMCO" ] || { echo "guard: FAIL MEMBER_COMPANY_ID not set (source backups/fr-member.env)"; exit 1; }
+# The (r5/r6/r8) PostgREST checks need real JWTs, so they need passwords as well as ids. Named
+# separately so a half-sourced environment says which file is missing rather than skipping a check.
+ADMIN_EMAIL=${FR_LOGIN_EMAIL:-}
+[ -n "$ADMIN_EMAIL" ] || { echo "guard: FAIL FR_LOGIN_EMAIL not set (source backups/fr-login.env)"; exit 1; }
+ADMIN_PW=${FR_LOGIN_PASSWORD:-}
+[ -n "$ADMIN_PW" ] || { echo "guard: FAIL FR_LOGIN_PASSWORD not set (source backups/fr-login.env)"; exit 1; }
+MEM_EMAIL=${MEMBER_EMAIL:-}
+[ -n "$MEM_EMAIL" ] || { echo "guard: FAIL MEMBER_EMAIL not set (source backups/fr-member.env)"; exit 1; }
+MEM_PW=${MEMBER_PASSWORD:-}
+[ -n "$MEM_PW" ] || { echo "guard: FAIL MEMBER_PASSWORD not set (source backups/fr-member.env)"; exit 1; }
+NA_EMAIL=${NONADMIN_EMAIL:-}
+[ -n "$NA_EMAIL" ] || { echo "guard: FAIL NONADMIN_EMAIL not set (source backups/fr-nonadmin.env)"; exit 1; }
+NA_PW=${NONADMIN_PASSWORD:-}
+[ -n "$NA_PW" ] || { echo "guard: FAIL NONADMIN_PASSWORD not set (source backups/fr-nonadmin.env)"; exit 1; }
 
 psqlq() { docker exec -i "$PGC" psql -U postgres -d postgres -At -c "$1"; }
 reopendef() { psqlq "select pg_get_functiondef('public.reopen_first_read_session'::regproc)"; }
+# The audit trigger's full definition — body AND security label AND search_path. PLANT=removalsinvoker
+# edits it inside the transaction and PLANT=removalsinvokerlive edits it for real; (z) and the EXIT
+# trap respectively prove it came back byte for byte.
+auditdef() { psqlq "select pg_get_functiondef('public.first_read_sessions_delete_audit()'::regprocedure)"; }
 # (z) also covers the three tables' own shape: RLS flag, every policy expression, every grant. A plant
 # that somehow committed instead of rolling back shows up here even if no check above noticed.
 tableshape() {
-  psqlq "select relname||' rls='||relrowsecurity::text from pg_class where oid in ('first_read_sessions'::regclass,'first_read_responses'::regclass,'first_read_session_reopens'::regclass) order by 1"
-  psqlq "select tablename||'|'||policyname||'|'||cmd||'|'||roles::text||'|'||coalesce(qual,'-')||'|'||coalesce(with_check,'-') from pg_policies where schemaname='public' and tablename in ('first_read_sessions','first_read_responses','first_read_session_reopens') order by 1"
-  psqlq "select table_name||'|'||grantee||'|'||privilege_type from information_schema.role_table_grants where table_schema='public' and table_name in ('first_read_sessions','first_read_responses','first_read_session_reopens') order by 1"
+  psqlq "select relname||' rls='||relrowsecurity::text from pg_class where oid in ('first_read_sessions'::regclass,'first_read_responses'::regclass,'first_read_session_reopens'::regclass,'first_read_session_removals'::regclass) order by 1"
+  psqlq "select tablename||'|'||policyname||'|'||cmd||'|'||roles::text||'|'||coalesce(qual,'-')||'|'||coalesce(with_check,'-') from pg_policies where schemaname='public' and tablename in ('first_read_sessions','first_read_responses','first_read_session_reopens','first_read_session_removals') order by 1"
+  psqlq "select table_name||'|'||grantee||'|'||privilege_type from information_schema.role_table_grants where table_schema='public' and table_name in ('first_read_sessions','first_read_responses','first_read_session_reopens','first_read_session_removals') order by 1"
 }
 
 ADMIN=$(psqlq "select user_id from user_roles where role='admin' order by user_id limit 1")
@@ -214,6 +270,19 @@ case "${PLANT:-}" in
                     create policy \"plant reopens anon insert\" on public.first_read_session_reopens for insert to anon with check (true);";;
   reopenstruncanon) P="grant truncate on public.first_read_session_reopens to anon;";;
   reopenstruncauth) P="grant truncate on public.first_read_session_reopens to authenticated;";;
+  removalsrlsoff) P="alter table public.first_read_session_removals disable row level security;";;
+  removalsmemberpolicy) P="create policy \"plant removals member read\" on public.first_read_session_removals for select to authenticated using (company_id in (select company_id from public.company_members where user_id = auth.uid()));";;
+  removalsinsertpolicy) P="grant insert on public.first_read_session_removals to authenticated;
+                    create policy \"plant removals insert\" on public.first_read_session_removals for insert to authenticated with check (true);";;
+  # GRANT ONLY, deliberately no policy: a policy-shaped plant would be caught by (r2) first and would
+  # prove nothing about (r3). With the grant back and still no anon policy, anon's SELECT returns 0
+  # rows instead of raising — which (r3) also reports, because a silent 0 is not a refusal.
+  removalsanongrant) P="grant select on public.first_read_session_removals to anon;";;
+  removalstruncauth) P="grant truncate on public.first_read_session_removals to authenticated;";;
+  removalsinvoker) P="$(psqlq "select replace(pg_get_functiondef('public.first_read_sessions_delete_audit()'::regprocedure), 'SECURITY DEFINER', 'SECURITY INVOKER')");";;
+  # The three committed plants are applied outside this transaction, in the HTTP section. Named here
+  # only so an unknown-PLANT typo still aborts rather than running a silently plant-free guard.
+  removalsmemberread|removalsadminupdate|removalsinvokerlive) P="";;
   boot)          P="";;
   "")            P="";;
   *)             echo "guard: FAIL unknown PLANT '${PLANT:-}'"; exit 1;;
@@ -221,6 +290,7 @@ esac
 
 # ── (a2) the exact expected policy set. Normalised text, as pg_policies renders it. ───────────────
 MD5_REOPEN_BEFORE=$(reopendef | md5)
+MD5_AUDIT_BEFORE=$(auditdef | md5)
 MD5_SHAPE_BEFORE=$(tableshape | md5)
 
 EXPECT_POLICIES=$(cat <<'EOF'
@@ -228,6 +298,7 @@ first_read_responses|Admins manage all first_read_responses|ALL|{authenticated}|
 first_read_responses|Members read own company first_read_responses|SELECT|{authenticated}|(company_id IN ( SELECT company_members.company_id
    FROM company_members
   WHERE (company_members.user_id = auth.uid())))|-
+first_read_session_removals|Admins read first_read_session_removals|SELECT|{authenticated}|has_role(auth.uid(), 'admin'::app_role)|-
 first_read_session_reopens|Admins manage all first_read_session_reopens|ALL|{authenticated}|has_role(auth.uid(), 'admin'::app_role)|has_role(auth.uid(), 'admin'::app_role)
 first_read_sessions|Admins manage all first_read_sessions|ALL|{authenticated}|has_role(auth.uid(), 'admin'::app_role)|has_role(auth.uid(), 'admin'::app_role)
 first_read_sessions|Members read own company first_read_sessions|SELECT|{authenticated}|(company_id IN ( SELECT company_members.company_id
@@ -583,6 +654,74 @@ BEGIN
   RAISE NOTICE '  ok   (h9) TRUNCATE of the audit table refused for authenticated (%)', left(v_msg, 45);
   PERFORM set_config('role', 'postgres', true);
 
+  -- ══ (r) first_read_session_removals — the REMOVAL audit (20260930090000) ═══════════════════
+  -- Admin READ only, and APPEND-ONLY: no write policy for any role, and every write verb revoked from
+  -- authenticated. The trigger writes it as its DEFINER owner, so no app role needs INSERT at all.
+
+  -- ── (r1) RLS on ───────────────────────────────────────────────────────────────────────────────
+  SELECT relrowsecurity INTO v_fired FROM pg_class WHERE oid='public.first_read_session_removals'::regclass;
+  IF NOT v_fired THEN
+    RAISE EXCEPTION 'GUARD-FAIL (r1) row level security is NOT enabled on first_read_session_removals';
+  END IF;
+  RAISE NOTICE '  ok   (r1) row level security is enabled on first_read_session_removals';
+
+  -- ── (r2) exactly one admin SELECT policy, and nothing else ────────────────────────────────────
+  -- Spelled out here rather than left to (a2) so an added write policy names THIS check. Append-only
+  -- must be a policy fact, not only a grant fact: a future GRANT would otherwise re-open writes.
+  SELECT string_agg(policyname||'|'||cmd||'|'||roles::text||'|'||coalesce(qual,'-')||'|'||coalesce(with_check,'-'), chr(10) ORDER BY policyname)
+    INTO v_got FROM pg_policies
+   WHERE schemaname='public' AND tablename='first_read_session_removals';
+  v_want := 'Admins read first_read_session_removals|SELECT|{authenticated}|has_role(auth.uid(), ''admin''::app_role)|-';
+  IF coalesce(v_got,'') IS DISTINCT FROM v_want THEN
+    RAISE EXCEPTION E'GUARD-FAIL (r2) the removal audit policy set is not exactly one admin SELECT.\n--- got ---\n%\n--- want ---\n%', coalesce(v_got,'(none)'), v_want;
+  END IF;
+  RAISE NOTICE '  ok   (r2) exactly one policy on the removal audit: admin SELECT, no write policy for any role, no member or anon policy';
+
+  -- ── (r3) anon holds nothing, and an anon SELECT is refused ────────────────────────────────────
+  SELECT count(*) INTO v_n FROM information_schema.role_table_grants
+   WHERE table_schema='public' AND table_name='first_read_session_removals' AND grantee='anon';
+  IF v_n <> 0 THEN
+    RAISE EXCEPTION 'GUARD-FAIL (r3) anon still holds % privilege(s) on the removal audit', v_n;
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('role','anon')::text, true);
+  PERFORM set_config('role', 'anon', true);
+  v_fired := false;
+  BEGIN SELECT count(*) INTO v_n FROM public.first_read_session_removals;
+  EXCEPTION WHEN others THEN v_fired := true; v_msg := SQLERRM; END;
+  PERFORM set_config('role', 'postgres', true);
+  IF NOT v_fired THEN
+    RAISE EXCEPTION 'GUARD-FAIL (r3) anon SELECT on the removal audit SUCCEEDED, returning % rows', v_n;
+  END IF;
+  RAISE NOTICE '  ok   (r3) anon holds no privilege on the removal audit and its SELECT is refused (%)', left(v_msg, 50);
+
+  -- ── (r4) authenticated holds SELECT and nothing else ──────────────────────────────────────────
+  SELECT string_agg(privilege_type, ',' ORDER BY privilege_type) INTO v_got
+    FROM information_schema.role_table_grants
+   WHERE table_schema='public' AND table_name='first_read_session_removals' AND grantee='authenticated';
+  IF coalesce(v_got,'(none)') <> 'SELECT' THEN
+    RAISE EXCEPTION 'GUARD-FAIL (r4) authenticated holds "%" on the removal audit, expected exactly SELECT', coalesce(v_got,'(none)');
+  END IF;
+  RAISE NOTICE '  ok   (r4) authenticated holds exactly SELECT on the removal audit — no INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER';
+
+  -- ── (r7) the audit trigger is SECURITY DEFINER with a fixed search_path ───────────────────────
+  -- Not cosmetic: (r4) just revoked INSERT from authenticated, so an INVOKER trigger would make every
+  -- session delete fail on the audit insert. DEFINER is what keeps the delete working, and the pinned
+  -- search_path is what stops a caller shadowing public.* to steer a postgres-owned function.
+  SELECT p.prosecdef INTO v_fired FROM pg_proc p WHERE p.oid='public.first_read_sessions_delete_audit()'::regprocedure;
+  IF NOT v_fired THEN
+    RAISE EXCEPTION 'GUARD-FAIL (r7) first_read_sessions_delete_audit is SECURITY INVOKER — with no INSERT grant for authenticated, every session delete now fails on the audit insert';
+  END IF;
+  SELECT coalesce(array_to_string(p.proconfig, ','), '(none)') INTO v_got
+    FROM pg_proc p WHERE p.oid='public.first_read_sessions_delete_audit()'::regprocedure;
+  IF v_got NOT LIKE 'search_path=%' THEN
+    RAISE EXCEPTION 'GUARD-FAIL (r7) first_read_sessions_delete_audit is SECURITY DEFINER with no pinned search_path (proconfig=%)', v_got;
+  END IF;
+  SELECT pg_get_userbyid(p.proowner) INTO v_mode FROM pg_proc p WHERE p.oid='public.first_read_sessions_delete_audit()'::regprocedure;
+  IF v_mode <> 'postgres' THEN
+    RAISE EXCEPTION 'GUARD-FAIL (r7) the audit trigger is owned by % — DEFINER only admits the insert while its owner owns the table', v_mode;
+  END IF;
+  RAISE NOTICE '  ok   (r7) the audit trigger is SECURITY DEFINER, owner postgres, % ', v_got;
+
   -- ══ (a2) LAST — the policy set equals the spec exactly ══════════════════════════════════════
   -- Runs last on purpose: it catches every policy-shaped plant, so ahead of the behavioural checks
   -- it would mask them. See the ORDER NOTES in the header.
@@ -591,13 +730,13 @@ BEGIN
            coalesce(qual,'-')||'|'||coalesce(with_check,'-') AS line
       FROM pg_policies
      WHERE schemaname='public'
-       AND tablename IN ('first_read_sessions','first_read_responses','first_read_session_reopens')
+       AND tablename IN ('first_read_sessions','first_read_responses','first_read_session_reopens','first_read_session_removals')
   ) t;
   v_want := \$want\$$EXPECT_POLICIES\$want\$;
   IF coalesce(v_got,'') IS DISTINCT FROM v_want THEN
     RAISE EXCEPTION E'GUARD-FAIL (a2) the policy set does not equal the spec.\n--- got ---\n%\n--- want ---\n%', coalesce(v_got,'(none)'), v_want;
   END IF;
-  RAISE NOTICE '  ok   (a2) exactly five policies across the three tables, commands, roles and expressions equal the spec — no sixth policy, no anon policy, no member policy on the audit table';
+  RAISE NOTICE '  ok   (a2) exactly six policies across the four tables, commands, roles and expressions equal the spec — no seventh policy, no anon policy, no member policy on either audit table, no write policy on the removal audit';
 
   RAISE NOTICE 'GUARD DB GREEN';
 END
@@ -615,12 +754,17 @@ if [ "$MD5_REOPEN_BEFORE" != "$MD5_REOPEN_AFTER" ]; then
   echo "guard: FAIL (z) reopen_first_read_session was NOT restored by the ROLLBACK ($MD5_REOPEN_BEFORE -> $MD5_REOPEN_AFTER)"
   exit 1
 fi
-MD5_SHAPE_AFTER=$(tableshape | md5)
-if [ "$MD5_SHAPE_BEFORE" != "$MD5_SHAPE_AFTER" ]; then
-  echo "guard: FAIL (z) the three tables' RLS flags, policies or grants were NOT restored by the ROLLBACK ($MD5_SHAPE_BEFORE -> $MD5_SHAPE_AFTER)"
+MD5_AUDIT_AFTER=$(auditdef | md5)
+if [ "$MD5_AUDIT_BEFORE" != "$MD5_AUDIT_AFTER" ]; then
+  echo "guard: FAIL (z) first_read_sessions_delete_audit was NOT restored by the ROLLBACK ($MD5_AUDIT_BEFORE -> $MD5_AUDIT_AFTER)"
   exit 1
 fi
-echo "  ok   (z) reopen_first_read_session and all three tables' RLS, policies and grants are restored md5-identical after the ROLLBACK"
+MD5_SHAPE_AFTER=$(tableshape | md5)
+if [ "$MD5_SHAPE_BEFORE" != "$MD5_SHAPE_AFTER" ]; then
+  echo "guard: FAIL (z) the four tables' RLS flags, policies or grants were NOT restored by the ROLLBACK ($MD5_SHAPE_BEFORE -> $MD5_SHAPE_AFTER)"
+  exit 1
+fi
+echo "  ok   (z) reopen_first_read_session, first_read_sessions_delete_audit and all four tables' RLS, policies and grants are restored md5-identical after the ROLLBACK"
 
 if ! echo "$OUT" | grep -q 'GUARD DB GREEN'; then
   echo "$OUT" | grep -E 'GUARD-FAIL|ERROR|FATAL' | head -20
@@ -651,5 +795,156 @@ for fn in generate-first-read-proposal feed-first-read-corrections; do
   esac
 done
 [ "$g2_fail" = 0 ] || { echo "guard: FAIL (g2 boot probe)"; exit 1; }
+
+# ── (r5/r6/r8) the removal audit THROUGH PostgREST, with real user JWTs ───────────────────────────
+# Why HTTP and not the transaction above: request.jwt.claims + SET role reproduces the policy layer
+# faithfully, but it does not reproduce PostgREST — the grant layer as the API applies it, the 403 an
+# admin actually receives, or the DELETE path a real session removal travels. These three checks are
+# the end-to-end ones, so they run over the API as the three real accounts.
+#
+# The three plants for this section are COMMITTED: a separate connection cannot see an uncommitted
+# one. The EXIT trap below restores whatever was planted and verifies the restore md5-identically
+# against the baseline taken before the plant, so an interrupted run cannot leave the plant standing.
+REST_URL=${REST_URL:-http://127.0.0.1:54321/rest/v1}
+AUTH_URL=${AUTH_URL:-http://127.0.0.1:54321/auth/v1}
+ANON_KEY_V=${ANON_KEY:-}
+if [ -z "$ANON_KEY_V" ]; then
+  ANON_KEY_V=$(cd "$(dirname "$0")/../.." && npx supabase status --output env 2>/dev/null | sed -n 's/^ANON_KEY="\(.*\)"$/\1/p')
+fi
+[ -n "$ANON_KEY_V" ] || { echo "guard: FAIL could not resolve ANON_KEY for the (r5/r6/r8) PostgREST checks"; exit 1; }
+
+mint_jwt() {  # $1 email, $2 password → access_token on stdout, empty on failure
+  curl -s -m 30 -X POST "$AUTH_URL/token?grant_type=password" \
+    -H "apikey: $ANON_KEY_V" -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$1\",\"password\":\"$2\"}" \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).access_token||"")}catch(e){process.stdout.write("")}})'
+}
+JWT_ADMIN=$(mint_jwt "$ADMIN_EMAIL" "$ADMIN_PW")
+[ -n "$JWT_ADMIN" ] || { echo "guard: FAIL could not mint an admin JWT for $ADMIN_EMAIL (r5/r6/r8)"; exit 1; }
+JWT_MEM=$(mint_jwt "$MEM_EMAIL" "$MEM_PW")
+[ -n "$JWT_MEM" ] || { echo "guard: FAIL could not mint a member JWT for $MEM_EMAIL (r5/r6/r8)"; exit 1; }
+JWT_NA=$(mint_jwt "$NA_EMAIL" "$NA_PW")
+[ -n "$JWT_NA" ] || { echo "guard: FAIL could not mint a non-admin JWT for $NA_EMAIL (r5/r6/r8)"; exit 1; }
+
+rest_rows() {  # $1 jwt, $2 query → row count, or "refused:<code>"
+  local body code
+  body=$(curl -s -m 30 -w $'\n%{http_code}' "$REST_URL/first_read_session_removals?$2" \
+           -H "apikey: $ANON_KEY_V" -H "Authorization: Bearer $1")
+  code=$(printf '%s' "$body" | tail -1)
+  if [ "$code" != "200" ]; then printf 'refused:%s' "$code"; return; fi
+  printf '%s' "$body" | sed '$d' | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.stdout.write(String(Array.isArray(j)?j.length:-1))}catch(e){process.stdout.write("-1")}})'
+}
+rest_code() {  # $1 jwt, $2 method, $3 query, $4 body → http status
+  curl -s -m 30 -o /dev/null -w '%{http_code}' -X "$2" "$REST_URL/first_read_session_removals?$3" \
+    -H "apikey: $ANON_KEY_V" -H "Authorization: Bearer $1" -H 'Content-Type: application/json' \
+    ${4:+-d "$4"}
+}
+
+# The baseline this section must return to, and the committed plant's inverse.
+ROWS_BEFORE=$(psqlq "select count(*) from public.first_read_session_removals")
+MD5_ROWS_BEFORE=$(psqlq "select coalesce(md5(string_agg(t::text, chr(10) order by t.id)),'(empty)') from public.first_read_session_removals t")
+MD5_SHAPE_PRE_HTTP=$(tableshape | md5)
+MD5_AUDIT_PRE_HTTP=$(auditdef | md5)
+AUDIT_DEF_SAVED=$(auditdef)
+HTTP_CLEAN_SESSION=""
+
+restore_http_plant() {
+  case "${PLANT:-}" in
+    removalsmemberread)  psqlq "drop policy if exists \"plant live removals member read\" on public.first_read_session_removals" >/dev/null;;
+    removalsadminupdate) psqlq "drop policy if exists \"plant live removals admin update\" on public.first_read_session_removals" >/dev/null
+                         psqlq "revoke update on public.first_read_session_removals from authenticated" >/dev/null;;
+    removalsinvokerlive) printf '%s' "$AUDIT_DEF_SAVED" | docker exec -i "$PGC" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 >/dev/null 2>&1;;
+  esac
+  # The (r8) throwaway rows, removed as postgres — the only writes this guard commits, and they go.
+  # ORDER MATTERS, and getting it wrong is silent: deleting the session FIRES THE AUDIT TRIGGER and
+  # writes a fresh removal row. So the session goes first and its removal rows second. (Reversed, a
+  # planted run that left the session standing came back with 10 rows instead of 9.)
+  [ -n "$HTTP_CLEAN_SESSION" ] && psqlq "delete from public.first_read_sessions where id='$HTTP_CLEAN_SESSION'" >/dev/null
+  [ -n "$HTTP_CLEAN_SESSION" ] && psqlq "delete from public.first_read_session_removals where session_id='$HTTP_CLEAN_SESSION'" >/dev/null
+  psqlq "delete from public.companies where id='$CO'" >/dev/null 2>&1
+  psqlq "notify pgrst, 'reload schema'" >/dev/null 2>&1
+}
+http_restore_report() {
+  local sa aa ra ma
+  sa=$(tableshape | md5); aa=$(auditdef | md5)
+  ra=$(psqlq "select count(*) from public.first_read_session_removals")
+  ma=$(psqlq "select coalesce(md5(string_agg(t::text, chr(10) order by t.id)),'(empty)') from public.first_read_session_removals t")
+  [ "$sa" = "$MD5_SHAPE_PRE_HTTP" ] || { echo "  RESTORE-FAIL the four tables' shape did not come back ($MD5_SHAPE_PRE_HTTP -> $sa)"; return 1; }
+  [ "$aa" = "$MD5_AUDIT_PRE_HTTP" ] || { echo "  RESTORE-FAIL first_read_sessions_delete_audit did not come back ($MD5_AUDIT_PRE_HTTP -> $aa)"; return 1; }
+  [ "$ra" = "$ROWS_BEFORE" ] || { echo "  RESTORE-FAIL the removal audit holds $ra rows, started at $ROWS_BEFORE"; return 1; }
+  [ "$ma" = "$MD5_ROWS_BEFORE" ] || { echo "  RESTORE-FAIL the removal audit rows changed ($MD5_ROWS_BEFORE -> $ma)"; return 1; }
+  echo "  ok   (restore) the committed plant is gone; shape, audit trigger and all $ra rows are md5-identical to before the HTTP section"
+  return 0
+}
+trap 'restore_http_plant' EXIT
+
+# apply the committed plant, if this run carries one
+case "${PLANT:-}" in
+  removalsmemberread)
+    # USING (true), not a company-scoped predicate: the existing removal rows belong to companies the
+    # member fixture is not in, so a scoped policy would be behaviourally INERT and (r5) would stay
+    # green while the table was in fact open. The plant has to actually admit rows to test the check.
+    psqlq "create policy \"plant live removals member read\" on public.first_read_session_removals for select to authenticated using (true)" >/dev/null;;
+  removalsadminupdate)
+    psqlq "create policy \"plant live removals admin update\" on public.first_read_session_removals for update to authenticated using (has_role(auth.uid(), 'admin'::app_role)) with check (has_role(auth.uid(), 'admin'::app_role))" >/dev/null
+    psqlq "grant update on public.first_read_session_removals to authenticated" >/dev/null;;
+  removalsinvokerlive)
+    psqlq "select replace(pg_get_functiondef('public.first_read_sessions_delete_audit()'::regprocedure), 'SECURITY DEFINER', 'SECURITY INVOKER')" \
+      | docker exec -i "$PGC" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 >/dev/null;;
+esac
+psqlq "notify pgrst, 'reload schema'" >/dev/null 2>&1
+
+r_fail=0
+
+# ── (r5) who reads what, over the API ─────────────────────────────────────────────────────────────
+n_admin=$(rest_rows "$JWT_ADMIN" "select=id")
+n_mem=$(rest_rows "$JWT_MEM" "select=id")
+n_na=$(rest_rows "$JWT_NA" "select=id")
+if [ "$n_admin" != "$ROWS_BEFORE" ]; then
+  echo "  FAIL (r5) the admin read $n_admin over PostgREST, expected all $ROWS_BEFORE rows"; r_fail=1
+elif [ "$n_mem" != "0" ] || [ "$n_na" != "0" ]; then
+  echo "  FAIL (r5) a non-admin read the removal audit over PostgREST: member=$n_mem non-admin=$n_na, expected 0 and 0"; r_fail=1
+else
+  echo "  ok   (r5) over PostgREST the admin reads all $n_admin rows; the member reads 0 and the non-admin reads 0"
+fi
+
+# ── (r6) the admin cannot write it, over the API ──────────────────────────────────────────────────
+ins=$(rest_code "$JWT_ADMIN" POST "" '{"session_id":"66666666-6666-4666-8666-66666666aa01","company_id":"66666666-6666-4666-8666-66666666aa01","status_at_deletion":"open","confirmed_count":0,"corrected_count":0,"rejected_count":0,"reason":"guard r6 probe"}')
+upd=$(rest_code "$JWT_ADMIN" PATCH "reason=eq.__guard_r6_nomatch__" '{"reason":"guard r6 tamper"}')
+del=$(rest_code "$JWT_ADMIN" DELETE "reason=eq.__guard_r6_nomatch__" "")
+# 403 is the refusal we want (42501, permission denied). 2xx means the write verb is reachable.
+bad=""
+case "$ins" in 4*) ;; *) bad="$bad INSERT=$ins";; esac
+case "$upd" in 4*) ;; *) bad="$bad UPDATE=$upd";; esac
+case "$del" in 4*) ;; *) bad="$bad DELETE=$del";; esac
+if [ -n "$bad" ]; then
+  echo "  FAIL (r6) an admin write verb on the removal audit was NOT refused over PostgREST:$bad (want 4xx on all three)"; r_fail=1
+else
+  echo "  ok   (r6) over PostgREST the admin's INSERT ($ins), UPDATE ($upd) and DELETE ($del) on the removal audit are all refused"
+fi
+
+# ── (r8) an admin session delete still lands exactly one removal row ──────────────────────────────
+# On the guard's OWN throwaway company and a session created for this check — never CB1, CB2, or a
+# real session. Both rows are removed again by the EXIT trap and the count returns to $ROWS_BEFORE.
+psqlq "insert into public.companies (id, name, created_by, frozen) values ('$CO','GUARD first-read-rls throwaway (r8)','$ADMIN',false) on conflict (id) do nothing" >/dev/null
+R8_SESS=$(psqlq "select gen_random_uuid()")
+HTTP_CLEAN_SESSION="$R8_SESS"
+psqlq "insert into public.first_read_sessions (id, company_id, status) values ('$R8_SESS','$CO','open')" >/dev/null
+r8_code=$(curl -s -m 30 -o /dev/null -w '%{http_code}' -X DELETE \
+  "$REST_URL/first_read_sessions?id=eq.$R8_SESS" -H "apikey: $ANON_KEY_V" -H "Authorization: Bearer $JWT_ADMIN")
+r8_rows=$(psqlq "select count(*) from public.first_read_session_removals where session_id='$R8_SESS'")
+r8_sess_left=$(psqlq "select count(*) from public.first_read_sessions where id='$R8_SESS'")
+if [ "$r8_rows" != "1" ]; then
+  echo "  FAIL (r8) the admin delete (HTTP $r8_code, session rows left $r8_sess_left) landed $r8_rows removal rows, expected exactly 1 — the DEFINER audit trigger is not writing"; r_fail=1
+elif [ "$r8_sess_left" != "0" ]; then
+  echo "  FAIL (r8) the removal row landed but the session still exists (HTTP $r8_code) — the delete did not take"; r_fail=1
+else
+  echo "  ok   (r8) an admin DELETE of a throwaway session over PostgREST (HTTP $r8_code) landed exactly one removal row, with no app role holding INSERT"
+fi
+
+trap - EXIT
+restore_http_plant
+http_restore_report || r_fail=1
+[ "$r_fail" = 0 ] || { echo "guard: FAIL (r5/r6/r8 PostgREST checks)"; exit 1; }
 
 echo "guard: PASS"
