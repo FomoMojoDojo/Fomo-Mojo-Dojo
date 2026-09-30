@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ROW SECURITY on the three first-read tables:
 #   first_read_sessions, first_read_responses      — CV3, migration 20260927120000 (2026-09-27)
-#   first_read_session_reopens (the reopen audit)  — migration 20260928120000 (2026-09-28)
+#   first_read_session_reopens (the reopen audit)  — migrations 20260928120000, 20260930140000 (append-only)
 #   first_read_session_removals (the removal audit) — migration 20260930090000 (2026-09-30)
 # Guards against the REAL local database. Every check runs inside ONE ROLLED-BACK
 # transaction; the only rows read or written belong to THROWAWAY companies. Edgewood's first-read rows
@@ -54,10 +54,18 @@
 #   (r8) an admin DELETE of a throwaway first read session lands EXACTLY ONE removal row for that
 #        session id — the end-to-end proof that the DEFINER trigger still writes the audit. The row is
 #        removed again as postgres and the count returns to its starting value.
-#   (a2) LAST: the policy set equals the spec EXACTLY — SIX policies across the FOUR tables, their
+#   (o1) the reopen audit's policy set is EXACTLY admin SELECT + admin INSERT — read and record, and
+#        no UPDATE or DELETE policy for any role (20260930140000)
+#   (o2) authenticated holds SELECT and INSERT only on it — no UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER
+#   -- over PostgREST, with REAL user JWTs, outside the transaction:
+#   (o3) an admin UPDATE and an admin DELETE on the reopen audit are both refused
+#   (o4) an admin reopen through reopen_first_read_session lands EXACTLY ONE reopen row. The RPC stays
+#        SECURITY INVOKER (RO2), so this is the proof that the narrow INSERT policy still admits the
+#        one write it makes. Cleanup as postgres returns the table to 0 rows.
+#   (a2) LAST: the policy set equals the spec EXACTLY — SEVEN policies across the FOUR tables, their
 #        commands, their roles, and the normalised text of every USING / WITH CHECK expression. No
-#        seventh policy, no anon policy, no member policy on either audit table, and no write policy
-#        of any kind on first_read_session_removals.
+#        eighth policy, no anon policy, no member policy on either audit table, no write policy of any
+#        kind on first_read_session_removals, and no UPDATE or DELETE policy on either audit table.
 #
 # ORDER NOTES. The checks abort on the first failure, so the order is chosen to make each plant below
 # report against its OWN target:
@@ -149,10 +157,22 @@
 #   PLANT=removalsinvokerlive  the audit trigger reverted to SECURITY INVOKER,
 #                              committed — the delete must then fail outright or
 #                              land no removal row                              ⇒ (r8) red
+#   -- first_read_session_reopens append-only (20260930140000). In-transaction:
+#   PLANT=reopensforall        the pre-20260930140000 FOR ALL policy put back in
+#                              place of the read+record pair — behaviourally it
+#                              re-opens UPDATE and DELETE to admins              ⇒ (o1) red
+#   PLANT=reopensupdatepolicy  an admin UPDATE policy added alongside the pair    ⇒ (o1) red
+#   PLANT=reopensupdategrant   UPDATE re-granted to authenticated (grant only —
+#                              a policy would be caught by (o1) first)           ⇒ (o2) red
+#   -- COMMITTED plants, for the PostgREST checks (restored by the EXIT trap):
+#   PLANT=reopensupdatelive    an admin UPDATE policy AND its grant, committed —
+#                              the restore drops both                            ⇒ (o3) red
+#   PLANT=reopensnoinsertlive  the admin INSERT policy dropped, committed — the
+#                              reopen must then fail or land no row              ⇒ (o4) red
 #
-# COVERAGE LAW. 40 "ok" lines and 39 plants (a green run prints (g2) twice — once per edge function —
-# and (r2) and (b4) each carry two plants, so the two counts are not meant to be equal). Every check
-# above has a plant here, and each plant makes its OWN check
+# COVERAGE LAW. 44 "ok" lines and 44 plants (a green run prints (g2) twice — once per edge function —
+# and (r2), (o1) and (b4) each carry two plants, so the two counts matching here is coincidence, not a
+# rule). Every check above has a plant here, and each plant makes its OWN check
 # the first failure. A check no plant can break is not a check. (b4) carries two plants because it now
 # has two independent failure modes — the session half and the audit half. (z) is the one exception and
 # cannot be otherwise: it verifies that the ROLLBACK restored the function AND the three tables' RLS
@@ -256,11 +276,14 @@ case "${PLANT:-}" in
   anoninsert)    P="grant insert on public.first_read_sessions to anon;
                     create policy \"plant anon insert s\" on public.first_read_sessions for insert to anon with check (true);";;
   anontrunc)     P="grant truncate on public.first_read_sessions to anon; grant truncate on public.first_read_responses to anon;";;
-  reopensnowrite) P="drop policy \"Admins manage all first_read_session_reopens\" on public.first_read_session_reopens;
-                    create policy \"Admins manage all first_read_session_reopens\" on public.first_read_session_reopens for select to authenticated using (has_role(auth.uid(), 'admin'::app_role));";;
+  # Retargeted by 20260930140000: the FOR ALL policy is gone, so breaking the write path now means
+  # dropping the INSERT half of the read+record pair. (b4) still reports it — the RPC's audit insert
+  # is refused and the reopen raises.
+  reopensnowrite) P="drop policy \"Admins record first_read_session_reopens\" on public.first_read_session_reopens;";;
   reopensrlsoff) P="alter table public.first_read_session_reopens disable row level security;";;
-  reopensnoread) P="drop policy \"Admins manage all first_read_session_reopens\" on public.first_read_session_reopens;
-                    create policy \"Admins manage all first_read_session_reopens\" on public.first_read_session_reopens for insert to authenticated with check (has_role(auth.uid(), 'admin'::app_role));";;
+  # Retargeted by 20260930140000: breaking the READ half now means dropping the SELECT policy, leaving
+  # the INSERT policy in place — so the reopen still writes and only (h2)'s read-back fails.
+  reopensnoread) P="drop policy \"Admins read first_read_session_reopens\" on public.first_read_session_reopens;";;
   reopensmemberread) P="create policy \"plant reopens member read\" on public.first_read_session_reopens for select to authenticated using (true);";;
   reopensmemberwrite) P="create policy \"plant reopens member write\" on public.first_read_session_reopens for insert to authenticated with check (true);";;
   reopensnonmemberread) P="create policy \"plant reopens nonmember read\" on public.first_read_session_reopens for select to authenticated using (not exists (select 1 from public.company_members cm where cm.user_id = auth.uid()));";;
@@ -280,9 +303,16 @@ case "${PLANT:-}" in
   removalsanongrant) P="grant select on public.first_read_session_removals to anon;";;
   removalstruncauth) P="grant truncate on public.first_read_session_removals to authenticated;";;
   removalsinvoker) P="$(psqlq "select replace(pg_get_functiondef('public.first_read_sessions_delete_audit()'::regprocedure), 'SECURITY DEFINER', 'SECURITY INVOKER')");";;
-  # The three committed plants are applied outside this transaction, in the HTTP section. Named here
+  reopensforall) P="drop policy \"Admins read first_read_session_reopens\" on public.first_read_session_reopens;
+                    drop policy \"Admins record first_read_session_reopens\" on public.first_read_session_reopens;
+                    grant update, delete on public.first_read_session_reopens to authenticated;
+                    create policy \"Admins manage all first_read_session_reopens\" on public.first_read_session_reopens for all to authenticated using (has_role(auth.uid(), 'admin'::app_role)) with check (has_role(auth.uid(), 'admin'::app_role));";;
+  reopensupdatepolicy) P="create policy \"plant reopens admin update\" on public.first_read_session_reopens for update to authenticated using (has_role(auth.uid(), 'admin'::app_role)) with check (has_role(auth.uid(), 'admin'::app_role));";;
+  # GRANT ONLY: a policy-shaped plant would be caught by (o1) first and would prove nothing about (o2).
+  reopensupdategrant) P="grant update on public.first_read_session_reopens to authenticated;";;
+  # The five committed plants are applied outside this transaction, in the HTTP section. Named here
   # only so an unknown-PLANT typo still aborts rather than running a silently plant-free guard.
-  removalsmemberread|removalsadminupdate|removalsinvokerlive) P="";;
+  removalsmemberread|removalsadminupdate|removalsinvokerlive|reopensupdatelive|reopensnoinsertlive) P="";;
   boot)          P="";;
   "")            P="";;
   *)             echo "guard: FAIL unknown PLANT '${PLANT:-}'"; exit 1;;
@@ -299,7 +329,8 @@ first_read_responses|Members read own company first_read_responses|SELECT|{authe
    FROM company_members
   WHERE (company_members.user_id = auth.uid())))|-
 first_read_session_removals|Admins read first_read_session_removals|SELECT|{authenticated}|has_role(auth.uid(), 'admin'::app_role)|-
-first_read_session_reopens|Admins manage all first_read_session_reopens|ALL|{authenticated}|has_role(auth.uid(), 'admin'::app_role)|has_role(auth.uid(), 'admin'::app_role)
+first_read_session_reopens|Admins read first_read_session_reopens|SELECT|{authenticated}|has_role(auth.uid(), 'admin'::app_role)|-
+first_read_session_reopens|Admins record first_read_session_reopens|INSERT|{authenticated}|-|has_role(auth.uid(), 'admin'::app_role)
 first_read_sessions|Admins manage all first_read_sessions|ALL|{authenticated}|has_role(auth.uid(), 'admin'::app_role)|has_role(auth.uid(), 'admin'::app_role)
 first_read_sessions|Members read own company first_read_sessions|SELECT|{authenticated}|(company_id IN ( SELECT company_members.company_id
    FROM company_members
@@ -722,6 +753,36 @@ BEGIN
   END IF;
   RAISE NOTICE '  ok   (r7) the audit trigger is SECURITY DEFINER, owner postgres, % ', v_got;
 
+  -- ══ (o) first_read_session_reopens — APPEND-ONLY (20260930140000) ══════════════════════════
+  -- Read and RECORD, not the removals shape: reopen_first_read_session stays SECURITY INVOKER (RO2),
+  -- so its audit INSERT runs under the policies of the caller and the table needs a real INSERT policy.
+  -- (NOTE on quoting: bash 3.2 toggles single-quote state on every apostrophe while it scans for the
+  -- closing paren of the enclosing command substitution, heredoc body included. A prose apostrophe in
+  -- a comment here can therefore break the whole script, with the error reported 100 lines away.
+  -- Write comments inside this heredoc without apostrophes.)
+  -- What it must NOT have is any way to amend what was recorded.
+
+  -- ── (o1) exactly admin SELECT + admin INSERT ─────────────────────────────────────────────────
+  SELECT string_agg(policyname||'|'||cmd||'|'||roles::text||'|'||coalesce(qual,'-')||'|'||coalesce(with_check,'-'), chr(10) ORDER BY policyname)
+    INTO v_got FROM pg_policies
+   WHERE schemaname='public' AND tablename='first_read_session_reopens';
+  v_want := 'Admins read first_read_session_reopens|SELECT|{authenticated}|has_role(auth.uid(), ''admin''::app_role)|-'
+            || chr(10) ||
+            'Admins record first_read_session_reopens|INSERT|{authenticated}|-|has_role(auth.uid(), ''admin''::app_role)';
+  IF coalesce(v_got,'') IS DISTINCT FROM v_want THEN
+    RAISE EXCEPTION E'GUARD-FAIL (o1) the reopen audit policy set is not exactly admin SELECT + admin INSERT.\n--- got ---\n%\n--- want ---\n%', coalesce(v_got,'(none)'), v_want;
+  END IF;
+  RAISE NOTICE '  ok   (o1) exactly two policies on the reopen audit: admin SELECT and admin INSERT — no UPDATE or DELETE policy for any role';
+
+  -- ── (o2) authenticated holds SELECT and INSERT only ──────────────────────────────────────────
+  SELECT string_agg(privilege_type, ',' ORDER BY privilege_type) INTO v_got
+    FROM information_schema.role_table_grants
+   WHERE table_schema='public' AND table_name='first_read_session_reopens' AND grantee='authenticated';
+  IF coalesce(v_got,'(none)') <> 'INSERT,SELECT' THEN
+    RAISE EXCEPTION 'GUARD-FAIL (o2) authenticated holds "%" on the reopen audit, expected exactly INSERT,SELECT', coalesce(v_got,'(none)');
+  END IF;
+  RAISE NOTICE '  ok   (o2) authenticated holds exactly SELECT and INSERT on the reopen audit — no UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER';
+
   -- ══ (a2) LAST — the policy set equals the spec exactly ══════════════════════════════════════
   -- Runs last on purpose: it catches every policy-shaped plant, so ahead of the behavioural checks
   -- it would mask them. See the ORDER NOTES in the header.
@@ -736,7 +797,7 @@ BEGIN
   IF coalesce(v_got,'') IS DISTINCT FROM v_want THEN
     RAISE EXCEPTION E'GUARD-FAIL (a2) the policy set does not equal the spec.\n--- got ---\n%\n--- want ---\n%', coalesce(v_got,'(none)'), v_want;
   END IF;
-  RAISE NOTICE '  ok   (a2) exactly six policies across the four tables, commands, roles and expressions equal the spec — no seventh policy, no anon policy, no member policy on either audit table, no write policy on the removal audit';
+  RAISE NOTICE '  ok   (a2) exactly seven policies across the four tables, commands, roles and expressions equal the spec — no eighth policy, no anon policy, no member policy on either audit table, no write policy on the removal audit, no UPDATE or DELETE policy on either';
 
   RAISE NOTICE 'GUARD DB GREEN';
 END
@@ -847,6 +908,8 @@ MD5_SHAPE_PRE_HTTP=$(tableshape | md5)
 MD5_AUDIT_PRE_HTTP=$(auditdef | md5)
 AUDIT_DEF_SAVED=$(auditdef)
 HTTP_CLEAN_SESSION=""
+REOPENS_BEFORE=$(psqlq "select count(*) from public.first_read_session_reopens")
+O4_SESSION=""
 
 restore_http_plant() {
   case "${PLANT:-}" in
@@ -854,7 +917,20 @@ restore_http_plant() {
     removalsadminupdate) psqlq "drop policy if exists \"plant live removals admin update\" on public.first_read_session_removals" >/dev/null
                          psqlq "revoke update on public.first_read_session_removals from authenticated" >/dev/null;;
     removalsinvokerlive) printf '%s' "$AUDIT_DEF_SAVED" | docker exec -i "$PGC" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 >/dev/null 2>&1;;
+    reopensupdatelive)   psqlq "drop policy if exists \"plant live reopens admin update\" on public.first_read_session_reopens" >/dev/null
+                         psqlq "revoke update on public.first_read_session_reopens from authenticated" >/dev/null;;
+    reopensnoinsertlive) psqlq "drop policy if exists \"Admins record first_read_session_reopens\" on public.first_read_session_reopens; create policy \"Admins record first_read_session_reopens\" on public.first_read_session_reopens for insert to authenticated with check (has_role(auth.uid(), 'admin'::app_role))" >/dev/null;;
   esac
+  # (o4) rows. The session is deleted FIRST, because deleting it fires the REMOVALS audit trigger and
+  # writes a removal row; then that removal row goes, then the reopen row. A session left at
+  # proposal_issued (the planted run, where the reopen was refused) cannot be deleted without a reason,
+  # so the reason GUC is set for the cleanup delete. Order chosen to leave removals at its start count
+  # and reopens at 0.
+  if [ -n "$O4_SESSION" ]; then
+    psqlq "select set_config('app.fr_session_removal_reason','guard o4 cleanup',false); delete from public.first_read_sessions where id='$O4_SESSION'" >/dev/null
+    psqlq "delete from public.first_read_session_removals where session_id='$O4_SESSION'" >/dev/null
+    psqlq "delete from public.first_read_session_reopens where session_id='$O4_SESSION'" >/dev/null
+  fi
   # The (r8) throwaway rows, removed as postgres — the only writes this guard commits, and they go.
   # ORDER MATTERS, and getting it wrong is silent: deleting the session FIRES THE AUDIT TRIGGER and
   # writes a fresh removal row. So the session goes first and its removal rows second. (Reversed, a
@@ -873,7 +949,9 @@ http_restore_report() {
   [ "$aa" = "$MD5_AUDIT_PRE_HTTP" ] || { echo "  RESTORE-FAIL first_read_sessions_delete_audit did not come back ($MD5_AUDIT_PRE_HTTP -> $aa)"; return 1; }
   [ "$ra" = "$ROWS_BEFORE" ] || { echo "  RESTORE-FAIL the removal audit holds $ra rows, started at $ROWS_BEFORE"; return 1; }
   [ "$ma" = "$MD5_ROWS_BEFORE" ] || { echo "  RESTORE-FAIL the removal audit rows changed ($MD5_ROWS_BEFORE -> $ma)"; return 1; }
-  echo "  ok   (restore) the committed plant is gone; shape, audit trigger and all $ra rows are md5-identical to before the HTTP section"
+  local oa; oa=$(psqlq "select count(*) from public.first_read_session_reopens")
+  [ "$oa" = "$REOPENS_BEFORE" ] || { echo "  RESTORE-FAIL the reopen audit holds $oa rows, started at $REOPENS_BEFORE"; return 1; }
+  echo "  ok   (restore) the committed plant is gone; shape, audit trigger, all $ra removal rows md5-identical and the reopen audit back to $oa rows"
   return 0
 }
 trap 'restore_http_plant' EXIT
@@ -891,6 +969,11 @@ case "${PLANT:-}" in
   removalsinvokerlive)
     psqlq "select replace(pg_get_functiondef('public.first_read_sessions_delete_audit()'::regprocedure), 'SECURITY DEFINER', 'SECURITY INVOKER')" \
       | docker exec -i "$PGC" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 >/dev/null;;
+  reopensupdatelive)
+    psqlq "create policy \"plant live reopens admin update\" on public.first_read_session_reopens for update to authenticated using (has_role(auth.uid(), 'admin'::app_role)) with check (has_role(auth.uid(), 'admin'::app_role))" >/dev/null
+    psqlq "grant update on public.first_read_session_reopens to authenticated" >/dev/null;;
+  reopensnoinsertlive)
+    psqlq "drop policy \"Admins record first_read_session_reopens\" on public.first_read_session_reopens" >/dev/null;;
 esac
 psqlq "notify pgrst, 'reload schema'" >/dev/null 2>&1
 
@@ -940,6 +1023,44 @@ elif [ "$r8_sess_left" != "0" ]; then
   echo "  FAIL (r8) the removal row landed but the session still exists (HTTP $r8_code) — the delete did not take"; r_fail=1
 else
   echo "  ok   (r8) an admin DELETE of a throwaway session over PostgREST (HTTP $r8_code) landed exactly one removal row, with no app role holding INSERT"
+fi
+
+# ── (o3) the reopen audit cannot be AMENDED, over the API ─────────────────────────────────────────
+REOPENS_REST="$REST_URL/first_read_session_reopens"
+o_upd=$(curl -s -m 30 -o /dev/null -w '%{http_code}' -X PATCH "$REOPENS_REST?reason=eq.__guard_o3_nomatch__" \
+          -H "apikey: $ANON_KEY_V" -H "Authorization: Bearer $JWT_ADMIN" -H 'Content-Type: application/json' -d '{"reason":"guard o3 tamper"}')
+o_del=$(curl -s -m 30 -o /dev/null -w '%{http_code}' -X DELETE "$REOPENS_REST?reason=eq.__guard_o3_nomatch__" \
+          -H "apikey: $ANON_KEY_V" -H "Authorization: Bearer $JWT_ADMIN")
+o_bad=""
+case "$o_upd" in 4*) ;; *) o_bad="$o_bad UPDATE=$o_upd";; esac
+case "$o_del" in 4*) ;; *) o_bad="$o_bad DELETE=$o_del";; esac
+if [ -n "$o_bad" ]; then
+  echo "  FAIL (o3) an admin amending verb on the reopen audit was NOT refused over PostgREST:$o_bad (want 4xx on both)"; r_fail=1
+else
+  echo "  ok   (o3) over PostgREST the admin UPDATE ($o_upd) and DELETE ($o_del) on the reopen audit are both refused"
+fi
+
+# ── (o4) the reopen RPC still records, over the API ───────────────────────────────────────────────
+# reopen_first_read_session stays SECURITY INVOKER (RO2), so its audit INSERT runs under the policies of
+# the admin making the call. This is the proof that the narrow INSERT policy admits that one write and
+# that append-only did not break recording. On the guard throwaway company, never a real session.
+psqlq "insert into public.companies (id, name, created_by, frozen) values ('$CO','GUARD first-read-rls throwaway (o4)','$ADMIN',false) on conflict (id) do nothing" >/dev/null
+O4_SESS=$(psqlq "select gen_random_uuid()")
+O4_SESSION="$O4_SESS"
+# proposal_issued is the only status the RPC will reopen, and the transition trigger gates the edge, so
+# the fixture is planted directly as postgres rather than driven through the app path.
+psqlq "insert into public.first_read_sessions (id, company_id, status) values ('$O4_SESS','$CO','open'); update public.first_read_sessions set status='proposal_issued' where id='$O4_SESS'" >/dev/null
+o4_code=$(curl -s -m 30 -o /dev/null -w '%{http_code}' -X POST "$REST_URL/rpc/reopen_first_read_session" \
+  -H "apikey: $ANON_KEY_V" -H "Authorization: Bearer $JWT_ADMIN" -H 'Content-Type: application/json' \
+  -d "{\"p_session_id\":\"$O4_SESS\",\"p_reason\":\"guard o4 probe\"}")
+o4_rows=$(psqlq "select count(*) from public.first_read_session_reopens where session_id='$O4_SESS'")
+o4_status=$(psqlq "select coalesce(max(status),'(gone)') from public.first_read_sessions where id='$O4_SESS'")
+if [ "$o4_rows" != "1" ]; then
+  echo "  FAIL (o4) the admin reopen (HTTP $o4_code, session status $o4_status) landed $o4_rows reopen rows, expected exactly 1 — the admin INSERT policy is not admitting the audit write"; r_fail=1
+elif [ "$o4_status" != "open" ]; then
+  echo "  FAIL (o4) the reopen row landed but the session status is $o4_status, expected open — the RPC did not complete"; r_fail=1
+else
+  echo "  ok   (o4) an admin reopen through the RPC over PostgREST (HTTP $o4_code) landed exactly one reopen row and flipped the session to open"
 fi
 
 trap - EXIT
