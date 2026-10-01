@@ -1,0 +1,24 @@
+# MojoMap — passwordless, READ-ONLY pf inspection for the network guard (ruling N6, 2026-09-30).
+# Installs to /etc/sudoers.d/mojomap-pf-readonly, owner root:wheel, mode 0440.
+#
+# WHY THIS EXISTS. network-guard.sh check n4 has to read pf's real state: whether pf is enabled, and
+# whether the loaded rules in our anchor still match scripts/network/pf.anchor. Both reads need root —
+# /dev/pf is not readable by this user (verified: "pfctl: /dev/pf: Permission denied"). Without this
+# entry n4 cannot run, and the guard is written to FAIL loudly naming this file rather than skip the
+# check, because a check that quietly skips is how an open boundary passes a ritual.
+#
+# WHY IT IS SAFE. Exactly two commands, both read-only:
+#   pfctl -s info                  prints status and counters; changes nothing
+#   pfctl -a mojomap -s rules      lists the loaded rules in OUR anchor only; changes nothing
+# There is no wildcard, so -f (load), -e/-E (enable), -d/-X (disable), -F (flush) and every other
+# mutating form still require the operator's password. The anchor name is fixed, so this cannot be used
+# to read or alter any other anchor. NOPASSWD is confined to these two argument vectors.
+#
+# Validate before installing:  visudo -c -f scripts/network/sudoers.mojomap-pf-readonly
+# Install:                     sudo install -m 0440 -o root -g wheel \
+#                                scripts/network/sudoers.mojomap-pf-readonly /etc/sudoers.d/mojomap-pf-readonly
+# Remove:                      sudo rm /etc/sudoers.d/mojomap-pf-readonly
+
+Cmnd_Alias MOJOMAP_PF_READ = /sbin/pfctl -s info, /sbin/pfctl -a mojomap -s rules
+
+fomomojodojo ALL=(root) NOPASSWD: MOJOMAP_PF_READ

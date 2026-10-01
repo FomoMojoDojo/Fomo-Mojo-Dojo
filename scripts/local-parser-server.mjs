@@ -4,7 +4,10 @@ import { createRequire } from "node:module";
 import mammoth from "mammoth";
 import JSZip from "jszip";
 
-const HOST = process.env.LOCAL_PARSER_HOST || "0.0.0.0";
+// N1b (2026-09-30): loopback default — was 0.0.0.0. Edge functions reach it at
+// host.docker.internal:8789, which Docker Desktop proxies to the host loopback (proven against
+// Ollama, itself 127.0.0.1-only). LOCAL_PARSER_HOST still overrides.
+const HOST = process.env.LOCAL_PARSER_HOST || "127.0.0.1";
 const PORT = Number(process.env.LOCAL_PARSER_PORT || 8789);
 // Gate B (R1, 2026-09-19): every extraction reports the parser versions so a transcript record can store
 // extraction_version — { server, pdfjs, mammoth } read once from the installed packages.

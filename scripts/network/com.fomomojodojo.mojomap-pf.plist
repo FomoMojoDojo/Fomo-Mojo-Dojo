@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  MojoMap pf loader — ruling N1 (2026-09-30). Installs to /Library/LaunchDaemons/.
+
+  WHY A DAEMON AT ALL. /etc/pf.conf says in terms: "PF will not be automatically enabled". Apple's own
+  /System/Library/LaunchDaemons/com.apple.pfctl.plist runs `pfctl -f /etc/pf.conf` at boot, which LOADS
+  the ruleset but does not ENABLE pf. Without something calling `pfctl -E`, our anchor is parsed and
+  then ignored. This daemon supplies the missing enable.
+
+  MECHANISM CHOSEN, and why. /etc/pf.conf evaluates exactly one anchor path, "com.apple/*", and loads it
+  from /etc/pf.anchors/com.apple. There is no second evaluated path to nest under, and writing our rules
+  inside Apple's own anchor file would put them in a file the OS owns and rewrites. So install-pf.sh
+  appends two lines to /etc/pf.conf:
+
+      anchor "mojomap"
+      load anchor "mojomap" from "/etc/pf.anchors/mojomap"
+
+  keeping a timestamped backup. That is the minimal reversible change, and it survives any later
+  `pfctl -f /etc/pf.conf` by another component — our rules come back with Apple's, rather than being
+  flushed by the next reload. The alternative considered and rejected was a separate top-level conf
+  loaded only by us: it would win at boot but would be silently dropped the moment anything reloaded
+  /etc/pf.conf, which is the failure mode that leaves the ports open while the guard still reads
+  "pf enabled".
+
+  KNOWN CAVEAT, and the guard that catches it: a macOS update can replace /etc/pf.conf and remove our
+  two lines. RunAtLoad re-applies on the next boot, and network-guard.sh check n4 compares the anchor's
+  LOADED rules against scripts/network/pf.anchor, so a silently dropped anchor fails the ritual rather
+  than passing unnoticed.
+
+  -E increments pf's enable reference count rather than forcing pf on, so this cooperates with any other
+  component that also enables pf instead of fighting it.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.fomomojodojo.mojomap-pf</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <!-- Load the full ruleset (Apple's anchor plus ours) and enable pf. -E is the enable; -f is the
+         load. Both in one call so a partial state is not possible. -->
+    <string>/sbin/pfctl -E -f /etc/pf.conf</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/var/log/mojomap-pf.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/mojomap-pf.log</string>
+</dict>
+</plist>

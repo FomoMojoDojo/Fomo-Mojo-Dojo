@@ -5,7 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PORT="${PORT:-8080}"
-HOST="0.0.0.0"
+# N1b (2026-09-30): loopback only. Remote viewers reach the app through `tailscale serve`, which
+# proxies from this host, so 127.0.0.1 still serves every partner while no LAN or tailnet device can
+# open the dev server directly. Overridable for a deliberate exception.
+HOST="${HOST_BIND:-127.0.0.1}"
 PARSER_PORT="8789"
 FUNCTION_ENV_FILE="$PROJECT_DIR/supabase/functions/.env.local"
 

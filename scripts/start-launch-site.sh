@@ -6,7 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_DIR="$PROJECT_DIR/launch-site"
 PORT="${PORT:-3010}"
-HOST="0.0.0.0"
+# N1b (2026-09-30): loopback only, same reasoning as start-local-app.sh.
+HOST="${HOST_BIND:-127.0.0.1}"
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 

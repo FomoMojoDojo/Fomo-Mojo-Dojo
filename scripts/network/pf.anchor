@@ -1,0 +1,66 @@
+# MojoMap pf anchor — block inbound TCP to local service ports on every non-loopback interface.
+# Ruling N1 (2026-09-30). Loaded at /etc/pf.anchors/mojomap, evaluated by an anchor line in /etc/pf.conf.
+#
+# WHY pf AND NOT PORT BINDINGS. Docker Desktop for Mac publishes every container port on all
+# interfaces no matter what: the daemon "ip" key is honoured by dockerd INSIDE the VM (verified:
+# 127.0.0.1:45997 in the VM) but Desktop's host-side proxy re-publishes on 0.0.0.0 (verified:
+# com.docke *:45997). Only an explicit per-port HostIp binds loopback, and the Supabase CLI has no
+# option for it. So the packet filter is the boundary, not the bind.
+#
+# WHY THIS CANNOT BREAK TAILSCALE SERVE — the load-bearing fact for the operator and the partners.
+# `tailscale serve` does NOT listen on a host port. Nothing listens on 443 or 8443 (verified with
+# lsof); the Tailscale system extension (io.tailscale.ipn.macsys 1.98.5) terminates the TLS session
+# inside its own process and then dials the service as a LOCAL connection to 127.0.0.1. Proven end to
+# end: Vite binds 127.0.0.1 only and https://mojomap.tail7b863b.ts.net still returns 200 with the
+# app's HTML. A rule that blocks inbound TCP to port 8080 on utun4 therefore never sees the serve
+# path, because the serve path arrives as tailscaled's own traffic and continues over loopback.
+#   * The serve ports 443 and 8443 are NEVER blocked here, on any interface.
+#   * lo0 is NEVER filtered — every rule below excludes it.
+#
+# PORTS BLOCKED, each with its service (from the exposure census, 2026-09-30):
+#   54321  Supabase Kong, the API gateway        — reached by partners through serve :8443 instead
+#   54322  Supabase Postgres                     — postgres/authenticator/supabase_admin all still
+#                                                  accept the CLI default password (N3 leaves that
+#                                                  alone), so the port must not be reachable
+#   54323  Supabase Studio                       — ran arbitrary SQL as postgres with NO auth
+#   54324  Supabase Inbucket, captured mail      — unauthenticated
+#   54327  Supabase Analytics (Logflare)         — unauthenticated /health
+#    8080  Vite dev server, the app              — reached by partners through serve :443 instead
+#    8789  local parser (PDF/DOCX extract)       — edge functions reach it via host.docker.internal
+#    3010  launch-site next-server               — unauthenticated
+#    3000  Open WebUI                            — unauthenticated
+#    8888  SearXNG                               — unauthenticated; edge functions use
+#                                                  host.docker.internal:8888
+#    8090  Dify nginx (http)                     — app-level login only
+#    8100  Dify nginx (https)                    — app-level login only
+#    5001  Dify api                              — container-internal today; blocked as defence in
+#                                                  depth in case it is ever published
+#    5003  Dify plugin_daemon                    — no auth observed
+#
+# NOT BLOCKED, deliberately: Apple system services (AirPlay 5000/7000 under ControlCenter, Continuity
+# 49158/57568/57569 under rapportd) are left to Apple; they are named in the network guard allowlist
+# with the same reasoning rather than filtered here.
+#
+# INTERFACE COVERAGE. "on ! lo0" covers every non-loopback interface present now (en0, en1, utun4,
+# bridge*) and every one that appears later — a new VPN utun or a Thunderbolt bridge is covered the
+# day it exists, with no edit here. That is the whole of N1 in one predicate.
+#
+# `quick` so the decision is final at first match; no state is kept for a blocked SYN.
+# `return` rather than a silent drop so a mistaken local client fails fast and loudly instead of
+# hanging for a minute — the operator phone test looks for "Connection refused", not a timeout.
+#
+# WHY `flags S/SA` (amendment A1). 54321-54327 sit inside macOS's ephemeral port range,
+# 49152-65535, which is where the kernel draws SOURCE ports for this Mac's own outbound
+# connections. Without a flag match, a rule written "to any port 54321" also matches the RETURN
+# traffic of any outbound connection that happened to be assigned 54321 as its local port — the
+# packets arrive inbound on en0 or utun4 carrying that port, and pf would refuse them. The symptom
+# is the worst kind: a random, occasional failure of unrelated outbound traffic, roughly one
+# connection in sixteen thousand, that looks like a flaky network rather than a firewall rule.
+# `flags S/SA` restricts the match to packets with SYN set and ACK clear — i.e. only a NEW inbound
+# connection ATTEMPT. Reply traffic always carries ACK, so it never matches, and nothing this Mac
+# initiates is affected. That is also the honest description of the boundary: it refuses new inbound
+# connections to these ports, and does nothing else.
+
+mojomap_ports = "{ 3000, 3010, 5001, 5003, 8080, 8090, 8100, 8789, 8888, 54321, 54322, 54323, 54324, 54327 }"
+
+block return in quick on ! lo0 proto tcp from any to any port $mojomap_ports flags S/SA

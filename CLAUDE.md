@@ -171,6 +171,47 @@ Guards that name a non-admin caller read their ids from gitignored env files, an
 
 ---
 
+## Network boundary — the ritual runs network-guard.sh
+
+`bash scripts/guards/network-guard.sh` joins the session-open ritual (needs no DB login; n4 needs the
+read-only sudo entry from `scripts/network/sudoers.mojomap-pf-readonly`). It asserts: no non-loopback
+listener outside the Apple/Tailscale allowlist or the pf-blocked port set; Vite (8080), the local parser
+(8789) and launch-site (3010) on 127.0.0.1 only; zero `nc` listeners; pf enabled with our anchor's
+loaded rules matching `scripts/network/pf.anchor`; and both Tailscale serve URLs answering.
+
+**Partners reach MojoMap ONLY through Tailscale serve** — `https://mojomap.tail7b863b.ts.net` (app) and
+`:8443` (API). Taylor (taylorstandlee@gmail.com) and Jim (jimcmagill@gmail.com) are full members of the
+`tail7b863b.ts.net` tailnet. Serve listens on **no host port**: nothing binds 443 or 8443; the Tailscale
+system extension terminates TLS in its own process and dials the service over loopback. That is why our
+servers can bind 127.0.0.1 and why pf rules on `utun*` never touch the partner path — and why check n5
+exists: it is the standing proof that the boundary did not cut them off. Never point a partner at a LAN
+or tailnet address with a port; that path is closed on purpose.
+
+**The Mac cannot test its own boundary.** macOS routes traffic addressed to any of the host's own
+addresses over `lo0`, and the pf rule exempts `lo0`, so `nc 192.168.12.191 54321` from this Mac connects
+even when the boundary is working. The LAN and tailnet addresses are only testable from another device —
+that is why the runbook's before/after checks are done from the operator's phone.
+
+**A Docker Desktop restart leaves the edge runtime down.** `supabase_edge_runtime` carries
+`RestartPolicy: no`, so after any Docker restart it stays exited and Kong answers
+`503 {"message":"name resolution failed"}` on all twelve function terminals. Fix before the boot sweep:
+
+```bash
+docker start supabase_edge_runtime_dzlgyxcvuwiulgifbmew
+```
+
+Do not restart Kong first — the 503 is the missing upstream, not a stale Kong.
+
+**A guard never leaves a listener running.** 60 orphaned `nc -l` processes from a superseded
+client-sync-schedule design sat on every interface for four days before anyone noticed. Any guard that
+opens a socket restores it in an EXIT trap and re-verifies afterwards; check n3 fails on a single stray
+`nc`.
+
+**Docker Desktop publishes on every interface regardless of the daemon `ip` key.** Verified: dockerd
+inside the VM honours `"ip": "127.0.0.1"` (binds `127.0.0.1:<port>` there), but Desktop's host-side proxy
+re-publishes on `0.0.0.0`. Only an explicit per-port HostIp binds loopback, and the Supabase CLI has no
+option for it — hence pf as the boundary, not the bind.
+
 ## Session-open ritual — terminal boot list
 
 Empty-body / `{}` POST with a service-role bearer to each (the legacy JWT one — see Baselines above);
