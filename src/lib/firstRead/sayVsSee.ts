@@ -39,3 +39,43 @@ export const SILENT_SEE_LINE = "Nothing we've read so far speaks to this.";
 // publicly_silent items double as the open-question bridge (V2-4). A LIGHT connective
 // line — no duplicate list. PENDING SIGNATURE.
 export const SILENT_BRIDGE_NOTE = "These are also the open questions we'll leave you with.";
+
+// ── THE TEXT-ONLY NOTE (IR6, signed 2026-10-01) ──────────────────────────────────────────────────
+//
+// Every line above that reports a silence about the company — "Nothing we've read so far speaks to
+// this", "What we haven't found yet", "Scanned {date} — none found" — was honest when nothing could
+// read an image. It is not honest about COVERAGE: the read strips every tag with its attributes
+// (extractTextBasic, public-baseline/index.ts:185 and _shared/fetchAndExtract.ts:18), fetches no
+// image bytes, and sends a text-only prompt to the web_search lane. Words on a flyer, an event
+// graphic or a quote card are not read and never were.
+//
+// So wherever such a silence renders, this note renders beside it, ONCE per section — never per row,
+// never twice in a section. It is a statement about what the read covers, not about the company, so
+// it carries no mark control and is not markable (FM15), and no census or parity spec counts it as
+// a row.
+//
+// THE EXISTING SIGNED STRINGS ARE UNCHANGED. This note is additive.
+export const TEXT_ONLY_NOTE = "We read text only. Words inside images, such as flyers, aren't read yet.";
+
+/** One row of a say-vs-see group, reduced to what the silence test needs. */
+export type SilenceProbeRow = { readonly see?: string | null };
+
+/**
+ * Does this group render at least one silence string, and therefore take the note?
+ *
+ * TRUE for publicly_silent always: its heading ("What we haven't found yet") is itself a silence
+ * claim and every one of its rows renders SILENT_SEE_LINE by definition.
+ * TRUE for echoed / divergent only when a row has no see side — the same `silent` test the row
+ * components and the export each apply (DeltaItemRow.tsx:28, FeaturedExhibitCard, exportHtml:223).
+ *
+ * Shared so the screen and the leave-behind can never disagree about where the note belongs.
+ */
+export function groupShowsSilence(key: SayVsSeeGroupKey, rows: readonly SilenceProbeRow[]): boolean {
+  if (key === "publicly_silent") return true;
+  return rows.some((r) => !r.see);
+}
+
+/** The same silence test for a SINGLE row (the featured lead card shows one item, not a group). */
+export function rowShowsSilence(key: SayVsSeeGroupKey | string, row: SilenceProbeRow): boolean {
+  return key === "publicly_silent" || !row.see;
+}

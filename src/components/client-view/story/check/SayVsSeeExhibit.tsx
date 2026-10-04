@@ -4,7 +4,7 @@
 // double as the open-question bridge (V2-4) — a light connective note, no duplicate list.
 
 import type { CheckItem, Verdict } from "@/hooks/useFirstReadCapture";
-import { SAY_VS_SEE_GROUPS, SILENT_BRIDGE_NOTE } from "@/lib/firstRead/sayVsSee";
+import { SAY_VS_SEE_GROUPS, SILENT_BRIDGE_NOTE, TEXT_ONLY_NOTE, groupShowsSilence } from "@/lib/firstRead/sayVsSee";
 import DeltaItemRow from "./DeltaItemRow";
 
 export default function SayVsSeeExhibit({
@@ -34,6 +34,11 @@ export default function SayVsSeeExhibit({
               <DeltaItemRow key={i.identity} item={i} onSet={onSet} disabled={disabled} />
             ))}
             {g.key === "publicly_silent" && <p className="cvs-saysee-bridge">{SILENT_BRIDGE_NOTE}</p>}
+            {/* IR6: the coverage note, ONCE per section that shows a silence — never per row. It
+                carries no mark control and no data-fr-mark-* attribute, so it is not markable. */}
+            {groupShowsSilence(g.key, groupItems.map((i) => ({ see: i.delta?.see }))) && (
+              <p className="cvs-saysee-bridge" data-text-only-note>{TEXT_ONLY_NOTE}</p>
+            )}
           </section>
         );
       })}

@@ -22,7 +22,7 @@ import { FR_EXPORT_ACTS } from "@/lib/firstRead/acts";
 import { WHY_OUTSIDE_RATIONALE, JOURNEY_VISUAL_LABELS } from "@/lib/firstRead/whyOutside";
 import { admitStatedProblem, statedProblemLabel } from "@/lib/firstRead/statedProblem";
 import { outsideBand } from "@/lib/firstRead/outsideBands";
-import { SAY_VS_SEE_GROUPS, SAY_LABEL, SEE_LABEL, SILENT_SEE_LINE, SILENT_BRIDGE_NOTE } from "@/lib/firstRead/sayVsSee";
+import { SAY_VS_SEE_GROUPS, SAY_LABEL, SEE_LABEL, SILENT_SEE_LINE, SILENT_BRIDGE_NOTE, TEXT_ONLY_NOTE, groupShowsSilence } from "@/lib/firstRead/sayVsSee";
 import { formatSourceAttribution } from "@/lib/firstRead/reportedDate";
 import {
   CURATED_TENSION_HEADING, CURATED_TENSION_FRAMING, CURATED_TENSION_PROMISE_LABEL,
@@ -234,7 +234,12 @@ function sectionCheck(d: FirstReadExportData): string {
         + `${annFor(i)}</div>`;
     }).join("");
     const bridge = g.key === "publicly_silent" ? `<p class="ss-bridge">${esc(SILENT_BRIDGE_NOTE)}</p>` : "";
-    return `<div class="ss-group"><p class="ss-head">${esc(g.heading)}</p>${rowsHtml}${bridge}</div>`;
+    // IR6: the coverage note, ONCE per group that shows a silence — the same shared predicate the
+    // screen uses, so the leave-behind can never disagree with what the room saw.
+    const note = groupShowsSilence(g.key, gi.map((i) => ({ see: i.delta!.see })))
+      ? `<p class="ss-bridge" data-text-only-note>${esc(TEXT_ONLY_NOTE)}</p>`
+      : "";
+    return `<div class="ss-group"><p class="ss-head">${esc(g.heading)}</p>${rowsHtml}${bridge}${note}</div>`;
   }).join("");
   const exhibitHtml = `<div class="ss-exhibit">${exhibit}</div>`;
 

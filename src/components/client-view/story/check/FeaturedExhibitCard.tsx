@@ -6,7 +6,7 @@
 import type { CheckItem } from "@/hooks/useFirstReadCapture";
 import { CHECK_KIND_LABEL } from "@/lib/firstRead/checkItemView";
 import { OUTSIDE_RAISED_LABEL } from "./OutsideRaisedSection";
-import { SAY_LABEL, SEE_LABEL, SILENT_SEE_LINE } from "@/lib/firstRead/sayVsSee";
+import { SAY_LABEL, SEE_LABEL, SILENT_SEE_LINE, TEXT_ONLY_NOTE } from "@/lib/firstRead/sayVsSee";
 import SignalQuote from "@/components/evidence/SignalQuote";
 import { formatSourceAttribution } from "@/lib/firstRead/reportedDate";
 
@@ -50,6 +50,9 @@ export default function FeaturedExhibitCard({ item }: { item: CheckItem }) {
             {reported && <p className="cvs-delta-reported">{reported}</p>}
           </div>
         </div>
+        {/* IR6: this lead card is its own rendering unit — when its one item is silent it shows a
+            silence string with no group section around it, so the note belongs here, once. */}
+        {silent && <p className="cvs-saysee-bridge" data-text-only-note>{TEXT_ONLY_NOTE}</p>}
       </div>
     );
   }

@@ -42,6 +42,7 @@ import { Chip, SeqChip, TwoWeightHeadline, NumberedList } from "./primitives";
 // sidebar beats (3, 4, 5, 6, 11, 12, 14, 15, 16). Stage 3b: full match to the captures, beats 1–17.
 import { Divider, FlowLine, HangingItem, Labeled, Screen, Spread, VerticalScale, flowColumns, withStop } from "./primitives-editorial";
 import { plural } from "./plural";
+import { TEXT_ONLY_NOTE } from "@/lib/firstRead/sayVsSee";
 
 /** Stage 3 — the Spread sidebar for an ActHeader-shaped beat. Same strings in the same DOM order the
  *  header used: eyebrow → headline → standfirst → subline → count → Why-this (now below the hairline).
@@ -198,6 +199,18 @@ const GAP_LOOKED_NONE_NOTE =
 const GAP_COULDNT_CHECK_NOTE =
   "This comparison didn't complete — it will run again on the next refresh."; // signed
 const NO_QUESTIONS_NOTE = "No open questions generated yet."; // signed (not-yet: no integrity row)
+
+// IR6 (Finding 1, signed 2026-10-03) — the coverage note on the preview read's four
+// looked-and-found-nothing lines. Each of those says "we read / we compared … and found nothing",
+// which was honest only while nothing could read an image: the read strips every tag with its
+// attributes, fetches no image bytes, and sends a text-only prompt to the search lane. The note
+// renders ONCE per empty box, beside the line it qualifies, and ONLY on the looked-none branch —
+// the *_COULDNT lines stay bare, because nothing was read there at all and "text only" is not the
+// limitation. It carries no mark anchor and no control, so it is not markable (FM15).
+function TextOnlyNote({ show }: { show: boolean }) {
+  if (!show) return null;
+  return <p className="mt-2" data-text-only-note>{TEXT_ONLY_NOTE}</p>;
+}
 // Integrity-grounded empty lines (mirror offeringIntegrity/gapIntegrity vocabulary). DRAFT strings
 // pending operator signature — added with the first_read_open_questions integrity gate.
 const QUESTIONS_LOOKED_NONE = "We compared what you say with what's out there and found nothing left open yet."; // signed
@@ -752,6 +765,7 @@ export function ActFindings({ read, eyebrow }: { read: FirstReadPreviewData; eye
               : read.findingsIntegrity === "looked_none"
                 ? FINDINGS_LOOKED_NONE
                 : NO_FINDINGS_NOTE}
+            <TextOnlyNote show={read.findingsIntegrity === "looked_none"} />
           </Absent>
         ) : null}
         {shown.map((f) => (
@@ -852,7 +866,12 @@ export function ActWhatYouSay({ read, eyebrow }: { read: FirstReadPreviewData; e
   return (
     <SpreadBeat eyebrow={eyebrow} headline={YOUSAY_HEADLINE} standfirst={YOUSAY_SUB} rationale={RATIONALE_WHAT_YOU_SAY}>
       <main className="fr-stagger fr-rows">
-        {!hasOwn && emptyNote ? <Absent>{emptyNote}</Absent> : null}
+        {!hasOwn && emptyNote ? (
+          <Absent>
+            {emptyNote}
+            <TextOnlyNote show={read.ownWordsWriteCompleted} />
+          </Absent>
+        ) : null}
         {/* R2: operator-only "Not meeting-ready" line when no own-words run exists (null for the client). */}
         <OwnWordsNotRunNote run={read.ownWordsRun} />
         {/* Verbatim self-assertions lead — quoted, page + read date. */}
@@ -1780,6 +1799,7 @@ export function ActGap({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?
               : read.gapIntegrity === "looked_none"
                 ? GAP_LOOKED_NONE_NOTE
                 : NO_PAIRS_NOTE}
+            <TextOnlyNote show={read.gapIntegrity === "looked_none"} />
           </Absent>
         ) : null}
         {/* One row per RESOLVED STATEMENT. Confirmed/contradicted statements list their pair evidence
@@ -1917,6 +1937,7 @@ export function ActQuestions({ read, eyebrow }: { read: FirstReadPreviewData; ey
                 : read.openQuestionsIntegrity === "looked_none"
                   ? QUESTIONS_LOOKED_NONE
                   : NO_QUESTIONS_NOTE}
+              <TextOnlyNote show={read.openQuestionsIntegrity === "looked_none"} />
             </Absent>
           ) : null
         ) : (

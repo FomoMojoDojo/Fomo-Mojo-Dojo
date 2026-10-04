@@ -1,3 +1,4 @@
+import { TEXT_ONLY_NOTE } from "@/lib/firstRead/sayVsSee";
 import { useSignalReview } from "../hooks";
 import type { SignalStage, BaselineResult, ExclusionControls, BaselineEvidenceItem } from "../types";
 import { coverageOf, cleanSnippet } from "../helpers";
@@ -171,6 +172,11 @@ function OutsideEmptyState({ integrity, hint }: { integrity?: BaselineIntegrity;
       <div className="crpv-ws-section">
         <div className="crpv-ws-placeholder">
           <p>Scanned {when} — none found.</p>
+          {/* IR6: this branch is the one empty state that claims a completed look at the COMPANY
+              and found nothing, so it says what the look covered. The two branches around it
+              report our own collection state — no scan yet, or a check that did not finish — and
+              take no note: nothing was read, so "text only" is not the limitation. */}
+          <p className="crpv-ws-hint" data-text-only-note>{TEXT_ONLY_NOTE}</p>
         </div>
       </div>
     );
