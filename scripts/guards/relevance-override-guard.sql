@@ -8,7 +8,10 @@
 --   4. superseding the override with 'withdrawn' (via the RPC) clears the operator stamp and the next insert
 --      for that identity is born NULL;
 --   5. deleting the observed claim leaves the override row in place and lists it in the report view;
---   6. the RPC refuses the frozen company (CB1).
+--   6. the RPC refuses the frozen company (CB1);
+--   7. anon cannot INSERT through relevance_overrides_without_live_pair (V1, 2026-10-05) -- the view
+--      is auto-updatable, so definer rights plus an anon INSERT grant were an unauthenticated
+--      cross-company write. PLANT=anonviewwrite reverts the fix in-transaction => (7) red.
 -- Any failed assertion raises → psql exits non-zero → everything rolls back.
 --
 -- RED against the schema WITHOUT the migration (the override table does not exist).
@@ -18,7 +21,18 @@
 --         < scripts/guards/relevance-override-guard.sql
 
 \set ON_ERROR_STOP on
+-- PLANT (V1, 2026-10-05). Bare run plants nothing. One plant, for check 7:
+--   psql -v plant=anonviewwrite ...  reverts the V1 fix inside the transaction (definer rights +
+--   an anon INSERT grant on the report view) => (7) red. The ROLLBACK undoes it.
+\if :{?plant}
+\else
+  \set plant none
+\endif
 begin;
+
+-- psql does not interpolate :vars inside a dollar-quoted block, so the plant is carried in a
+-- transaction-local GUC set out here, where interpolation does happen.
+select set_config('guard.plant', :'plant', true);
 
 do $$
 declare
@@ -110,7 +124,35 @@ begin
   end;
   if not v_raised then raise exception 'RED (6): frozen company CB1 was NOT refused'; end if;
 
-  raise notice 'GREEN: override wins on insert + update; forged operator provenance refused; withdrawal clears + next row null; override outlives claim loss + reported; CB1 refused';
+  -- 7. anon cannot INSERT through the report view (V1, 2026-10-05).
+  -- relevance_overrides_without_live_pair is a single-table view, so Postgres reports it
+  -- auto-updatable. While it ran with DEFINER rights and anon held INSERT, an unauthenticated
+  -- caller could write an override row against ANY company id: the insert landed as the view
+  -- owner (postgres, bypassrls) and never met the base table RLS. Proven on 2026-10-05 as
+  -- INSERT 0 1 through the view against an insert the same role was refused on the base table.
+  -- 20261005120000 closed it with security_invoker = true plus REVOKE ALL FROM anon.
+  if coalesce(current_setting('guard.plant', true), 'none') = 'anonviewwrite' then
+    execute 'alter view public.relevance_overrides_without_live_pair reset (security_invoker)';
+    execute 'grant insert on public.relevance_overrides_without_live_pair to anon';
+  end if;
+  v_raised := false;
+  begin
+    execute 'set local role anon';
+    execute format('insert into public.relevance_overrides_without_live_pair'
+                || ' (company_id, pairing_kind, content_identity, verdict, reason)'
+                || ' values (%L, %L, %L, %L, %L)',
+                   v_co, 'public_vs_public', 'guard-anon-write', 'relevant', 'GUARD: must be refused');
+  exception when others then
+    v_raised := true;
+  end;
+  execute 'reset role';
+  if not v_raised then
+    raise exception 'RED (7): anon INSERTed through relevance_overrides_without_live_pair -- the view must run with security_invoker = true and anon must hold nothing on it, or an unauthenticated caller writes an override for any company';
+  end if;
+  select count(*) into v_n from public.claim_delta_relevance_overrides where content_identity = 'guard-anon-write';
+  if v_n <> 0 then raise exception 'RED (7b): an anon-written override row exists, got %', v_n; end if;
+
+  raise notice 'GREEN: override wins on insert + update; forged operator provenance refused; withdrawal clears + next row null; override outlives claim loss + reported; CB1 refused; anon INSERT through the report view refused';
 end
 $$;
 
