@@ -1043,19 +1043,60 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         for (const r of (prRows ?? []) as Array<{ kind: string; payload: Record<string, unknown>; created_at: string | null }>) {
           prByKind.set(r.kind, { payload: r.payload ?? {}, created_at: r.created_at });
         }
+
+        // ── SHORT-FORM SLOTS (R1-R7, 2026-10-05) ────────────────────────────────────────────────
+        // ONLY a current, SIGNED slot is loaded. Three filters say the same thing so no one of them
+        // is load-bearing alone: is_current, signed_at non-null, and (for a member) the RLS policy.
+        // A staged slot is invisible here by construction, so a screen with no signed slot renders
+        // exactly what it rendered before slots existed (R6) — the absence needs no extra branch.
+        // This surface READS slots and never writes one: the write path is the generator alone
+        // (guard s1), and authenticated holds SELECT only, so a write from here is impossible.
+        const { data: slotRows } = await loose()
+          .from("first_read_slots")
+          .select("kind, slots, signed_at")
+          .eq("company_id", companyId)
+          .eq("is_current", true)
+          .not("signed_at", "is", null);
+        const slotByKind = new Map<string, Record<string, unknown>>();
+        for (const r of (slotRows ?? []) as Array<{ kind: string; slots: Record<string, unknown> | null }>) {
+          if (r.slots) slotByKind.set(r.kind, r.slots);
+        }
+        /** A stored slot line → the render shape. A blank text is treated as absent, never as "". */
+        const slotLine = (v: unknown): { text: string; citations: string[] } | null => {
+          const o = (v ?? {}) as { text?: unknown; citations?: unknown };
+          const text = String(o.text ?? "").trim();
+          if (!text) return null;
+          return { text, citations: Array.isArray(o.citations) ? o.citations.map(String) : [] };
+        };
+        const posSlotRaw = slotByKind.get("positioning");
+        const posDiffLines = (Array.isArray(posSlotRaw?.differentiators) ? posSlotRaw!.differentiators : [])
+          .map(slotLine).filter((l): l is { text: string; citations: string[] } => l !== null);
+        const posCategoryContext = slotLine(posSlotRaw?.category_context);
+        // A positioning short form LEADS WITH THE DIFFERENTIATORS, so with none there is no short
+        // form to show — fall back to the full read rather than render a bare category line.
+        const positioningSlots = posSlotRaw && posDiffLines.length > 0
+          ? { differentiators: posDiffLines, categoryContext: posCategoryContext }
+          : null;
+        const strSlotRaw = slotByKind.get("strategy");
+        const strWhere = slotLine(strSlotRaw?.where_to_play_line);
+        const strHow = slotLine(strSlotRaw?.how_to_win_line);
+        // Strategy's short form is the two rungs; one alone is a half-read, so both must be present.
+        const strategySlots = strSlotRaw && strWhere && strHow
+          ? { whereToPlayLine: strWhere, howToWinLine: strHow }
+          : null;
         const publicReadTag = (createdAt: string | null) => ({
           label: `Public read · ${formatFullDate(createdAt) ?? ""}`.trim().replace(/·\s*$/, "").trim(),
         });
 
         const posRow = prByKind.get("positioning");
         const posPayload = (posRow?.payload ?? null) as
-          | { market_category?: string | null; value_for_customer?: string | null; unique_attributes?: Array<{ text?: string | null }> }
+          | { market_category?: string | null; value_for_customer?: string | null; best_fit_customers?: string | null; unique_attributes?: Array<{ text?: string | null }> }
           | null;
         const posDiffs = Array.isArray(posPayload?.unique_attributes)
           ? posPayload!.unique_attributes.map((a) => String(a?.text ?? "").trim()).filter(Boolean)
           : [];
         const positioning = posRow && posPayload && (posPayload.market_category || posPayload.value_for_customer || posDiffs.length)
-          ? { category: posPayload.market_category ?? null, value: posPayload.value_for_customer ?? null, differentiators: posDiffs, sourceTag: publicReadTag(posRow.created_at) }
+          ? { category: posPayload.market_category ?? null, value: posPayload.value_for_customer ?? null, bestFit: posPayload.best_fit_customers ?? null, differentiators: posDiffs, sourceTag: publicReadTag(posRow.created_at) }
           : null;
 
         // Stage B (2026-08-28): the strategy payload is the 5-rung public cascade SPINE. Rungs 4–5
@@ -1335,6 +1376,8 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             unstatedIntegrity,
             offeringProductLabels,
             positioning,
+            positioningSlots,
+            strategySlots,
             promise,
             strategy,
             whereYouStand,

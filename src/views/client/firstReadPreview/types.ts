@@ -239,6 +239,11 @@ export type FRPositioning = {
   category: string | null;
   value: string | null;
   differentiators: string[];
+  /** R4 (2026-10-05): best_fit_customers has been stored and cited on every positioning read since
+   *  the gate shipped and was never rendered. The full read now shows it. OPTIONAL for the same
+   *  reason FRStrategy.capabilities is — so the existing fixtures still type-check; the render
+   *  treats absent exactly as null. */
+  bestFit?: string | null;
   sourceTag: SourceTagResult;
 } | null;
 
@@ -260,6 +265,22 @@ export type FRStrategy = {
   capabilities?: string[];
   managementSystems?: string[];
   sourceTag: SourceTagResult;
+} | null;
+
+/** ── SHORT-FORM SLOTS (R1-R7, signed 2026-10-05) ────────────────────────────────────────────────
+ *  The CURRENT, OPERATOR-SIGNED short form of a commitment screen: framework slots, not a shortened
+ *  paragraph. Only a signed, current row ever reaches here — an unsigned or staged slot is invisible
+ *  to the render by construction (the loader filters, and the member RLS policy filters again), so a
+ *  screen with no signed slot renders exactly what it rendered before slots existed (R6).
+ *  Each line carries the citations it INHERITED from its source field; it never mints one. */
+export type FRSlotLine = { text: string; citations: string[] };
+export type FRPositioningSlots = {
+  differentiators: FRSlotLine[];
+  categoryContext: FRSlotLine | null;
+} | null;
+export type FRStrategySlots = {
+  whereToPlayLine: FRSlotLine | null;
+  howToWinLine: FRSlotLine | null;
 } | null;
 
 /** Observed finding (S4) — public_inferred, ranked by recurrence breadth then recency. */
@@ -424,6 +445,9 @@ export type FirstReadPreviewData = {
   positioning: FRPositioning;
   promise: FRPromise;
   strategy: FRStrategy;
+  /** The signed short form of each commitment screen, or null when none is signed (R6). */
+  positioningSlots: FRPositioningSlots;
+  strategySlots: FRStrategySlots;
   whereYouStand: FRWhereYouStand;
   /** S4: observed findings (public_inferred, open), recurrence-ranked. */
   findings: FRFinding[];
@@ -499,6 +523,8 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   positioning: null,
   promise: null,
   strategy: null,
+  positioningSlots: null,
+  strategySlots: null,
   whereYouStand: null,
   findings: [],
   findingsIntegrity: "not_yet",

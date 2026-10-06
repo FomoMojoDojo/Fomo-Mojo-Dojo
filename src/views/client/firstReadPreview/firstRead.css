@@ -2895,3 +2895,31 @@ span.fr-mark-target .fr-mark-box { display: flex; }
    own tones carry the meaning. */
 .fr-chip-sub { display: inline-flex; }
 .fr-chip-sub .fr-chip { transform: scale(0.85); transform-origin: left center; }
+
+/* ── SHORT-FORM SLOTS (R1-R7, 2026-10-05) ────────────────────────────────────────────────────────
+   The short form leads a commitment screen and the full read sits behind a full-screen swap. The
+   slot list carries NO numerals: on the full read the numbered columns mean "here are the several
+   things holding the position up", and a slot screen says the opposite — these ARE the position. A
+   numeral there would read as a ranking the generator never produced. */
+.fr-slot-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2.25rem; }
+.fr-slot-item { margin: 0; }
+
+/* The swap control sits at the foot of the screen in the mono voice the other meta lines use, so it
+   reads as apparatus rather than as part of the read. Lime underline on hover only — it is a way out
+   of the screen, not a call to action competing with the statement above it. */
+.fr-swap-control {
+  margin-top: 3.5rem;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: var(--fr-font-mono);
+  font-size: 0.8125rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(var(--fr-paper) / 0.7);
+  cursor: pointer;
+  border-bottom: 1px solid hsl(var(--fr-paper) / 0.3);
+  line-height: 1.8;
+}
+.fr-swap-control:hover,
+.fr-swap-control:focus-visible { color: hsl(var(--fr-lime)); border-bottom-color: hsl(var(--fr-lime)); }

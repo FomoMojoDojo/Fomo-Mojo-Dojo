@@ -254,6 +254,11 @@ const POSITIONING_TITLE = "Your positioning"; // signed
 const POSITIONING_WHY = "Behind that promise is a position — where you stand against the alternatives."; // signed
 const STRATEGY_TITLE = "Your strategy"; // signed
 const STRATEGY_WHY = "Behind that position is a set of choices — where to play, how to win."; // signed
+// ── SHORT-FORM SLOTS (R1-R7, 2026-10-05) — the swap controls and the newly surfaced best-fit label.
+//    UNSIGNED: the operator signs these at screenshot review.
+const SHOW_FULL_READ = "Show the full read"; // UNSIGNED — sign at screenshot review
+const BACK_TO_SHORT_FORM = "Back to the short form"; // UNSIGNED — sign at screenshot review
+const LABEL_BEST_FIT = "Best fit"; // UNSIGNED — sign at screenshot review (R4)
 const SIESTA1_HEADLINE = "That's what the record shows. Now, what it means."; // signed
 const SIESTA1_LINE = "Four commitments the record lets us read — then the base they sit on."; // signed
 const SIESTA2_HEADLINE = "That's your base, as the record shows it."; // signed
@@ -1418,33 +1423,108 @@ export function ActPromise({ read }: { read: FirstReadPreviewData }) {
   );
 }
 
+/** The swap control (R7). A screen with a signed short form carries exactly one of these: the short
+ *  form offers "Show the full read", the full read offers the way back. A screen with NO signed slot
+ *  carries NO control at all — there is nothing to swap to, and an inert control would imply there is. */
+function SwapControl({ showingFull, onToggle }: { showingFull: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className="fr-swap-control fr-mono"
+      data-testid={showingFull ? "slot-swap-back" : "slot-swap-full"}
+      onClick={onToggle}
+    >
+      {showingFull ? BACK_TO_SHORT_FORM : SHOW_FULL_READ}
+    </button>
+  );
+}
+
+/** The positioning FULL read — byte-for-byte what this screen rendered before slots existed, plus
+ *  best_fit_customers (R4). Extracted so the slot-led screen and the no-slot screen render the SAME
+ *  component: "renders exactly what renders today" is then true by construction, not by inspection. */
+function PositioningFullRead({ p }: { p: NonNullable<FirstReadPreviewData["positioning"]> }) {
+  return (
+    <>
+      {p.category ? <h1 className={statementClass(sentenceCase(p.category))}><MarkTarget kind="read_field" keyVal="positioning:category" text={p.category} as="span">{withStop(sentenceCase(p.category))}</MarkTarget></h1> : null}
+      {p.value ? <p className="fr-lede fr-lede--dark"><MarkTarget kind="read_field" keyVal="positioning:value" text={p.value} as="span">{sentenceCase(p.value)}</MarkTarget></p> : null}
+      {/* B9: below a hairline, the label column carries the existing Why-this line (no "What holds
+          it up" string exists); the attributes sit as numbered columns (their numerals are text). */}
+      {p.differentiators.length > 0 ? (
+        <div className="fr-dark-section">
+          <Labeled
+            label={<><Eyebrow>Why this</Eyebrow><span className="fr-dark-label fr-mono">{POSITIONING_WHY}</span></>}
+            className="fr-labeled--dark"
+          >
+            <NumberedList items={p.differentiators} className="fr-numbered-cols" itemKey={(i) => `positioning:differentiators:${i}`} />
+          </Labeled>
+        </div>
+      ) : null}
+      {/* R4 (2026-10-05): best_fit_customers was stored and cited from the day the gate shipped and
+          was never rendered. It sits under its own label at the foot of the full read. */}
+      {p.bestFit ? (
+        <div className="fr-dark-section">
+          <Labeled label={<Eyebrow>{LABEL_BEST_FIT}</Eyebrow>} className="fr-labeled--dark">
+            <p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="positioning:best_fit" text={p.bestFit} as="span">{sentenceCase(p.bestFit)}</MarkTarget></p>
+          </Labeled>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** The positioning SHORT FORM: the differentiators LEAD, the category is context (council verdict).
+ *  Slot marks use their own key namespace, slot:<kind>:<field> (R7), so the full read's read_field
+ *  marks are untouched and a mark on a slot can never be confused for a mark on the read. */
+function PositioningShortForm({ sl }: { sl: NonNullable<FirstReadPreviewData["positioningSlots"]> }) {
+  return (
+    <>
+      <ol className="fr-slot-list">
+        {sl.differentiators.map((d, i) => (
+          <li key={i} className="fr-slot-item">
+            {/* DISPLAY CASING ONLY (operator ruling 2026-10-05): the first character is capitalised
+                at render. The STORED text is byte-identical to the source read — that is what makes a
+                verbatim differentiator verbatim, and what the deterministic verbatim_mismatch check
+                compares. MarkTarget keeps receiving the RAW text, so a mark anchors to what is
+                stored, never to what is displayed. */}
+            <h1 className={statementClass(d.text)}>
+              <MarkTarget kind="read_field" keyVal={`slot:positioning:differentiators:${i}`} text={d.text} as="span">{withStop(sentenceCase(d.text))}</MarkTarget>
+            </h1>
+          </li>
+        ))}
+      </ol>
+      {sl.categoryContext ? (
+        <div className="fr-dark-section">
+          <Labeled label={<Eyebrow>{LABEL_POSITIONING}</Eyebrow>} className="fr-labeled--dark">
+            <p className="fr-rung-text">
+              <MarkTarget kind="read_field" keyVal="slot:positioning:category_context" text={sl.categoryContext.text} as="span">{sentenceCase(sl.categoryContext.text)}</MarkTarget>
+            </p>
+          </Labeled>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function ActPositioning({ read }: { read: FirstReadPreviewData }) {
   const p = read.positioning;
+  const sl = read.positioningSlots;
+  // A signed short form LEADS; the full read sits behind the swap. With no signed slot there is no
+  // swap and no short form — the screen is what it was before slots existed (R6).
+  const [showFull, setShowFull] = useState(false);
+  const showingFull = !sl || showFull;
   return (
     <Screen
       tone="dark"
       eyebrow={POSITIONING_TITLE}
       // The Why-this line labels the attributes column when there are attributes (B9); otherwise it
       // sits in the foot beside the tag, as on the other unpacking pages.
-      foot={<DarkFoot tag={p ? p.sourceTag : null} why={p && p.differentiators.length > 0 ? undefined : POSITIONING_WHY} />}
+      foot={<DarkFoot tag={p ? p.sourceTag : null} why={p && p.differentiators.length > 0 && showingFull ? undefined : POSITIONING_WHY} />}
     >
-      <main className="fr-stagger">
+      <main className="fr-stagger" data-slot-state={sl ? (showFull ? "full" : "short") : "no-slot"}>
         {p ? (
           <>
-            {p.category ? <h1 className={statementClass(sentenceCase(p.category))}><MarkTarget kind="read_field" keyVal="positioning:category" text={p.category} as="span">{withStop(sentenceCase(p.category))}</MarkTarget></h1> : null}
-            {p.value ? <p className="fr-lede fr-lede--dark"><MarkTarget kind="read_field" keyVal="positioning:value" text={p.value} as="span">{sentenceCase(p.value)}</MarkTarget></p> : null}
-            {/* B9: below a hairline, the label column carries the existing Why-this line (no "What holds
-                it up" string exists); the attributes sit as numbered columns (their numerals are text). */}
-            {p.differentiators.length > 0 ? (
-              <div className="fr-dark-section">
-                <Labeled
-                  label={<><Eyebrow>Why this</Eyebrow><span className="fr-dark-label fr-mono">{POSITIONING_WHY}</span></>}
-                  className="fr-labeled--dark"
-                >
-                  <NumberedList items={p.differentiators} className="fr-numbered-cols" itemKey={(i) => `positioning:differentiators:${i}`} />
-                </Labeled>
-              </div>
-            ) : null}
+            {showingFull ? <PositioningFullRead p={p} /> : <PositioningShortForm sl={sl!} />}
+            {sl ? <SwapControl showingFull={showFull} onToggle={() => setShowFull((v) => !v)} /> : null}
           </>
         ) : (
           <GatedLine>{POSITIONING_NOT_ENOUGH}</GatedLine>
@@ -1454,33 +1534,72 @@ export function ActPositioning({ read }: { read: FirstReadPreviewData }) {
   );
 }
 
+/** The strategy FULL read — what this screen rendered before slots existed, extracted unchanged. */
+function StrategyFullRead({ st }: { st: NonNullable<FirstReadPreviewData["strategy"]> }) {
+  const caps = st.capabilities ?? [];
+  const mgmt = st.managementSystems ?? [];
+  return (
+    <>
+      {/* The aspiration at statement size (one string) under its rung eyebrow; the framing line beside. */}
+      <p className="fr-dark-framing fr-mono">{CASCADE_FRAMING}</p>
+      {st.aspiration ? (
+        <div className="mt-6">
+          <span className="fr-eyebrow">{RUNG_ASPIRATION}</span>
+          <h1 className={`${statementClass(st.aspiration)} mt-4`}><MarkTarget kind="read_field" keyVal="strategy:aspiration" text={st.aspiration} as="span">{withStop(st.aspiration)}</MarkTarget></h1>
+        </div>
+      ) : null}
+      {/* Hairline, then the rungs as columns: Where to play / How to win / Must-have capabilities
+          (+ Management systems when present). Rung text at text-xl paper 500; lists numbered. */}
+      <div className="fr-dark-section">
+        <div className="fr-rung-cols">
+          {st.whereToPlay ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_WHERE}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:where_to_play" text={st.whereToPlay} as="span">{st.whereToPlay}</MarkTarget></p></div> : null}
+          {st.howToWin ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_HOW}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:how_to_win" text={st.howToWin} as="span">{st.howToWin}</MarkTarget></p></div> : null}
+          {caps.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_CAPABILITIES}</span><NumberedList items={caps} className="mt-3" itemKey={(i) => `strategy:capabilities:${i}`} /></div> : null}
+          {mgmt.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_MGMT}</span><NumberedList items={mgmt} className="mt-3" itemKey={(i) => `strategy:management_systems:${i}`} /></div> : null}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** The strategy SHORT FORM: where to play and how to win, one line each, at statement size under
+ *  their existing signed rung eyebrows. The aspiration and the capabilities stay behind the swap. */
+function StrategyShortForm({ sl }: { sl: NonNullable<FirstReadPreviewData["strategySlots"]> }) {
+  return (
+    <>
+      <p className="fr-dark-framing fr-mono">{CASCADE_FRAMING}</p>
+      {sl.whereToPlayLine ? (
+        <div className="mt-6">
+          <span className="fr-eyebrow">{RUNG_WHERE}</span>
+          <h1 className={`${statementClass(sl.whereToPlayLine.text)} mt-4`}>
+            <MarkTarget kind="read_field" keyVal="slot:strategy:where_to_play_line" text={sl.whereToPlayLine.text} as="span">{withStop(sentenceCase(sl.whereToPlayLine.text))}</MarkTarget>
+          </h1>
+        </div>
+      ) : null}
+      {sl.howToWinLine ? (
+        <div className="fr-dark-section">
+          <span className="fr-eyebrow">{RUNG_HOW}</span>
+          <h1 className={`${statementClass(sl.howToWinLine.text)} mt-4`}>
+            <MarkTarget kind="read_field" keyVal="slot:strategy:how_to_win_line" text={sl.howToWinLine.text} as="span">{withStop(sentenceCase(sl.howToWinLine.text))}</MarkTarget>
+          </h1>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function ActStrategy({ read }: { read: FirstReadPreviewData }) {
   const st = read.strategy;
-  const caps = st?.capabilities ?? [];
-  const mgmt = st?.managementSystems ?? [];
+  const sl = read.strategySlots;
+  const [showFull, setShowFull] = useState(false);
+  const showingFull = !sl || showFull;
   return (
     <Screen tone="dark" eyebrow={STRATEGY_TITLE} foot={<DarkFoot tag={st ? st.sourceTag : null} why={STRATEGY_WHY} />}>
-      <main className="fr-stagger">
+      <main className="fr-stagger" data-slot-state={sl ? (showFull ? "full" : "short") : "no-slot"}>
         {st ? (
           <>
-            {/* The aspiration at statement size (one string) under its rung eyebrow; the framing line beside. */}
-            <p className="fr-dark-framing fr-mono">{CASCADE_FRAMING}</p>
-            {st.aspiration ? (
-              <div className="mt-6">
-                <span className="fr-eyebrow">{RUNG_ASPIRATION}</span>
-                <h1 className={`${statementClass(st.aspiration)} mt-4`}><MarkTarget kind="read_field" keyVal="strategy:aspiration" text={st.aspiration} as="span">{withStop(st.aspiration)}</MarkTarget></h1>
-              </div>
-            ) : null}
-            {/* Hairline, then the rungs as columns: Where to play / How to win / Must-have capabilities
-                (+ Management systems when present). Rung text at text-xl paper 500; lists numbered. */}
-            <div className="fr-dark-section">
-              <div className="fr-rung-cols">
-                {st.whereToPlay ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_WHERE}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:where_to_play" text={st.whereToPlay} as="span">{st.whereToPlay}</MarkTarget></p></div> : null}
-                {st.howToWin ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_HOW}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:how_to_win" text={st.howToWin} as="span">{st.howToWin}</MarkTarget></p></div> : null}
-                {caps.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_CAPABILITIES}</span><NumberedList items={caps} className="mt-3" itemKey={(i) => `strategy:capabilities:${i}`} /></div> : null}
-                {mgmt.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_MGMT}</span><NumberedList items={mgmt} className="mt-3" itemKey={(i) => `strategy:management_systems:${i}`} /></div> : null}
-              </div>
-            </div>
+            {showingFull ? <StrategyFullRead st={st} /> : <StrategyShortForm sl={sl!} />}
+            {sl ? <SwapControl showingFull={showFull} onToggle={() => setShowFull((v) => !v)} /> : null}
           </>
         ) : (
           <GatedLine>{STRATEGY_NOT_ENOUGH}</GatedLine>
