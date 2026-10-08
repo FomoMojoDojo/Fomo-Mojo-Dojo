@@ -56,7 +56,18 @@ function genSystemFor(kind: SlotKind): string {
     `- Say LESS than the field, never more. Add no fact, no qualifier, no number, no name that is not in the field you shorten.\n` +
     `- Carry the field's citations through. A SUBSET is fine — you may carry fewer. NEVER a citation id the source field does not hold.\n` +
     `- No verdict or status vocabulary (confirmed, disputed, stale, leading, best-in-class).\n` +
-    `- Plain sentence case. One sentence per line. No trailing ellipsis.\n`;
+    `- Plain sentence case. One sentence per line. No trailing ellipsis.\n` +
+    // SPECIFICS (2026-10-08) — the same rule the full read carries. It matters more here: a slot is a
+    // COMPRESSION, and the cheapest thing to lose when shortening is the hedge or the scope that made
+    // the specific sourceable. A line that drops "in the Bay Area" to fit the cap turns a sourced
+    // claim into an unsourced one.
+    `SPECIFICS. A specific is a superlative, an exclusivity word, a figure, or a reach claim.\n` +
+    `- Keep a specific ONLY in the words the source field already uses, and keep the citations that carry it.\n` +
+    `- Never strengthen one while shortening: 'one of the only' stays 'one of the only'; it never becomes 'the only' or 'sole'.\n` +
+    `- Keep the SCOPE attached to the specific. 'the only CSU serving youth under 12 in the Bay Area' may shorten to\n` +
+    `  'the only CSU for youth under 12 in the Bay Area', never to 'the only CSU for youth under 12': the place is\n` +
+    `  part of what makes the claim true.\n` +
+    `- If the cap will not fit the specific WITH its scope and its hedge, drop the specific and name the plain thing instead.\n`;
   if (kind === "positioning") {
     return shared +
       `SLOTS for positioning — the DIFFERENTIATORS LEAD and the category is context:\n` +
@@ -68,8 +79,15 @@ function genSystemFor(kind: SlotKind): string {
     `SLOTS for strategy — NAME THE CORE, one line each:\n` +
     `- where_to_play_line: name the CORE WHERE in one line. Max ${SLOT_CAPS.strategy.where_to_play_line} chars, min ${SLOT_MIN_CHARS}. Carries where_to_play's citations.\n` +
     `- how_to_win_line: name the CORE HOW in one line AND KEEP ITS SINGLE MOST CONCRETE SPECIFIC from\n` +
-    `  the read — a named unit, a named program, or a stated distinction (for example "the only X", "a\n` +
-    `  level N facility", a named programme). Max ${SLOT_CAPS.strategy.how_to_win_line} chars, min ${SLOT_MIN_CHARS}. Carries how_to_win's citations.\n` +
+    `  the read — a named unit, a named program, or a stated distinction (for example "a level N\n` +
+    `  facility", a named programme, a named payer). Max ${SLOT_CAPS.strategy.how_to_win_line} chars, min ${SLOT_MIN_CHARS}. Carries how_to_win's citations.\n` +
+    // 2026-10-08: the old example here offered an exclusivity claim as the specific to keep. It was the
+    // sharpest invitation to an unsourced superlative anywhere in the codebase, because it told the
+    // model to KEEP an exclusivity claim with no sourcing condition attached. The example now shows
+    // specifics that are not exclusivity claims; an exclusivity word is governed by SPECIFICS above.
+    `  A specific that is an EXCLUSIVITY claim ("the only…", "the sole…") is kept ONLY under SPECIFICS:\n` +
+    `  in the source field's own words, with its scope and its citations. Otherwise keep a different\n` +
+    `  specific from the field, or name the plain thing.\n` +
     `  NO ADJECTIVE MAY STAND IN FOR A FACT. Words like "unique", "exclusive", "pioneering", "strong",\n` +
     `  "comprehensive" are only allowed when the fact they describe is ALSO present in your line. A line\n` +
     `  made of adjectives is a rejected line: it is the specifics that carry the claim.\n` +

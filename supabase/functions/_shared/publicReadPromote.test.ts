@@ -139,5 +139,14 @@ Deno.test("source guard: the generator stages cascade_source on a strategy row, 
   assert(gen.includes('if (kind === "strategy") {\n        cascadeRouting = await writeCascadeGaps('), "direct write unchanged");
   assert(!gen.includes("async function writeCascadeGaps("), "one writeCascadeGaps, in _shared");
   const per = await read("./publicReadPerKind.ts");
-  assert(per.includes("if (!deps.accepts(kind, verdict)) {") && per.includes("await deps.commit(kind, payload, verdict);"), "commit (stage/write) only on accept");
+  // 2026-10-08: the per-kind driver gained a BOUNDED RE-ASK, so the gate sequence moved into
+  // runGates() and the accept test is now the tagged return below. The invariant is unchanged and
+  // still pinned here: commit is reachable ONLY from the "accepted" branch, and a not_accepted
+  // outcome either re-asks ONCE or rejects — it can never fall through to a write.
+  assert(per.includes('return deps.accepts(kind, verdict) ? { outcome: "accepted", verdict } : { outcome: "not_accepted", verdict };'), "accept decides the tagged outcome");
+  assert(per.includes("await deps.commit(kind, payload, g.verdict);"), "commit takes the accepted verdict");
+  const notAcceptedAt = per.indexOf('if (g.outcome === "not_accepted") {');
+  const commitAt = per.indexOf("await deps.commit(kind, payload, g.verdict);");
+  assert(notAcceptedAt > 0 && commitAt > notAcceptedAt, "commit sits AFTER the not_accepted branch returns — no fall-through to a write");
+  assert(per.includes("if (!reasked && deps.reaskOnClassRefusal) {") && per.includes("reasked = true; continue;"), "the re-ask is bounded to one");
 });

@@ -59,14 +59,34 @@ function wordsFrom(text: string, fromIndex: number): string[] {
   const tail = text.slice(fromIndex);
   return (tail.match(WORD_RE) ?? []).slice(0, 8);
 }
+/** The words immediately BEFORE `at`, in reading order, at most three. */
+function wordsBefore(text: string, at: number): string[] {
+  const head = (text.slice(0, at).match(WORD_RE) ?? []);
+  return head.slice(Math.max(0, head.length - 3));
+}
 
 /** The probes for a token at `at`: the token plus its next 1-3 words, longest first. A probe is
- *  never shorter than two words, so no single word can source itself. */
+ *  never shorter than two words, so no single word can source itself.
+ *
+ *  LEFT-WINDOW FALLBACK (operator ruling, signed 2026-10-08). A specific at the END of a sentence
+ *  has no right-hand window, so this built ZERO probes for it and `specificIsSourced` returned false
+ *  for every cited row — a specific that could never be sourced, however plainly the record carried
+ *  it. "…serving children under 12" failed on the figure 12 against a row reading "youth under 12".
+ *  When there is no right-hand window the probes are built LEFTWARD instead: the preceding one to
+ *  three words plus the token. Still never one word, so nothing can source itself; and the fallback
+ *  applies ONLY when the rightward window is empty, so every probe that worked before still works
+ *  exactly as it did. */
 function probesFor(text: string, at: number, token: string): string[] {
   const after = wordsFrom(text, at + token.length);
   const out: string[] = [];
   for (const n of [3, 2, 1]) {
     if (after.length >= n) out.push([token, ...after.slice(0, n)].join(" "));
+  }
+  if (out.length === 0) {
+    const before = wordsBefore(text, at);
+    for (const n of [3, 2, 1]) {
+      if (before.length >= n) out.push([...before.slice(before.length - n), token].join(" "));
+    }
   }
   return out;
 }

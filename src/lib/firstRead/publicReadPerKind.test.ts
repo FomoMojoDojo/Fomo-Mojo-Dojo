@@ -257,3 +257,77 @@ describe("reject visibility contract", () => {
     expect(src).toContain("runKindsIsolated");
   });
 });
+
+// ── THE BOUNDED RE-ASK on a class refusal (operator ruling, signed 2026-10-08) ──────────────────
+// One re-ask per kind, ever; the FULL gate runs again on the second answer; and it fires only when
+// `accepts` refused — never when a deterministic guard did, because a guard failure is a different
+// fault and a rewrite would be asked to fix something it was not told about.
+describe("the bounded re-ask", () => {
+  it("fires ONCE on a class refusal, re-runs the gate, and writes the second answer", async () => {
+    const calls: string[] = [];
+    let reasks = 0;
+    const outcomes = await runKindsIsolated(["positioning"], {
+      citedRefs: collectCitationRefs, validRefs, uuidByRef, provenances, liveness,
+      generate: (kind) => { calls.push(`generate:${kind}`); return Promise.resolve({ ...payloadFor("positioning"), market_category: "BAD" }); },
+      judge: (kind, payload) => {
+        calls.push(`judge:${kind}`);
+        const fixed = (payload as { market_category?: string }).market_category === "FIXED";
+        return Promise.resolve({ ...CLEAN_VERDICT, class: { class_ok: fixed, fields: [] } });
+      },
+      accepts: (_k, v) => (v.class as { class_ok?: boolean }).class_ok === true,
+      reaskOnClassRefusal: (kind, payload) => {
+        reasks++; calls.push(`reask:${kind}`);
+        return Promise.resolve({ ...(payload as object), market_category: "FIXED" } as Record<string, unknown>);
+      },
+      commit: () => { calls.push("commit"); return Promise.resolve(); },
+    });
+    expect(outcomes[0].status).toBe("written");
+    expect(reasks).toBe(1);
+    // the gate ran again IN ORDER after the re-ask: judge is called a second time before commit
+    expect(calls).toEqual(["generate:positioning", "judge:positioning", "reask:positioning", "judge:positioning", "commit"]);
+  });
+
+  it("re-asks at most ONCE — a second class refusal is final", async () => {
+    let reasks = 0;
+    const outcomes = await runKindsIsolated(["positioning"], {
+      citedRefs: collectCitationRefs, validRefs, uuidByRef, provenances, liveness,
+      generate: () => Promise.resolve(payloadFor("positioning")),
+      // the re-ask answer STILL carries an unsourced specific, so the judge refuses again
+      judge: () => Promise.resolve({ ...CLEAN_VERDICT, class: { class_ok: false, fields: [{ field: "unique_attributes[0]", class: "our_read", class_ok: false, reason: "sole" }] } }),
+      accepts: (_k, v) => (v.class as { class_ok?: boolean }).class_ok === true,
+      reaskOnClassRefusal: (_k, payload) => { reasks++; return Promise.resolve(payload); },
+      commit: () => Promise.resolve(),
+    });
+    expect(reasks).toBe(1);
+    expect(outcomes[0].status).toBe("rejected");
+    expect(outcomes[0].guard).toBe("judge");
+  });
+
+  it("does NOT fire when a DETERMINISTIC guard rejected — only `accepts` can trigger it", async () => {
+    let reasks = 0;
+    const outcomes = await runKindsIsolated(["strategy"], {
+      citedRefs: collectCitationRefs, validRefs, uuidByRef, provenances, liveness,
+      // "confirmed" trips the framing guard, which rejects before the judge is ever called
+      generate: () => Promise.resolve({ ...payloadFor("strategy"), how_to_win: "a confirmed edge over the others" }),
+      judge: () => Promise.resolve({ ...CLEAN_VERDICT }),
+      accepts: () => true,
+      reaskOnClassRefusal: () => { reasks++; return Promise.resolve(payloadFor("strategy")); },
+      commit: () => Promise.resolve(),
+    });
+    expect(outcomes[0].guard).toBe("framing_vocab");
+    expect(reasks).toBe(0);
+  });
+
+  it("declining the re-ask (null) rejects exactly as before", async () => {
+    const outcomes = await runKindsIsolated(["positioning"], {
+      citedRefs: collectCitationRefs, validRefs, uuidByRef, provenances, liveness,
+      generate: () => Promise.resolve(payloadFor("positioning")),
+      judge: () => Promise.resolve({ ...CLEAN_VERDICT, grounding_ok: false, reason: "not grounded" }),
+      accepts: (_k, v) => v.grounding_ok === true,
+      reaskOnClassRefusal: () => Promise.resolve(null),   // a non-class fault declines
+      commit: () => Promise.resolve(),
+    });
+    expect(outcomes[0].status).toBe("rejected");
+    expect(outcomes[0].detail).toContain("not grounded");
+  });
+});

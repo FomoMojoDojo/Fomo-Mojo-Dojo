@@ -68,6 +68,17 @@ export type PerKindDeps = {
   recordIntegrity?: (kind: string, row: { status: "completed" | "rejected"; guard?: string; detail?: string }) => Promise<void>;
   /** The reject log line. Called once per rejected kind, before the next kind runs. */
   onReject?: (kind: string, guard: PerKindGuard, detail: string) => void;
+  /** BOUNDED RE-ASK (operator ruling, signed 2026-10-08). When `accepts` refuses and the caller
+   *  judges the refusal to be the CLASS gate alone, it may return one rewritten payload carrying the
+   *  refused specifics back to the model. The FULL gate then runs again in order — citations, offering
+   *  structure, framing, live-public, judge, accepts — exactly as the slots layer re-asks on
+   *  entailment. Returning null declines the re-ask, and the kind is rejected as before.
+   *  ONE re-ask per kind, ever: the second answer is final. */
+  reaskOnClassRefusal?: (
+    kind: string,
+    payload: Record<string, unknown>,
+    verdict: Record<string, unknown>,
+  ) => Promise<Record<string, unknown> | null>;
 };
 
 /** Reject detail, capped at the 200 chars the log line and the integrity row both carry. */
@@ -105,6 +116,46 @@ export async function runKindsIsolated(
     outcomes.push({ kind, status: "rejected", guard, detail, payload, verdict });
   };
 
+  // ── THE GATE SEQUENCE for one candidate payload, in the ruled order ─────────────────────────────
+  // Extracted so the bounded re-ask can run it a second time WITHOUT any guard being skipped or
+  // reordered: the re-ask is a second pass of the same gate, never a shortcut past it.
+  type GateResult =
+    | { outcome: "rejected"; guard: PerKindGuard; detail: unknown; payload: Record<string, unknown>; verdict: Record<string, unknown> | null }
+    | { outcome: "not_accepted"; verdict: Record<string, unknown> }
+    | { outcome: "accepted"; verdict: Record<string, unknown> };
+
+  const runGates = async (kind: string, payload: Record<string, unknown>): Promise<GateResult> => {
+    // ── GUARD 1: every cited token resolves to a ledger ref ─────────────────────────────────────
+    const bad = deps.citedRefs(payload).filter((ref) => !deps.validRefs.has(ref));
+    if (bad.length) return { outcome: "rejected", guard: "citation_outside_ledger", detail: `bad_ids=${bad.join(",")}`, payload, verdict: null };
+
+    // ── GUARD 2: offering structure (offering kind only) ────────────────────────────────────────
+    if (kind === "offering") {
+      const offViol = offeringStructureViolations(payload, deps.validRefs);
+      if (offViol.length) return { outcome: "rejected", guard: "offering_structure", detail: JSON.stringify(offViol), payload, verdict: null };
+    }
+
+    // ── GUARD 3: framing vocabulary (a posit is a hypothesis, never a verdict) ──────────────────
+    const framing = framingViolations({ [kind]: payload });
+    if (framing.length) return { outcome: "rejected", guard: "framing_vocab", detail: JSON.stringify(framing), payload, verdict: null };
+
+    // ── GUARD 4: every cited id is LIVE + PUBLIC in the ledger ─────────────────────────────────
+    const citedUuids = [...new Set(
+      deps.citedRefs(payload).map((ref) => deps.uuidByRef.get(ref)).filter((x): x is string => !!x),
+    )];
+    const livePublic = citationsLivePublic(citedUuids, deps.provenances, deps.liveness);
+    if (!livePublic.ok) return { outcome: "rejected", guard: "citation_not_live_public", detail: `bad_ids=${livePublic.bad.join(",")}`, payload, verdict: null };
+
+    // ── JUDGE (this kind alone) ────────────────────────────────────────────────────────────────
+    let verdict: Record<string, unknown>;
+    try {
+      verdict = await deps.judge(kind, payload);
+    } catch (e) {
+      return { outcome: "rejected", guard: "judge", detail: `judge call failed: ${(e as Error).message}`, payload, verdict: null };
+    }
+    return deps.accepts(kind, verdict) ? { outcome: "accepted", verdict } : { outcome: "not_accepted", verdict };
+  };
+
   for (const kind of kinds) {
     // ── GENERATE ───────────────────────────────────────────────────────────────────────────────
     let payload: Record<string, unknown>;
@@ -115,63 +166,38 @@ export async function runKindsIsolated(
       continue;
     }
 
-    // ── GUARD 1: every cited token resolves to a ledger ref (was: whole-read FAIL LOUD) ─────────
-    const bad = deps.citedRefs(payload).filter((ref) => !deps.validRefs.has(ref));
-    if (bad.length) {
-      await reject(kind, "citation_outside_ledger", `bad_ids=${bad.join(",")}`, payload, null);
-      continue;
-    }
+    // AT MOST TWO attempts: the answer, and one re-ask when the class gate alone refused it.
+    let reasked = false;
+    for (;;) {
+      const g = await runGates(kind, payload);
 
-    // ── GUARD 2: offering structure (offering kind only) ───────────────────────────────────────
-    if (kind === "offering") {
-      const offViol = offeringStructureViolations(payload, deps.validRefs);
-      if (offViol.length) {
-        await reject(kind, "offering_structure", JSON.stringify(offViol), payload, null);
-        continue;
+      if (g.outcome === "rejected") {
+        await reject(kind, g.guard, g.detail, g.payload, g.verdict);
+        break;
       }
-    }
 
-    // ── GUARD 3: framing vocabulary (a posit is a hypothesis, never a verdict) ──────────────────
-    const framing = framingViolations({ [kind]: payload });
-    if (framing.length) {
-      await reject(kind, "framing_vocab", JSON.stringify(framing), payload, null);
-      continue;
-    }
-
-    // ── GUARD 4: every cited id is LIVE + PUBLIC in the ledger ─────────────────────────────────
-    const citedUuids = [...new Set(
-      deps.citedRefs(payload).map((ref) => deps.uuidByRef.get(ref)).filter((x): x is string => !!x),
-    )];
-    const livePublic = citationsLivePublic(citedUuids, deps.provenances, deps.liveness);
-    if (!livePublic.ok) {
-      await reject(kind, "citation_not_live_public", `bad_ids=${livePublic.bad.join(",")}`, payload, null);
-      continue;
-    }
-
-    // ── JUDGE (this kind alone) ────────────────────────────────────────────────────────────────
-    let verdict: Record<string, unknown>;
-    try {
-      verdict = await deps.judge(kind, payload);
-    } catch (e) {
-      await reject(kind, "judge", `judge call failed: ${(e as Error).message}`, payload, null);
-      continue;
-    }
-    if (!deps.accepts(kind, verdict)) {
-      await reject(kind, "judge", String(verdict.reason ?? JSON.stringify(verdict)), payload, verdict);
-      continue;
-    }
-
-    // ── COMMIT (absent on dry-run) ─────────────────────────────────────────────────────────────
-    if (deps.commit) {
-      try {
-        await deps.commit(kind, payload, verdict);
-      } catch (e) {
-        await reject(kind, "write_error", (e as Error).message, payload, verdict);
-        continue;
+      if (g.outcome === "not_accepted") {
+        if (!reasked && deps.reaskOnClassRefusal) {
+          const next = await deps.reaskOnClassRefusal(kind, payload, g.verdict);
+          if (next) { payload = next; reasked = true; continue; }   // second and FINAL attempt
+        }
+        await reject(kind, "judge", String(g.verdict.reason ?? JSON.stringify(g.verdict)), payload, g.verdict);
+        break;
       }
+
+      // ── COMMIT (absent on dry-run) ───────────────────────────────────────────────────────────
+      if (deps.commit) {
+        try {
+          await deps.commit(kind, payload, g.verdict);
+        } catch (e) {
+          await reject(kind, "write_error", (e as Error).message, payload, g.verdict);
+          break;
+        }
+      }
+      await deps.recordIntegrity?.(kind, { status: "completed" });
+      outcomes.push({ kind, status: "written", guard: null, detail: "", payload, verdict: g.verdict });
+      break;
     }
-    await deps.recordIntegrity?.(kind, { status: "completed" });
-    outcomes.push({ kind, status: "written", guard: null, detail: "", payload, verdict });
   }
 
   return outcomes;

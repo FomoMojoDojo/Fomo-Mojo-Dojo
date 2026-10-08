@@ -29,7 +29,8 @@ import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
-import { classRefusals, decideFieldClass, fieldClassOk, type FieldClassDecision } from "../_shared/classFactCheck.ts";
+import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, specificIsSourced, type FieldClassDecision } from "../_shared/classFactCheck.ts";
+import { searchLiveRecordForSpecifics, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
 import { PromoteRefused, promoteStagedReads, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
@@ -136,7 +137,12 @@ const CITE_KEY_TO_CLASS_KEY = (key: string): string | null => {
   const m = /^(.*?)_(?:citations|cites?|refs?)$/.exec(key);
   return m ? `${m[1]}_class` : null;
 };
-export type StampedField = { field: string; cls: SourceClass; refs: string[]; text: string };
+export type StampedField = {
+  field: string; cls: SourceClass; refs: string[]; text: string;
+  /** the object that holds the citation array, and its key — so a row admitted from the live
+   *  record can be APPENDED to the field's own citations rather than justified silently. */
+  obj: Record<string, unknown>; citeKey: string; textKey: string;
+};
 const CITE_OR_CLASS_KEY = /citation|cites?$|refs?$|ids$|_class$|^class$/i;
 /** The TEXT of the field that cites, beside its citation key. Three shapes exist in these payloads:
  *    market_category_citations → market_category          (base names the value exactly)
@@ -145,22 +151,22 @@ const CITE_OR_CLASS_KEY = /citation|cites?$|refs?$|ids$|_class$|^class$/i;
  *  The prefix case is why this is not a one-line lookup: `value_citations` and `best_fit_citations`
  *  do not name their value keys, and resolving them to "" made the fact-check skip two whole rungs.
  *  Returns "" only when nothing resolves, which decideFieldClass treats as a refusal, not a pass. */
-function resolveFieldText(obj: Record<string, unknown>, base: string): string {
+function resolveFieldText(obj: Record<string, unknown>, base: string): { key: string; text: string } {
   const str = (v: unknown) => (typeof v === "string" ? v : null);
   if (base) {
     const exact = str(obj[base]);
-    if (exact !== null) return exact;
+    if (exact !== null) return { key: base, text: exact };
     // the prefix case, deterministic: the shortest non-citation key starting with `<base>_`
     const prefixed = Object.keys(obj)
       .filter((k) => k.startsWith(`${base}_`) && !CITE_OR_CLASS_KEY.test(k) && str(obj[k]) !== null)
       .sort((a, b) => a.length - b.length)[0];
-    if (prefixed) return str(obj[prefixed])!;
+    if (prefixed) return { key: prefixed, text: str(obj[prefixed])! };
   }
   for (const k of ["text", "statement", "promise", "body"]) {
     const v = str(obj[k]);
-    if (v !== null) return v;
+    if (v !== null) return { key: k, text: v };
   }
-  return "";
+  return { key: "", text: "" };
 }
 /** Mutates `payload` in place, stamping each citing field's class. Returns one entry per citing
  *  field — its class, the refs it cited and its own TEXT — which is what the class fact-check needs. */
@@ -180,7 +186,8 @@ function stampFieldClasses(payload: unknown, classByRef: ReadonlyMap<string, Sou
           // A BARE `citations`/`refs` key has no named base — the element's text is text/statement.
           const base = classKey === "class" ? "" : classKey.replace(/_class$/, "");
           const fieldName = classKey === "class" ? (at || "(root)") : `${at ? `${at}.` : ""}${base}`;
-          out.push({ field: fieldName, cls, refs, text: resolveFieldText(obj, base) });
+          const rt = resolveFieldText(obj, base);
+          out.push({ field: fieldName, cls, refs, text: rt.text, obj, citeKey: k, textKey: rt.key });
         } else {
           delete obj[classKey];           // uncited ⇒ no class, and never a stale one
         }
@@ -329,10 +336,43 @@ Deno.serve(async (req) => {
     };
 
     const { text: CAT, uuidByRef, classByRef, textByRef, tokenSummary } = buildCatalogue(inputs);
+    // The ref set and the catalogue TEXT both grow when a row is admitted from the live record,
+    // so guard 1 accepts the new token and the judge can see the line it cites.
+    const validRefs = new Set(uuidByRef.keys());
+    let CAT_LIVE = CAT;
+    /** rows admitted from outside the pool, for the report and the ledger */
+    const admitted: Array<{ ref: string; id: string; kind: string; cls: string; sourced: string[] }> = [];
     const CITE_RULE = `Cite ONLY tokens that appear VERBATIM in the LEDGER below — each printed in square brackets at the start of its line (e.g. [S1], [O3], [F2], [D1]). The valid tokens are exactly these families and NO others: ${tokenSummary} (S… = signals, O… = own-words, F… = findings, D… = deltas). Any token NOT printed in the ledger INVALIDATES THE WHOLE RESPONSE — this includes a position/ordinal number, an "Item N" reference to your own output, and any "I…" / "INPUT…" / "L…" prefix. There is no "I" family; never invent one. Copy each token EXACTLY as shown and cite AT MOST 3 per claim. If the public record does not support a field, return it empty ("" or []) with no citations — never guess or invent a token. Each ledger line names its SOURCE CLASS after its kind: the record (outside voices, filings), you (the company's own site and own words), or our read (our analysis of the record). A line you write may assert only as much as the weakest class it cites. Cite our-read rows freely — they are what makes this worth discussing — but a line resting on our read is written as our reading ('we read you as…'), never as an established fact.`;
 
+    // ── SPECIFICS (operator ruling, signed 2026-10-08) ─────────────────────────────────────────
+    // The class gate refuses a field that states a specific our read cannot source. Until now the
+    // generator was never told the rule: the prompts said "state as a hypothesis" and nothing about
+    // specifics, so the model wrote "sole Level 14 residential facility" where the record says "the
+    // only level 14 residential facility" and the gate — correctly — refused it. This block is the
+    // rule, referenced from every GEN_* and from the slots shorten instruction.
+    //
+    // THREE EDITS to the proposed text, each reported:
+    //   1. the example names no ref TOKEN. Tokens are assigned per run (buildCatalogue counts per
+    //      kind in input order), so a static "S4" points at a different row every time and would
+    //      teach the model to cite a number rather than a row.
+    //   2. the hedge example gained "in the Bay Area". A specific at the END of a sentence has no
+    //      right-hand window, so the gate can build no probe for it and it can never clear (b) —
+    //      "serving children under 12" fails on the figure 12 even with the row that carries it
+    //      cited. With the scope restored the same sentence clears. (The gate's blindness to a
+    //      trailing specific is reported separately; the gate is frozen in this brief.)
+    //   3. one sentence added: cite the row whose words you used. The live failure was a CITATION
+    //      omission as much as a wording one — the under-12 claim was made while citing two findings
+    //      and the mightycause row, and never the filing row that actually carries it.
+    const SPECIFICS_RULE = `SPECIFICS. A specific is a superlative, an exclusivity word, a figure, or a reach claim (a place or market you say you cover).
+(1) Use a specific only in the exact words of a ledger row whose class is 'the record' or 'you', and CITE THAT ROW. If you use a row's words, its token must be in that field's citations — a specific sourced to a row you did not cite reads as unsourced.
+(2) A specific you cannot find in such a row is either written as our reading ('we read you as…', 'the record suggests…') or left out.
+(3) Never strengthen a source: 'one of the only' stays 'one of the only'; it never becomes 'the only' or 'sole'.
+(4) Prefer the plain claim over the superlative when the record carries both.
+(5) Keep the scope the row states. Do not end a claim on a bare number — 'serving youth under 12 in the Bay Area' carries the row's scope, 'serving youth under 12' drops it.
+EXAMPLE. A row of class 'the record' says 'the only level 14 residential facility in northern California'. Write: 'the only Level 14 residential facility in Northern California' and cite that row. Do NOT write 'sole'. If NO row carries the under-12 CSU claim, write 'we read you as one of few crisis stabilization units serving youth under 12 in the Bay Area' — or leave it out.`;
     // ── GENERATE each kind ───────────────────────────────────────────────────────────────────────
     const GEN_POSITIONING = `You read a company's PUBLIC record and state its positioning as a hypothesis for the room to test. ${CITE_RULE}
+${SPECIFICS_RULE}
 Return ONLY JSON:
 {"market_category":"<a plain-language category this business ACTUALLY IS — e.g. 'neighborhood cafe & roaster', not a fancy or aspirational label>","market_category_citations":["<id>"],
  "value_for_customer":"<what a customer gets, in plain words>","value_citations":["<id>"],
@@ -344,6 +384,7 @@ ${US_ENGLISH_RULE}`;
     // public record can't ground is returned EMPTY (""/[]) with empty citations — never guessed. An
     // omitted rung is routed to the Questions beat downstream (cascade_gap), never fabricated here.
     const GEN_STRATEGY = `You read a company's PUBLIC record and state, as a hypothesis, THE STRATEGY ITS PUBLIC RECORD IMPLIES — using Roger Martin's Playing-to-Win cascade (five linked choices). This is a READING of what the record points to, never a recommendation or a go-forward plan. ${CITE_RULE}
+${SPECIFICS_RULE}
 CRITICAL — cited-or-omitted: if the public record does not GROUND a rung, return it EMPTY ("" for a text rung, [] for a list rung) with empty citations. Do NOT invent capabilities or management systems that the record doesn't show. It is EXPECTED and correct for a rung to be empty.
 Return ONLY JSON:
 {"winning_aspiration":"<what winning looks like for this business, plainly>","winning_aspiration_citations":["<id>"],
@@ -353,6 +394,7 @@ Return ONLY JSON:
  "management_systems":[{"text":"<one system/process/measure the record shows runs the strategy — rarely visible in a public record; return [] if none is shown>","citations":["<id>"]}]}
 ${US_ENGLISH_RULE}`;
     const GEN_PROMISE = `You read a company's PUBLIC record and state, in ONE sentence, what the customer is promised — stated ONLY as far as the record backs it. ${CITE_RULE}
+${SPECIFICS_RULE}
 Return ONLY JSON: {"promise":"<one sentence>","citations":["<id>"]}
 ${US_ENGLISH_RULE}`;
     // OFFERING (2026-09-01) — ENUMERATE what the public record shows THIS COMPANY currently puts in
@@ -361,6 +403,7 @@ ${US_ENGLISH_RULE}`;
     // intent, never a quality judgment. Cite every item; OMIT anything uncited. Currency/entity doubts
     // go in open_questions (never inside an item statement). ATTRIBUTE ONLY TO THIS COMPANY.
     const GEN_OFFERING = `You read a company's PUBLIC record and ENUMERATE what it currently puts in front of the people it serves — its offerings: products, services, programs, formats, and channels, exactly as the record shows them. ${CITE_RULE}
+${SPECIFICS_RULE}
 STRICT RULES:
 - ENUMERATE, don't strategize: each item names ONE concrete thing offered (e.g. "small-batch roasted coffee", "residential crisis stabilization program", "wholesale café supply"). NOT a positioning line, NOT a value claim, NOT intent, NOT a quality/verdict word.
 - CITED-OR-OMITTED: every item MUST cite at least one token in its "refs" array, and every token MUST be one printed in the LEDGER (e.g. [S3], [O4], [F1], [D1]). If you cannot cite it from the ledger, DO NOT include it. NEGATIVE EXAMPLE — never write refs like ["I11"], ["Item 11"], or ["11"]: there is no "I" family and item positions are NOT tokens; any such token invalidates the whole response.
@@ -446,6 +489,87 @@ Respond with ONLY JSON:
 
     const fieldClasses: Partial<Record<Kind, StampedField[]>> = {};          // 1a-4: per citing field, its class + refs + text
     const classDecisions: Partial<Record<Kind, FieldClassDecision[]>> = {};  // the tightening: (b) sourced, or judge_required
+    /** Stamp a candidate payload's field classes and run (b) over it. Used for the FIRST answer and
+     *  for a re-asked one, so a re-ask is decided by exactly the same rule — never a softer one.
+     *  (b) runs FIRST and costs nothing: a field whose every specific is verbatim-sourced in a cited
+     *  record/you row clears without a judgment. Our OWN rows are excluded from the sourcing
+     *  evidence — our read cannot source itself. */
+    /** Admit a row found in the LIVE RECORD to this read's ledger: it gets the next ref token of its
+     *  kind, joins uuid/class/text lookup and the valid-ref set, is appended to the ledger's ids,
+     *  by_kind, provenances, liveness and classes, and its line is appended to the catalogue the
+     *  judge reads. Every downstream guard then sees it exactly as it sees a pool row — which is the
+     *  point of admitting it rather than justifying a field against something it does not cite. */
+    const admitSourcingRow = (row: SourcingRow): string => {
+      const existing = [...uuidByRef.entries()].find(([, id]) => id === row.id);
+      if (existing) return existing[0];
+      const px = REF_PREFIX[row.kind] ?? "X";
+      const next = 1 + Math.max(0, ...[...uuidByRef.keys()]
+        .filter((r) => r.startsWith(px)).map((r) => Number(r.slice(px.length)) || 0));
+      const ref = `${px}${next}`;
+      uuidByRef.set(ref, row.id);
+      classByRef.set(ref, row.cls);
+      textByRef.set(ref, row.text);
+      validRefs.add(ref);
+      ledger.ids.push(row.id);
+      (ledger.by_kind as Record<string, string[]>)[row.kind] =
+        [...((ledger.by_kind as Record<string, string[]>)[row.kind] ?? []), row.id];
+      (ledger.provenances as Record<string, string>)[row.id] = "public_observed";
+      (ledger.liveness as Record<string, string>)[row.id] = "live";
+      (ledger.classes as Record<string, string>)[row.id] = row.cls;
+      ledger.count = ledger.ids.length;
+      CAT_LIVE += `\n[${ref}] (${row.kind} · ${CLASS_LABEL[row.cls]}) ${row.text.slice(0, 400)}`;
+      return ref;
+    };
+
+    const stampAndDecide = async (kind: Kind, p: Record<string, unknown>): Promise<FieldClassDecision[]> => {
+      const stamped = stampFieldClasses(p, classByRef);
+      fieldClasses[kind] = stamped;
+      const decideOne = (f: StampedField) =>
+        decideFieldClass({
+          field: f.field, cls: f.cls, text: f.text,
+          citedSourceTexts: f.refs
+            .filter((r) => classByRef.get(r) === "record" || classByRef.get(r) === "you")
+            .map((r) => textByRef.get(r) ?? ""),
+        });
+      // PASS 1 — the pool, as before: free, and it settles most fields.
+      let decs = stamped.map(decideOne);
+
+      // PASS 2 (ruling 2026-10-08) — the LIVE RECORD, only for what the pool could not source. A hit
+      // is ADMITTED to the ledger and appended to the field's citations, then the field is re-decided
+      // on the widened evidence. A miss stays a miss and still goes to the judge.
+      for (let i = 0; i < decs.length; i++) {
+        const d = decs[i];
+        if (d.branch !== "judge_required") continue;
+        const tokens = d.unsourced.filter((u) => u.kind !== "unresolved").map((u) => u.token);
+        if (tokens.length === 0) continue;
+        const f = stamped[i];
+        const specifics = unsourcedSpecificsOf(f.text, tokens);
+        const alreadyCited = new Set(f.refs.map((r) => uuidByRef.get(r) ?? "").filter(Boolean));
+        const found = await searchLiveRecordForSpecifics(supabase, company_id, specifics, alreadyCited);
+        sourcingSearch[kind] = {
+          searched: found.searched,
+          considered: (sourcingSearch[kind]?.considered ?? 0) + specifics.length,
+        };
+        if (found.hits.length === 0) continue;
+        for (const hit of found.hits) {
+          const ref = admitSourcingRow(hit);
+          const cites = Array.isArray(f.obj[f.citeKey]) ? (f.obj[f.citeKey] as unknown[]).map(String) : [];
+          if (!cites.includes(ref)) f.obj[f.citeKey] = [...cites, ref];
+          f.refs = Array.isArray(f.obj[f.citeKey]) ? (f.obj[f.citeKey] as unknown[]).map(String) : f.refs;
+          admitted.push({
+            ref, id: hit.id, kind: hit.kind, cls: hit.cls,
+            sourced: [...found.bySpecific.entries()].filter(([, h]) => h.id === hit.id).map(([t]) => t),
+          });
+        }
+        decs[i] = decideOne(f);     // re-decide on the widened evidence
+      }
+      classDecisions[kind] = decs;
+      return decs;
+    };
+    /** per kind, how much live record was searched — reported, never guessed */
+    const sourcingSearch: Partial<Record<Kind, { searched: { signals: number; own_words: number }; considered: number }>> = {};
+    /** Which kinds used their one re-ask, for the report. */
+    const reasked: Partial<Record<Kind, { specifics: string[]; fields: string[] }>> = {};
     const storagePayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
     const resolvedPayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
     const verdicts: Partial<Record<Kind, Record<string, unknown>>> = {};
@@ -568,7 +692,7 @@ Respond with ONLY JSON:
     };
     const outcomes = await runKindsIsolated(activeKinds, {
       citedRefs,
-      validRefs: new Set(uuidByRef.keys()),
+      validRefs,
       uuidByRef,
       provenances: ledger.provenances,
       liveness: ledger.liveness,
@@ -578,18 +702,7 @@ Respond with ONLY JSON:
         // 1a-4: the class of every citing field is COMPUTED here from the refs the model returned,
         // weakest-wins, overwriting anything it volunteered. Done BEFORE the judge sees the payload so
         // the judge is told each field's class rather than asked to infer it.
-        const stamped = stampFieldClasses(p, classByRef);
-        fieldClasses[kind as Kind] = stamped;
-        // THE TIGHTENING (2026-10-07): (b) runs FIRST and costs nothing — a field whose every
-        // specific is verbatim-sourced in a cited record/you row clears without a judgment. Only
-        // our OWN rows are excluded from the sourcing evidence: our read cannot source itself.
-        classDecisions[kind as Kind] = stamped.map((f) =>
-          decideFieldClass({
-            field: f.field, cls: f.cls, text: f.text,
-            citedSourceTexts: f.refs
-              .filter((r) => classByRef.get(r) === "record" || classByRef.get(r) === "you")
-              .map((r) => textByRef.get(r) ?? ""),
-          }));
+        await stampAndDecide(kind as Kind, p);
         payloads[kind as Kind] = p;
         return p;
       },
@@ -602,7 +715,7 @@ Respond with ONLY JSON:
         const askBlock = needJudgment.length === 0
           ? "none — every our_read field is verbatim-sourced in a cited record/you row, so there is nothing to judge for class."
           : JSON.stringify(needJudgment.map((d) => ({ field: d.field, class: d.cls, unsourced_specifics: d.unsourced.map((u) => u.token) })));
-        const judgeUser = `LEDGER (id-tagged):\n${CAT}\n\nFIELD CLASSES (computed from each field's citations, weakest-wins):\n${JSON.stringify(decs.map((d) => ({ field: d.field, class: d.cls, branch: d.branch })))}\n\nFIELDS NEEDING A CLASS JUDGMENT (check (e) — these state specifics no cited record/you row carries):\n${askBlock}\n\nTHE READ:\n${kind}: ${JSON.stringify(payload)}\n\nJudge and decide accept (accept reflects a,b,c,e${offeringActive ? " and the offering f–i flags" : ""} ONLY — d is reported, never blocks).`;
+        const judgeUser = `LEDGER (id-tagged):\n${CAT_LIVE}\n\nFIELD CLASSES (computed from each field's citations, weakest-wins):\n${JSON.stringify(decs.map((d) => ({ field: d.field, class: d.cls, branch: d.branch })))}\n\nFIELDS NEEDING A CLASS JUDGMENT (check (e) — these state specifics no cited record/you row carries):\n${askBlock}\n\nTHE READ:\n${kind}: ${JSON.stringify(payload)}\n\nJudge and decide accept (accept reflects a,b,c,e${offeringActive ? " and the offering f–i flags" : ""} ONLY — d is reported, never blocks).`;
         const v = await run(judgeChoice, judgeSysFor(kind as Kind), judgeUser, 0);
         verdicts[kind as Kind] = v;
         return v;
@@ -616,6 +729,97 @@ Respond with ONLY JSON:
         verdict.grounding_ok === true && verdict.sanity_ok === true && verdict.consistency_ok === true
         && verdict.accept === true && classGateOk(kind, verdict)
         && (kind === "offering" ? offeringAcceptFromVerdict(verdict) : true),
+      // ── THE BOUNDED RE-ASK (2026-10-08) ─────────────────────────────────────────────────────
+      // Fires ONLY when the class gate alone refused: grounding, plain-sanity, consistency and the
+      // judge's own accept must all hold, and at least one field must be refused on class. Anything
+      // else is a different fault and gets no re-ask. One call, the refused specifics named back,
+      // then the FULL gate again — the driver re-runs every guard in order.
+      reaskOnClassRefusal: async (kind, payload, verdict) => {
+        const decs = classDecisions[kind as Kind] ?? [];
+        const hedged = judgeHedgedByField(verdict);
+        const refused = decs.filter((d) => !fieldClassOk(d, hedged[d.field]));
+        // NOTE on `accept`: it is deliberately NOT part of this test. The judge's prompt makes accept
+        // reflect checks a, b, c AND e (class), so the moment a class refusal exists the judge sets
+        // accept:false — requiring accept:true here made the re-ask unreachable in exactly the case
+        // it exists for (first observed on the 2026-10-08 Edgewood run: a/b/c all true, accept false,
+        // reason "class violations ... prevent acceptance"). With a, b and c all true, the only thing
+        // accept can be objecting to IS the class, which is what the re-ask addresses.
+        const classOnly = verdict.grounding_ok === true && verdict.sanity_ok === true
+          && verdict.consistency_ok === true
+          && (kind === "offering" ? offeringAcceptFromVerdict(verdict) : true)
+          && refused.length > 0;
+        if (!classOnly) return null;   // a different fault — no re-ask
+        // every unsourced word, once, in the order the fields were read
+        const words = [...new Set(refused.flatMap((d) => d.unsourced.map((u) => u.token)))];
+        // THE POINTER (2026-10-08). The first re-ask offered (a) use the record's words, (b) hedge, or
+        // (c) leave it out — and the model took (c) every time, deleting the Level 14 claim that the
+        // record carries VERBATIM. "Find a ledger row that uses it" was a search problem it had no
+        // cheap way to solve, so it chose deletion. We already know the answer: scan the record/you
+        // rows with the SAME probe the gate uses and NAME the row. (a) then costs less than (c).
+        const sourcingRefs = [...classByRef.entries()]
+          .filter(([, c]) => c === "record" || c === "you").map(([r]) => r);
+        /** Which record/you rows carry this specific, by ref token — the gate's own test, run wider. */
+        const carriedBy = (fieldText: string, token: string): string[] => {
+          const sp = extractSpecifics(fieldText).filter((x) => x.token === token);
+          if (sp.length === 0) return [];
+          return sourcingRefs.filter((r) => sp.some((x) => specificIsSourced(x, [textByRef.get(r) ?? ""])));
+        };
+        const byField = new Map(decs.map((d) => [d.field, d]));
+        const textFor = (f: string) => (fieldClasses[kind as Kind] ?? []).find((x) => x.field === f)?.text ?? "";
+        const lines: string[] = [];
+        let anyCarried = false;
+        for (const d of refused) {
+          const ft = textFor(d.field);
+          for (const u of d.unsourced) {
+            const hits = carriedBy(ft, u.token);
+            if (hits.length > 0) {
+              anyCarried = true;
+              lines.push(`- ${d.field}: "${u.token}" IS carried by ${hits.slice(0, 3).map((h) => `[${h}]`).join(" ")} — use THAT ROW'S WORDS for this claim and cite it.`);
+            } else {
+              lines.push(`- ${d.field}: "${u.token}" is in NO record/you row — hedge the claim as our reading, or leave the claim out.`);
+            }
+          }
+        }
+        void byField;
+        // PER-FIELD RE-ASK (ruling 2026-10-08) — the slots pattern: ONLY the refused fields are
+        // rewritten, each once, and an accepted sibling is never re-rolled. The model returns a
+        // `fixes` map keyed by the field names it was given; each fix is spliced into the SAME object
+        // the field came from, so every untouched field stays byte-identical by construction rather
+        // than by inspection. The whole payload is then re-gated, in order, by the driver.
+        const askedFields = refused.map((d) => d.field);
+        const current = Object.fromEntries(refused.map((d) => {
+          const f = (fieldClasses[kind as Kind] ?? []).find((x) => x.field === d.field);
+          return [d.field, { text: f?.text ?? "", citations: f?.refs ?? [] }];
+        }));
+        const ask = `YOUR ANSWER WAS REFUSED ON CLASS — on these fields ONLY. Every other field was ACCEPTED and must not be rewritten.\n`
+          + `Each word below states a specific that the field's own citations do not carry.\n${lines.join("\n")}\n\n`
+          + `THE FIELDS TO REWRITE, as they stand:\n${JSON.stringify(current, null, 1)}\n\n`
+          + `REWRITE UNDER SPECIFICS, in this order of preference:\n`
+          + `  (a) where a row is named above, KEEP THE CLAIM and restate it in that row's own words, citing that row. This is REQUIRED, not optional: a claim the record carries must not be dropped.\n`
+          + `  (b) where no row is named, write the claim as our reading ('we read you as…', 'the record suggests…') with its scope attached;\n`
+          + `  (c) only if neither works, leave that claim out.\n`
+          + (anyCarried ? `At least one refused word IS in the ledger (see above) — deleting that claim instead of restating it is a WRONG answer.\n` : ``)
+          + `Do not strengthen a source. Do not drop a scope to fit.\n`
+          + `Return ONLY the rewritten fields, keyed by the EXACT field names above:\n`
+          + `{"fixes":{${askedFields.map((f) => `"${f}":{"text":"...","citations":["<token>"]}`).join(",")}}}`;
+        const extra = kind === "strategy" ? positioningContext : "";
+        const fixResp = await run(genChoice, genSys[kind as Kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT_LIVE}${extra}\n\n${ask}`, 0);
+        const fixes = ((fixResp?.fixes ?? fixResp ?? {}) as Record<string, unknown>);
+        let spliced = 0;
+        for (const d of refused) {
+          const f = (fieldClasses[kind as Kind] ?? []).find((x) => x.field === d.field);
+          const fix = (fixes[d.field] ?? null) as { text?: unknown; citations?: unknown } | null;
+          if (!f || !fix || typeof fix.text !== "string" || !fix.text.trim()) continue;
+          if (f.textKey) f.obj[f.textKey] = fix.text;
+          if (Array.isArray(fix.citations)) f.obj[f.citeKey] = fix.citations.map(String);
+          spliced++;
+        }
+        if (spliced === 0) return null;      // nothing usable came back — reject exactly as before
+        reasked[kind as Kind] = { specifics: words, fields: askedFields };
+        await stampAndDecide(kind as Kind, payload);
+        payloads[kind as Kind] = payload;
+        return payload;
+      },
       commit: finalize,
       recordIntegrity: recordKindIntegrity,
       onReject: (kind, guard, detail) => {
@@ -663,6 +867,9 @@ Respond with ONLY JSON:
     if (!doWrite) {
       return json({ ok: true, dry_run: true, per_kind: perKind, rejected, payloads, resolved_payloads: resolvedPayloads,
         // 1a-4 tightened: per field, the class, the branch that decided it, and what (b) could not source
+        reasked: reasked,
+        sourcing_search: sourcingSearch,
+        admitted_from_live_record: admitted,
         class_decisions: Object.fromEntries(Object.entries(classDecisions).map(([k, ds]) => [k, (ds ?? []).map((d) => ({
           field: d.field, class: d.cls, branch: d.branch, examined: d.examined,
           unsourced: d.unsourced.map((u) => `${u.token} (${u.kind})`),

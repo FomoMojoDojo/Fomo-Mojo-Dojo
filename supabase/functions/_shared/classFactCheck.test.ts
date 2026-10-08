@@ -44,6 +44,34 @@ Deno.test("a probe is never one word — a bare 'only' cannot source itself", ()
   assertEquals(specificIsSourced(only, ["we are only getting started"]), false);
 });
 
+// ── LEFT-WINDOW FALLBACK (signed 2026-10-08) ────────────────────────────────────────────────────
+Deno.test("a specific at the END of a sentence is sourced through a LEFT window", () => {
+  // the live failure: the gate built zero probes for a trailing figure, so no cited row could ever
+  // source it. "…serving children under 12" against a row reading "youth under 12".
+  const trailing = extractSpecifics("operates a unit serving children under 12").find((x) => x.token === "12")!;
+  assert(trailing.probes.length > 0, "a trailing specific now has probes");
+  assert(trailing.probes.every((p) => p.trim().split(/\s+/).length >= 2), JSON.stringify(trailing.probes));
+  assert(trailing.probes.includes("under 12"), JSON.stringify(trailing.probes));
+  assertEquals(specificIsSourced(trailing, ["the only crisis stabilization unit serving youth under 12 in the Bay Area"]), true);
+
+  const d = decideFieldClass({
+    field: "ua[0]", cls: "our_read",
+    text: "operates a crisis stabilization unit serving children under 12",
+    citedSourceTexts: ["Edgewood CSU is the only crisis stabilization unit serving youth under 12 in the Bay Area."],
+  });
+  assertEquals(d.branch, "sourced", JSON.stringify(d.unsourced));
+});
+
+Deno.test("the left window is a FALLBACK only — a rightward probe still decides when one exists", () => {
+  // unchanged behaviour: with words to the right, the probes are rightward and the left is not used
+  const mid = extractSpecifics("the sole Level 14 residential facility in Northern California").find((x) => x.token === "14")!;
+  assert(mid.probes.includes("14 residential facility"), JSON.stringify(mid.probes));
+  assert(!mid.probes.some((p) => p.startsWith("level 14") || p.startsWith("Level 14")), "no leftward probe was added");
+  // and the fallback cannot source a word by itself: a one-word probe is never built on either side
+  const alone = extractSpecifics("only").find((x) => x.token === "only");
+  assertEquals(alone?.probes ?? [], [], "a specific with no neighbour on either side has no probe at all");
+});
+
 Deno.test("(b) PASSES a field whose 'the only…' is verbatim in a cited RECORD row", () => {
   const d = decideFieldClass({
     field: "unique_attributes[0]", cls: "our_read",
