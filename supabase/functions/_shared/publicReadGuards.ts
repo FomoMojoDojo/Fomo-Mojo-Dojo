@@ -167,6 +167,14 @@ export function offeringStructureViolations(payload: unknown, validRefs: Set<str
  *  banned-vocab-absent. A missing/false flag on ANY of the four → reject (fail-closed). This is the
  *  criterion the entity falsification probe exercises: strip the entity clause and an entity-bad
  *  verdict wrongly accepts. */
+// ── CLASS GATE — moved out (tightening signed 2026-10-07) ───────────────────────────────────────
+// The class decision lives in ONE place, _shared/classFactCheck.ts: (b) every specific in an
+// our_read field is verbatim-sourced in a cited record/you row, else (a) the judge must find it
+// hedged. The roll-up readers that used to live here (classOkFromVerdict / classViolations) read the
+// judge's answer ALONE, which is exactly what the first live run proved insufficient — the judge
+// cleared "sole Level 14 residential facility in Northern California" as an openly-held reading. They
+// are deleted rather than left beside the new gate: two authorities on one rule is how a gate rots.
+
 export function offeringAcceptFromVerdict(verdict: Record<string, unknown> | null | undefined): boolean {
   if (!verdict) return false;
   const o = (verdict.offering ?? {}) as Record<string, unknown>;

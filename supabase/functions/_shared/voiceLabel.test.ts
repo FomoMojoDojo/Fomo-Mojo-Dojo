@@ -76,3 +76,42 @@ Deno.test("source guard: the three deciders read the shared predicate BEFORE any
   const ep = await read("./evidencePhase1.ts");
   assert(ep.includes("allSignals.filter((row) => isClaimCandidateSignal(row as ClaimCandidateSignalRow))") && ep.includes("if (isAnalysisRow(row)) {"));
 });
+
+// ── 1a-4 (signed 2026-10-07): the class clause reached both prompt sites ─────────────────────────
+Deno.test("source guard: CITE_RULE carries the S1 class clause and judgeSysFor carries (e) CLASS", async () => {
+  const gpr = await read("../generate-public-read/index.ts");
+  // S1, verbatim as signed
+  assert(gpr.includes("Each ledger line names its SOURCE CLASS after its kind: the record (outside voices, filings), you (the company's own site and own words), or our read (our analysis of the record)."), "S1 opening, verbatim");
+  assert(gpr.includes("A line you write may assert only as much as the weakest class it cites."), "S1 weakest-wins sentence");
+  assert(gpr.includes("but a line resting on our read is written as our reading ('we read you as…'), never as an established fact."), "S1 closing, verbatim");
+  assert(gpr.indexOf("Each ledger line names its SOURCE CLASS") > gpr.indexOf("const CITE_RULE ="), "S1 sits inside CITE_RULE");
+  // S2, verbatim as signed, as check (e)
+  assert(gpr.includes("(e) CLASS — each field names its source class."), "(e) CLASS");
+  assert(gpr.includes("A field of class 'our_read' must read as an openly-held reading, never as an established fact."), "S2 our_read sentence");
+  assert(gpr.includes("Set class_ok:false on any field that asserts more than its class allows, naming the words that do it."), "S2 closing");
+  // the offering clause moved to (f)-(i) so (e) could be CLASS; its four checks are intact
+  assert(gpr.includes("(f)–(i) OFFERING") && gpr.includes("(f) ENUMERABLE") && gpr.includes("(g) ENTITY ATTRIBUTION") && gpr.includes("(h) DOUBTS-PLACED") && gpr.includes("(i) BANNED-VOCAB"), "offering clause relettered, all four checks kept");
+  assert(!gpr.includes("(e)–(h) OFFERING"), "the old offering lettering is gone");
+  // the class is COMPUTED, never asked of the model: no generator prompt mentions a class field
+  assert(!gpr.includes('"market_category_class"'), "the model is never asked for a class");
+  assert(gpr.includes("const stamped = stampFieldClasses(p, classByRef);") && gpr.includes("fieldClasses[kind as Kind] = stamped;"), "classes stamped from the returned citations");
+  assert(gpr.includes("&& verdict.accept === true && classGateOk(kind, verdict)"), "the class gate refuses where grounding refuses");
+  // the tightening (2026-10-07): (b) deterministic and FIRST, the judge only on the fields it failed
+  assert(gpr.includes("classDecisions[kind as Kind] = stamped.map((f) =>"), "(b) runs at generate time, before any judge call");
+  assert(gpr.includes('const needJudgment = decs.filter((d) => d.branch === "judge_required");'), "only unsourced fields are put to the judge");
+  assert(gpr.includes("A sentence that states a superlative, figure or exclusivity as fact is NOT an openly-held reading, whatever its citations say."), "the ordered judge sentence, verbatim");
+  const gpg = await read("./publicReadGuards.ts");
+  assert(!gpg.includes("export function classOkFromVerdict"), "the judge-alone roll-up is gone — one authority on the class rule");
+  // the verbatim authority is REUSED, never re-implemented
+  const cfc = await read("./classFactCheck.ts");
+  assert(cfc.includes('import { verbatimProvable } from "./ownWordsExtract.ts";'), "classFactCheck reuses the Sep-18 verbatim guard");
+  assert(!/function\s+verbatimProvable/.test(cfc), "and does not re-implement it");
+  // the same function decides a SLOT line
+  const slots2 = await read("../generate-read-slots/index.ts");
+  assert(slots2.includes('import { decideFieldClass, fieldClassOk, type FieldClassDecision } from "../_shared/classFactCheck.ts";'), "slots use the same class function");
+  assert(slots2.includes("entry.class_ok = fieldClassOk(d, entry.class_ok === true);"), "slot class_ok combines (b) with the judge");
+  // the slots judge asks the same question
+  const slots = await read("../generate-read-slots/index.ts");
+  assert(slots.includes(") CLASS — each slot names its source class."), "the slots judge judges class too");
+  assert(slots.includes('"class_ok":true|false,"accept":true|false'), "the slots verdict carries class_ok");
+});

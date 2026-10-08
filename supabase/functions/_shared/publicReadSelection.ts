@@ -10,7 +10,7 @@
 // invented. Pure: the caller runs the queries and passes rows; the ledger is stamped with SELECTION_VERSION so
 // every stored read says which selection built it (absent = the pre-ruling physical-order selection).
 //
-//   S  today's query, then isPageShapedRow ∧ !isChannelJunk(text, source_title) ∧ evidence_class <> 'listing';
+//   S  today's query, then (isAnalysisRow ∨ isPageShapedRow) ∧ !isChannelJunk(text, source_title) ∧ evidence_class <> 'listing';
 //      DEDUPE before the cap — same canonical URL (normalizeUrlKey) + same statement (normalizeForHash) counts
 //      once, the newest read (created_at, then id) wins; ORDER BY the preview's beat-2 keys (compareBeat2:
 //      read-date desc, host, strength, event date desc) with id as the final tie-break; BREADTH — one row per
@@ -25,14 +25,14 @@
 //      pair by its newest record SIGNAL's confidence_to_use (useFirstReadPreviewData.ts:741–760) — the claim's
 //      confidence is the same scale one level up, and the only pair-level authority the generator has without
 //      re-deriving the preview's signal join.
-import { isPageShapedRow } from "./voiceLabel.ts";
+import { isAnalysisRow, isPageShapedRow } from "./voiceLabel.ts";
 import { isChannelJunk } from "./ownWordsExtract.ts";
 import { normalizeForHash } from "./contentIdentity.ts";
 import { normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 import { isPairAdmissible } from "./relevanceActive.ts";
 import { compareBeat2, gapVerdictForDeltaType, orderGapPairs, strengthForSignal } from "./previewOrder.ts";
 
-export const SELECTION_VERSION = "gpr-select-2026-09-18.1" as const;
+export const SELECTION_VERSION = "gpr-select-2026-10-07.1" as const;
 
 export type Dropped = { id: string; kind: "signal" | "own_word" | "finding" | "delta"; reason: string };
 
@@ -59,7 +59,14 @@ export function selectSignals(rows: SelSignal[], cap: number, recurrenceConfirme
   for (const s of rows) {
     const text = signalText(s);
     if (!text) { dropped.push({ id: s.id, kind: "signal", reason: "empty_text" }); continue; }
-    if (!isPageShapedRow(s)) { dropped.push({ id: s.id, kind: "signal", reason: "not_page_shaped" }); continue; }
+    // 1a-4 (2026-10-07): an ANALYSIS row is admitted past the page-shape gate. isPageShapedRow
+    // refuses a synthesis row by construction — it carries no page address because it is not a read
+    // OF a page — so leaving this gate untouched would admit zero analysis rows and the ruling could
+    // not take effect. It is admitted on its own footing and LABELLED our_read; every other
+    // admission rule (junk, listing), the dedupe, the beat-2 order, the per-host breadth and the cap
+    // are unchanged. Breadth keeps it honest: analysis rows all carry the company's own host, so the
+    // round-robin takes at most one per round and they can never flood the pool.
+    if (!isAnalysisRow(s) && !isPageShapedRow(s)) { dropped.push({ id: s.id, kind: "signal", reason: "not_page_shaped" }); continue; }
     if (isChannelJunk(text, s.source_title ?? null)) { dropped.push({ id: s.id, kind: "signal", reason: "channel_junk" }); continue; }
     if (s.evidence_class === "listing") { dropped.push({ id: s.id, kind: "signal", reason: "listing" }); continue; }
     admitted.push(s);

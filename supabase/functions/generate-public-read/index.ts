@@ -29,13 +29,14 @@ import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
+import { classRefusals, decideFieldClass, fieldClassOk, type FieldClassDecision } from "../_shared/classFactCheck.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
 import { PromoteRefused, promoteStagedReads, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
 import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type OfferingSeenOn } from "../_shared/publicReadStorage.ts";
 import { loadOwnSiteRecord } from "../_shared/offeringNamedOnSite.ts";
 import { SELECTION_VERSION } from "../_shared/publicReadSelection.ts";
-import { selectPublicInputs, type InputRow } from "../_shared/publicReadInputs.ts";
+import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass } from "../_shared/publicReadInputs.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
@@ -74,6 +75,9 @@ async function ledgerOf(inputs: InputRow[]) {
     by_kind: KINDS_INPUT.reduce((acc, k) => { acc[k] = inputs.filter((r) => r.kind === k).map((r) => r.id); return acc; }, {} as Record<string, string[]>),
     provenances: inputs.reduce((acc, r) => { acc[r.id] = r.provenance; return acc; }, {} as Record<string, string>),
     liveness: inputs.reduce((acc, r) => { acc[r.id] = "live"; return acc; }, {} as Record<string, string>),
+    // 1a-4 (2026-10-07): the SOURCE CLASS of every row that was read, so the stored read says what
+    // each of its inputs licensed — the same id→value shape as provenances and liveness above.
+    classes: inputs.reduce((acc, r) => { acc[r.id] = r.source_class; return acc; }, {} as Record<string, string>),
     corpus_md5,
     count: inputs.length,
     // ruling 5: which selection built this read (absent on rows written before 2026-09-18 = physical-order selection)
@@ -87,8 +91,12 @@ const KINDS_INPUT = ["signal", "own_word", "finding", "delta"] as const;
 // model cites refs; we validate refs against the map (unknown ref → reject, fail loud) and translate
 // accepted refs BACK to the real ledger ids for storage, so stored citations resolve to the ledger.
 const REF_PREFIX: Record<string, string> = { signal: "S", own_word: "O", finding: "F", delta: "D" };
-function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<string, string>; tokenSummary: string } {
+/** How a class is NAMED to the model in the catalogue (1a-4). */
+export const CLASS_LABEL: Record<SourceClass, string> = { record: "the record", you: "you", our_read: "our read" };
+function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<string, string>; classByRef: Map<string, SourceClass>; textByRef: Map<string, string>; tokenSummary: string } {
   const uuidByRef = new Map<string, string>();
+  const classByRef = new Map<string, SourceClass>();
+  const textByRef = new Map<string, string>();
   const counters: Record<string, number> = {};
   const lines: string[] = [];
   for (const r of inputs) {
@@ -96,11 +104,14 @@ function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<stri
     counters[px] = (counters[px] ?? 0) + 1;
     const ref = `${px}${counters[px]}`;
     uuidByRef.set(ref, r.id);
-    lines.push(`[${ref}] (${r.kind}) ${r.text.slice(0, 400)}`);
+    classByRef.set(ref, r.source_class);
+    textByRef.set(ref, r.text);        // the FULL row text, for the class fact-check (not the 400-char catalogue slice)
+    // 1a-4: the class rides WITH the line, so the model sees what each row licenses as it cites it.
+    lines.push(`[${ref}] (${r.kind} · ${CLASS_LABEL[r.source_class]}) ${r.text.slice(0, 400)}`);
   }
   // The exact valid token ranges, e.g. "S1–S20, O1–O25, F1–F13, D1–D15" — the model may cite ONLY these.
   const tokenSummary = Object.entries(counters).map(([px, n]) => (n === 1 ? `${px}1` : `${px}1–${px}${n}`)).join(", ");
-  return { text: lines.join("\n"), uuidByRef, tokenSummary };
+  return { text: lines.join("\n"), uuidByRef, classByRef, textByRef, tokenSummary };
 }
 
 // Collect every ref token a payload cites (from any "citations"/"cite" array).
@@ -112,6 +123,74 @@ function citedRefs(payload: unknown): string[] {
   };
   walk(payload);
   return [...new Set(out)];
+}
+
+// ── PER-FIELD CLASS (1a-4, signed 2026-10-07) ────────────────────────────────────────────────────
+// Every field that cites gets a sibling `<field>_class` (or `class`, for a field whose citation key is
+// the bare `citations`/`refs`) = inheritedClass of its refs, WEAKEST-wins. COMPUTED, never model-set:
+// the model is never asked for a class and anything it volunteered under these keys is overwritten.
+// An UNCITED field gets NO class — it is required to be empty by the existing cited-or-omitted rule,
+// so there is nothing for a class to license.
+const CITE_KEY_TO_CLASS_KEY = (key: string): string | null => {
+  if (key === "citations" || key === "cite" || key === "refs" || key === "ref") return "class";
+  const m = /^(.*?)_(?:citations|cites?|refs?)$/.exec(key);
+  return m ? `${m[1]}_class` : null;
+};
+export type StampedField = { field: string; cls: SourceClass; refs: string[]; text: string };
+const CITE_OR_CLASS_KEY = /citation|cites?$|refs?$|ids$|_class$|^class$/i;
+/** The TEXT of the field that cites, beside its citation key. Three shapes exist in these payloads:
+ *    market_category_citations → market_category          (base names the value exactly)
+ *    value_citations           → value_for_customer       (base is a PREFIX of the value key)
+ *    citations / refs          → text | statement         (an array element, no named base)
+ *  The prefix case is why this is not a one-line lookup: `value_citations` and `best_fit_citations`
+ *  do not name their value keys, and resolving them to "" made the fact-check skip two whole rungs.
+ *  Returns "" only when nothing resolves, which decideFieldClass treats as a refusal, not a pass. */
+function resolveFieldText(obj: Record<string, unknown>, base: string): string {
+  const str = (v: unknown) => (typeof v === "string" ? v : null);
+  if (base) {
+    const exact = str(obj[base]);
+    if (exact !== null) return exact;
+    // the prefix case, deterministic: the shortest non-citation key starting with `<base>_`
+    const prefixed = Object.keys(obj)
+      .filter((k) => k.startsWith(`${base}_`) && !CITE_OR_CLASS_KEY.test(k) && str(obj[k]) !== null)
+      .sort((a, b) => a.length - b.length)[0];
+    if (prefixed) return str(obj[prefixed])!;
+  }
+  for (const k of ["text", "statement", "promise", "body"]) {
+    const v = str(obj[k]);
+    if (v !== null) return v;
+  }
+  return "";
+}
+/** Mutates `payload` in place, stamping each citing field's class. Returns one entry per citing
+ *  field — its class, the refs it cited and its own TEXT — which is what the class fact-check needs. */
+function stampFieldClasses(payload: unknown, classByRef: ReadonlyMap<string, SourceClass>, path = ""): StampedField[] {
+  const out: StampedField[] = [];
+  const walk = (v: unknown, at: string): void => {
+    if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${at}[${i}]`)); return; }
+    if (!v || typeof v !== "object") return;
+    const obj = v as Record<string, unknown>;
+    for (const [k, val] of Object.entries(obj)) {
+      const classKey = CITE_KEY_TO_CLASS_KEY(k);
+      if (classKey && Array.isArray(val)) {
+        const refs = val.filter((x): x is string => typeof x === "string").map((x) => x.trim());
+        const cls = inheritedClass(refs, classByRef);
+        if (cls) {
+          obj[classKey] = cls;
+          // A BARE `citations`/`refs` key has no named base — the element's text is text/statement.
+          const base = classKey === "class" ? "" : classKey.replace(/_class$/, "");
+          const fieldName = classKey === "class" ? (at || "(root)") : `${at ? `${at}.` : ""}${base}`;
+          out.push({ field: fieldName, cls, refs, text: resolveFieldText(obj, base) });
+        } else {
+          delete obj[classKey];           // uncited ⇒ no class, and never a stale one
+        }
+        continue;
+      }
+      walk(val, k === "items" || k === "open_questions" || Array.isArray(val) ? `${at ? `${at}.` : ""}${k}` : at);
+    }
+  };
+  walk(payload, path);
+  return out;
 }
 
 // Deep-copy a payload, replacing every citation ref token with its real ledger uuid (unknown refs are
@@ -249,8 +328,8 @@ Deno.serve(async (req) => {
       return callLocal(choice.model, system, user, temperature);
     };
 
-    const { text: CAT, uuidByRef, tokenSummary } = buildCatalogue(inputs);
-    const CITE_RULE = `Cite ONLY tokens that appear VERBATIM in the LEDGER below — each printed in square brackets at the start of its line (e.g. [S1], [O3], [F2], [D1]). The valid tokens are exactly these families and NO others: ${tokenSummary} (S… = signals, O… = own-words, F… = findings, D… = deltas). Any token NOT printed in the ledger INVALIDATES THE WHOLE RESPONSE — this includes a position/ordinal number, an "Item N" reference to your own output, and any "I…" / "INPUT…" / "L…" prefix. There is no "I" family; never invent one. Copy each token EXACTLY as shown and cite AT MOST 3 per claim. If the public record does not support a field, return it empty ("" or []) with no citations — never guess or invent a token.`;
+    const { text: CAT, uuidByRef, classByRef, textByRef, tokenSummary } = buildCatalogue(inputs);
+    const CITE_RULE = `Cite ONLY tokens that appear VERBATIM in the LEDGER below — each printed in square brackets at the start of its line (e.g. [S1], [O3], [F2], [D1]). The valid tokens are exactly these families and NO others: ${tokenSummary} (S… = signals, O… = own-words, F… = findings, D… = deltas). Any token NOT printed in the ledger INVALIDATES THE WHOLE RESPONSE — this includes a position/ordinal number, an "Item N" reference to your own output, and any "I…" / "INPUT…" / "L…" prefix. There is no "I" family; never invent one. Copy each token EXACTLY as shown and cite AT MOST 3 per claim. If the public record does not support a field, return it empty ("" or []) with no citations — never guess or invent a token. Each ledger line names its SOURCE CLASS after its kind: the record (outside voices, filings), you (the company's own site and own words), or our read (our analysis of the record). A line you write may assert only as much as the weakest class it cites. Cite our-read rows freely — they are what makes this worth discussing — but a line resting on our read is written as our reading ('we read you as…'), never as an established fact.`;
 
     // ── GENERATE each kind ───────────────────────────────────────────────────────────────────────
     const GEN_POSITIONING = `You read a company's PUBLIC record and state its positioning as a hypothesis for the room to test. ${CITE_RULE}
@@ -321,11 +400,13 @@ ${US_ENGLISH_RULE}`;
     const judgeSysFor = (kind: Kind): string => {
       const offeringActive = kind === "offering";
       const OFFERING_JUDGE_CLAUSE = offeringActive
-        ? `\n(e)–(h) OFFERING (the "offering" read is a CATALOGUE of what the company puts in front of customers):
-(e) ENUMERABLE — every item names a concrete offering (product/service/program/format/channel), NOT a strategy line, value claim, or intent;
-(f) ENTITY ATTRIBUTION — every item's cited inputs describe THIS company's own offering; if ANY item actually describes a CO-LOCATED / partner / third-party entity's offering, set entity_attribution_ok:false;
-(g) DOUBTS-PLACED — currency/entity doubts live in open_questions (with a reason), never phrased as a verdict inside an item statement;
-(h) BANNED-VOCAB — no verdict/currency/status words (confirmed, disputed, stale, closed, retired, underserved, …) appear inside any item statement.`
+        // 1a-4: CLASS takes (e) by signature, so the offering clause moved from (e)–(h) to (f)–(i).
+      // Its four CHECKS and its four verdict flags are unchanged — only the letters shift.
+      ? `\n(f)–(i) OFFERING (the "offering" read is a CATALOGUE of what the company puts in front of customers):
+(f) ENUMERABLE — every item names a concrete offering (product/service/program/format/channel), NOT a strategy line, value claim, or intent;
+(g) ENTITY ATTRIBUTION — every item's cited inputs describe THIS company's own offering; if ANY item actually describes a CO-LOCATED / partner / third-party entity's offering, set entity_attribution_ok:false;
+(h) DOUBTS-PLACED — currency/entity doubts live in open_questions (with a reason), never phrased as a verdict inside an item statement;
+(i) BANNED-VOCAB — no verdict/currency/status words (confirmed, disputed, stale, closed, retired, underserved, …) appear inside any item statement.`
         : "";
       const OFFERING_VERDICT_FIELD = offeringActive
         ? `,\n "offering":{"enumerable_ok":true|false,"entity_attribution_ok":true|false,"doubts_placed_ok":true|false,"banned_vocab_ok":true|false,"reason":"<one line>"}`
@@ -334,12 +415,14 @@ ${US_ENGLISH_RULE}`;
 (a) GROUNDING — every claim is supported by the cited inputs (the cited excerpts back it; nothing invented);
 (b) PLAIN-SANITY — market_category names what this business ACTUALLY IS per its own words and outside signals (a coffee roaster is NOT "SaaS"; a clinic is NOT "marketplace"). Reject an absurd or aspirational category. If positioning is not in this read, set sanity_ok:true;
 (c) CONSISTENCY — the read describes the SAME business throughout and does not contradict itself. If only one kind is in this read, judge its internal consistency and set consistency_ok:true when coherent;
-(d) CASCADE COHERENCE (strategy only, does NOT affect accept) — does how_to_win plausibly SERVE the stated where_to_play AND winning_aspiration? Does each must_have_capability plausibly SERVE how_to_win? A rung left empty is neither coherent nor incoherent — mark empty rungs coherent:true. Judge only NON-empty rungs on the merits.${OFFERING_JUDGE_CLAUSE}
+(d) CASCADE COHERENCE (strategy only, does NOT affect accept) — does how_to_win plausibly SERVE the stated where_to_play AND winning_aspiration? Does each must_have_capability plausibly SERVE how_to_win? A rung left empty is neither coherent nor incoherent — mark empty rungs coherent:true. Judge only NON-empty rungs on the merits.\n(e) CLASS — each field names its source class. A field of class 'our_read' must read as an openly-held reading, never as an established fact. A field of class 'record' may say what the record shows. A field of class 'you' may say what the company says. Set class_ok:false on any field that asserts more than its class allows, naming the words that do it. A sentence that states a superlative, figure or exclusivity as fact is NOT an openly-held reading, whatever its citations say.${OFFERING_JUDGE_CLAUSE}
 Respond with ONLY JSON:
 {"grounding_ok":true|false,"sanity_ok":true|false,"consistency_ok":true|false,
  "per_kind":{"positioning":{"ok":true|false,"reason":"..."},"strategy":{"ok":true|false,"reason":"..."},"promise":{"ok":true|false,"reason":"..."}},
  "cascade_coherence":{"how_to_win":{"coherent":true|false,"reason":"<one line: does it serve where-to-play + aspiration?>"},
    "capabilities":[{"text":"<echo the capability text>","coherent":true|false,"reason":"<one line: does it serve how-to-win?>"}]}${OFFERING_VERDICT_FIELD},
+ ,
+ "class":{"class_ok":true|false,"fields":[{"field":"<the field name as given in FIELD CLASSES>","class":"record|you|our_read","class_ok":true|false,"reason":"<ok, or the words that assert more than the class allows>"}]},
  "accept":true|false,"reason":"<one line>"}`;
     };
 
@@ -360,6 +443,9 @@ Respond with ONLY JSON:
     const refUrl = (id: string) => inputs.find((r) => r.id === id)?.source_url ?? null;
 
     const payloads: Partial<Record<Kind, Record<string, unknown>>> = {};
+
+    const fieldClasses: Partial<Record<Kind, StampedField[]>> = {};          // 1a-4: per citing field, its class + refs + text
+    const classDecisions: Partial<Record<Kind, FieldClassDecision[]>> = {};  // the tightening: (b) sourced, or judge_required
     const storagePayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
     const resolvedPayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
     const verdicts: Partial<Record<Kind, Record<string, unknown>>> = {};
@@ -464,6 +550,22 @@ Respond with ONLY JSON:
       }
     };
 
+    /** judge class_ok per field, from the verdict's class.fields[] block. */
+    const judgeHedgedByField = (verdict: Record<string, unknown>): Record<string, boolean | undefined> => {
+      const block = (verdict?.class ?? null) as Record<string, unknown> | null;
+      const fields = block && Array.isArray(block.fields) ? block.fields : [];
+      const out: Record<string, boolean | undefined> = {};
+      for (const f of fields) {
+        const o = (f ?? {}) as Record<string, unknown>;
+        if (typeof o.field === "string") out[o.field] = o.class_ok === true;
+      }
+      return out;
+    };
+    const classGateOk = (kind: string, verdict: Record<string, unknown>): boolean => {
+      const decs = classDecisions[kind as Kind] ?? [];
+      const hedged = judgeHedgedByField(verdict);
+      return decs.every((d) => fieldClassOk(d, hedged[d.field]));
+    };
     const outcomes = await runKindsIsolated(activeKinds, {
       citedRefs,
       validRefs: new Set(uuidByRef.keys()),
@@ -473,23 +575,56 @@ Respond with ONLY JSON:
       generate: async (kind) => {
         const extra = kind === "strategy" ? positioningContext : "";
         const p = await run(genChoice, genSys[kind as Kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}\n\nProduce the ${kind} JSON.`, 0);
+        // 1a-4: the class of every citing field is COMPUTED here from the refs the model returned,
+        // weakest-wins, overwriting anything it volunteered. Done BEFORE the judge sees the payload so
+        // the judge is told each field's class rather than asked to infer it.
+        const stamped = stampFieldClasses(p, classByRef);
+        fieldClasses[kind as Kind] = stamped;
+        // THE TIGHTENING (2026-10-07): (b) runs FIRST and costs nothing — a field whose every
+        // specific is verbatim-sourced in a cited record/you row clears without a judgment. Only
+        // our OWN rows are excluded from the sourcing evidence: our read cannot source itself.
+        classDecisions[kind as Kind] = stamped.map((f) =>
+          decideFieldClass({
+            field: f.field, cls: f.cls, text: f.text,
+            citedSourceTexts: f.refs
+              .filter((r) => classByRef.get(r) === "record" || classByRef.get(r) === "you")
+              .map((r) => textByRef.get(r) ?? ""),
+          }));
         payloads[kind as Kind] = p;
         return p;
       },
       judge: async (kind, payload) => {
         const offeringActive = kind === "offering";
-        const judgeUser = `LEDGER (id-tagged):\n${CAT}\n\nTHE READ:\n${kind}: ${JSON.stringify(payload)}\n\nJudge and decide accept (accept reflects a,b,c${offeringActive ? " and the offering e–h flags" : ""} ONLY — d is reported, never blocks).`;
+        const decs = classDecisions[kind as Kind] ?? [];
+        const needJudgment = decs.filter((d) => d.branch === "judge_required");
+        // Only the fields (b) could not source are put to the judge. A field it cleared is not
+        // offered for judgment at all, so a lenient judge can neither rescue nor overturn it.
+        const askBlock = needJudgment.length === 0
+          ? "none — every our_read field is verbatim-sourced in a cited record/you row, so there is nothing to judge for class."
+          : JSON.stringify(needJudgment.map((d) => ({ field: d.field, class: d.cls, unsourced_specifics: d.unsourced.map((u) => u.token) })));
+        const judgeUser = `LEDGER (id-tagged):\n${CAT}\n\nFIELD CLASSES (computed from each field's citations, weakest-wins):\n${JSON.stringify(decs.map((d) => ({ field: d.field, class: d.cls, branch: d.branch })))}\n\nFIELDS NEEDING A CLASS JUDGMENT (check (e) — these state specifics no cited record/you row carries):\n${askBlock}\n\nTHE READ:\n${kind}: ${JSON.stringify(payload)}\n\nJudge and decide accept (accept reflects a,b,c,e${offeringActive ? " and the offering f–i flags" : ""} ONLY — d is reported, never blocks).`;
         const v = await run(judgeChoice, judgeSysFor(kind as Kind), judgeUser, 0);
         verdicts[kind as Kind] = v;
         return v;
       },
-      // The EXISTING accept expression, unchanged — offeringActive is now per-kind.
+      // The EXISTING accept expression, plus the 1a-4 CLASS gate (ruling S2): a field that asserts
+      // more than its class allows refuses the kind at the SAME point a grounding failure does.
+      // TIGHTENED 2026-10-07: the gate is (b)-then-(a) per field. A field (b) sourced clears without
+      // consulting the judge at all; a field (b) could not source clears ONLY if the judge found it
+      // hedged. FAIL-CLOSED: a judge that answers nothing for a judge_required field refuses it.
       accepts: (kind, verdict) =>
         verdict.grounding_ok === true && verdict.sanity_ok === true && verdict.consistency_ok === true
-        && verdict.accept === true && (kind === "offering" ? offeringAcceptFromVerdict(verdict) : true),
+        && verdict.accept === true && classGateOk(kind, verdict)
+        && (kind === "offering" ? offeringAcceptFromVerdict(verdict) : true),
       commit: finalize,
       recordIntegrity: recordKindIntegrity,
-      onReject: (kind, guard, detail) => console.log(rejectLogLine(company_id, kind, guard, detail)),
+      onReject: (kind, guard, detail) => {
+        // name the unsourced specifics on a class refusal, so the log says WHICH words failed
+        const v = verdicts[kind as Kind] ?? null;
+        const refs = v ? classRefusals(classDecisions[kind as Kind] ?? [], judgeHedgedByField(v)) : [];
+        const extra = refs.length > 0 ? ` class_refusals=${JSON.stringify(refs)}` : "";
+        console.log(rejectLogLine(company_id, kind, guard, detail) + extra);
+      },
     });
 
     const acceptedKinds = outcomes.filter((o) => o.status === "written").map((o) => o.kind as Kind);
@@ -526,7 +661,14 @@ Respond with ONLY JSON:
       return json({ ok: true, staged, per_kind: perKind, rejected, resolved_payloads: resolvedPayloads, citation_resolution: citationResolution, judge_verdicts: judgeVerdicts, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
     }
     if (!doWrite) {
-      return json({ ok: true, dry_run: true, per_kind: perKind, rejected, payloads, resolved_payloads: resolvedPayloads, derived_seen_on: derivedSeenOn, citation_resolution: citationResolution, cascade_gaps: cascadeGapsPreview, judge_verdicts: judgeVerdicts, router_resolution: routerResolution, ledger_summary: ledgerSummary, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+      return json({ ok: true, dry_run: true, per_kind: perKind, rejected, payloads, resolved_payloads: resolvedPayloads,
+        // 1a-4 tightened: per field, the class, the branch that decided it, and what (b) could not source
+        class_decisions: Object.fromEntries(Object.entries(classDecisions).map(([k, ds]) => [k, (ds ?? []).map((d) => ({
+          field: d.field, class: d.cls, branch: d.branch, examined: d.examined,
+          unsourced: d.unsourced.map((u) => `${u.token} (${u.kind})`),
+          judge_class_ok: judgeHedgedByField(verdicts[k as Kind] ?? {})[d.field] ?? null,
+          class_ok: fieldClassOk(d, judgeHedgedByField(verdicts[k as Kind] ?? {})[d.field]),
+        }))])), derived_seen_on: derivedSeenOn, citation_resolution: citationResolution, cascade_gaps: cascadeGapsPreview, judge_verdicts: judgeVerdicts, router_resolution: routerResolution, ledger_summary: ledgerSummary, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
     }
 
     return json({ ok: true, written, per_kind: perKind, rejected, cascade_routing: cascadeRouting, cascade_gaps: cascadeGapsPreview, payloads, derived_seen_on: derivedSeenOn, judge_verdicts: judgeVerdicts, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });

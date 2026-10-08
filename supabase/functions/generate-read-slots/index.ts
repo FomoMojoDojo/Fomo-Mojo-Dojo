@@ -29,10 +29,11 @@ import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 import {
   SLICE_1_KINDS, SLOT_CAPS, SLOT_MIN_CHARS, DIFFERENTIATORS_MIN, DIFFERENTIATORS_MAX,
   VERBATIM_MAX_CHARS, checkSlotsDeterministic, slotFieldPaths, judgeVisibleFields,
-  verbatimDifferentiatorIndices, type SlotKind,
+  verbatimDifferentiatorIndices, sourceClassFor, type SlotKind,
 } from "../_shared/readSlots.ts";
 import { promoteStagedSlots, rejectStagedSlots, SlotPromoteRefused } from "../_shared/readSlotsPromote.ts";
-import { runKind, lengthsOf, type GenerateFn, type JudgeFn } from "../_shared/readSlotsRun.ts";
+import { runKind, lengthsOf, getSlotAt, type GenerateFn, type JudgeFn } from "../_shared/readSlotsRun.ts";
+import { decideFieldClass, fieldClassOk, type FieldClassDecision } from "../_shared/classFactCheck.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -97,10 +98,13 @@ function judgeSystemFor(kind: SlotKind): string {
     `For each slot answer:\n` +
     `(a) ENTAILED — is every claim in the slot already stated by the field it was shortened from? Any new fact, added qualifier, widened scope, number, or named entity that the field does not contain ⇒ entailed:false.\n` +
     `(b) NO VERDICT VOCABULARY — no confirmed/disputed/stale/leading/best-in-class style word appears.${sanity}\n` +
+    // 1a-4 (S2, 2026-10-07): the slot's CLASS is given to you per slot; judge the WORDING against it.
+    // The letter follows the kind so there is no hole: positioning already uses (c) for category sanity.
+    `(${kind === "positioning" ? "d" : "c"}) CLASS — each slot names its source class. A slot of class 'our_read' must read as an openly-held reading, never as an established fact. A slot of class 'record' may say what the record shows. A slot of class 'you' may say what the company says. Set class_ok:false on any slot that asserts more than its class allows, naming the words that do it.\n` +
     `Judge each slot ON ITS OWN. One slot failing says nothing about the others.\n` +
     `JSON only: {"slots":{"<slot field path>":{"entailed":true|false,"vocab_ok":true|false,` +
     (kind === "positioning" ? `"category_sanity_ok":true|false,` : ``) +
-    `"accept":true|false,"reason":"<one line>"}}}`;
+    `"class_ok":true|false,"accept":true|false,"reason":"<one line>"}}}`;
 }
 
 /** THE JUDGE RE-ASK (ruling 1, 2026-10-05). The judge's own reason goes back, and ONLY the rejected
@@ -114,10 +118,11 @@ function judgeRetrySystemFor(kind: SlotKind): string {
     `SOURCE READ; add nothing. Keep the SAME citations (a subset is fine — never a ref the source does\n` +
     `not hold). Respect the character cap given for each field.\n` +
     `Return ONLY the rejected fields, keyed by the exact field path you were given.\n` +
+    `The slot's CLASS is fixed by its source field and is re-attached for you — do not write it.\n` +
     `JSON only: {"fixes":{"<field path>":{"text":"...","citations":["..."]}}}`;
 }
 
-type SlotVerdict = { entailed?: boolean; vocab_ok?: boolean; category_sanity_ok?: boolean; accept?: boolean; reason?: string };
+type SlotVerdict = { entailed?: boolean; vocab_ok?: boolean; category_sanity_ok?: boolean; class_ok?: boolean; accept?: boolean; reason?: string };
 
 
 
@@ -190,9 +195,9 @@ serve(async (req) => {
     for (const kind of kinds) {
       // ── the source read: its CURRENT revision, and its own fields are the only input ───────────
       const { data: readRow } = await supabase.from("public_reads")
-        .select("id, payload, model_provider, created_at")
+        .select("id, payload, input_ledger, model_provider, created_at")
         .eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
-      const src = readRow as { id?: string; payload?: Record<string, unknown>; model_provider?: string | null } | null;
+      const src = readRow as { id?: string; payload?: Record<string, unknown>; input_ledger?: Record<string, unknown> | null; model_provider?: string | null } | null;
       if (!src?.id) {
         perKind[kind] = { status: "no_source_read", detail: `no current public_reads row for kind=${kind}` };
         await supabase.from("integrity_runs").insert({
@@ -226,15 +231,60 @@ serve(async (req) => {
       // written: no generator call and no judge call for that item. Copying cannot say more than the
       // source, so the thing the judge exists to catch cannot happen. The deterministic checks still
       // run over it — including a byte-equality check that the line really IS its source.
+      // ── THE CLASS FACT-CHECK on slot lines (2026-10-07) ──────────────────────────────────────
+      // The SAME function the read-level gate uses. It matters most here: a slot is a COMPRESSION,
+      // and the cheapest thing to lose when shortening is the hedge. A source field the judge
+      // cleared as "we read Edgewood as…" can shorten to a bare assertion, so the slot is
+      // fact-checked on its own terms rather than inheriting its source field's verdict.
+      // The sourcing evidence is the source read's own ledger: the rows it cited whose class is
+      // record or you. A read written before 1a-4 carries no classes, so there is no evidence to
+      // source against and every specific-bearing line goes to the judge.
+      const ledgerClasses = ((src?.input_ledger ?? {}) as { classes?: Record<string, string> }).classes ?? {};
+      const sourceRowTextById = new Map<string, string>();
+      {
+        const wanted = Object.keys(ledgerClasses).filter((id) => ledgerClasses[id] === "record" || ledgerClasses[id] === "you");
+        for (let i = 0; i < wanted.length; i += 200) {
+          const chunk = wanted.slice(i, i + 200);
+          const [sg, ow, fd] = await Promise.all([
+            supabase.from("signals").select("id, claim_text, evidence_excerpt").in("id", chunk),
+            supabase.from("own_words_candidates").select("id, quote").in("id", chunk),
+            supabase.from("findings").select("id, body").in("id", chunk),
+          ]);
+          for (const r of ((sg.data ?? []) as Array<{ id: string; claim_text: string | null; evidence_excerpt: string | null }>)) {
+            sourceRowTextById.set(r.id, `${r.claim_text ?? ""} ${r.evidence_excerpt ?? ""}`.trim());
+          }
+          for (const r of ((ow.data ?? []) as Array<{ id: string; quote: string | null }>)) sourceRowTextById.set(r.id, r.quote ?? "");
+          for (const r of ((fd.data ?? []) as Array<{ id: string; body: string | null }>)) sourceRowTextById.set(r.id, r.body ?? "");
+        }
+      }
+      /** (b) for one slot line: its specifics against the record/you rows IT cites. */
+      const decideSlotClass = (field: string, line: unknown): FieldClassDecision => {
+        const l = (line ?? {}) as { text?: unknown; citations?: unknown; source_class?: unknown };
+        const refs = Array.isArray(l.citations) ? l.citations.map(String) : [];
+        return decideFieldClass({
+          field,
+          cls: typeof l.source_class === "string" ? l.source_class : null,
+          text: typeof l.text === "string" ? l.text : "",
+          citedSourceTexts: refs
+            .filter((id) => ledgerClasses[id] === "record" || ledgerClasses[id] === "you")
+            .map((id) => sourceRowTextById.get(id) ?? ""),
+        });
+      };
+
       const verbatimIdx = kind === "positioning" ? verbatimDifferentiatorIndices(payload) : [];
       const verbatimPaths = verbatimIdx.map((i) => `differentiators[${i}]`);
       const srcAttrs = Array.isArray(payload.unique_attributes)
         ? (payload.unique_attributes as Array<{ text?: unknown; citations?: unknown }>) : [];
-      const verbatimLineAt = (i: number) => ({
-        text: String(srcAttrs[i]?.text ?? "").trim(),
-        citations: Array.isArray(srcAttrs[i]?.citations) ? (srcAttrs[i]!.citations as unknown[]).map(String) : [],
-        path: "verbatim" as const,
-      });
+      const verbatimLineAt = (i: number) => {
+        const cls = sourceClassFor(payload, kind, "differentiators", i);
+        return {
+          text: String(srcAttrs[i]?.text ?? "").trim(),
+          citations: Array.isArray(srcAttrs[i]?.citations) ? (srcAttrs[i]!.citations as unknown[]).map(String) : [],
+          path: "verbatim" as const,
+          // 1a-4: a copied line inherits its source item's class exactly — never stronger.
+          ...(cls ? { source_class: cls } : {}),
+        };
+      };
       /** Splice the copied differentiators over whatever the model returned for that kind. */
       const applyVerbatim = (out: Record<string, unknown>): Record<string, unknown> => {
         if (kind !== "positioning" || verbatimIdx.length === 0) return out;
@@ -279,11 +329,31 @@ serve(async (req) => {
         return await runModel(genChoice, judgeRetrySystemFor(kind), fixUser);
       };
       const judge: JudgeFn = async (candidate) => {
-        const judgeUser = `THE READ'S OWN FIELDS:\n${JSON.stringify(visible, null, 1)}\n\nTHE SLOTS:\n${JSON.stringify(candidate, null, 1)}\n\nJudge each slot for entailment.`;
-        return await runModel(judgeChoice, judgeSystemFor(kind), judgeUser);
+        // 1a-4 tightened: (b) first, per line. Only the lines whose specifics are NOT verbatim-
+        // sourced in a cited record/you row are put to the judge for a class judgment.
+        const decs = slotFieldPaths(kind, candidate).map((f) => decideSlotClass(f, getSlotAt(candidate, f)));
+        lastSlotClassDecisions = decs;
+        const needJudgment = decs.filter((d) => d.branch === "judge_required");
+        const askBlock = needJudgment.length === 0
+          ? "none — every our_read slot is verbatim-sourced in a cited record/you row."
+          : JSON.stringify(needJudgment.map((d) => ({ field: d.field, class: d.cls, unsourced_specifics: d.unsourced.map((u) => u.token) })));
+        const judgeUser = `THE READ'S OWN FIELDS:\n${JSON.stringify(visible, null, 1)}\n\nSLOT CLASSES (inherited from the source field):\n${JSON.stringify(decs.map((d) => ({ field: d.field, class: d.cls, branch: d.branch })))}\n\nSLOTS NEEDING A CLASS JUDGMENT (these state specifics no cited record/you row carries):\n${askBlock}\n\nTHE SLOTS:\n${JSON.stringify(candidate, null, 1)}\n\nJudge each slot for entailment and class.`;
+        const v = await runModel(judgeChoice, judgeSystemFor(kind), judgeUser);
+        // combine: a line (b) cleared is class_ok regardless of what the judge said about it; a line
+        // (b) could not clear keeps the judge's answer. slotAccepted then reads one boolean.
+        const slots = ((v?.slots ?? {}) as Record<string, Record<string, unknown>>);
+        for (const d of decs) {
+          const entry = slots[d.field] ?? (slots[d.field] = {});
+          entry.class_ok = fieldClassOk(d, entry.class_ok === true);
+          if (!entry.class_ok && d.unsourced.length > 0) {
+            entry.reason = `${String(entry.reason ?? "")} [class: unsourced specifics — ${d.unsourced.map((u) => u.token).join(", ")}]`.trim();
+          }
+        }
+        return { ...v, slots };
       };
 
       let slotsForPrompt: Record<string, unknown> = {};
+      let lastSlotClassDecisions: FieldClassDecision[] = [];
       let outcome;
       try {
         outcome = await runKind({ kind, payload, verbatimPaths, generate: async (mode, ctx) => {
@@ -309,6 +379,11 @@ serve(async (req) => {
         status: allAccepted ? (doStage ? "staged" : "accepted_dry_run")
                             : (outcome.violations.length > 0 ? "rejected_deterministic" : "rejected_judge"),
         source_read_id: src.id,
+        // 1a-4 tightened: which branch decided each line's class, and the specifics (b) could not source
+        class_decisions: lastSlotClassDecisions.map((d) => ({
+          field: d.field, class: d.cls, branch: d.branch, examined: d.examined,
+          unsourced: d.unsourced.map((u) => `${u.token} (${u.kind})`),
+        })),
         lane: { generator: genChoice, judge: judgeChoice },
         caps: SLOT_CAPS[kind],
         generator_calls: outcome.generator_calls,
@@ -318,7 +393,7 @@ serve(async (req) => {
           n: a.n, kind_of_attempt: a.kind_of_attempt, stage_reached: a.stage_reached,
           lengths: a.lengths,
           violations: a.violations,
-          per_slot: a.per_slot.map((s) => ({ field: s.field, accepted: s.accepted, entailed: s.verdict?.entailed ?? null, vocab_ok: s.verdict?.vocab_ok ?? null, category_sanity_ok: s.verdict?.category_sanity_ok ?? null, reason: s.accepted ? null : (s.verdict?.reason ?? null) })),
+          per_slot: a.per_slot.map((s) => ({ field: s.field, accepted: s.accepted, entailed: s.verdict?.entailed ?? null, vocab_ok: s.verdict?.vocab_ok ?? null, class_ok: s.verdict?.class_ok ?? null, category_sanity_ok: s.verdict?.category_sanity_ok ?? null, reason: s.accepted ? null : (s.verdict?.reason ?? null) })),
         })),
         slot_lengths: lengthsOf(kind, slots),
         violations: outcome.violations,

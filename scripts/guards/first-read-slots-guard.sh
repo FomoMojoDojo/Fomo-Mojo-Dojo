@@ -24,6 +24,8 @@
 #        would break it: a who_you_serve slot stamped external_openai.
 #   (s7) anon holds NOTHING on first_read_slots and authenticated holds at most SELECT, and the table
 #        has RLS ON (so it never joins the 29-table RLS-off exemption that grants-guard g3 polices).
+#   (s8) 1a-4 (2026-10-07): every CURRENT slot line carries a source_class. HOLDS VACUOUSLY TODAY
+#        (zero current slots), so its plant stamps a current slot and strips one line's class.
 #
 # Plants. Every check has one, and each plant must make its OWN check red.
 #   PLANT=srcwriter     a src/ file gains a first_read_slots write            => (s1) red
@@ -33,6 +35,7 @@
 #   PLANT=unsigned      a current slot's signature is cleared                 => (s5) red
 #   PLANT=wysexternal   a who_you_serve slot stamped external_openai          => (s6) red
 #   PLANT=anongrant     anon gains SELECT on first_read_slots                 => (s7) red
+#   PLANT=unclassedslot a seeded current slot line loses its source_class     => (s8) red
 #
 # Every DB plant runs inside ONE ROLLED-BACK transaction. The src/ plant is made on a byte-checked
 # copy and restored md5-identical. No company's rows are changed.
@@ -91,7 +94,7 @@ case "$PLANT" in
   # bare "update ... where is_current" matches nothing and the check it targets passes VACUOUSLY.
   # Each of those plants SEEDS one current, signed, verdict-bearing slot first, then breaks it —
   # the same reason (s6) inserts the row it needs rather than updating one.
-  judgereject|addcitation|unsigned|wysexternal|stalesource) P="";;
+  judgereject|addcitation|unsigned|wysexternal|stalesource|unclassedslot) P="";;
   anongrant)   P="grant select on table public.first_read_slots to anon;";;
   srcwriter|"") P="";;
   *) echo "guard: FAIL unknown PLANT=$PLANT"; exit 1;;
@@ -107,7 +110,7 @@ DECLARE
   v_fail int := 0;
 BEGIN
   -- ── SEED: every plant that corrupts a current slot needs one to exist first ─────────────────
-  IF v_plant IN ('judgereject','addcitation','unsigned','stalesource') THEN
+  IF v_plant IN ('judgereject','addcitation','unsigned','stalesource','unclassedslot') THEN
     SELECT company_id, id INTO v_co, v_read
       FROM public.public_reads WHERE is_current AND kind='strategy' LIMIT 1;
     IF v_co IS NULL THEN RAISE EXCEPTION 'guard setup: no current strategy read to seed a slot against'; END IF;
@@ -266,6 +269,24 @@ BEGIN
     ELSE
       RAISE NOTICE '  ok   (s7) anon holds nothing, authenticated holds at most SELECT, and RLS is ON';
     END IF;
+  END IF;
+
+  -- ── (s8) 1a-4: every CURRENT slot line carries a source class ────────────────────────
+  -- A line with no class cannot be rendered under 1a-4: the reader would be shown a commitment with
+  -- no statement of whose words it is. Source-class-guard (c4) polices the wider PROMOTABLE set
+  -- (current + staged) and the no-stronger-than-source rule; this one is the current-only invariant
+  -- that belongs beside the rest of the slot layer.
+  SELECT count(*), coalesce(string_agg(left(x.slot_id::text,8)||':'||x.field, ', '),'-') INTO v_n, v_list
+    FROM (SELECT s.id AS slot_id, t.k AS field
+            FROM public.first_read_slots s CROSS JOIN LATERAL jsonb_each(s.slots) t(k,v)
+           WHERE s.is_current AND jsonb_typeof(t.v)='object' AND NOT (t.v ? 'source_class')) x;
+  IF v_n <> 0 THEN
+    RAISE NOTICE '  FAIL (s8) % current slot line(s) carry no source_class -- %', v_n, left(v_list,300);
+    v_fail := v_fail + 1;
+  ELSE
+    SELECT count(*) INTO v_n FROM public.first_read_slots WHERE is_current;
+    IF v_n = 0 THEN RAISE NOTICE '  ok   (s8) vacuous -- no current slot row exists (the rule holds for the rows that exist)';
+    ELSE RAISE NOTICE '  ok   (s8) every line of all % current slot row(s) carries a source class', v_n; END IF;
   END IF;
 
   IF v_fail = 0 THEN RAISE NOTICE 'GUARD DB GREEN'; END IF;

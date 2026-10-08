@@ -18,8 +18,10 @@ const GOOD_B = line("a differentiator line of real length two", ["b1"]);
 const GOOD_CAT = line("a category context line of real length", ["m1"]);
 const posSlots = (a = GOOD_A) => ({ differentiators: [a, GOOD_B], category_context: GOOD_CAT });
 
-const accept = { entailed: true, vocab_ok: true, category_sanity_ok: true, accept: true };
-const reject = (reason: string) => ({ entailed: false, vocab_ok: true, category_sanity_ok: true, accept: false, reason });
+// 1a-4 (2026-10-07): the real judge now also answers class_ok, and slotAccepted fail-closes without
+// it, so the fake judge answers it too. A class rejection is exercised in readSlotsClass.test.ts.
+const accept = { entailed: true, vocab_ok: true, category_sanity_ok: true, class_ok: true, accept: true };
+const reject = (reason: string) => ({ entailed: false, vocab_ok: true, category_sanity_ok: true, class_ok: true, accept: false, reason });
 
 /** A judge that rejects the named paths on the calls listed, accepting everything else. */
 function judgeRejecting(plan: Array<string[]>): { fn: JudgeFn; calls: number } {

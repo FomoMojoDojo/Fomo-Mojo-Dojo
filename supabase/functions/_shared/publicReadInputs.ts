@@ -4,17 +4,67 @@
 // (queries, caps, selectors); generate-public-read and frontierFinding import it — never copy it. Every query's
 // predicate selects public provenance ONLY; the selectors (publicReadSelection.ts) admit, dedupe, order and cap.
 //   S  signals: outside band ∧ PUBLIC_SIGNAL_VOICES ∧ live (superseded_at/held_at NULL) ∧ page-shaped ∧ not junk ∧ not listing
+//      (1a-4, 2026-10-07: 'analysis' JOINED PUBLIC_SIGNAL_VOICES — our read belongs in the base, LABELLED as ours.
+//      An analysis row is never page-shaped by construction (voiceLabel.isPageShapedRow refuses it), so selectSignals
+//      admits it past that ONE gate; junk, listing, dedupe, order, breadth and the cap are unchanged.)
 //   O  own_words_candidates with an ACTIVE own_words claim, one per identity
 //   F  findings: register public_inferred ∧ status open ∧ recurrence-backed (opts.excludeFindingKinds drops e.g. 'frontier')
 //   D  claim_deltas public_vs_public echoed|divergent ∧ isPairAdmissible ∧ every claim active
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { declaredEligibleFor, parseOwnWordsKind } from "./ownWordsKinds.ts";
+import { isAnalysisRow } from "./voiceLabel.ts";
 import { selectDeltas, selectFindings, selectOwnWords, selectSignals, signalText, type Dropped, type SelClaim, type SelDelta, type SelFinding, type SelOwnWord, type SelSignal } from "./publicReadSelection.ts";
 
-export const PUBLIC_SIGNAL_VOICES = ["outside_voice_about_client", "client_voice", "market_context", "competitor_voice"];
+export const PUBLIC_SIGNAL_VOICES = ["outside_voice_about_client", "client_voice", "market_context", "competitor_voice", "analysis"];
+
+// ── SOURCE CLASS (operator ruling 1a-4, signed 2026-10-07) ───────────────────────────────────────
+// Three classes on every pool row, so a generated line can be held to what its inputs license:
+//   record    the outside record — outside voices, filings, registries
+//   you       the company's own site and own words
+//   our_read  OUR analysis of the record — analysis rows, findings, frontier rows
+// The stamp is isAnalysisRow (label OR raw_payload.source_type OR the hypothesis shape), tested
+// BEFORE voice_class: the label alone under-counts (the pre-D1 rows carry the marker without it, and
+// six live Cafe Barra rows are analysis by shape while stamped client_voice).
+export type SourceClass = "record" | "you" | "our_read";
+
+// WEAKEST WINS (ruling 2A-ii): a line may assert only as much as the SOFTEST class it cites. One
+// record citation can therefore never launder the analysis cited beside it.
+const CLASS_RANK: Record<SourceClass, number> = { our_read: 0, you: 1, record: 2 };
+
+/** The class a generated line INHERITS from the refs it cites — the weakest among them. null when it
+ *  cites nothing: an uncited field has no class and must be empty (the cited-or-omitted rule). */
+export function inheritedClass(refs: readonly string[], classByRef: ReadonlyMap<string, SourceClass>): SourceClass | null {
+  const cs = refs.map((r) => classByRef.get(r)).filter((c): c is SourceClass => !!c);
+  if (cs.length === 0) return null;
+  return cs.reduce((a, b) => (CLASS_RANK[b] < CLASS_RANK[a] ? b : a));
+}
+
+/** True when `a` asserts more than `b` allows — the slot check's comparison. */
+export function classStrongerThan(a: SourceClass, b: SourceClass): boolean {
+  return CLASS_RANK[a] > CLASS_RANK[b];
+}
+
+/** A signal's class: the analysis mark wins over every voice test (voiceLabel ruling S1). */
+export function classOfSignal(s: { voice_class?: string | null; raw_payload?: unknown }): SourceClass {
+  if (isAnalysisRow(s)) return "our_read";
+  return s.voice_class === "client_voice" ? "you" : "record";
+}
+
+/** A delta's class. The pair's assertion rests on its PUBLIC side (the record speaking); the declared
+ *  side is quoted, not asserted. Either side resting on an analysis-cited claim makes the pair ours. */
+export function classOfDelta(
+  d: { declared_claim_id?: string | null; public_claim_id?: string | null },
+  analysisClaimIds: ReadonlySet<string>,
+): SourceClass {
+  if ((d.declared_claim_id && analysisClaimIds.has(d.declared_claim_id)) ||
+      (d.public_claim_id && analysisClaimIds.has(d.public_claim_id))) return "our_read";
+  return "record";
+}
 
 export type InputRow = {
   id: string; kind: string; provenance: string; text: string;
+  /** 1a-4: REQUIRED, so a lane cannot forget it — the compiler refuses an unstamped row. */
+  source_class: SourceClass;
   // Source metadata — used ONLY to DERIVE the offering read's seen_on / source_count / date range in
   // code (the model never claims these). source_url → domain; event_date → the item's date range;
   // own_site is true for own-words (the company's own public site by construction) or when the domain
@@ -62,7 +112,7 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   dropped.push(...sigSel.dropped);
   for (const s of sigSel.kept) {
     const text = signalText(s);
-    rows.push({ id: s.id, kind: "signal", provenance: "public_observed", text: `${text}${s.source_title ? ` (${s.source_title})` : ""}`, source_url: s.source_url, event_date: s.event_date });
+    rows.push({ id: s.id, kind: "signal", provenance: "public_observed", source_class: classOfSignal(s), text: `${text}${s.source_title ? ` (${s.source_title})` : ""}`, source_url: s.source_url, event_date: s.event_date });
   }
 
   // 2. own-words — the company's OWN public-site voice, judge-kept only. own_site=true by construction
@@ -78,7 +128,8 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   dropped.push(...owSel.dropped);
   // source_url carried so the offering's own-host test can see WHERE the words were said (a registry-hosted
   // own_word is not the company's own site — rule 2026-09-18); the own_site flag is no longer trusted downstream.
-  for (const w of owSel.kept) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", text: (w.quote ?? "").trim(), source_url: (w as { source_url?: string | null }).source_url ?? null, own_site: true });
+  // 1a-4: own words are the company speaking — class `you`, unconditionally.
+  for (const w of owSel.kept) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", source_class: "you", text: (w.quote ?? "").trim(), source_url: (w as { source_url?: string | null }).source_url ?? null, own_site: true });
 
   // 3. findings — the public_inferred register, open, AND RECURRENCE-BACKED (Gate 6a, 2026-08-26):
   //    only findings with a Gate-5c finding_recurrence row (entity-anchored, IDF-coherent, judge-anchored,
@@ -96,7 +147,11 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   for (const f of ((fnd ?? []) as Array<SelFinding & { kind?: string | null }>).filter((f) => excludedKinds.has(String(f.kind ?? "")))) dropped.push({ id: f.id, kind: "finding", reason: `kind_excluded:${f.kind}` });
   const fSel = selectFindings(((fnd ?? []) as Array<SelFinding & { kind?: string | null }>).filter((f) => !excludedKinds.has(String(f.kind ?? ""))), READ_CAP.finding, recurrenceBacked);
   dropped.push(...fSel.dropped);
-  for (const f of fSel.kept) rows.push({ id: f.id, kind: "finding", provenance: "public_inferred", text: (f.body ?? "").trim() });
+  // 1a-4 (ruling 1A-i): EVERY finding is our read — its body is our synthesis whatever it rests on,
+  // which is what the findings beat already says of it ("the finding BODY is OUR reading, not a
+  // quote"). A frontier row (origin_signal_id NULL, basis in beats.input_ledger) arrives through this
+  // same lane and is classed the same way.
+  for (const f of fSel.kept) rows.push({ id: f.id, kind: "finding", provenance: "public_inferred", source_class: "our_read", text: (f.body ?? "").trim() });
 
   // 4. (REMOVED — Stage B Option-B, 2026-08-28) odi_market_definitions is a STRUCTURALLY FORBIDDEN
   //    input for this generator. Stage A proved the table holds ZERO public_research rows across the
@@ -119,12 +174,31 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
     const { data: cl } = await supabase.from("claims").select("id, statement, status, confidence").in("id", claimIds);
     for (const c of (cl ?? []) as SelClaim[]) claimById.set(c.id, { ...c, statement: c.statement?.trim() ?? null });
   }
+  // 1a-4: which claims rest on an analysis signal — the claim_signal_refs → isAnalysisRow join, the
+  // same shape claimDeltaSynthesis.ts:609-616 runs for its self-voice exclusion. A pair with an
+  // analysis-cited claim on either side is OUR read, not the record speaking.
+  const analysisClaimIds = new Set<string>();
+  if (claimIds.length) {
+    const { data: aSigRows } = await supabase
+      .from("signals").select("id, voice_class, raw_payload").eq("company_id", companyId);
+    const analysisSigIds = new Set(
+      ((aSigRows ?? []) as Array<{ id: string; voice_class: string | null; raw_payload?: unknown }>)
+        .filter((s) => isAnalysisRow(s)).map((s) => s.id),
+    );
+    if (analysisSigIds.size > 0) {
+      const { data: aRefRows } = await supabase
+        .from("claim_signal_refs").select("claim_id, signal_id").eq("company_id", companyId);
+      for (const r of ((aRefRows ?? []) as Array<{ claim_id: string; signal_id: string }>)) {
+        if (analysisSigIds.has(r.signal_id)) analysisClaimIds.add(r.claim_id);
+      }
+    }
+  }
   const dSel = selectDeltas(deltas, READ_CAP.delta, claimById);
   dropped.push(...dSel.dropped);
   for (const d of dSel.kept) {
     const decl = d.declared_claim_id ? claimById.get(d.declared_claim_id)?.statement : "";
     const pub = d.public_claim_id ? claimById.get(d.public_claim_id)?.statement : "";
-    rows.push({ id: d.id, kind: "delta", provenance: "public_observed", text: `[${d.delta_type}] declared: "${decl ?? ""}" · public: "${pub ?? ""}"` });
+    rows.push({ id: d.id, kind: "delta", provenance: "public_observed", source_class: classOfDelta(d, analysisClaimIds), text: `[${d.delta_type}] declared: "${decl ?? ""}" · public: "${pub ?? ""}"` });
   }
 
   return { inputs: rows, dropped };

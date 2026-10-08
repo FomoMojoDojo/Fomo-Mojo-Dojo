@@ -22,7 +22,7 @@ const sig = (id: string, url: string, text: string, created: string, extra: Part
   raw_payload: { url, snippet: text }, ...extra,
 });
 
-Deno.test("(a) junk and non-page-shaped rows are excluded; a page-shaped prose row stays", () => {
+Deno.test("(a) junk and non-page-shaped rows are excluded; a page-shaped prose row stays; an ANALYSIS row is admitted (1a-4)", () => {
   const rows = [
     sig("S-prose", "https://glassdoor.com/r/1", "3.4/5 rating; 58% recommend; management described as far removed.", "2026-09-11T00:00:00Z"),
     sig("S-junk", "https://edgewood.org/", "Edgewood — Home", "2026-09-11T00:00:00Z"), // exact page title
@@ -31,8 +31,24 @@ Deno.test("(a) junk and non-page-shaped rows are excluded; a page-shaped prose r
     sig("S-listing", "https://yelp.com/biz/e", "Edgewood San Francisco 2 reviews", "2026-09-11T00:00:00Z", { evidence_class: "listing" }),
   ];
   const { kept, dropped } = selectSignals(rows, 20, NONE);
-  assertEquals(kept.map((s) => s.id), ["S-prose"]);
-  assertEquals(Object.fromEntries(dropped.map((d) => [d.id, d.reason])), { "S-junk": "channel_junk", "S-meta": "not_page_shaped", "S-noshape": "not_page_shaped", "S-listing": "listing" });
+  // 1a-4 (2026-10-07): S-meta carries the synthesis SHAPE (raw_payload.hypothesis), so it is now
+  // ADMITTED past the page-shape gate and labelled our_read downstream — our analysis belongs in the
+  // base. A row that is neither analysis nor page-shaped (S-noshape) is still excluded, and junk and
+  // listing still exclude whatever they excluded before: the bypass is for the page gate ALONE.
+  assertEquals(kept.map((s) => s.id).sort(), ["S-meta", "S-prose"]);
+  assertEquals(Object.fromEntries(dropped.map((d) => [d.id, d.reason])), { "S-junk": "channel_junk", "S-noshape": "not_page_shaped", "S-listing": "listing" });
+});
+
+Deno.test("(a2) 1a-4: the page-shape bypass is for ANALYSIS rows only, and junk still wins over it", () => {
+  // an analysis-shaped row whose text IS the page title is still channel junk — the bypass does not
+  // rescue it, because junk is tested after the page gate and on its own merits.
+  const rows = [
+    sig("S-analysis-junk", "https://edgewood.org/", "Edgewood — Home", "2026-09-11T00:00:00Z", { raw_payload: { hypothesis: "x" } }),
+    sig("S-analysis-real", "https://edgewood.org/", "A substantive reading of what the record implies about this business.", "2026-09-11T00:00:00Z", { raw_payload: { hypothesis: "x" } }),
+  ];
+  const { kept, dropped } = selectSignals(rows, 20, NONE);
+  assertEquals(kept.map((s) => s.id), ["S-analysis-real"]);
+  assertEquals(Object.fromEntries(dropped.map((d) => [d.id, d.reason])), { "S-analysis-junk": "channel_junk" });
 });
 
 const delta = (id: string, extra: Partial<SelDelta> = {}): SelDelta => ({ id, delta_type: "echoed", declared_claim_id: "c-decl", public_claim_id: "c-pub", relevance_verdict: "relevant", observed_own_host: false, operator_disposition: null, ...extra });
@@ -132,13 +148,19 @@ Deno.test("(h) breadth for pairs: 3 observed claims, cap 3 → one pair per obse
 });
 
 Deno.test("(g) the ledger carries selection_version; the generator selects through the helper and imports every predicate", async () => {
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-09-18.1");
+  // 1a-4 (2026-10-07): the selection CHANGED — analysis rows are now admitted and every row carries a
+  // source class — so the version stepped. A read stamped with the old version has an unclassed pool.
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-07.1");
   const gen = await read("../generate-public-read/index.ts");
   assert(gen.includes("selection_version: SELECTION_VERSION,"), "ledgerOf stamps the version");
   assert(gen.includes("const { inputs, dropped } = await selectPublicInputs(supabase, company_id);"), "the ONE selection helper feeds the ledger");
   assert(!gen.includes("async function gatherPublicInputs("), "the physical-order gather is gone");
   // wall brief (2026-09-18): the gather MOVED to publicReadInputs.ts so the bet writer reads the same pool; the generator imports it
-  assert(gen.includes('import { selectPublicInputs, type InputRow } from "../_shared/publicReadInputs.ts";'), "the generator imports the shared pool");
+  // 1a-4 widened this import with the class helpers, so the guard names what must be imported rather
+  // than pinning the whole line: the point is that the generator takes the pool and the class rule
+  // from the shared module, never a local copy.
+  assert(/import \{[^}]*\bselectPublicInputs\b[^}]*\btype InputRow\b[^}]*\} from "\.\.\/_shared\/publicReadInputs\.ts";/.test(gen), "the generator imports the shared pool");
+  assert(/import \{[^}]*\binheritedClass\b[^}]*\} from "\.\.\/_shared\/publicReadInputs\.ts";/.test(gen), "and the shared weakest-wins class rule");
   const pool = await read("./publicReadInputs.ts");
   for (const fn of ["selectSignals(", "selectOwnWords(", "selectFindings(", "selectDeltas("]) assert(pool.includes(fn), `${fn} used by the shared pool`);
   const sel = await read("./publicReadSelection.ts");

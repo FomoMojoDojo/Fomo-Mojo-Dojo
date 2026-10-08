@@ -10,9 +10,12 @@
 // Pure over injected generate/judge callbacks (no Deno, no fetch), so the three acceptance specs can
 // exercise every branch deterministically — the same technique publicReadPromote.ts uses for a fake
 // client. The edge function supplies the real model calls.
-import { checkSlotsDeterministic, slotFieldPaths, type CitationViolation, type SlotKind } from "./readSlots.ts";
+//
+// 1a-4 (2026-10-07): the gate order is unchanged — length, then no-new-citations AND no-stronger-class
+// (both deterministic and free), then the judge, which now also answers class_ok per slot.
+import { attachSourceClasses, checkSlotsDeterministic, slotFieldPaths, type CitationViolation, type SlotKind } from "./readSlots.ts";
 
-export type SlotVerdict = { entailed?: boolean; vocab_ok?: boolean; category_sanity_ok?: boolean; accept?: boolean; reason?: string };
+export type SlotVerdict = { entailed?: boolean; vocab_ok?: boolean; category_sanity_ok?: boolean; class_ok?: boolean; accept?: boolean; reason?: string };
 export type PerSlot = { field: string; accepted: boolean; verdict: SlotVerdict | null };
 
 /** Full regenerate (gate retry) and targeted fix (judge retry) are two different asks. */
@@ -43,10 +46,13 @@ export type RunOutcome = {
   retry_unavailable_reason?: string;
 };
 
-/** A slot is accepted iff entailment AND vocabulary hold (and category sanity, where it applies). */
+/** A slot is accepted iff entailment AND vocabulary AND class hold (and category sanity, where it
+ *  applies). CLASS (1a-4, ruling S2): a line whose class is `our_read` must read as an openly-held
+ *  reading — a judge judgment, by signature, with no deterministic phrase list behind it. Fail-closed:
+ *  a verdict that omits class_ok does not clear. */
 export function slotAccepted(kind: SlotKind, path: string, v: SlotVerdict | undefined | null): boolean {
   if (!v) return false;
-  if (v.entailed !== true || v.vocab_ok !== true || v.accept !== true) return false;
+  if (v.entailed !== true || v.vocab_ok !== true || v.class_ok !== true || v.accept !== true) return false;
   if (kind === "positioning" && path === "category_context" && v.category_sanity_ok !== true) return false;
   return true;
 }
@@ -100,7 +106,10 @@ async function runGate(
   const vs = ((verdict?.slots ?? {}) as Record<string, SlotVerdict>);
   const perSlot: PerSlot[] = paths.map((f) =>
     verbatimPaths.has(f)
-      ? { field: f, accepted: true, verdict: { entailed: true, vocab_ok: true, accept: true, reason: "verbatim — the slot IS the source text, so entailment holds by construction" } }
+      // 1a-4: a verbatim line INHERITS its source field's class (checkSlotsDeterministic already
+      // compared them, for free, above), so it cannot assert more than the source and class_ok holds
+      // by construction exactly as entailment does. The judge is still never called for it.
+      ? { field: f, accepted: true, verdict: { entailed: true, vocab_ok: true, class_ok: true, accept: true, reason: "verbatim — the slot IS the source text, so entailment and class hold by construction" } }
       : { field: f, accepted: slotAccepted(kind, f, vs[f]), verdict: vs[f] ?? null });
   const ok = perSlot.length > 0 && perSlot.every((s) => s.accepted);
   return { violations: [], verdict, perSlot, stage: "judge", ok };
@@ -120,7 +129,8 @@ export async function runKind(args: {
   const attempts: Attempt[] = [];
   let calls = 0;
 
-  let slots = await generate("initial", {}); calls++;
+  // 1a-4: the class is attached HERE, on every path, so no caller can forget it and no retry can drop it.
+  let slots = attachSourceClasses(kind, await generate("initial", {}), payload); calls++;
   let g = await runGate(kind, slots, payload, judge, verbatim);
   attempts.push({ n: 1, kind_of_attempt: "initial", stage_reached: g.stage, lengths: lengthsOf(kind, slots), violations: g.violations, per_slot: g.perSlot });
 
@@ -133,7 +143,7 @@ export async function runKind(args: {
   let candidate: Record<string, unknown>;
   if (retryBy === "gate") {
     // the whole answer is regenerated: a length or citation failure is not slot-local
-    candidate = await generate("gate_retry", { violations: g.violations }); calls++;
+    candidate = attachSourceClasses(kind, await generate("gate_retry", { violations: g.violations }), payload); calls++;
   } else {
     // ONLY the rejected slots are regenerated, each carrying the judge's own reason back.
     const rejected = g.perSlot.filter((s) => !s.accepted && !verbatim.has(s.field))
@@ -145,6 +155,8 @@ export async function runKind(args: {
       const line = fixMap[r.field];
       if (line !== undefined) candidate = spliceSlotAt(candidate, r.field, line);
     }
+    // a spliced fix arrives from the model without a class — re-attach from the source read
+    candidate = attachSourceClasses(kind, candidate, payload);
   }
 
   const g2 = await runGate(kind, candidate, payload, judge, verbatim);

@@ -10,8 +10,19 @@
 export const SLICE_1_KINDS = ["positioning", "strategy"] as const;
 export type SlotKind = (typeof SLICE_1_KINDS)[number];
 
-/** A slot line: the shortened text plus the citations it INHERITS from its source field. */
-export type SlotLine = { text: string; citations: string[]; path?: SlotPath };
+// ── SOURCE CLASS (1a-4, signed 2026-10-07) ───────────────────────────────────────────────────────
+// This module is import-free on purpose (so vitest exercises the deterministic checks without Deno),
+// so the class vocabulary is declared here rather than imported from publicReadInputs.ts. The two
+// must agree; the census test asserts they do.
+export type SlotSourceClass = "record" | "you" | "our_read";
+const SLOT_CLASS_RANK: Record<SlotSourceClass, number> = { our_read: 0, you: 1, record: 2 };
+/** True when `a` asserts MORE than `b` allows. A slot may never be stronger than its source field. */
+export function slotClassStrongerThan(a: SlotSourceClass, b: SlotSourceClass): boolean {
+  return SLOT_CLASS_RANK[a] > SLOT_CLASS_RANK[b];
+}
+
+/** A slot line: the shortened text plus the citations AND the class it INHERITS from its source field. */
+export type SlotLine = { text: string; citations: string[]; path?: SlotPath; source_class?: SlotSourceClass };
 
 export type PositioningSlots = {
   differentiators: SlotLine[];      // 2-3, ordered as the read orders unique_attributes
@@ -111,6 +122,26 @@ export function sourceTextFor(
   return typeof t === "string" ? t : null;
 }
 
+/** The CLASS the source read holds for a slot's source field — the twin of sourceCitationsFor.
+ *  Scalar fields carry "<field>_class"; an object-array element carries its own "class". Returns null
+ *  when the source field or its class is absent (a read generated before 1a-4 carries none), which the
+ *  caller treats as "nothing to compare" rather than as a refusal — only a slot claiming a class
+ *  STRONGER than a KNOWN source class is a violation. */
+export function sourceClassFor(
+  payload: Record<string, unknown>, kind: SlotKind, field: string, index?: number,
+): SlotSourceClass | null {
+  const src = SLOT_SOURCE_FIELD[kind]?.[field];
+  if (!src) return null;
+  const asClass = (v: unknown): SlotSourceClass | null =>
+    v === "record" || v === "you" || v === "our_read" ? v : null;
+  if (typeof index === "number") {
+    const arr = payload[src];
+    if (!Array.isArray(arr) || index >= arr.length) return null;
+    return asClass((arr[index] as { class?: unknown } | null)?.class);
+  }
+  return asClass(payload[`${src}_class`]);
+}
+
 /** Which positioning differentiators take the VERBATIM path: every source item at or under the
  *  threshold. Returns the render-order indices, so the caller copies exactly those. */
 export function verbatimDifferentiatorIndices(payload: Record<string, unknown>): number[] {
@@ -125,7 +156,7 @@ export function verbatimDifferentiatorIndices(payload: Record<string, unknown>):
 
 export type CitationViolation = {
   field: SlotFieldPath;
-  kind: "unknown_citation" | "missing_source_field" | "over_cap" | "under_floor" | "empty_text" | "count_out_of_range" | "verbatim_mismatch";
+  kind: "unknown_citation" | "missing_source_field" | "over_cap" | "under_floor" | "empty_text" | "count_out_of_range" | "verbatim_mismatch" | "class_stronger_than_source";
   detail: string;
 };
 
@@ -141,7 +172,7 @@ export function checkSlotsDeterministic(
   const caps = SLOT_CAPS[kind] as Record<string, number>;
 
   const checkLine = (path: SlotFieldPath, field: string, line: unknown, index?: number): void => {
-    const l = (line ?? {}) as { text?: unknown; citations?: unknown; path?: unknown };
+    const l = (line ?? {}) as { text?: unknown; citations?: unknown; path?: unknown; source_class?: unknown };
     const text = typeof l.text === "string" ? l.text.trim() : "";
     if (!text) { out.push({ field: path, kind: "empty_text", detail: "slot text is empty" }); return; }
     const isVerbatim = l.path === "verbatim";
@@ -172,6 +203,15 @@ export function checkSlotsDeterministic(
         out.push({ field: path, kind: "unknown_citation", detail: `citation not held by the source field` });
       }
     }
+    // 1a-4: a slot inherits its source field's class and may never claim a STRONGER one. This is the
+    // class twin of the citation rule — a slot may say LESS than its source (a weaker class is fine,
+    // and so is carrying none), never more. A source field with no stored class predates 1a-4: there
+    // is nothing to compare, so nothing is refused.
+    const srcClass = sourceClassFor(payload, kind, field, index);
+    const lineClass = l.source_class === "record" || l.source_class === "you" || l.source_class === "our_read" ? l.source_class : null;
+    if (srcClass && lineClass && slotClassStrongerThan(lineClass, srcClass)) {
+      out.push({ field: path, kind: "class_stronger_than_source", detail: `slot class '${lineClass}' asserts more than its source field's '${srcClass}'` });
+    }
   };
 
   if (kind === "positioning") {
@@ -186,6 +226,32 @@ export function checkSlotsDeterministic(
     checkLine("how_to_win_line", "how_to_win_line", slots.how_to_win_line);
   }
   return out;
+}
+
+/** 1a-4: attach each line's INHERITED class, from its source field on the read. Returns a NEW object;
+ *  lines whose source field carries no stored class are left unclassed (a read written before 1a-4 has
+ *  none to give, and inventing one here would be the lie the class exists to prevent). Applied to
+ *  EVERY generator output — initial, gate retry and the judge re-ask's splice — so a class can never be
+ *  model-set and can never go missing on a retry path. */
+export function attachSourceClasses(
+  kind: SlotKind, slots: Record<string, unknown>, payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...slots };
+  for (const path of slotFieldPaths(kind, next)) {
+    const m = /^(\w+)\[(\d+)\]$/.exec(path);
+    const field = m ? m[1] : path;
+    const idx = m ? Number(m[2]) : undefined;
+    const cls = sourceClassFor(payload, kind, field, idx);
+    if (!cls) continue;
+    if (m) {
+      const arr = Array.isArray(next[field]) ? [...(next[field] as unknown[])] : [];
+      if (arr[idx!] && typeof arr[idx!] === "object") arr[idx!] = { ...(arr[idx!] as object), source_class: cls };
+      next[field] = arr;
+    } else if (next[field] && typeof next[field] === "object") {
+      next[field] = { ...(next[field] as object), source_class: cls };
+    }
+  }
+  return next;
 }
 
 /** The slot field paths of a kind, in render order — the unit the judge verdicts and the guard counts. */
