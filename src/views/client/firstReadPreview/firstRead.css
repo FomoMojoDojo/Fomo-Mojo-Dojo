@@ -2923,3 +2923,25 @@ span.fr-mark-target .fr-mark-box { display: flex; }
 }
 .fr-swap-control:hover,
 .fr-swap-control:focus-visible { color: hsl(var(--fr-lime)); border-bottom-color: hsl(var(--fr-lime)); }
+
+/* ── THE COMMITMENT SOURCE LINE (1a-4, 2026-10-08) ─────────────────────────────────────────────
+   Attribution under a commitment: head · host · published. Deliberately quiet — it sits under a
+   statement and must not compete with it — and it reuses .fr-tag/.fr-mono so it matches the
+   OurReadTag and SourceTag chips already on these screens. */
+.fr-source-line {
+  display: inline-block;
+  margin-top: 0.5rem;
+  color: hsl(var(--fr-faint));
+  letter-spacing: 0.02em;
+}
+/* An our_read line is the one a reader must not mistake for the record, so it carries the accent. */
+.fr-source-line[data-fr-source-class="our_read"] { color: hsl(var(--fr-muted)); }
+.fr-dark-section .fr-source-line,
+.fr-labeled--dark .fr-source-line { color: hsl(var(--fr-paper) / 0.55); }
+
+/* S7 — the base's class note, under the existing "Why this" rationale line. */
+.fr-base-class-note {
+  display: block;
+  margin-top: 0.75rem;
+  color: hsl(var(--fr-faint));
+}

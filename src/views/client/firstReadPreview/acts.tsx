@@ -18,12 +18,13 @@ import {
   ScoreNow,
   SourceTag,
   OurReadTag,
+  CommitmentSource,
   VerdictChip,
 } from "./primitives";
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason, orderPairsByVerdict } from "./mapping";
-import type { FirstReadPreviewData, FRGapCounts, FRGapPair, FRGapStatement, FROfferItem, FRSignal, FRStatusConflict } from "./types";
+import type { FirstReadPreviewData, FRFieldSource, FRGapCounts, FRGapPair, FRGapStatement, FROfferItem, FRSignal, FRStatusConflict } from "./types";
 import type { ChipTone } from "./primitives";
 import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
 // Gate 2 — THE relationship-kind vocabulary (labels + known set + the emergent-kind note). Shared
@@ -170,10 +171,14 @@ function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) 
 const RATIONALE_WHAT_YOU_SAY = "Your own public words, exactly as they appear. This is the claim the rest of the read tests."; // signed
 const RATIONALE_GAP = "Where your words and the record agree, disagree, or don't yet meet. The disagreements are the most useful part."; // signed
 const RATIONALE_SERVE = "The groups the public record suggests you're for. A hypothesis to confirm or correct, not a finding."; // signed
-const RATIONALE_FINDINGS = "What stands out in the record on its own, before we weigh it against your direction."; // signed
+// S8 (signed 2026-10-08) — replaces the old line. The beat is OUR reading of the record, and the
+// old wording ("what stands out in the record on its own") described a record-class beat.
+const RATIONALE_FINDINGS = "What we read as standing out, before we weigh it against your direction. This is our reading, not the record speaking."; // signed
 const RATIONALE_SCORE = "One number for the likelihood your strategy succeeds, read only from public signals at this stage. It moves on evidence, not opinion."; // signed
 const RATIONALE_WHERE = "The pieces behind that number, so it's inspectable rather than taken on trust."; // signed
 const RATIONALE_BASE = "The four commitments everything else stands on. Aligning them comes first."; // signed
+// S7 (signed 2026-10-08) — the base's class note, under the existing rationale line.
+const BASE_CLASS_NOTE = "Three kinds of line sit in this base: what the record says, what you say, and what we read from it. Ours are marked."; // signed
 const RATIONALE_QUESTIONS = "The threads the record leaves open — worth taking a position on together."; // signed
 const RATIONALE_NEXT = "What this read opened, and where we go from here."; // signed
 // Coherence note (2026-08-22, signed): a company with a rung-1 status conflict but ZERO contradicted
@@ -791,9 +796,14 @@ export function ActFindings({ read, eyebrow }: { read: FirstReadPreviewData; eye
                     lines below already carry host + read date, so a bare "read <date> · undated" here
                     names nothing. UNCORROBORATED: "Our read · <date>" (signed A′; read date alone; no
                     "undated" — our reading has no event date). No age marker on either branch. */}
+                {/* 6A (2026-10-08): EVERY finding carries the tag. A finding is our synthesis whether
+                    or not the record corroborates it, and the corroborated branch used to render no
+                    class marker at all — so a corroborated finding read as the record speaking. The
+                    DATE stays off that branch for the original reason: the per-receipt lines below
+                    already carry host + read date, so a bare read-date here names nothing. */}
                 {f.recurrence > 0
-                  ? null
-                  : (f.sourceTag ? <OurReadTag>{f.sourceTag.label.replace(/^read\s+/i, "")}</OurReadTag> : null)}
+                  ? <OurReadTag />
+                  : (f.sourceTag ? <OurReadTag>{f.sourceTag.label.replace(/^read\s+/i, "")}</OurReadTag> : <OurReadTag />)}
               </>
             }
             // FIX 3: the raw supporting quote(s) beneath the synthesized finding — source-attributed.
@@ -1439,6 +1449,13 @@ function SwapControl({ showingFull, onToggle }: { showingFull: boolean; onToggle
   );
 }
 
+/** 1a-4: the source line for a FULL-READ field. Renders NOTHING when the loader gave no entry —
+ *  which is exactly the legacy case, a read written before 1a-4 with no classes map. */
+function FieldSource({ fs }: { fs?: FRFieldSource }) {
+  if (!fs) return null;
+  return <CommitmentSource sourceClass={fs.cls} sources={fs.sources} />;
+}
+
 /** The positioning FULL read — byte-for-byte what this screen rendered before slots existed, plus
  *  best_fit_customers (R4). Extracted so the slot-led screen and the no-slot screen render the SAME
  *  component: "renders exactly what renders today" is then true by construction, not by inspection. */
@@ -1446,7 +1463,9 @@ function PositioningFullRead({ p }: { p: NonNullable<FirstReadPreviewData["posit
   return (
     <>
       {p.category ? <h1 className={statementClass(sentenceCase(p.category))}><MarkTarget kind="read_field" keyVal="positioning:category" text={p.category} as="span">{withStop(sentenceCase(p.category))}</MarkTarget></h1> : null}
+      {p.category ? <FieldSource fs={p.fieldSources?.category} /> : null}
       {p.value ? <p className="fr-lede fr-lede--dark"><MarkTarget kind="read_field" keyVal="positioning:value" text={p.value} as="span">{sentenceCase(p.value)}</MarkTarget></p> : null}
+      {p.value ? <FieldSource fs={p.fieldSources?.value} /> : null}
       {/* B9: below a hairline, the label column carries the existing Why-this line (no "What holds
           it up" string exists); the attributes sit as numbered columns (their numerals are text). */}
       {p.differentiators.length > 0 ? (
@@ -1455,7 +1474,8 @@ function PositioningFullRead({ p }: { p: NonNullable<FirstReadPreviewData["posit
             label={<><Eyebrow>Why this</Eyebrow><span className="fr-dark-label fr-mono">{POSITIONING_WHY}</span></>}
             className="fr-labeled--dark"
           >
-            <NumberedList items={p.differentiators} className="fr-numbered-cols" itemKey={(i) => `positioning:differentiators:${i}`} />
+            <NumberedList items={p.differentiators} className="fr-numbered-cols" itemKey={(i) => `positioning:differentiators:${i}`}
+              itemAfter={(i) => <FieldSource fs={p.fieldSources?.[`differentiators.${i}`]} />} />
           </Labeled>
         </div>
       ) : null}
@@ -1465,6 +1485,7 @@ function PositioningFullRead({ p }: { p: NonNullable<FirstReadPreviewData["posit
         <div className="fr-dark-section">
           <Labeled label={<Eyebrow>{LABEL_BEST_FIT}</Eyebrow>} className="fr-labeled--dark">
             <p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="positioning:best_fit" text={p.bestFit} as="span">{sentenceCase(p.bestFit)}</MarkTarget></p>
+            <FieldSource fs={p.fieldSources?.bestFit} />
           </Labeled>
         </div>
       ) : null}
@@ -1489,6 +1510,7 @@ function PositioningShortForm({ sl }: { sl: NonNullable<FirstReadPreviewData["po
             <h1 className={statementClass(d.text)}>
               <MarkTarget kind="read_field" keyVal={`slot:positioning:differentiators:${i}`} text={d.text} as="span">{withStop(sentenceCase(d.text))}</MarkTarget>
             </h1>
+            <CommitmentSource sourceClass={d.sourceClass} sources={d.sources} />
           </li>
         ))}
       </ol>
@@ -1498,6 +1520,7 @@ function PositioningShortForm({ sl }: { sl: NonNullable<FirstReadPreviewData["po
             <p className="fr-rung-text">
               <MarkTarget kind="read_field" keyVal="slot:positioning:category_context" text={sl.categoryContext.text} as="span">{sentenceCase(sl.categoryContext.text)}</MarkTarget>
             </p>
+            <CommitmentSource sourceClass={sl.categoryContext.sourceClass} sources={sl.categoryContext.sources} />
           </Labeled>
         </div>
       ) : null}
@@ -1546,6 +1569,7 @@ function StrategyFullRead({ st }: { st: NonNullable<FirstReadPreviewData["strate
         <div className="mt-6">
           <span className="fr-eyebrow">{RUNG_ASPIRATION}</span>
           <h1 className={`${statementClass(st.aspiration)} mt-4`}><MarkTarget kind="read_field" keyVal="strategy:aspiration" text={st.aspiration} as="span">{withStop(st.aspiration)}</MarkTarget></h1>
+          <FieldSource fs={st.fieldSources?.aspiration} />
         </div>
       ) : null}
       {/* Hairline, then the rungs as columns: Where to play / How to win / Must-have capabilities
@@ -1553,7 +1577,9 @@ function StrategyFullRead({ st }: { st: NonNullable<FirstReadPreviewData["strate
       <div className="fr-dark-section">
         <div className="fr-rung-cols">
           {st.whereToPlay ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_WHERE}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:where_to_play" text={st.whereToPlay} as="span">{st.whereToPlay}</MarkTarget></p></div> : null}
+          {st.whereToPlay ? <FieldSource fs={st.fieldSources?.whereToPlay} /> : null}
           {st.howToWin ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_HOW}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:how_to_win" text={st.howToWin} as="span">{st.howToWin}</MarkTarget></p></div> : null}
+          {st.howToWin ? <FieldSource fs={st.fieldSources?.howToWin} /> : null}
           {caps.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_CAPABILITIES}</span><NumberedList items={caps} className="mt-3" itemKey={(i) => `strategy:capabilities:${i}`} /></div> : null}
           {mgmt.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_MGMT}</span><NumberedList items={mgmt} className="mt-3" itemKey={(i) => `strategy:management_systems:${i}`} /></div> : null}
         </div>
@@ -2019,7 +2045,7 @@ export function BaseGate({ eyebrow, read }: { eyebrow?: ReactNode; read?: FirstR
       title={<>A strong base <span>changes your odds<span className="fr-stop">.</span></span></>}
       lede={<>Every choice downstream inherits its strength — or its cracks. Aligning it comes first.</>}
       statement={<>Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise.</>}
-      aside={<BeatWhy plain>{RATIONALE_BASE}</BeatWhy>}
+      aside={<BeatWhy plain><>{RATIONALE_BASE}<span className="fr-base-class-note">{BASE_CLASS_NOTE}</span></></BeatWhy>}
       foot={<>Before the map{tag ? <><span className="fr-foot-sep" aria-hidden />{tag.label}</> : null}</>}
     >
       <div className="fr-stagger flex w-full flex-col items-center">

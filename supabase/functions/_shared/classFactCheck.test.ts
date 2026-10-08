@@ -177,3 +177,42 @@ Deno.test("LIVE FIXTURE: the Edgewood Level 14 field takes the JUDGE branch, and
   assertEquals(refusals.length, 1);
   assert(refusals[0].unsourced.includes("sole (exclusivity)"), refusals[0].unsourced);
 });
+
+// ── THE STAGE GATE (ruling 2026-10-08): unsupported is final, judge or not ──────────────────────
+// The class judge cleared "unique" and "exclusive" on a staged strategy row where neither word
+// appears anywhere in 253 live signals or 258 own-words rows. The promote fact-check caught it; it
+// is now the gate. Three outcomes, not two:
+//   sourced        — a cited record/you row carries it
+//   judge_required — only one of OUR OWN rows carries it; ours to hedge, and the judge decides
+//   unsupported    — nothing carries it; not citable, not hedgeable, REFUSED without a judgment
+Deno.test("unsupported is FINAL — no judgment can clear it", () => {
+  const d = { field: "how_to_win", cls: "our_read", branch: "unsupported" as const, examined: 2,
+    unsourced: [{ kind: "exclusivity" as const, token: "unique" }, { kind: "exclusivity" as const, token: "exclusive" }] };
+  assertEquals(fieldClassOk(d, true), false, "a judge saying yes cannot clear it");
+  assertEquals(fieldClassOk(d, false), false);
+  assertEquals(fieldClassOk(d, undefined), false);
+  const r = classRefusals([d], { how_to_win: true });
+  assertEquals(r.length, 1);
+  assert(r[0].reason.includes("found NOWHERE in the company's record"), r[0].reason);
+  assert(r[0].unsourced.includes("unique (exclusivity)") && r[0].unsourced.includes("exclusive (exclusivity)"));
+});
+
+Deno.test("judge_required is still the HEDGE question, and a hedged field still passes by the judge", () => {
+  // a specific carried only by our own rows: ours to hedge, so the judge is still asked
+  const d = { field: "how_to_win", cls: "our_read", branch: "judge_required" as const, examined: 1,
+    unsourced: [{ kind: "exclusivity" as const, token: "only" }] };
+  assertEquals(fieldClassOk(d, true), true, "the judge found it written as our reading");
+  assertEquals(fieldClassOk(d, false), false);
+  assertEquals(fieldClassOk(d, undefined), false, "fail-closed");
+});
+
+Deno.test("decideFieldClass itself is UNCHANGED — the three-way split is the generator's, not the gate's", () => {
+  // the brief-1b live fixture takes exactly the branch it took then
+  const MC = "Mightycause fundraising profile: Edgewood operates 'the only level 14 residential facility in northern California - the highest level of residential care available'.";
+  const LIVE = "only youth-under-12 Crisis Stabilization Unit (CSU) in the Bay Area and sole Level 14 residential facility in Northern California";
+  const d = decideFieldClass({ field: "unique_attributes[0]", cls: "our_read", text: LIVE, citedSourceTexts: [MC] });
+  assertEquals(d.branch, "judge_required", "unchanged: this module never returns 'unsupported' on its own");
+  const tokens = d.unsourced.map((u) => u.token);
+  assert(tokens.includes("sole") && tokens.includes("Bay Area"));
+  assert(!tokens.includes("14") && !tokens.includes("Northern California"));
+});

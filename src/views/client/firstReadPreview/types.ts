@@ -245,6 +245,9 @@ export type FRPositioning = {
    *  treats absent exactly as null. */
   bestFit?: string | null;
   sourceTag: SourceTagResult;
+  /** 1a-4: per-field class + cited rows. Keys: category | value | bestFit | differentiators.N.
+   *  OPTIONAL — a read with no classes map has none, and the render then shows no source line. */
+  fieldSources?: FRFieldSources;
 } | null;
 
 /** Observed promise (ruling 1, 2026-08-21): the market_read canvas has NO distinct promise field,
@@ -265,6 +268,8 @@ export type FRStrategy = {
   capabilities?: string[];
   managementSystems?: string[];
   sourceTag: SourceTagResult;
+  /** 1a-4: keys aspiration | whereToPlay | howToWin | capabilities.N. See FRPositioning.fieldSources. */
+  fieldSources?: FRFieldSources;
 } | null;
 
 /** ── SHORT-FORM SLOTS (R1-R7, signed 2026-10-05) ────────────────────────────────────────────────
@@ -273,7 +278,31 @@ export type FRStrategy = {
  *  to the render by construction (the loader filters, and the member RLS policy filters again), so a
  *  screen with no signed slot renders exactly what it rendered before slots existed (R6).
  *  Each line carries the citations it INHERITED from its source field; it never mints one. */
-export type FRSlotLine = { text: string; citations: string[] };
+/** 1a-4: one cited row behind a commitment — where it was said and when it was published. */
+export type FRSourceClass = "record" | "you" | "our_read";
+export type FRSourceRef = {
+  host: string;
+  /** already through publishedSegment(): a year, a full date, or null (segment omitted) */
+  published: string | null;
+  /** the RAW ISO date the segment was made from — what the order is decided on. Sorting the DISPLAY
+   *  string put "December 1, 2020" above "2025", because "D" > "2". */
+  publishedAt?: string | null;
+  cls: FRSourceClass;
+  registryFrame?: "filing" | "profile" | null;
+};
+/** A field's inherited class and the record/you rows it cites. */
+export type FRFieldSource = { cls: FRSourceClass; sources: FRSourceRef[] };
+/** field key → its source line. Keys: category | value | bestFit | differentiators.N for
+ *  positioning; aspiration | whereToPlay | howToWin | capabilities.N for strategy. ABSENT entirely
+ *  on a read with no classes map (written before 1a-4) — the render then shows no source line. */
+export type FRFieldSources = Record<string, FRFieldSource>;
+
+export type FRSlotLine = {
+  text: string; citations: string[];
+  /** 1a-4: the class the slot INHERITED from its source field, and the rows it cites. */
+  sourceClass?: FRSourceClass | null;
+  sources?: FRSourceRef[];
+};
 export type FRPositioningSlots = {
   differentiators: FRSlotLine[];
   categoryContext: FRSlotLine | null;

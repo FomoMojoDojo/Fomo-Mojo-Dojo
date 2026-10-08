@@ -42,7 +42,8 @@ describe("signed per-beat rationale lines — present and exact", () => {
     ["Your own public words, exactly as they appear. This is the claim the rest of the read tests.", <ActWhatYouSay read={E} />],
     ["Where your words and the record agree, disagree, or don't yet meet. The disagreements are the most useful part.", <ActGap read={E} />],
     ["The groups the public record suggests you're for. A hypothesis to confirm or correct, not a finding.", <ActWhoYouServe read={E} />],
-    ["What stands out in the record on its own, before we weigh it against your direction.", <ActFindings read={E} />],
+    // S8 (signed 2026-10-08): the beat is OUR reading of the record, so the line says so.
+    ["What we read as standing out, before we weigh it against your direction. This is our reading, not the record speaking.", <ActFindings read={E} />],
     ["One number for the likelihood your strategy succeeds, read only from public signals at this stage. It moves on evidence, not opinion.", <ScoreReveal read={E} />],
     ["The pieces behind that number, so it's inspectable rather than taken on trust.", <ActWhereYouStand read={E} />],
     ["The four commitments everything else stands on. Aligning them comes first.", <BaseGate />],

@@ -128,9 +128,17 @@ export type FieldClassInput = {
 export type FieldClassDecision = {
   field: string;
   cls: string | null;
-  /** sourced → (b) cleared it deterministically; judge_required → (b) failed, the judge decides;
-   *  not_applicable → the field is not our_read, or carries no text/class */
-  branch: "sourced" | "judge_required" | "not_applicable";
+  /** sourced        → (b) cleared it deterministically; no judgment is asked.
+   *  judge_required  → a specific is stated ONLY in one of OUR OWN rows (a finding, an analysis
+   *                    row). It is ours to hedge, and the judge decides whether we hedged it.
+   *  unsupported     → a specific is in NO row of the company's record at all — not a cited one, not
+   *                    an uncited one, not even one of ours. There is nothing to hedge and nothing
+   *                    to cite, so the field REFUSES and the judge is never asked (ruling
+   *                    2026-10-08: the promote fact-check became the stage gate, because the class
+   *                    judge cleared "unique" and "exclusive" on a row where neither word appears
+   *                    anywhere in 253 signals and 258 own-words rows).
+   *  not_applicable  → the field is not our_read, or carries no text/class. */
+  branch: "sourced" | "judge_required" | "unsupported" | "not_applicable";
   /** the specifics (b) could not source — named in the refusal */
   unsourced: Array<{ kind: SpecificKind; token: string }>;
   /** every specific found, for the report */
@@ -168,6 +176,9 @@ export function decideFieldClass(input: FieldClassInput): FieldClassDecision {
  *  judge that clears everything cannot rescue an unsourced one it was never asked about. */
 export function fieldClassOk(d: FieldClassDecision, judgeHedged: boolean | undefined): boolean {
   if (d.branch === "not_applicable" || d.branch === "sourced") return true;
+  // UNSUPPORTED is final: a specific the record does not carry anywhere cannot be hedged into
+  // existence, so no judgment can clear it.
+  if (d.branch === "unsupported") return false;
   return judgeHedged === true;
 }
 
@@ -182,6 +193,8 @@ export function classRefusals(
       field: d.field,
       cls: d.cls,
       unsourced: d.unsourced.map((u) => `${u.token} (${u.kind})`).join(", "),
-      reason: `states ${d.unsourced.length} specific(s) no cited record/you row carries, and the judge did not find it written as an openly-held reading`,
+      reason: d.branch === "unsupported"
+        ? `states ${d.unsourced.length} specific(s) found NOWHERE in the company's record — not citable and not hedgeable`
+        : `states ${d.unsourced.length} specific(s) carried only by our own rows, and the judge did not find it written as an openly-held reading`,
     }));
 }

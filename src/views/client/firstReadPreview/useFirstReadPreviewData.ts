@@ -33,6 +33,7 @@ import {
 import { normalizeForHash } from "../../../../supabase/functions/_shared/contentIdentity.ts";
 import { channelRowAdmission, savedPageIndex } from "@/lib/firstRead/channelAdmission";
 import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
+import { publishedSegment } from "@/lib/firstRead/publishedSegment";
 import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { classifyFindingAge, orderFindings } from "./findingsAge";
@@ -53,7 +54,9 @@ import type {
   FRReverseRow,
   FRSignal,
   FRStatusSource, FROwnSiteState } from "./types";
-import { EMPTY_FIRST_READ } from "./types";
+import { EMPTY_FIRST_READ,
+  type FRFieldSource, type FRFieldSources, type FRSourceRef, type FRSlotLine,
+} from "./types";
 
 /** The judge's VERBATIM clause for an unstated group — operator view only, never the client sub-line.
  *  judge_reasons is a bag keyed by gate and pass ("solution_agnostic", "solution_agnostic_reframed",
@@ -1036,13 +1039,95 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         // and never deleted. Source tag date = the row's created_at.
         const { data: prRows } = await loose()
           .from("public_reads")
-          .select("kind, payload, created_at")
+          .select("kind, payload, input_ledger, created_at")
           .eq("company_id", companyId)
           .eq("is_current", true);
-        const prByKind = new Map<string, { payload: Record<string, unknown>; created_at: string | null }>();
-        for (const r of (prRows ?? []) as Array<{ kind: string; payload: Record<string, unknown>; created_at: string | null }>) {
-          prByKind.set(r.kind, { payload: r.payload ?? {}, created_at: r.created_at });
+        const prByKind = new Map<string, { payload: Record<string, unknown>; ledger: Record<string, unknown>; created_at: string | null }>();
+        for (const r of (prRows ?? []) as Array<{ kind: string; payload: Record<string, unknown>; input_ledger: Record<string, unknown> | null; created_at: string | null }>) {
+          prByKind.set(r.kind, { payload: r.payload ?? {}, ledger: r.input_ledger ?? {}, created_at: r.created_at });
         }
+
+        // ── 1a-4: THE SOURCE LINE BEHIND EVERY COMMITMENT ──────────────────────────────────────
+        // The stored payload carries, per field, its citations (ledger uuids) and its inherited
+        // `<field>_class`. The ledger carries `classes` — id → record | you | our_read. To render
+        // "head · host · published" we resolve each cited RECORD or YOU id to its host and its
+        // published date. Our own rows (findings, frontier rows, analysis signals) attribute nothing
+        // and are never named: an our_read line names what it RESTS ON, not itself.
+        //
+        // A read with NO classes map was written before 1a-4. It gets no fieldSources at all, so the
+        // render shows no source line rather than a guessed one.
+        const classedIds = new Set<string>();
+        for (const row of prByKind.values()) {
+          const cls = (row.ledger.classes ?? null) as Record<string, string> | null;
+          if (!cls) continue;
+          for (const [id, c] of Object.entries(cls)) if (c === "record" || c === "you") classedIds.add(id);
+        }
+        const sourceById = new Map<string, { host: string; published: string | null; publishedAt: string | null; registryFrame: "filing" | "profile" | null }>();
+        if (classedIds.size > 0) {
+          const ids = [...classedIds];
+          const hostOf = (raw: string | null | undefined): string => {
+            try { return new URL(String(raw ?? "").includes("://") ? String(raw) : `https://${raw}`).hostname.replace(/^www\./i, "").toLowerCase(); }
+            catch { return ""; }
+          };
+          for (let i = 0; i < ids.length; i += 200) {
+            const chunk = ids.slice(i, i + 200);
+            const [sg, ow] = await Promise.all([
+              loose().from("signals").select("id, source_url, event_date, raw_payload").in("id", chunk),
+              loose().from("own_words_candidates").select("id, source_url").in("id", chunk),
+            ]);
+            for (const r of ((sg.data ?? []) as Array<{ id: string; source_url: string | null; event_date: string | null; raw_payload?: { date?: unknown; registry?: { page_type?: unknown } } | null }>)) {
+              // published: event_date, falling back to raw_payload.date. event_date_precision is NOT
+              // consulted — it reads 'day' on every row in the record, undated ones included.
+              const raw = r.event_date ?? (typeof r.raw_payload?.date === "string" ? r.raw_payload.date : null);
+              const pt = r.raw_payload?.registry?.page_type;
+              sourceById.set(r.id, {
+                host: hostOf(r.source_url), published: publishedSegment(raw), publishedAt: raw,
+                registryFrame: pt === "filing_data" ? "filing" : (pt ? "profile" : null),
+              });
+            }
+            for (const r of ((ow.data ?? []) as Array<{ id: string; source_url: string | null }>)) {
+              // own words carry no event date — the segment is omitted, never invented
+              if (!sourceById.has(r.id)) sourceById.set(r.id, { host: hostOf(r.source_url), published: null, publishedAt: null, registryFrame: null });
+            }
+          }
+        }
+        /** The source line for an ARRAY ELEMENT (a differentiator, a capability): the element carries
+         *  its class as its own `class` key beside its own citations. */
+        const elementSourceOf = (kind: string, el: Record<string, unknown> | null | undefined): FRFieldSource | undefined => {
+          const row = prByKind.get(kind);
+          const ledgerClasses = (row?.ledger.classes ?? null) as Record<string, string> | null;
+          if (!ledgerClasses) return undefined;
+          const cls = el?.class;
+          if (cls !== "record" && cls !== "you" && cls !== "our_read") return undefined;
+          const cited = Array.isArray(el?.citations) ? (el!.citations as unknown[]).map(String) : [];
+          const sources: FRSourceRef[] = [];
+          for (const id of cited) {
+            const c = ledgerClasses[id];
+            if (c !== "record" && c !== "you") continue;
+            const sv = sourceById.get(id);
+            if (!sv || !sv.host) continue;
+            sources.push({ host: sv.host, published: sv.published, publishedAt: sv.publishedAt, cls: c, registryFrame: sv.registryFrame });
+          }
+          return { cls, sources };
+        };
+        /** The source line for one field of one kind, or undefined when the read carries no classes. */
+        const fieldSourceOf = (kind: string, classKey: string, citations: unknown): FRFieldSource | undefined => {
+          const row = prByKind.get(kind);
+          const ledgerClasses = (row?.ledger.classes ?? null) as Record<string, string> | null;
+          if (!row || !ledgerClasses) return undefined;                 // legacy read — no source line
+          const cls = (row.payload as Record<string, unknown>)[classKey];
+          if (cls !== "record" && cls !== "you" && cls !== "our_read") return undefined;
+          const cited = Array.isArray(citations) ? citations.map(String) : [];
+          const sources: FRSourceRef[] = [];
+          for (const id of cited) {
+            const c = ledgerClasses[id];
+            if (c !== "record" && c !== "you") continue;               // our own rows attribute nothing
+            const s = sourceById.get(id);
+            if (!s || !s.host) continue;
+            sources.push({ host: s.host, published: s.published, publishedAt: s.publishedAt, cls: c, registryFrame: s.registryFrame });
+          }
+          return { cls, sources };
+        };
 
         // ── SHORT-FORM SLOTS (R1-R7, 2026-10-05) ────────────────────────────────────────────────
         // ONLY a current, SIGNED slot is loaded. Three filters say the same thing so no one of them
@@ -1062,24 +1147,42 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           if (r.slots) slotByKind.set(r.kind, r.slots);
         }
         /** A stored slot line → the render shape. A blank text is treated as absent, never as "". */
-        const slotLine = (v: unknown): { text: string; citations: string[] } | null => {
-          const o = (v ?? {}) as { text?: unknown; citations?: unknown };
+        const slotLine = (kind: string) => (v: unknown): FRSlotLine | null => {
+          const o = (v ?? {}) as { text?: unknown; citations?: unknown; source_class?: unknown };
           const text = String(o.text ?? "").trim();
           if (!text) return null;
-          return { text, citations: Array.isArray(o.citations) ? o.citations.map(String) : [] };
+          const citations = Array.isArray(o.citations) ? o.citations.map(String) : [];
+          // 1a-4: the class is read OUT of the stored slot (source_class), never re-derived here — the
+          // slot was checked against its source field at generation and the stored value is what was
+          // signed. Its cited record/you rows are resolved so the line can name the mix.
+          const sc = o.source_class;
+          const cls = sc === "record" || sc === "you" || sc === "our_read" ? sc : null;
+          const row = prByKind.get(kind);
+          const ledgerClasses = (row?.ledger.classes ?? null) as Record<string, string> | null;
+          const sources: FRSourceRef[] = [];
+          if (cls && ledgerClasses) {
+            for (const id of citations) {
+              const c = ledgerClasses[id];
+              if (c !== "record" && c !== "you") continue;
+              const sv = sourceById.get(id);
+              if (!sv || !sv.host) continue;
+              sources.push({ host: sv.host, published: sv.published, publishedAt: sv.publishedAt, cls: c, registryFrame: sv.registryFrame });
+            }
+          }
+          return { text, citations, sourceClass: cls, sources };
         };
         const posSlotRaw = slotByKind.get("positioning");
         const posDiffLines = (Array.isArray(posSlotRaw?.differentiators) ? posSlotRaw!.differentiators : [])
-          .map(slotLine).filter((l): l is { text: string; citations: string[] } => l !== null);
-        const posCategoryContext = slotLine(posSlotRaw?.category_context);
+          .map(slotLine("positioning")).filter((l): l is FRSlotLine => l !== null);
+        const posCategoryContext = slotLine("positioning")(posSlotRaw?.category_context);
         // A positioning short form LEADS WITH THE DIFFERENTIATORS, so with none there is no short
         // form to show — fall back to the full read rather than render a bare category line.
         const positioningSlots = posSlotRaw && posDiffLines.length > 0
           ? { differentiators: posDiffLines, categoryContext: posCategoryContext }
           : null;
         const strSlotRaw = slotByKind.get("strategy");
-        const strWhere = slotLine(strSlotRaw?.where_to_play_line);
-        const strHow = slotLine(strSlotRaw?.how_to_win_line);
+        const strWhere = slotLine("strategy")(strSlotRaw?.where_to_play_line);
+        const strHow = slotLine("strategy")(strSlotRaw?.how_to_win_line);
         // Strategy's short form is the two rungs; one alone is a half-read, so both must be present.
         const strategySlots = strSlotRaw && strWhere && strHow
           ? { whereToPlayLine: strWhere, howToWinLine: strHow }
@@ -1092,11 +1195,22 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         const posPayload = (posRow?.payload ?? null) as
           | { market_category?: string | null; value_for_customer?: string | null; best_fit_customers?: string | null; unique_attributes?: Array<{ text?: string | null }> }
           | null;
+        // 1a-4: per-field source lines. ABSENT when the read carries no classes map (legacy).
+        const posRaw = (posRow?.payload ?? {}) as Record<string, unknown>;
+        const posFieldSources: FRFieldSources = {};
+        {
+          const put = (k: string, v: FRFieldSource | undefined) => { if (v) posFieldSources[k] = v; };
+          put("category", fieldSourceOf("positioning", "market_category_class", posRaw.market_category_citations));
+          put("value", fieldSourceOf("positioning", "value_class", posRaw.value_citations));
+          put("bestFit", fieldSourceOf("positioning", "best_fit_class", posRaw.best_fit_citations));
+          (Array.isArray(posRaw.unique_attributes) ? posRaw.unique_attributes as Array<Record<string, unknown>> : [])
+            .forEach((a, i) => put(`differentiators.${i}`, elementSourceOf("positioning", a)));
+        }
         const posDiffs = Array.isArray(posPayload?.unique_attributes)
           ? posPayload!.unique_attributes.map((a) => String(a?.text ?? "").trim()).filter(Boolean)
           : [];
         const positioning = posRow && posPayload && (posPayload.market_category || posPayload.value_for_customer || posDiffs.length)
-          ? { category: posPayload.market_category ?? null, value: posPayload.value_for_customer ?? null, bestFit: posPayload.best_fit_customers ?? null, differentiators: posDiffs, sourceTag: publicReadTag(posRow.created_at) }
+          ? { category: posPayload.market_category ?? null, value: posPayload.value_for_customer ?? null, bestFit: posPayload.best_fit_customers ?? null, differentiators: posDiffs, sourceTag: publicReadTag(posRow.created_at), ...(Object.keys(posFieldSources).length > 0 ? { fieldSources: posFieldSources } : {}) }
           : null;
 
         // Stage B (2026-08-28): the strategy payload is the 5-rung public cascade SPINE. Rungs 4–5
@@ -1113,6 +1227,16 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           | null;
         const rungList = (arr: Array<{ text?: string | null }> | null | undefined): string[] =>
           (Array.isArray(arr) ? arr : []).map((a) => String(a?.text ?? "").trim()).filter(Boolean);
+        const strRaw = (strRow?.payload ?? {}) as Record<string, unknown>;
+        const strFieldSources: FRFieldSources = {};
+        {
+          const put = (k: string, v: FRFieldSource | undefined) => { if (v) strFieldSources[k] = v; };
+          put("aspiration", fieldSourceOf("strategy", "winning_aspiration_class", strRaw.winning_aspiration_citations));
+          put("whereToPlay", fieldSourceOf("strategy", "where_to_play_class", strRaw.where_to_play_citations));
+          put("howToWin", fieldSourceOf("strategy", "how_to_win_class", strRaw.how_to_win_citations));
+          (Array.isArray(strRaw.must_have_capabilities) ? strRaw.must_have_capabilities as Array<Record<string, unknown>> : [])
+            .forEach((a, i) => put(`capabilities.${i}`, elementSourceOf("strategy", a)));
+        }
         const strCaps = rungList(strPayload?.must_have_capabilities);
         const strMgmt = rungList(strPayload?.management_systems);
         const strategy = strRow && strPayload &&
@@ -1124,6 +1248,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
               capabilities: strCaps,
               managementSystems: strMgmt,
               sourceTag: publicReadTag(strRow.created_at),
+              ...(Object.keys(strFieldSources).length > 0 ? { fieldSources: strFieldSources } : {}),
             }
           : null;
 

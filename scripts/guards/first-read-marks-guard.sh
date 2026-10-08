@@ -259,4 +259,33 @@ if [ -f tests/workspace/x8-revisit-prompt.spec.ts ] \
 else
   echo "  FAIL (s) the revisit prompt gate or tests/workspace/x8-revisit-prompt.spec.ts"; fail=1
 fi
+# ── (u) 1a-4 (2026-10-08): A COMMITMENT SOURCE LINE IS NOT MARKABLE ────────────────────────────
+# A source line is attribution, not a claim: "In the record · mightycause.com · 2023" is not a
+# sentence anyone wrote, so a mark on it would anchor to text with no author and no provenance. The
+# silence note holds the same rule (silence-note-guard check (e)); this is the twin for the source
+# line. Source-level, because the DOM is the only place the rule can be broken: CommitmentSource
+# must render no MarkTarget and must never be rendered INSIDE one.
+PRIM=src/views/client/firstReadPreview/primitives.tsx
+ACTS=src/views/client/firstReadPreview/acts.tsx
+if [ ! -f "$PRIM" ] || [ ! -f "$ACTS" ]; then
+  echo "  FAIL (u) missing $PRIM or $ACTS"; fail=1
+else
+  # the component itself carries no mark anchor
+  SRC_FN=$(awk '/^export function CommitmentSource\(/,/^}/' "$PRIM")
+  if [ -z "$SRC_FN" ]; then
+    echo "  FAIL (u) CommitmentSource not found in $PRIM"; fail=1
+  elif echo "$SRC_FN" | grep -q 'MarkTarget'; then
+    echo "  FAIL (u) CommitmentSource renders a MarkTarget — a source line must not be markable"; fail=1
+  else
+    # and no render site nests it inside a MarkTarget: every call sits on its own line, as a sibling
+    BAD=$(grep -n 'CommitmentSource' "$ACTS" | grep 'MarkTarget' || true)
+    if [ -n "$BAD" ]; then
+      echo "  FAIL (u) a source line is rendered inside a MarkTarget: $(echo "$BAD" | head -2 | tr '\n' ' ')"; fail=1
+    else
+      N=$(grep -c 'CommitmentSource sourceClass=\|<CommitmentSource ' "$ACTS")
+      echo "  ok   (u) CommitmentSource carries no mark anchor, and none of its $N render sites nests it in a MarkTarget"
+    fi
+  fi
+fi
+
 [ $fail = 0 ] && echo "guard: PASS" || { echo "guard: FAIL"; echo "$out" | grep -E "^[A-Z][0-9]|ERROR" | head -40; exit 1; }

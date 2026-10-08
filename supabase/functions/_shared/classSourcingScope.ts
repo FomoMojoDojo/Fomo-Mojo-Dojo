@@ -104,6 +104,36 @@ export async function searchLiveRecordForSpecifics(
   return out;
 }
 
+/**
+ * Does ANY of OUR OWN rows carry this specific? Analysis signals and open findings — the rows that
+ * are never sourcing evidence, because our read cannot source itself. Used only to tell two very
+ * different failures apart (ruling 2026-10-08):
+ *   carried by one of ours  → the claim is OURS to hedge; the judge decides whether we hedged it.
+ *   carried by nothing      → UNSUPPORTED. There is nothing to cite and nothing to hedge, and the
+ *                             field refuses at stage without a judgment.
+ */
+export async function specificsCarriedByOurOwnRows(
+  supabase: AnySupabase,
+  companyId: string,
+  specifics: readonly Specific[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (specifics.length === 0) return out;
+  const [sg, fd] = await Promise.all([
+    supabase.from("signals").select("id, claim_text, evidence_excerpt, voice_class, raw_payload")
+      .eq("company_id", companyId).is("superseded_at", null).is("held_at", null),
+    supabase.from("findings").select("id, body").eq("company_id", companyId).eq("status", "open"),
+  ]);
+  const texts: string[] = [];
+  for (const r of ((sg.data ?? []) as Array<{ claim_text: string | null; evidence_excerpt: string | null; voice_class: string | null; raw_payload?: unknown }>)) {
+    if (!isAnalysisRow(r)) continue;                       // ours ONLY — the rest is sourcing evidence
+    texts.push(`${r.claim_text ?? ""} ${r.evidence_excerpt ?? ""}`.trim());
+  }
+  for (const r of ((fd.data ?? []) as Array<{ body: string | null }>)) texts.push(r.body ?? "");
+  for (const sp of specifics) if (texts.some((t) => specificIsSourced(sp, [t]))) out.add(sp.token);
+  return out;
+}
+
 /** The specifics of a field text that a decision left unsourced — the search input. */
 export function unsourcedSpecificsOf(text: string, unsourcedTokens: readonly string[]): Specific[] {
   const want = new Set(unsourcedTokens);

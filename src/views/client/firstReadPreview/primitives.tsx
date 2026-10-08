@@ -4,6 +4,8 @@
 // primitive for persisted-integrity empty states.
 
 import { MarkTarget } from "@/lib/firstReadMarks/MarksContext";
+import { sourceLineOf } from "@/lib/firstRead/publishedSegment";
+import { FILING_FRAME_HEAD, PROFILE_FRAME_HEAD } from "@/views/client/workspace/InterviewOrigin";
 import type { FRListing } from "./types";
 import { LISTING_STRINGS, listingBody } from "./listingStrings";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -320,10 +322,105 @@ export function SourceTag({ children }: { children: ReactNode }) {
 /** OUR-READ attribution — for an analysis-register finding with NO corroborating hosts yet: it is our
  *  reading of the record, not something a source said, so it must NOT wear the "Source:" label.
  *  (STEP 2b — SIGNED A′: "Our read · <date>", the read date alone; no "read " prefix, no "undated".) */
-export function OurReadTag({ children }: { children: ReactNode }) {
+/** S5, signed. The ONE "Our read" string: OurReadTag and CommitmentSource both render this. */
+export const OUR_READ_HEAD = "Our read" as const;
+
+export function OurReadTag({ children }: { children?: ReactNode }) {
+  // 6A (2026-10-08): a finding carries this tag whether or not it is corroborated, and the published
+  // segment is omitted when there is none — "Our read" alone, never "Our read · undated".
+  const trailing = typeof children === "string" ? children.trim() : children;
   return (
     <span className="fr-tag fr-mono">
-      Our read · {children}
+      {trailing ? `${OUR_READ_HEAD} · ` : OUR_READ_HEAD}{trailing || null}
+    </span>
+  );
+}
+
+// ── THE COMMITMENT SOURCE LINE (1a-4, strings S3-S6 + S9 signed 2026-10-08) ─────────────────────
+//
+// Under every commitment: who said it, where, and when. The HEAD is the class, so a reader never has
+// to guess whether a line is the record speaking, the company speaking, or us reading:
+//   record   → S3 "In the record"
+//   you      → S6 "In your filing" / "In your profile" when the row came through a registry
+//              (filingOrigin's own frames, reused), else S4 "On your site"
+//   our_read → S5 "Our read" — the SAME string OurReadTag already renders, reused verbatim — and
+//              then the record/you hosts the line cites, so the reader sees the mix: our reading,
+//              and what it rests on.
+//
+// A source line is NOT MARKABLE. It carries no MarkTarget and no mark anchor: it is attribution, not
+// a claim, and a mark on it would anchor to text no one wrote. The silence note holds the same rule
+// (its guard check (e)) and first-read-marks-guard now checks this one too.
+//
+// Every segment is OMITTED when absent — no "undated", no invented year, no dangling separator.
+export const RECORD_FRAME_HEAD = "In the record" as const;      // S3
+export const OWN_SITE_FRAME_HEAD = "On your site" as const;     // S4
+
+/** One cited row behind a commitment: where it was said, and when it was published. */
+export type FRCommitmentSource = {
+  host: string;
+  /** already through publishedSegment(): a year, a full date, or null */
+  published: string | null;
+  /** the RAW ISO date behind that segment — the ONLY thing the order is decided on. */
+  publishedAt?: string | null;
+  cls: "record" | "you" | "our_read";
+  /** a `you` row that arrived through a registry wears the filing/profile frame instead of S4 */
+  registryFrame?: "filing" | "profile" | null;
+};
+
+/** How many cited hosts a source line names before it summarises the rest. */
+export const SOURCE_HOSTS_SHOWN = 3;
+
+/** The head for a line of this class, given the first cited row (which decides filing vs profile). */
+function headFor(cls: FRCommitmentSource["cls"], first: FRCommitmentSource | undefined): string {
+  if (cls === "our_read") return OUR_READ_HEAD;
+  if (cls === "you") {
+    if (first?.registryFrame === "filing") return FILING_FRAME_HEAD;
+    if (first?.registryFrame === "profile") return PROFILE_FRAME_HEAD;
+    return OWN_SITE_FRAME_HEAD;
+  }
+  return RECORD_FRAME_HEAD;
+}
+
+/** Dedupe by host, newest published first (a dated row outranks an undated one).
+ *  ORDERED ON THE RAW ISO DATE (ruling 2026-10-08), never on the rendered segment: the display
+ *  string sorts "December 1, 2020" above "2025" because "D" > "2", which happened to be invisible on
+ *  the data it shipped against. A row with no raw date falls back to its segment, then to last. */
+const sortKey = (s: FRCommitmentSource): string => String(s.publishedAt ?? s.published ?? "");
+export function orderedSources(sources: readonly FRCommitmentSource[]): FRCommitmentSource[] {
+  const byHost = new Map<string, FRCommitmentSource>();
+  for (const s of sources) {
+    if (!s.host) continue;
+    const prior = byHost.get(s.host);
+    if (!prior) { byHost.set(s.host, s); continue; }
+    // keep the one with a published segment; between two dated rows keep the later DATE
+    if (!prior.published && s.published) byHost.set(s.host, s);
+    else if (prior.published && s.published && sortKey(s) > sortKey(prior)) byHost.set(s.host, s);
+  }
+  return [...byHost.values()].sort((a, b) => {
+    if (!!a.published !== !!b.published) return a.published ? -1 : 1;
+    return sortKey(b).localeCompare(sortKey(a));
+  });
+}
+
+/**
+ * The source line under a commitment. `sources` are the rows the commitment CITES; for an our_read
+ * line only its record/you citations are named (our own rows attribute nothing).
+ * Renders nothing at all when there is no class — a read written before 1a-4 carries no classes map,
+ * and a guessed source line would be worse than none.
+ */
+export function CommitmentSource(
+  { sourceClass, sources = [] }: { sourceClass?: FRCommitmentSource["cls"] | null; sources?: readonly FRCommitmentSource[] },
+) {
+  if (!sourceClass) return null;
+  const named = orderedSources(sources.filter((s) => s.cls !== "our_read"));
+  const shown = named.slice(0, SOURCE_HOSTS_SHOWN);
+  const more = named.length - shown.length;
+  const head = headFor(sourceClass, shown[0]);
+  const parts = [head, ...shown.map((s) => sourceLineOf([s.host, s.published]))];
+  if (more > 0) parts.push(`+${more}`);
+  return (
+    <span className="fr-source-line fr-tag fr-mono" data-fr-source-class={sourceClass} data-testid="commitment-source">
+      {sourceLineOf(parts)}
     </span>
   );
 }
@@ -371,7 +468,9 @@ export function SeqChip({ children, tone = "neutral" }: { children: ReactNode; t
 }
 
 /** `itemKey(i)` (marks, 2026-09-22): the read_field key of item i — given, each item becomes a mark target. */
-export function NumberedList({ items, className, itemKey }: { items: string[]; className?: string; itemKey?: (i: number) => string }) {
+/** `itemAfter` (1a-4) renders under an item — the commitment source line. It sits INSIDE the
+ *  MarkTarget's sibling, never inside its text, so it is not part of what a mark anchors to. */
+export function NumberedList({ items, className, itemKey, itemAfter }: { items: string[]; className?: string; itemKey?: (i: number) => string; itemAfter?: (i: number) => ReactNode }) {
   if (items.length === 0) return null;
   return (
     <ol className={`flex flex-col gap-2${className ? ` ${className}` : ""}`}>
@@ -382,9 +481,12 @@ export function NumberedList({ items, className, itemKey }: { items: string[]; c
           </span>
           {/* Stage 3f: colour comes from .fr-numbered-text (ink/85 on paper; paper alphas on a dark Screen) —
               an inline colour here used to win the cascade and kept beats 9/10 dark-on-dark. */}
-          <MarkTarget kind="read_field" keyVal={itemKey ? itemKey(i) : null} text={text} className="min-w-0 flex-1">
-          <p className="fr-numbered-text text-sm font-light leading-relaxed">{text}</p>
-          </MarkTarget>
+          <div className="min-w-0 flex-1">
+            <MarkTarget kind="read_field" keyVal={itemKey ? itemKey(i) : null} text={text}>
+              <p className="fr-numbered-text text-sm font-light leading-relaxed">{text}</p>
+            </MarkTarget>
+            {itemAfter ? itemAfter(i) : null}
+          </div>
         </li>
       ))}
     </ol>

@@ -87,13 +87,19 @@ describe("Findings render honesty — no glyph on the body, honest meta pre-recu
     expect(c.textContent).not.toContain("undated"); // our reading has no event date — marker dropped
   });
 
-  it("(2b) corroborated (recurrence > 0) → the header meta line is DROPPED entirely (no date, no Source, no Our-read)", () => {
+  // 6A (signed 2026-10-08): a corroborated finding now CARRIES the Our-read tag. A finding is our
+  // synthesis whether or not the record corroborates it, and dropping the tag made a corroborated
+  // finding read as the record speaking — the one thing 1a-4 exists to prevent. What the old rule
+  // got right is kept: no DATE on this branch, because the per-receipt lines below already carry
+  // host + read date and a bare read-date here names nothing.
+  it("(2b) corroborated (recurrence > 0) → the Our-read tag renders, with NO date beside it", () => {
     const c = renderF(read(finding({ recurrence: 3, quotes: [] })));
+    expect(c.textContent).toContain("Our read");
+    expect(c.textContent).not.toContain("Our read ·");          // the tag alone — no hollow date
     expect(c.textContent).not.toContain("Source:");
-    expect(c.textContent).not.toContain("Our read");
-    expect(c.textContent).not.toContain("September 2, 2026"); // header meta node gone (receipts carry host+date)
+    expect(c.textContent).not.toContain("September 2, 2026");   // header meta date still gone
     expect(c.textContent).not.toContain("undated");
-    expect(c.textContent).toContain(finding({}).body); // the body still renders
+    expect(c.textContent).toContain(finding({}).body);          // the body still renders
   });
 
   it("(2b) receipts unchanged: a corroborated finding's verbatim receipt still carries its quote + host/date", () => {

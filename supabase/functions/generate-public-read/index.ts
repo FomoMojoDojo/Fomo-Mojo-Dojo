@@ -30,7 +30,7 @@ import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage }
 import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
 import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, specificIsSourced, type FieldClassDecision } from "../_shared/classFactCheck.ts";
-import { searchLiveRecordForSpecifics, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
+import { searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
 import { PromoteRefused, promoteStagedReads, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
@@ -563,6 +563,28 @@ Respond with ONLY JSON:
         }
         decs[i] = decideOne(f);     // re-decide on the widened evidence
       }
+
+      // PASS 3 (ruling 2026-10-08) — THE STAGE GATE. The promote fact-check used to be the last
+      // line; it is now the gate, because the class judge cleared "unique" and "exclusive" on a
+      // staged strategy row where neither word appears anywhere in 253 live signals or 258 own-words
+      // rows. A specific that survives PASS 2 is in NO record/you row. Two very different things can
+      // be true of it, and only one of them is hedgeable:
+      //   carried by one of OUR OWN rows (a finding, an analysis row) → it is ours to hedge, and the
+      //     judge still decides whether we hedged it. Branch stays judge_required.
+      //   carried by NOTHING → UNSUPPORTED. It cannot be cited and it cannot be hedged into
+      //     existence, so the field refuses here and the judge is never asked about it.
+      for (let i = 0; i < decs.length; i++) {
+        const d = decs[i];
+        if (d.branch !== "judge_required") continue;
+        const tokens = d.unsourced.filter((u) => u.kind !== "unresolved").map((u) => u.token);
+        if (tokens.length === 0) continue;
+        const specifics = unsourcedSpecificsOf(stamped[i].text, tokens);
+        const ours = await specificsCarriedByOurOwnRows(supabase, company_id, specifics);
+        const unsupported = d.unsourced.filter((u) => u.kind !== "unresolved" && !ours.has(u.token));
+        if (unsupported.length > 0) {
+          decs[i] = { ...d, branch: "unsupported", unsourced: unsupported };
+        }
+      }
       classDecisions[kind] = decs;
       return decs;
     };
@@ -710,12 +732,17 @@ Respond with ONLY JSON:
         const offeringActive = kind === "offering";
         const decs = classDecisions[kind as Kind] ?? [];
         const needJudgment = decs.filter((d) => d.branch === "judge_required");
+        const unsupportedFields = decs.filter((d) => d.branch === "unsupported");
         // Only the fields (b) could not source are put to the judge. A field it cleared is not
         // offered for judgment at all, so a lenient judge can neither rescue nor overturn it.
         const askBlock = needJudgment.length === 0
-          ? "none — every our_read field is verbatim-sourced in a cited record/you row, so there is nothing to judge for class."
-          : JSON.stringify(needJudgment.map((d) => ({ field: d.field, class: d.cls, unsourced_specifics: d.unsourced.map((u) => u.token) })));
-        const judgeUser = `LEDGER (id-tagged):\n${CAT_LIVE}\n\nFIELD CLASSES (computed from each field's citations, weakest-wins):\n${JSON.stringify(decs.map((d) => ({ field: d.field, class: d.cls, branch: d.branch })))}\n\nFIELDS NEEDING A CLASS JUDGMENT (check (e) — these state specifics no cited record/you row carries):\n${askBlock}\n\nTHE READ:\n${kind}: ${JSON.stringify(payload)}\n\nJudge and decide accept (accept reflects a,b,c,e${offeringActive ? " and the offering f–i flags" : ""} ONLY — d is reported, never blocks).`;
+          ? "none — every our_read field is either verbatim-sourced in a cited record/you row or already refused, so there is nothing to judge for class."
+          : JSON.stringify(needJudgment.map((d) => ({ field: d.field, class: d.cls, stated_only_in_our_own_rows: d.unsourced.map((u) => u.token) })));
+        // an unsupported field is REFUSED already — it is reported to the judge as context, never as
+        // a question, so no answer it gives can clear it
+        const refusedBlock = unsupportedFields.length === 0 ? "none"
+          : JSON.stringify(unsupportedFields.map((d) => ({ field: d.field, unsupported_specifics: d.unsourced.map((u) => u.token) })));
+        const judgeUser = `LEDGER (id-tagged):\n${CAT_LIVE}\n\nFIELD CLASSES (computed from each field's citations, weakest-wins):\n${JSON.stringify(decs.map((d) => ({ field: d.field, class: d.cls, branch: d.branch })))}\n\nFIELDS NEEDING A CLASS JUDGMENT (check (e) — these state specifics carried only by OUR OWN rows, so the question is whether we wrote them as our reading):\n${askBlock}\n\nALREADY REFUSED (specifics found nowhere in the company's record — context only, your answer cannot clear these):\n${refusedBlock}\n\nTHE READ:\n${kind}: ${JSON.stringify(payload)}\n\nJudge and decide accept (accept reflects a,b,c,e${offeringActive ? " and the offering f–i flags" : ""} ONLY — d is reported, never blocks).`;
         const v = await run(judgeChoice, judgeSysFor(kind as Kind), judgeUser, 0);
         verdicts[kind as Kind] = v;
         return v;
@@ -862,7 +889,18 @@ Respond with ONLY JSON:
     const judgeVerdicts = Object.fromEntries(outcomes.map((o) => [o.kind, o.verdict]));
 
     if (doStage) {
-      return json({ ok: true, staged, per_kind: perKind, rejected, resolved_payloads: resolvedPayloads, citation_resolution: citationResolution, judge_verdicts: judgeVerdicts, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+      // 1a-4: a STAGE run reports the same class evidence a dry run does — the staged rows are the
+      // ones an operator is about to accept, so the branch that decided each field, the specifics
+      // the fact-check could not source, and the rows admitted from the live record all belong here.
+      return json({ ok: true, staged, per_kind: perKind, rejected,
+        reasked, sourcing_search: sourcingSearch, admitted_from_live_record: admitted,
+        class_decisions: Object.fromEntries(Object.entries(classDecisions).map(([k, ds]) => [k, (ds ?? []).map((d) => ({
+          field: d.field, class: d.cls, branch: d.branch, examined: d.examined,
+          unsourced: d.unsourced.map((u) => `${u.token} (${u.kind})`),
+          judge_class_ok: judgeHedgedByField(verdicts[k as Kind] ?? {})[d.field] ?? null,
+          class_ok: fieldClassOk(d, judgeHedgedByField(verdicts[k as Kind] ?? {})[d.field]),
+        }))])),
+        resolved_payloads: resolvedPayloads, citation_resolution: citationResolution, judge_verdicts: judgeVerdicts, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
     }
     if (!doWrite) {
       return json({ ok: true, dry_run: true, per_kind: perKind, rejected, payloads, resolved_payloads: resolvedPayloads,

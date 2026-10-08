@@ -196,3 +196,28 @@ Deno.test("source guard: the re-ask is PER FIELD — only the refused are rewrit
   const per = await read("./publicReadPerKind.ts");
   assert(per.includes("if (!reasked && deps.reaskOnClassRefusal) {") && per.includes("reasked = true; continue;"), "one re-ask round per kind");
 });
+
+Deno.test("source guard: the stage gate refuses an unsupported specific WITHOUT asking the judge", async () => {
+  const gpr = await read("../generate-public-read/index.ts");
+  assert(gpr.includes("// PASS 3 (ruling 2026-10-08) — THE STAGE GATE"), "pass 3 exists and says what it is");
+  assert(gpr.includes("await specificsCarriedByOurOwnRows(supabase, company_id, specifics)"), "it asks whether one of OUR rows carries the specific");
+  assert(gpr.includes('decs[i] = { ...d, branch: "unsupported", unsourced: unsupported };'), "and marks the field unsupported when none does");
+  // an unsupported field is never put to the judge as a question
+  assert(gpr.includes('const needJudgment = decs.filter((d) => d.branch === "judge_required");'), "only judge_required is asked");
+  assert(gpr.includes("ALREADY REFUSED (specifics found nowhere in the company's record — context only, your answer cannot clear these)"), "unsupported fields go to the judge as context, not as a question");
+  const gate = await read("./classFactCheck.ts");
+  assert(gate.includes('if (d.branch === "unsupported") return false;'), "and fieldClassOk refuses it whatever the judge said");
+  // the probe is OUR rows only — analysis signals and open findings
+  const scope = await read("./classSourcingScope.ts");
+  assert(scope.includes("if (!isAnalysisRow(r)) continue;                       // ours ONLY"), "the probe reads only our own signals");
+  assert(scope.includes('.eq("status", "open")'), "and our open findings");
+});
+
+Deno.test("source guard: a source line is ordered on the RAW date, never the rendered segment", async () => {
+  const prim = await read("../../../src/views/client/firstReadPreview/primitives.tsx");
+  assert(prim.includes("const sortKey = (s: FRCommitmentSource): string => String(s.publishedAt ?? s.published ?? \"\");"), "the sort key is the raw date");
+  assert(prim.includes("sortKey(b).localeCompare(sortKey(a))"), "and the order uses it");
+  assert(!prim.includes('(b.published ?? "").localeCompare(a.published ?? "")'), "the display-string sort is gone");
+  const loader = await read("../../../src/views/client/firstReadPreview/useFirstReadPreviewData.ts");
+  assert(loader.includes("published: publishedSegment(raw), publishedAt: raw,"), "the loader carries the raw date through");
+});
