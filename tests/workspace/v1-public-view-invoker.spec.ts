@@ -42,6 +42,11 @@ const VIEWS = ["derived_tensions_structural", "relevance_overrides_without_live_
 
 // The signed baseline from the 2026-10-05 report: what the leak exposed, and what an admin must
 // still read afterwards. Data-dependent on purpose — if the fixture set changes, update these two.
+//
+// Briefly 12 and back to 11 (R-A5, 2026-10-12): Act 1's correction claim appeared here as
+// under_evidenced_diagnose, which was the VIEW asking the wrong question — an attestation is its
+// own evidence — not the fixture moving. derived_tensions_structural now excludes client_attested
+// from both under_evidenced branches, so the signed count stands. Guard: clientAttestedTension.spec.ts.
 const ADMIN_ROWS = 11;
 const ADMIN_COMPANIES = 3;
 

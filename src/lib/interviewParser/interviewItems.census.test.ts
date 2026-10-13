@@ -15,6 +15,17 @@ import { join, relative } from "node:path";
 const ROOT = join(__dirname, "..", "..", "..");
 const SCOPES = ["src", "supabase/functions"];
 const TABLE_NAME = /interview_items/;
+// R-A1 (2026-10-12): the override record is walled the same way, and separately — its name does not
+// contain "interview_items", so the regex above would never have caught it. Only the one shared
+// module may name it (the resolver lives there) plus the migrations; nothing else reads or writes an
+// override, which is what keeps effectiveItemKind() the single authority on the rule.
+const OVERRIDES_TABLE_NAME = /interview_item_kind_overrides/;
+const OVERRIDES_ALLOWED = [
+  /^supabase\/functions\/_shared\/interviewItems\.ts$/,
+  /^supabase\/functions\/_shared\/interviewItems\.test\.ts$/,
+  /^src\/lib\/interviewParser\//,
+  /^supabase\/migrations\//,
+];
 /** The only places allowed to name the table. */
 const ALLOWED = [
   /^supabase\/functions\/interview-parser\//,
@@ -45,6 +56,24 @@ describe("interview_items census (parser commit 1)", () => {
       }
     }
     expect(offenders, `readers of the item store outside the parser: ${offenders.join(", ")}`).toEqual([]);
+  });
+
+  it("no file outside the one shared module and the migrations names the kind-override record", () => {
+    const offenders: string[] = [];
+    for (const scope of SCOPES) {
+      for (const file of walk(join(ROOT, scope))) {
+        const rel = relative(ROOT, file).split("\\").join("/");
+        if (OVERRIDES_ALLOWED.some((re) => re.test(rel))) continue;
+        if (OVERRIDES_TABLE_NAME.test(readFileSync(file, "utf8"))) offenders.push(rel);
+      }
+    }
+    expect(offenders, `readers of the kind-override record outside the resolver: ${offenders.join(", ")}`).toEqual([]);
+  });
+
+  it("the override census is not vacuous: the resolver's own module DOES name it", () => {
+    const resolver = readFileSync(join(ROOT, "supabase/functions/_shared/interviewItems.ts"), "utf8");
+    expect(OVERRIDES_TABLE_NAME.test(resolver)).toBe(true);
+    expect(resolver).toContain("export async function effectiveItemKind");
   });
 
   it("the census is not vacuous: the one shared module does name the table", () => {

@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { sourceHost } from "@/lib/sourceHost";
-import { registryOriginOf, type RegistryFilingOriginView } from "@/views/client/workspace/InterviewOrigin";
+import { registryOriginOf, type RegistryFilingOriginView, attestedOriginOf, type AttestedOriginView } from "@/views/client/workspace/InterviewOrigin";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -86,6 +86,8 @@ export type ClaimDeltaRow = {
   declared_claim_provenance: "internal_declared" | "public_observed" | "client_attested" | "analytic" | "publicly_declared" | null;
   /** C2: the registry origin a publicly_declared declared side carries (raw_payload.origin = registry_filing). */
   declared_registry_origin?: RegistryFilingOriginView | null;
+  /** Act 1: the correction-minted attested origin (person + date) for attestedOrigin(). */
+  declared_attested_origin?: AttestedOriginView | null;
   declared_attested_date: string | null;
 };
 
@@ -276,6 +278,11 @@ export function useStrategicDelta(companyId?: string) {
       const claimProvenanceById = new Map<string, ClaimRow["provenance"]>(claimRows.map((c) => [c.id, c.provenance]));
       // C2: the registry origin of a publicly_declared claim (its say-side frame); null for every other provenance.
       const claimRegistryOriginById = new Map<string, RegistryFilingOriginView | null>(claimRows.map((c) => [c.id, c.provenance === "publicly_declared" ? registryOriginOf(c.raw_payload) : null]));
+      // Act 1 (2026-10-08): the attested origin of a client_attested claim minted by a correction —
+      // its raw_payload carries person_name + attested_at, so attestedOrigin() renders the signed
+      // "You told us · {name} · {date}" without a second read. Null for every other provenance, and
+      // null for an attested claim that did not come from a correction (origin !== interview_correction).
+      const claimAttestedOriginById = new Map<string, AttestedOriginView | null>(claimRows.map((c) => [c.id, c.provenance === "client_attested" ? attestedOriginOf(c.raw_payload) : null]));
 
       // FR-D3: resolve the attesting First Read date for client_attested claims.
       // raw_payload.session_id -> first_read_sessions.started_at. One extra read,
@@ -338,6 +345,7 @@ export function useStrategicDelta(companyId?: string) {
         declared_claim_provenance: r.declared_claim_id ? claimProvenanceById.get(r.declared_claim_id) ?? null : null,
         declared_attested_date: r.declared_claim_id ? claimAttestedDateById.get(r.declared_claim_id) ?? null : null,
         declared_registry_origin: r.declared_claim_id ? claimRegistryOriginById.get(r.declared_claim_id) ?? null : null,
+        declared_attested_origin: r.declared_claim_id ? claimAttestedOriginById.get(r.declared_claim_id) ?? null : null,
       }));
 
       const toDeltaSignal = (r: {

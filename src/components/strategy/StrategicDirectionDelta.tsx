@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FilingOriginChip } from "@/views/client/workspace/InterviewOrigin";
+import { FilingOriginChip, AttestedOriginChip } from "@/views/client/workspace/InterviewOrigin";
 import { useStrategicDelta, type ClaimDeltaRow, type DeltaSignal, type PublicTheme, type DispositionValue, type PublicVoiceDelta, type StruckClaim } from "@/hooks/useStrategicDelta";
 import { useDeltaStepRun } from "@/hooks/useDeltaStepRun";
 import OpenQuestionRecomputeControl from "@/components/strategy/OpenQuestionRecomputeControl";
@@ -763,7 +763,14 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus, 
                   Inferred pairing
                 </span>
               )}
-              {d.declared_claim_provenance === "client_attested" && <AttestedChip date={d.declared_attested_date} />}
+              {/* Act 1 (2026-10-08): a correction-minted attested claim wears the signed
+                   "You told us · {name} · {date}" frame, expanding to the client's own words.
+                   An attested claim WITHOUT a correction origin keeps the chip it had. */}
+              {d.declared_claim_provenance === "client_attested" && (
+                d.declared_attested_origin
+                  ? <AttestedOriginChip claim={{ provenance: d.declared_claim_provenance, raw_payload: d.declared_attested_origin ? { origin: "interview_correction", ...d.declared_attested_origin } : undefined, statement: d.declared_statement }} />
+                  : <AttestedChip date={d.declared_attested_date} />
+              )}
               {/* C2: a registry-declared say side wears its signed frame (In your filing / In your profile) */}
               {d.declared_claim_provenance === "publicly_declared" && (
                 <FilingOriginChip claim={{ provenance: d.declared_claim_provenance, raw_payload: d.declared_registry_origin ?? undefined, statement: d.declared_statement }} />
@@ -826,7 +833,9 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus, 
           {openQuestions.map((d) => (
             <div key={d.id} style={{ paddingLeft: 8, borderLeft: `2px solid ${D.hairlineFaint}`, marginBottom: 8 }}>
               {d.declared_claim_provenance === "client_attested" && (
-                <div style={{ marginBottom: 4 }}><AttestedChip date={d.declared_attested_date} /></div>
+                <div style={{ marginBottom: 4 }}>{d.declared_attested_origin
+                  ? <AttestedOriginChip claim={{ provenance: d.declared_claim_provenance, raw_payload: { origin: "interview_correction", ...d.declared_attested_origin }, statement: d.declared_statement }} />
+                  : <AttestedChip date={d.declared_attested_date} />}</div>
               )}
               {d.declared_claim_provenance === "publicly_declared" && (
                 <div style={{ marginBottom: 4 }}><FilingOriginChip claim={{ provenance: d.declared_claim_provenance, raw_payload: d.declared_registry_origin ?? undefined, statement: d.declared_statement }} /></div>
