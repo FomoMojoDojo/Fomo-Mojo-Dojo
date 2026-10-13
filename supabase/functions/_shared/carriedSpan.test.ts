@@ -357,3 +357,35 @@ Deno.test("R5. the dry run builds the pool as the generate path does at the carr
   assert(!/input_ledger/.test(sel), "the carry point reads no stored ledger");
   assert(sel.includes("await poolSpans()"), "it builds the pool from the catalogue it has just enlarged");
 });
+
+// ── the splice is BY PATH — established while diagnosing refusal 9868 ──────────────────────────
+//
+// The question asked of run 9868 was whether spliceCarries preserves a generated entry at a
+// NON-carried path. It does: it assigns attrs[i] at each carried index and never rebuilds or
+// truncates the array. Simulated over model arrays of length 0..4 against carries at [0] and [1]:
+// a model entry at index 2 or 3 survives; one at 0 or 1 is overwritten, which is correct — that is
+// the path the carry owns. Pinned here because section 3's reading of 9868 rests on it.
+Deno.test("splice: a generated line at a NON-carried path survives the splice", async () => {
+  const gen = await readSrc("../generate-public-read/index.ts");
+  const fn = gen.slice(gen.indexOf("const spliceCarries ="), gen.indexOf("const stampAndDecide ="));
+  assert(fn.includes("attrs[i] = { text: c.stored_text, citations: refs };"), "assignment at the carried index");
+  // `attrs` is BOUND once and never rebound: the only `attrs =` in the function is its declaration
+  assertEquals(fn.split("attrs =").length - 1, 1, "attrs is bound once");
+  assert(fn.includes("const attrs = Array.isArray(payload.unique_attributes)"), "and that one is the declaration");
+  for (const banned of ["attrs.splice(", "attrs.filter(", "attrs.slice(", "attrs.length =", "payload.unique_attributes ="]) {
+    assert(!fn.includes(banned), `the array is never replaced or truncated — only indexed, and this does ${banned}`);
+  }
+
+  // the same semantics, run: carries at [0] and [1] over model arrays of each length
+  const splice = (attrs: Array<Record<string, unknown>>, idx: readonly number[]) => {
+    for (const i of idx) attrs[i] = { text: `CARRY-${i}`, citations: ["S"] };
+    return attrs;
+  };
+  const survivors = (n: number) =>
+    splice(Array.from({ length: n }, (_, i) => ({ text: `GEN-${i}` })), [0, 1])
+      .filter((x) => String(x.text).startsWith("GEN-")).map((x) => x.text);
+  assertEquals(survivors(0), []);
+  assertEquals(survivors(2), [], "a model array of 2 is entirely overwritten by 2 carries");
+  assertEquals(survivors(3), ["GEN-2"], "the entry at the non-carried path survives");
+  assertEquals(survivors(4), ["GEN-2", "GEN-3"]);
+});

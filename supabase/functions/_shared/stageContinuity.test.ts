@@ -233,3 +233,108 @@ Deno.test("V2/V3 on the SLOT path too: full detail, named guard, not run_failed"
   assert(!/excluded_by_rule: \{ kind, guard: "run_failed", detail: String\(e\)\.slice/.test(slots),
     "the old run_failed + slice shape is gone");
 });
+
+// ── C1-A (operator ruling, 2026-10-13): a carried line continues BY ANCHOR ──────────────────────
+//
+// Refusal 9868 was C1 working as written and finding a gap R3 put there. R3 REPLACES a carried
+// line's citations with its span's row, so the line carried for current unique_attributes[1] cites
+// dfb6da68 while that current line cites 99037383 — they can never share a citation, however
+// exactly the carried words restate the fact. Measured on the live rows before building this:
+//
+//   current unique_attributes[1]  "the first kinship program in the country, with a
+//                                  family-placement retention rate over three decades"
+//                                 citations ["99037383"]   specifics ["first"]
+//   the span the carry chose      dfb6da68{45,114} → rendered
+//                                 "established the first kinship program in the country"
+//                                 carries ["first"]  → MISSING []
+//   the spans it did NOT choose   dfb6da68{0,43}   (30 years)  MISSING ["first"]
+//                                 dfb6da68{116,176} (90% / 18)  MISSING ["first"]
+//
+// So the carriage half still discriminates; only the citation half is dropped, and only for a
+// carried line, and only at its own path.
+const CARRY_PATH = "unique_attributes[1]";
+const CURRENT_AT_PATH: CitedLine = { field: CARRY_PATH, ...CURRENT_KINSHIP };
+/** What the carry splices in: the record's words, citing the record's row — never r99. */
+const CARRIED_LINE: CitedLine = {
+  field: CARRY_PATH, text: "established the first kinship program in the country",
+  cls: "record", refs: ["rdf"],
+};
+const base = { newLedgerIds: new Set(["r99", "rdf"]), textByRef: TEXTS, classByRef: CLASSES };
+
+Deno.test("C1-A.1 a carried line continues its anchor line without a shared citation (the 9868 case)", () => {
+  // the citations really do not overlap — that is the whole point
+  assertEquals(CURRENT_AT_PATH.refs.filter((r) => CARRIED_LINE.refs.includes(r)), []);
+  // under C1 as written this refused; it is what integrity_runs 9868 recorded
+  const before = droppedLines({ currentLines: [CURRENT_AT_PATH], stagedLines: [CARRIED_LINE], ...base });
+  assertEquals(before.length, 1, "no carriedFields ⇒ the old shared-citation test, and the old refusal");
+  // C1-A: the path is declared carried, so the anchor is the test
+  const after = droppedLines({ currentLines: [CURRENT_AT_PATH], stagedLines: [CARRIED_LINE], ...base, carriedFields: new Set([CARRY_PATH]) });
+  assertEquals(after, [], "continued by anchor — same field path, every specific carried");
+});
+
+Deno.test("C1-A.2 a carried line missing a specific of its anchor is NOT a continuation", () => {
+  // the 90% clause of the SAME row — usable, relevant, and silent about `first`
+  const wrongSpan: CitedLine = {
+    field: CARRY_PATH, text: "over 90% of youth served stayed in family settings to age 18",
+    cls: "record", refs: ["rdf"],
+  };
+  const missing = droppedLines({ currentLines: [CURRENT_AT_PATH], stagedLines: [wrongSpan], ...base, carriedFields: new Set([CARRY_PATH]) });
+  assertEquals(missing.length, 1, "the anchor is not a free pass — carriage still decides");
+  assertEquals(missing[0].specifics, ["first"]);
+  assert(missing[0].reason.includes(`the line carried at ${CARRY_PATH} does not carry [first]`), missing[0].reason);
+});
+
+Deno.test("C1-A.3 generated lines still require a shared citation", () => {
+  // a GENERATED line that carries `first` but cites only the carried row: not a continuation
+  const genNoShare: CitedLine = { field: CARRY_PATH, text: "the first kinship program in the country", cls: "our_read", refs: ["rdf"] };
+  assertEquals(
+    droppedLines({ currentLines: [CURRENT_AT_PATH], stagedLines: [genNoShare], ...base, carriedFields: new Set() }).length,
+    1, "no carry declared at this path ⇒ the citation test stands",
+  );
+  // the same line citing r99 continues it, exactly as before C1-A
+  const genShares: CitedLine = { ...genNoShare, refs: ["r99", "rdf"] };
+  assertEquals(
+    droppedLines({ currentLines: [CURRENT_AT_PATH], stagedLines: [genShares], ...base, carriedFields: new Set() }),
+    [], "unchanged for generated lines",
+  );
+  // and declaring OTHER paths carried changes nothing for a generated line at this one
+  assertEquals(
+    droppedLines({ currentLines: [CURRENT_AT_PATH], stagedLines: [genNoShare], ...base, carriedFields: new Set(["unique_attributes[0]"]) }).length,
+    1, "the relaxation is per path, not per run",
+  );
+});
+
+Deno.test("C1-A.4 a carry at ANOTHER path cannot continue this line", () => {
+  const elsewhere: CitedLine = { ...CARRIED_LINE, field: "unique_attributes[0]" };
+  const missing = droppedLines({
+    currentLines: [CURRENT_AT_PATH], stagedLines: [elsewhere], ...base,
+    carriedFields: new Set(["unique_attributes[0]", CARRY_PATH]),
+  });
+  assertEquals(missing.length, 1, "continuity is by ANCHOR — the same field path, not any carried line");
+});
+
+Deno.test("C1-A.5 a carried line still continues a line it ALSO shares a citation with", () => {
+  // the relaxation adds a way to continue; it removes none
+  const sharesToo: CitedLine = { ...CARRIED_LINE, refs: ["r99", "rdf"] };
+  assertEquals(droppedLines({ currentLines: [CURRENT_AT_PATH], stagedLines: [sharesToo], ...base, carriedFields: new Set([CARRY_PATH]) }), []);
+});
+
+Deno.test("C1-A.6 the licence to drop is UNCHANGED — a carried path does not license anything", () => {
+  // the real 170+ case: its record row left the ledger, so it may be dropped whether or not its
+  // path is carried, and for the same reason as before
+  const line170: CitedLine = {
+    field: "unique_attributes[2]",
+    text: "a 170+ year institutional history with deep government payer relationships",
+    cls: "our_read", refs: ["f838", "o3b", "gone8e1b"],
+  };
+  const noCarry = droppedLines({ currentLines: [line170], stagedLines: [], ...base, carriedFields: new Set() });
+  const carried = droppedLines({ currentLines: [line170], stagedLines: [], ...base, carriedFields: new Set(["unique_attributes[2]"]) });
+  assertEquals(noCarry, carried, "licensing is decided before continuity and C1-A does not touch it");
+});
+
+Deno.test("C1-A.7 the hook passes the carried paths and the staged line's field path", async () => {
+  const gen = await Deno.readTextFile(new URL("../generate-public-read/index.ts", import.meta.url));
+  assert(gen.includes("carriedFields: new Set(Object.keys(carriedNow)),"), "the carried block's keys ARE the carried paths");
+  assert(gen.includes("field: f.field, text: f.text, cls: f.cls, refs: f.refs.map(toUuid),"), "a staged line carries its field path, or no carry could ever be its own anchor");
+  assert(gen.indexOf("carriedFields: new Set(Object.keys(carriedNow)),") > gen.indexOf("const carriedNow ="), "the paths come from this run's block");
+});

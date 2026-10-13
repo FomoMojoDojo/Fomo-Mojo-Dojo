@@ -813,8 +813,10 @@ Respond with ONLY JSON:
       // that is what the model echoes; the stored payload and the current read carry UUIDs. So the
       // staged lines are mapped through uuidByRef before anything is compared.
       const toUuid = (r: string) => uuidByRef.get(r) ?? r;
+      // C1-A: the field path travels with the line. A carried line continues by anchor, and the
+      // anchor is this path — so dropping it here would make every carried line un-continuable.
       const stagedLines: CitedLine[] = (fieldClasses[kind] ?? []).map((f) => ({
-        text: f.text, cls: f.cls, refs: f.refs.map(toUuid),
+        field: f.field, text: f.text, cls: f.cls, refs: f.refs.map(toUuid),
       }));
       const textByUuid: Record<string, string> = {};
       const classByUuid: Record<string, string> = {};
@@ -861,6 +863,7 @@ Respond with ONLY JSON:
         currentLines, stagedLines,
         newLedgerIds: new Set(Object.keys(textByUuid)),
         textByRef: textByUuid, classByRef: classByUuid,
+        carriedFields: new Set(Object.keys(carriedNow)),   // C1-A: which paths are the record's words
       });
       const block: ContinuityBlock = continuityBlock(currentLines.length, missing, softened);
       continuityBlocks[kind] = block;

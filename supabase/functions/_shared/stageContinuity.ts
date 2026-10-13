@@ -118,10 +118,21 @@ export type MissingLine = { statement: string; specifics: string[]; reason: stri
 
 /** C1 — the staged read against the read it would replace.
  *
- *  A staged line CONTINUES a current line when it shares at least one citation AND carries every
- *  specific token of that line. Deliberately not normalizeForHash equality and not verbatim
- *  containment: both refuse an IMPROVED line, and improving a line is the point of regenerating
- *  (adding the 90% to the kinship statement would have been blocked by either).
+ *  A GENERATED staged line continues a current line when it shares at least one citation AND
+ *  carries every specific token of that line. Deliberately not normalizeForHash equality and not
+ *  verbatim containment: both refuse an IMPROVED line, and improving a line is the point of
+ *  regenerating (adding the 90% to the kinship statement would have been blocked by either).
+ *
+ *  C1-A (operator ruling, 2026-10-13): a CARRIED line continues BY ANCHOR, not by citation. R3 makes
+ *  a carried line's citations its span's row — they REPLACE the model's, so a carried line can never
+ *  share a citation with the current line it was carried for even when both state the same fact.
+ *  Refusal 9868 was exactly that: current unique_attributes[1] cites 99037383, the line carried for
+ *  it cites dfb6da68, and the shared-citation half of the test could not be satisfied by any carry.
+ *  So for a carried line the anchor IS the test: it continues the current line at its own field path
+ *  — the path R4 searched on, the one tagged carry:<path> — and it must still carry every specific
+ *  token of that current line. The carriage half is unchanged and does the discriminating: on
+ *  dfb6da68 only the span the carry chose ({45,114}) carries `first`; the 90% clause and the
+ *  30-years clause do not, so neither can pass itself off as a continuation of that line.
  *
  *  A current line must be continued UNLESS clause (7) licenses the drop: its cited rows have left
  *  the ledger, or it no longer passes the specifics check against what remains. Both are decided
@@ -132,7 +143,11 @@ export function droppedLines(args: {
   newLedgerIds: ReadonlySet<string>;
   textByRef: Readonly<Record<string, string>>;
   classByRef: Readonly<Record<string, string>>;
+  /** C1-A: the field paths this run CARRIED. A staged line at one of these is the record's own
+   *  words, spliced over whatever the model wrote, with its citations replaced by the span's row. */
+  carriedFields?: ReadonlySet<string>;
 }): MissingLine[] {
+  const carried = args.carriedFields ?? new Set<string>();
   const missing: MissingLine[] = [];
   for (const old of args.currentLines) {
     if (!old.text.trim()) continue;
@@ -144,14 +159,23 @@ export function droppedLines(args: {
     const d = decideFieldClass({ field: "continuity", cls: old.cls, text: old.text, citedSourceTexts: cited });
     if (d.branch === "judge_required" || d.branch === "unsupported") continue;  // licensed: fails the check now
     const tokens = extractSpecifics(old.text).map((s) => s.token);
-    const continued = args.stagedLines.some((n) =>
-      n.refs.some((r) => old.refs.includes(r)) && tokens.every((t) => verbatimProvable(t, n.text))
-    );
+    const continued = args.stagedLines.some((n) => {
+      // CARRIAGE — the same test for both kinds of line, and the only test C1-A relaxes around.
+      if (!tokens.every((t) => verbatimProvable(t, n.text))) return false;
+      // C1-A: a carried line answers for its OWN field path and nothing else. Not a free pass —
+      // a carry at another path cannot continue this line, and it still had to carry the specifics.
+      if (n.field !== undefined && carried.has(n.field)) return n.field === old.field;
+      // a GENERATED line is unchanged: it must share a citation with the line it continues.
+      return n.refs.some((r) => old.refs.includes(r));
+    });
     if (!continued) {
+      const anchorCarried = old.field !== undefined && carried.has(old.field);
       missing.push({
         statement: old.text,
         specifics: tokens,
-        reason: `still ${d.branch} against the new ledger; no staged line shares a citation and carries [${tokens.join(", ")}]`,
+        reason: anchorCarried
+          ? `still ${d.branch} against the new ledger; the line carried at ${old.field} does not carry [${tokens.join(", ")}]`
+          : `still ${d.branch} against the new ledger; no staged line shares a citation and carries [${tokens.join(", ")}]`,
       });
     }
   }
