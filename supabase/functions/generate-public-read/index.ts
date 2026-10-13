@@ -42,6 +42,10 @@ import {
   CONTINUITY_GUARD, SOFTENING_GUARD, continuityBlock, continuityDetail, droppedLines,
   softenedSpecifics, softeningDetail, type CitedLine, type ContinuityBlock,
 } from "../_shared/stageContinuity.ts";
+import {
+  CARRIED_DRIFT_GUARD, carriedBlockOf, carryForLine, driftedSpans, usableSpansOf,
+  type CarriedBlock, type CarriedSpan, type FieldCarry,
+} from "../_shared/carriedSpan.ts";
 import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass } from "../_shared/publicReadInputs.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
@@ -106,8 +110,8 @@ const KINDS_INPUT = ["signal", "own_word", "finding", "delta"] as const;
 const CITE_OR_CLASS_RE = /citation|cites?$|refs?$|ids$|_class$|^class$/i;
 export function linesOfStoredPayload(payload: Record<string, unknown> | null): CitedLine[] {
   const out: CitedLine[] = [];
-  const walk = (v: unknown): void => {
-    if (Array.isArray(v)) { v.forEach(walk); return; }
+  const walk = (v: unknown, path = ""): void => {
+    if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
     if (!v || typeof v !== "object") return;
     const obj = v as Record<string, unknown>;
     for (const [k, val] of Object.entries(obj)) {
@@ -125,10 +129,11 @@ export function linesOfStoredPayload(payload: Record<string, unknown> | null): C
         } else {
           for (const kk of ["text", "statement", "promise", "body"]) if (typeof obj[kk] === "string") { text = String(obj[kk]); break; }
         }
-        if (text) out.push({ text, cls, refs: (val as unknown[]).map(String) });
+        const field = bare ? path : `${path ? `${path}.` : ""}${base}`;
+        if (text) out.push({ field, text, cls, refs: (val as unknown[]).map(String) });
         continue;
       }
-      if (!CITE_OR_CLASS_RE.test(k)) walk(val);
+      if (!CITE_OR_CLASS_RE.test(k)) walk(val, path ? `${path}.${k}` : k);
     }
   };
   walk(payload);
@@ -558,6 +563,9 @@ Respond with ONLY JSON:
 
     /** C1/C2: the continuity block per kind — reported, and stored on the integrity row either way. */
     const continuityBlocks: Partial<Record<Kind, ContinuityBlock>> = {};
+    /** V1: the carried block per kind, and the carries themselves for the splice. */
+    const carriedBlocks: Partial<Record<Kind, CarriedBlock>> = {};
+    const carriesByKind: Partial<Record<Kind, FieldCarry[]>> = {};
     const fieldClasses: Partial<Record<Kind, StampedField[]>> = {};          // 1a-4: per citing field, its class + refs + text
     const classDecisions: Partial<Record<Kind, FieldClassDecision[]>> = {};  // the tightening: (b) sourced, or judge_required
     /** Stamp a candidate payload's field classes and run (b) over it. Used for the FIRST answer and
@@ -590,6 +598,64 @@ Respond with ONLY JSON:
       ledger.count = ledger.ids.length;
       CAT_LIVE += `\n[${ref}] (${row.kind} · ${CLASS_LABEL[row.cls]}) ${row.text.slice(0, 400)}`;
       return ref;
+    };
+
+    // ── V1 helpers: selection, and the splice ───────────────────────────────────────────────────
+    const refByUuid = new Map<string, string>();
+    for (const [ref, uuid] of uuidByRef) refByUuid.set(uuid, ref);
+
+    /** The current read's cited lines for a kind, loaded once and shared with C1. */
+    const currentLinesCache: Partial<Record<Kind, CitedLine[]>> = {};
+    const currentLinesFor = async (kind: Kind): Promise<CitedLine[]> => {
+      if (currentLinesCache[kind]) return currentLinesCache[kind]!;
+      const { data } = await supabase.from("public_reads")
+        .select("payload").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
+      const lines = linesOfStoredPayload((data as { payload?: Record<string, unknown> } | null)?.payload ?? null);
+      currentLinesCache[kind] = lines;
+      return lines;
+    };
+
+    /** Every usable span in THIS run's pool. Computed once per kind. */
+    const poolSpans = async (): Promise<CarriedSpan[]> => {
+      const out: CarriedSpan[] = [];
+      for (const [ref, uuid] of uuidByRef) {
+        const cls = String(classByRef.get(ref) ?? "");
+        if (cls !== "record" && cls !== "you") continue;   // rule 2, before any clause work
+        const { spans } = await usableSpansOf(uuid, textByRef.get(ref) ?? "", cls);
+        out.push(...spans);
+      }
+      return out;
+    };
+
+    const selectCarries = async (kind: Kind): Promise<FieldCarry[]> => {
+      const current = await currentLinesFor(kind);
+      if (current.length === 0) return [];               // nothing to anchor relevance on
+      const pool = await poolSpans();
+      if (pool.length === 0) return [];
+      const out: FieldCarry[] = [];
+      for (const line of current) {
+        // only the differentiator paths carry in slice 1 — the narrative fields are compositions
+        if (!/^unique_attributes\[\d+\]$/.test(line.field ?? "")) continue;
+        const c = carryForLine(String(line.field), line.text, pool);
+        if (c) out.push(c);
+      }
+      return out;
+    };
+
+    /** Splice the carried text and its citations over the model's answer at each carried path.
+     *  The citations are REPLACED, not merged: a carried line's citations ARE its span's rows, so
+     *  its inherited class is the span's class (record/you) and never our_read (V1-R3). */
+    const spliceCarries = (payload: Record<string, unknown>, carries: readonly FieldCarry[]): void => {
+      const attrs = Array.isArray(payload.unique_attributes) ? payload.unique_attributes as Array<Record<string, unknown>> : null;
+      if (!attrs) return;
+      for (const c of carries) {
+        const m = /^unique_attributes\[(\d+)\]$/.exec(c.field);
+        if (!m) continue;
+        const i = Number(m[1]);
+        const refs = c.add_refs.map((u) => refByUuid.get(u)).filter((x): x is string => !!x);
+        if (refs.length === 0) continue;                 // the span's row is not in this run's catalogue
+        attrs[i] = { text: c.stored_text, citations: refs };
+      }
     };
 
     const stampAndDecide = async (kind: Kind, p: Record<string, unknown>): Promise<FieldClassDecision[]> => {
@@ -733,6 +799,31 @@ Respond with ONLY JSON:
         classByUuid[uuid] = String(classByRef.get(ref) ?? "");
       }
 
+      // ── V1 drift, FAIL CLOSED, before anything else ─────────────────────────────────────────
+      // The spans were chosen against the pool as it was read at the top of this run. If a row's
+      // text has moved since — or the row is gone — the carried line is no longer a carry, and it
+      // must not be persisted on offsets into text that no longer says that. Mirrors
+      // extract-own-words' snapshot_drift (index.ts:111).
+      const carriedNow = carriedBlocks[kind] ?? {};
+      if (Object.keys(carriedNow).length > 0) {
+        const rowTextNow: Record<string, string> = {};
+        const wanted = [...new Set(Object.values(carriedNow).flatMap((c) =>
+          [c.primary.row_id, ...(c.second ? [c.second.row_id] : [])]))];
+        for (const [table, col] of [["signals", "claim_text"], ["findings", "body"], ["own_words_candidates", "quote"]] as const) {
+          const { data } = await supabase.from(table).select(`id, ${col}`).in("id", wanted);
+          for (const r of ((data ?? []) as Array<Record<string, unknown>>)) {
+            const t = r[col]; if (typeof t === "string") rowTextNow[String(r.id)] = t;
+          }
+        }
+        const drifted = await driftedSpans(carriedNow, rowTextNow);
+        if (drifted.length > 0) {
+          throw new StageRefusal(
+            CARRIED_DRIFT_GUARD,
+            drifted.map((d) => `${d.field} ${d.row_id.slice(0, 8)}:${d.why}`).join("; "),
+          );
+        }
+      }
+
       // C2 — SOFTENING, on every our_read line of what we are about to store.
       // V2: the FULL line text, never a slice — the refusal must be able to say what it refused.
       const softened = stagedLines.flatMap((l) =>
@@ -767,7 +858,10 @@ Respond with ONLY JSON:
         // Part F: stage stores exactly what direct write stores (`stored`), plus cascade_source on a strategy row
         // (ruling 6) so promote re-derives the gap/tension set from the raw rungs; only is_current/superseded_by differ.
         const { data: ins, error: insErr } = await supabase.from("public_reads").insert({
-          company_id, kind, payload: built.staged, input_ledger: ledger,
+          company_id, kind, payload: built.staged,
+          // V1: the `carried` block records every carried span — sha/start/end, its class, and what
+          // the field was chosen over — so the operator can see which lines are the record's words.
+          input_ledger: { ...ledger, carried: carriedBlocks[kind] ?? {} },
           model_provider: genChoice.provider, model_name: genChoice.model,
           judge_verdict: verdict, judge_model: judgeChoice.model,
           is_current: false, supersedes_legacy_row: legacyFor(kind),
@@ -838,7 +932,27 @@ Respond with ONLY JSON:
       liveness: ledger.liveness,
       generate: async (kind) => {
         const extra = kind === "strategy" ? positioningContext : "";
-        const p = await run(genChoice, genSys[kind as Kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}\n\nProduce the ${kind} JSON.`, 0);
+
+        // ── V1 (rulings 2026-10-13, R1-R3): CARRY BEFORE GENERATE ───────────────────────────────
+        // For a line whose pool holds a relevant, usable record/you span, the read CARRIES that
+        // span's words byte-exact. The model is told those lines are already written, writes the
+        // rest, and the carried text is spliced over whatever it returned — the slot path's
+        // applyVerbatim mechanic, one level up. No generation for a carried line means the hedge is
+        // unreachable rather than refused.
+        //
+        // The RELEVANCE ANCHOR is the CURRENT read's line at that field path: it is what the line is
+        // about, and it is the only description of the line available before the model writes. A
+        // company with no current read therefore carries nothing and generates everything — honest,
+        // not a failure.
+        const carries = await selectCarries(kind as Kind);
+        carriesByKind[kind as Kind] = carries;
+        carriedBlocks[kind as Kind] = carriedBlockOf(carries);
+        const takenBlock = carries.length === 0 ? "" :
+          `\n\nALREADY WRITTEN — these lines are carried from the record verbatim. Do not write them, do not restate their facts, and write every other line as usual:\n` +
+          carries.map((c) => `  ${c.field}: ${c.stored_text}`).join("\n");
+
+        const p = await run(genChoice, genSys[kind as Kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}${takenBlock}\n\nProduce the ${kind} JSON.`, 0);
+        spliceCarries(p, carries);
         // 1a-4: the class of every citing field is COMPUTED here from the refs the model returned,
         // weakest-wins, overwriting anything it volunteered. Done BEFORE the judge sees the payload so
         // the judge is told each field's class rather than asked to infer it.

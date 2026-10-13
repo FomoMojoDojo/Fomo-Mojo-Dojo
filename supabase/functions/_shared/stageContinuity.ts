@@ -28,6 +28,9 @@ export const CONTINUITY_GUARD = "continuity_line_dropped" as const;
 export const SOFTENING_GUARD = "specific_softened" as const;
 
 export type CitedLine = {
+  /** the field path, when the caller knows it. C1/C2 ignore it; V1's carry selection needs it to
+   *  know WHICH line it is choosing a span for. */
+  field?: string;
   /** the rendered statement */
   text: string;
   /** the inherited source class; only our_read is softening-checked */

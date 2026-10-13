@@ -43,7 +43,10 @@ export type PerKindGuard =
   // demoted into `detail` — so a refusal produced TWO rows (the check's own, and this wrapper's
   // mislabelled one) and a reader scanning guards saw a write failure that never happened.
   | "continuity_line_dropped"
-  | "specific_softened";
+  | "specific_softened"
+  // V1 (2026-10-13): a carried span's source text moved under it. Fail closed — the line is no
+  // longer a carry, and must not be persisted on offsets into text that no longer says that.
+  | "carried_span_drift";
 
 /** V3 — a REFUSAL from inside `commit`, as opposed to a write that failed.
  *
@@ -53,7 +56,7 @@ export type PerKindGuard =
  *  not borrow a refusal's name. */
 export class StageRefusal extends Error {
   constructor(
-    readonly guard: Extract<PerKindGuard, "continuity_line_dropped" | "specific_softened">,
+    readonly guard: Extract<PerKindGuard, "continuity_line_dropped" | "specific_softened" | "carried_span_drift">,
     /** The FULL refusal detail (V2): never a slice. `detailOf` caps the LOG line and the `error`
      *  column at 200 chars, but excluded_by_rule.detail stores this verbatim. */
     readonly detail: string,
