@@ -295,3 +295,56 @@ export function carriedBlockOf(carries: readonly FieldCarry[]): CarriedBlock {
   }
   return out;
 }
+
+// ── V1-R4 (operator ruling, 2026-10-13): the PRE-GENERATION span search ─────────────────────────
+//
+// The first V1 build carried from the base selection only, and the span it most needed was not
+// there: dfb6da68 reaches a read through PASS 2, which runs inside stampAndDecide AFTER generation.
+// So the carry and PASS 2 were hunting the same rows on opposite sides of the model call, and the
+// carry always lost. Refusal 9791 is that defect: the line was generated, the model hedged, C2
+// caught it, and no carry had been attempted.
+//
+// R4 closes it with a NARROW admission. Before generation, for each differentiator line of the
+// current read, search the live record for a row that wins a USABLE, RELEVANT span for THAT line.
+// Only a winner is admitted — a row that is merely relevant, or merely a sourcing candidate, is not.
+// The admission goes through the caller's own admitSourcingRow, so the row lands in the catalogue,
+// the ledger, and admitted_from_live_record exactly as a PASS 2 admission does.
+//
+// It shares PASS 2's candidate gathering (classSourcingScope.liveRecordCandidates, extracted
+// unchanged) so the two searches see the same rows. What differs is the test: PASS 2 asks "does this
+// row source this unsourced specific?", R4 asks "does this row hold a usable span relevant to this
+// line?".
+
+export type SpanSearchHit = {
+  field: string;
+  row: { id: string; kind: "signal" | "own_word"; text: string; cls: "record" | "you" };
+  span: CarriedSpan;
+};
+
+/** For each line, the row+span that wins it. Deterministic: candidate order, then the four keys.
+ *  `candidates` comes from liveRecordCandidates — this function never queries. */
+export async function searchLiveRecordForSpans(
+  lines: ReadonlyArray<{ field: string; text: string }>,
+  candidates: ReadonlyArray<{ id: string; kind: "signal" | "own_word"; text: string; cls: string }>,
+  n = 3,
+): Promise<SpanSearchHit[]> {
+  const out: SpanSearchHit[] = [];
+  for (const line of lines) {
+    const pool: CarriedSpan[] = [];
+    const rowOf = new Map<string, typeof candidates[number]>();
+    for (const c of candidates) {
+      if (c.cls !== "record" && c.cls !== "you") continue;      // rule 2, before any clause work
+      const { spans } = await usableSpansOf(c.id, c.text, c.cls);
+      // R4's narrowness: only spans RELEVANT to THIS line make the row a winner.
+      const rel = relevantSpans(spans, line.text, n);
+      if (rel.length === 0) continue;
+      pool.push(...rel);
+      rowOf.set(c.id, c);
+    }
+    const won = chooseSpan(pool);
+    if (!won) continue;
+    const row = rowOf.get(won.row_id)!;
+    out.push({ field: line.field, row: { ...row, cls: row.cls as "record" | "you" }, span: won });
+  }
+  return out;
+}

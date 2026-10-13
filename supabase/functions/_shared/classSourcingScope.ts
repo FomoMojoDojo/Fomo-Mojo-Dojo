@@ -58,23 +58,28 @@ function sourcingClassOfSignal(s: { voice_class?: string | null; raw_payload?: u
  * `alreadyCited` holds the ids the field already cites, so a row that failed to source in the pool
  * pass is never re-offered as if it were new.
  */
-export async function searchLiveRecordForSpecifics(
+/** V1-R4 (operator ruling, 2026-10-13): the candidate gathering, factored out UNCHANGED so the
+ *  pre-generation span search sees exactly the rows PASS 2 sees. Extracted, not reimplemented —
+ *  a second copy of this query is how the two searches would drift apart.
+ *
+ *  Every predicate is byte-identical to what searchLiveRecordForSpecifics ran before: outside band,
+ *  live (not superseded, not held), a sourcing class, not already cited; own-words rows gated on an
+ *  ACTIVE own_words claim's content_identity and judge_keep. */
+export async function liveRecordCandidates(
   supabase: AnySupabase,
   companyId: string,
-  specifics: readonly Specific[],
   alreadyCited: ReadonlySet<string>,
-): Promise<SourcingSearch> {
-  const out: SourcingSearch = { searched: { signals: 0, own_words: 0 }, hits: [], bySpecific: new Map() };
-  if (specifics.length === 0) return out;
+): Promise<{ candidates: SourcingRow[]; searched: { signals: number; own_words: number } }> {
+  const searched = { signals: 0, own_words: 0 };
+  const candidates: SourcingRow[] = [];
 
   const { data: sigRows } = await supabase
     .from("signals")
     .select("id, claim_text, evidence_excerpt, voice_class, raw_payload")
     .eq("company_id", companyId).eq("signal_band", "outside")
     .is("superseded_at", null).is("held_at", null);
-  const candidates: SourcingRow[] = [];
   for (const r of ((sigRows ?? []) as Array<{ id: string; claim_text: string | null; evidence_excerpt: string | null; voice_class: string | null; raw_payload?: unknown }>)) {
-    out.searched.signals++;
+    searched.signals++;
     const cls = sourcingClassOfSignal(r);
     if (!cls || alreadyCited.has(r.id)) continue;
     const text = `${r.claim_text ?? ""} ${r.evidence_excerpt ?? ""}`.trim();
@@ -90,12 +95,27 @@ export async function searchLiveRecordForSpecifics(
   const { data: owRows } = await supabase
     .from("own_words_candidates").select("id, quote, content_identity").eq("company_id", companyId).eq("judge_keep", true);
   for (const r of ((owRows ?? []) as Array<{ id: string; quote: string | null; content_identity: string | null }>)) {
-    out.searched.own_words++;
+    searched.own_words++;
     if (!r.content_identity || !activeIdentities.has(r.content_identity)) continue;
     if (alreadyCited.has(r.id)) continue;
     const text = (r.quote ?? "").trim();
     if (text) candidates.push({ id: r.id, kind: "own_word", text, cls: "you" });
   }
+  return { candidates, searched };
+}
+
+export async function searchLiveRecordForSpecifics(
+  supabase: AnySupabase,
+  companyId: string,
+  specifics: readonly Specific[],
+  alreadyCited: ReadonlySet<string>,
+): Promise<SourcingSearch> {
+  const out: SourcingSearch = { searched: { signals: 0, own_words: 0 }, hits: [], bySpecific: new Map() };
+  if (specifics.length === 0) return out;
+
+  const gathered = await liveRecordCandidates(supabase, companyId, alreadyCited);
+  const candidates = gathered.candidates;
+  out.searched = gathered.searched;
 
   // first match wins, in candidate order: a deterministic pick, and at most one new row per specific
   for (const sp of specifics) {

@@ -242,3 +242,118 @@ Deno.test("hook: only the differentiator paths carry in slice 1", async () => {
   assert(/if \(!\/\^unique_attributes\\\[\\d\+\\\]\$\/\.test\(line\.field \?\? ""\)\) continue;/.test(gen),
     "narrative fields are compositions, not carries");
 });
+
+// ── V1-R4 / V1-R5 (operator rulings, 2026-10-13) ────────────────────────────────────────────────
+import { liveRecordCandidates } from "./classSourcingScope.ts";
+import { searchLiveRecordForSpans } from "./carriedSpan.ts";
+
+const LIVE_ROWS = [
+  { id: "dfb6da68", kind: "signal" as const, text: RDF, cls: "record" },
+  { id: "99037383", kind: "signal" as const, text: R99, cls: "record" },
+  { id: "34405b08", kind: "signal" as const, text: R34, cls: "you" },
+  { id: "cc224d8e", kind: "signal" as const, text: CC2, cls: "our_read" },
+];
+const DIFF_LINES = [
+  { field: "unique_attributes[1]", text: KINSHIP_LINE },
+  { field: "unique_attributes[0]", text: "the only crisis stabilization unit serving youth under 12 in the Bay Area" },
+];
+
+Deno.test("R4. a carry candidate ABSENT from the base selection wins a span and is admitted", async () => {
+  // the base selection holds neither kinship row — exactly the 9791 situation
+  const won = await searchLiveRecordForSpans([DIFF_LINES[0]], LIVE_ROWS);
+  assertEquals(won.length, 1);
+  assertEquals(won[0].field, "unique_attributes[1]");
+  assertEquals(won[0].row.id, "dfb6da68");
+  assertEquals(won[0].span.start, 45);
+  assertEquals(won[0].span.end, 114);
+  assertEquals(won[0].row.cls, "record");
+});
+
+Deno.test("R4. admission is NARROW — a relevant row that wins no span is not admitted", async () => {
+  // 99037383 is highly relevant to the kinship line but every clause is unusable (reporting verbs)
+  assertEquals(await spansOf("99037383", R99, "record"), []);
+  const won = await searchLiveRecordForSpans([DIFF_LINES[0]], LIVE_ROWS);
+  assertEquals(won.map((w) => w.row.id), ["dfb6da68"], "only the span WINNER is admitted");
+  // and an our_read row is never a candidate at all
+  const onlyOurRead = await searchLiveRecordForSpans([DIFF_LINES[0]], [LIVE_ROWS[3]]);
+  assertEquals(onlyOurRead, []);
+});
+
+Deno.test("R4. a row irrelevant to every line is not admitted even though it holds usable spans", async () => {
+  const spans = await spansOf("34405b08", R34, "you");
+  assert(spans.length > 0, "34405b08 does hold usable spans");
+  const won = await searchLiveRecordForSpans([DIFF_LINES[0]], LIVE_ROWS);
+  assert(!won.some((w) => w.row.id === "34405b08"), "not relevant to the kinship line ⇒ not admitted");
+  // but it IS admitted for the line it is relevant to
+  const both = await searchLiveRecordForSpans(DIFF_LINES, LIVE_ROWS);
+  assertEquals(both.map((w) => `${w.field}:${w.row.id}`).sort(),
+    ["unique_attributes[0]:34405b08", "unique_attributes[1]:dfb6da68"]);
+});
+
+Deno.test("R4. the carry runs over the ENLARGED pool", async () => {
+  const base: CarriedSpan[] = await spansOf("34405b08", R34, "you");   // base selection: no kinship row
+  assertEquals(carryForLine("unique_attributes[1]", KINSHIP_LINE, base), null, "base alone carries nothing");
+  const won = await searchLiveRecordForSpans([DIFF_LINES[0]], LIVE_ROWS);
+  const enlarged = [...base, ...(await spansOf(won[0].row.id, RDF, "record"))];
+  const c = carryForLine("unique_attributes[1]", KINSHIP_LINE, enlarged)!;
+  assertEquals(c.primary.row_id, "dfb6da68");
+  assertEquals(c.primary.start, 45);
+});
+
+Deno.test("R4. the notice lists exactly the carried lines", async () => {
+  const gen = await readSrc("../generate-public-read/index.ts");
+  const g = gen.slice(gen.indexOf("generate: async (kind) =>"), gen.indexOf("judge: async (kind, payload)"));
+  assert(g.includes("carries.map((c) => `  ${c.field}: ${c.stored_text}`).join"),
+    "one notice line per carry, with its field and its stored text — nothing else");
+  assert(g.includes("carries.length === 0 ? \"\" :"), "no notice at all when nothing is carried");
+  // the notice is built from the SAME carries the splice applies, so it cannot drift from the truth
+  assert(g.indexOf("const carries = await selectCarries") < g.indexOf("ALREADY WRITTEN"));
+  assert(g.indexOf("ALREADY WRITTEN") < g.indexOf("spliceCarries(p, carries)"));
+});
+
+Deno.test("R4. the admission goes through admitSourcingRow and is recorded as admitted_from_live_record", async () => {
+  const gen = await readSrc("../generate-public-read/index.ts");
+  assert(gen.includes("const ref = admitSourcingRow(w.row);"), "the caller's own admission path");
+  // REACHABILITY, not mere presence. A plant that put `if (true) continue;` at the top of this loop
+  // left every string below intact and turned no test red — a source guard that checks only for a
+  // call cannot tell a live call from a dead one. So assert the loop body STARTS with the admission.
+  const loop = gen.slice(gen.indexOf("for (const w of won) {"));
+  const body = loop.slice(loop.indexOf("{") + 1, loop.indexOf("}"));
+  assertEquals(body.trim().split("\n")[0].trim(), "const ref = admitSourcingRow(w.row);",
+    "the admission is the first statement — nothing may guard it out");
+  assert(!/\b(continue|return|break)\b/.test(body), "no early exit inside the admission loop");
+  assert(gen.includes("admitted.push({ ref, id: w.row.id, kind: w.row.kind, cls: w.row.cls, sourced: [`carry:${w.field}`] });"),
+    "recorded in the same list PASS 2 reports as admitted_from_live_record, tagged with the line it won");
+  assert(gen.includes("refByUuid.set(w.row.id, ref);"), "and the splice can map it back to its ref token");
+  // PASS 2 itself is untouched: it still calls the specifics search, not the span search
+  assert(gen.includes("searchLiveRecordForSpecifics(supabase, company_id, specifics, alreadyCited)"));
+});
+
+Deno.test("R5. PASS 2's candidate gathering is EXTRACTED, not reimplemented", async () => {
+  const scope = await readSrc("./classSourcingScope.ts");
+  assert(scope.includes("export async function liveRecordCandidates("), "the gatherer is exported");
+  assert(scope.includes("const gathered = await liveRecordCandidates(supabase, companyId, alreadyCited);"),
+    "and PASS 2 calls it — one query, two searches");
+  // the query predicates appear exactly ONCE in the file
+  assertEquals(scope.split('.eq("signal_band", "outside")').length - 1, 1, "no second copy of the signals query");
+  assertEquals(scope.split('.eq("judge_keep", true)').length - 1, 1, "no second copy of the own-words query");
+});
+
+Deno.test("R5. the dry run builds the pool as the generate path does at the carry point", async () => {
+  // THE RULE: base selection + pre-generation admissions. NEVER the current read's stored ledger.
+  // The first dry run read the stored ledger, which already held PASS-2 admissions from the run that
+  // produced it — so it predicted a carry the live run could not make (refusal 9791).
+  const base = await spansOf("34405b08", R34, "you");                       // stands for the base selection
+  const won = await searchLiveRecordForSpans(DIFF_LINES, LIVE_ROWS);        // the pre-generation admissions
+  const admittedSpans: CarriedSpan[] = [];
+  for (const w of won) admittedSpans.push(...await spansOf(w.row.id, w.row.text, w.row.cls));
+  const poolAtCarry = [...base, ...admittedSpans];
+  // the kinship carry is reachable from THIS pool and from no smaller one
+  assertEquals(carryForLine("unique_attributes[1]", KINSHIP_LINE, poolAtCarry)!.primary.row_id, "dfb6da68");
+  assertEquals(carryForLine("unique_attributes[1]", KINSHIP_LINE, base), null);
+  // and the dry-run harness must not be handed a stored ledger: the generate path has none at this point
+  const gen = await readSrc("../generate-public-read/index.ts");
+  const sel = gen.slice(gen.indexOf("const selectCarries = async"), gen.indexOf("const spliceCarries"));
+  assert(!/input_ledger/.test(sel), "the carry point reads no stored ledger");
+  assert(sel.includes("await poolSpans()"), "it builds the pool from the catalogue it has just enlarged");
+});

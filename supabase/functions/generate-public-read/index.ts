@@ -30,7 +30,7 @@ import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage }
 import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
 import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, specificIsSourced, type FieldClassDecision } from "../_shared/classFactCheck.ts";
-import { searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
+import { liveRecordCandidates, searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { StageRefusal, detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
 import { PromoteRefused, promoteStagedReads, recordPromoteIntegrity, recordPromoteRefusal, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
@@ -43,8 +43,8 @@ import {
   softenedSpecifics, softeningDetail, type CitedLine, type ContinuityBlock,
 } from "../_shared/stageContinuity.ts";
 import {
-  CARRIED_DRIFT_GUARD, carriedBlockOf, carryForLine, driftedSpans, usableSpansOf,
-  type CarriedBlock, type CarriedSpan, type FieldCarry,
+  CARRIED_DRIFT_GUARD, carriedBlockOf, carryForLine, driftedSpans, searchLiveRecordForSpans,
+  usableSpansOf, type CarriedBlock, type CarriedSpan, type FieldCarry,
 } from "../_shared/carriedSpan.ts";
 import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass } from "../_shared/publicReadInputs.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
@@ -563,6 +563,8 @@ Respond with ONLY JSON:
 
     /** C1/C2: the continuity block per kind — reported, and stored on the integrity row either way. */
     const continuityBlocks: Partial<Record<Kind, ContinuityBlock>> = {};
+    /** V1-R4: how much live record the pre-generation span search read, per kind. */
+    const carrySearch: Partial<Record<Kind, { lines: number; considered: number; admitted: number }>> = {};
     /** V1: the carried block per kind, and the carries themselves for the splice. */
     const carriedBlocks: Partial<Record<Kind, CarriedBlock>> = {};
     const carriesByKind: Partial<Record<Kind, FieldCarry[]>> = {};
@@ -630,6 +632,28 @@ Respond with ONLY JSON:
     const selectCarries = async (kind: Kind): Promise<FieldCarry[]> => {
       const current = await currentLinesFor(kind);
       if (current.length === 0) return [];               // nothing to anchor relevance on
+
+      // ── V1-R4: the PRE-GENERATION admission, narrow ─────────────────────────────────────────
+      // Search the live record for a row holding a usable span RELEVANT to each differentiator
+      // line, and admit only the winners — through admitSourcingRow, so each lands in the
+      // catalogue, the ledger and admitted_from_live_record exactly as a PASS 2 admission does.
+      // Without this the carry sees only the base selection, and the span it needs most
+      // (dfb6da68, which reaches a read through PASS 2) is invisible to it — refusal 9791.
+      const diffLines = current.filter((l) => /^unique_attributes\[\d+\]$/.test(l.field ?? ""))
+        .map((l) => ({ field: String(l.field), text: l.text }));
+      if (diffLines.length > 0) {
+        const alreadyInCatalogue = new Set([...uuidByRef.values()]);
+        const { candidates } = await liveRecordCandidates(supabase, company_id, new Set<string>());
+        const outside = candidates.filter((c) => !alreadyInCatalogue.has(c.id));
+        const won = await searchLiveRecordForSpans(diffLines, outside);
+        for (const w of won) {
+          const ref = admitSourcingRow(w.row);
+          admitted.push({ ref, id: w.row.id, kind: w.row.kind, cls: w.row.cls, sourced: [`carry:${w.field}`] });
+          refByUuid.set(w.row.id, ref);
+        }
+        carrySearch[kind] = { lines: diffLines.length, considered: outside.length, admitted: won.length };
+      }
+
       const pool = await poolSpans();
       if (pool.length === 0) return [];
       const out: FieldCarry[] = [];
