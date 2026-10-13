@@ -179,7 +179,11 @@ Deno.test("source guard: (b) searches the pool FIRST and the live record on a mi
   assert(scope.includes('.is("superseded_at", null).is("held_at", null)'), "live only");
   assert(scope.includes("if (isAnalysisRow(s)) return null;"), "our own analysis can never be sourcing evidence");
   assert(scope.includes('.eq("claim_type", "own_words").eq("status", "active")'), "own-words rows need an ACTIVE own_words claim, the same authority the pool uses");
-  assert(scope.includes("const hit = candidates.find((c) => specificIsSourced(sp, [c.text]));"), "the search uses the GATE's own test, not a second one");
+  // G3 (2026-10-13): the pinned call tracks the gate's second-chance function. The assertion's
+  // POINT is unchanged — PASS 2 must ask the gate, never its own copy of the rule — so the pin
+  // moved with the function rather than being relaxed.
+  assert(scope.includes("const hit = candidates.find((c) => specificIsSourcedWithSecondChance(sp, [c.text]));"), "the search uses the GATE's own test, not a second one");
+  assert(!/specificIsSourced\(/.test(scope), "PASS 2 never calls the windowed test directly — it would miss what the second chance catches");
 });
 
 Deno.test("source guard: the re-ask is PER FIELD — only the refused are rewritten, siblings byte-identical", async () => {

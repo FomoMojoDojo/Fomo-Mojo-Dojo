@@ -18,7 +18,10 @@
 // put a non-public id in input_ledger.provenances and citationsLivePublic (guard 4) would refuse the
 // whole kind — the public-only invariant of this generator outranks a wider search. Every row this
 // module can admit is therefore public_observed, exactly like a pool row.
-import { extractSpecifics, specificIsSourced, type Specific } from "./classFactCheck.ts";
+// G3 (operator ruling, 2026-10-13): PASS 2 asks the SAME question the gate asks, so it imports the
+// gate's own second-chance function rather than re-deriving the rule. Two authorities on one rule is
+// how a rule rots — the reason classOkFromVerdict was deleted from publicReadGuards.ts.
+import { extractSpecifics, specificIsSourcedWithSecondChance, type Specific } from "./classFactCheck.ts";
 import { isAnalysisRow } from "./voiceLabel.ts";
 
 export type SourcingClass = "record" | "you";
@@ -96,7 +99,7 @@ export async function searchLiveRecordForSpecifics(
 
   // first match wins, in candidate order: a deterministic pick, and at most one new row per specific
   for (const sp of specifics) {
-    const hit = candidates.find((c) => specificIsSourced(sp, [c.text]));
+    const hit = candidates.find((c) => specificIsSourcedWithSecondChance(sp, [c.text]));
     if (!hit) continue;
     out.bySpecific.set(sp.token, hit);
     if (!out.hits.some((h) => h.id === hit.id)) out.hits.push(hit);
@@ -130,7 +133,9 @@ export async function specificsCarriedByOurOwnRows(
     texts.push(`${r.claim_text ?? ""} ${r.evidence_excerpt ?? ""}`.trim());
   }
   for (const r of ((fd.data ?? []) as Array<{ body: string | null }>)) texts.push(r.body ?? "");
-  for (const sp of specifics) if (texts.some((t) => specificIsSourced(sp, [t]))) out.add(sp.token);
+  // the same rule here too: whether a specific is ours to hedge must not depend on word order
+  // either, or PASS 3 would call a figure our own rows plainly carry "unsupported" — which is final.
+  for (const sp of specifics) if (texts.some((t) => specificIsSourcedWithSecondChance(sp, [t]))) out.add(sp.token);
   return out;
 }
 

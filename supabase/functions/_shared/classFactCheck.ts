@@ -43,7 +43,24 @@ const REACH = ["statewide", "nationwide", "countywide", "citywide", "regionwide"
 
 const EXCL_RE = new RegExp(`\\b(${EXCLUSIVITY.join("|")})\\b`, "gi");
 const REACH_RE = new RegExp(`\\b(${REACH.join("|")})\\b`, "gi");
-const FIGURE_RE = /\b(\d[\d,.]*\+?%?)\b/g;
+// ── G1 (operator ruling, 2026-10-13): the figure token, with its value attached ────────────────
+// WAS /\b(\d[\d,.]*\+?%?)\b/g, and the trailing \b was the whole defect: no word boundary sits
+// between '%' (or '+') and a following space, so the engine backtracked and discarded the suffix.
+// "90%+" captured as "90", probesFor then sliced past the bare digits, and WORD_RE skipped the
+// '%+' — so the probe read "90 family-placement…" while the cited row read "90%+ family-placement…".
+// normalizeForHash preserves punctuation, so the two could never match: EVERY percentage in the
+// record was unsourceable, and the generator learned to drop percentages rather than be refused.
+//
+// Four parts, each load-bearing:
+//   (?<![\d.,\-])   a figure cannot START mid-number — this is what keeps 2025-02-01 from yielding
+//                   "02-01" once the range arm exists.
+//   \d(?:[\d,]*\d)?(?:\.\d+)?   the core NEVER ends on a separator; the old one captured "1."
+//                                from "$1.2M" and a sentence-final "12." as "12.".
+//   [-–—]\d{1,3}(?![\d-])   a RANGE, and only a small one: "3-21" and "5-17" are ages, while a
+//                           four-digit left side is a year. ISO dates therefore collapse to the
+//                           year alone, which the operator ruled acceptable (year-only, 2026-10-07).
+//   (?:%|\+|bn\b|[kmKM]\b)*   the value suffixes, any run of them: "90%+", "170+", "$1.2M", "$350K".
+const FIGURE_RE = /(?<![\d.,\-])\$?\d(?:[\d,]*\d)?(?:\.\d+)?(?:[-–—]\d{1,3}(?![\d-]))?(?:%|\+|bn\b|[kmKM]\b)*/g;
 // A REACH CLAIM is a named place reached through SCOPE language — "in the Bay Area", "across
 // California", "serving Northern California". A capitalised phrase on its own is NOT a reach claim:
 // "Crisis Stabilization Unit" is a service name and naming it asserts no reach, so matching every
@@ -100,7 +117,10 @@ export function extractSpecifics(text: string): Specific[] {
     out.push({ kind, token, probes: probes ?? probesFor(t, at, token) });
   };
   for (const m of t.matchAll(EXCL_RE)) push("exclusivity", m[1], m.index ?? 0);
-  for (const m of t.matchAll(FIGURE_RE)) push("figure", m[1], m.index ?? 0);
+  // G1: FIGURE_RE has no capture group (the suffix run is a repetition, not a group), so the token
+  // is the whole match. A match with no digit cannot occur — the core requires one — but the filter
+  // states the invariant rather than relying on the reader to re-derive it.
+  for (const m of t.matchAll(FIGURE_RE)) if (/\d/.test(m[0])) push("figure", m[0], m.index ?? 0);
   for (const m of t.matchAll(REACH_RE)) push("reach", m[1], m.index ?? 0, [m[1]]);
   // the PLACE is the token; the probes are the scope phrase as written and, when the place itself is
   // two words or more, the place alone (so "in the Bay Area" also sources against "the Bay Area").
@@ -115,6 +135,39 @@ export function extractSpecifics(text: string): Specific[] {
 /** A specific is SOURCED when one of its probes appears verbatim in one of the cited texts. */
 export function specificIsSourced(s: Specific, citedTexts: readonly string[]): boolean {
   return s.probes.some((p) => citedTexts.some((c) => verbatimProvable(p, c)));
+}
+
+/** ── G2 (operator ruling, 2026-10-13): THE FIGURE-ONLY SECOND CHANCE ──────────────────────────
+ *
+ *  probesFor builds a contiguous word run in OUR order, so a true record fact written in a
+ *  different order was declared unsourced: the row says "in 1993 Edgewood established the first
+ *  kinship program in the country; over 90% of youth served stayed…", our line says "…since 1993,
+ *  with over 90% of youth staying…", and no probe of ours appears in that row. The fact is there;
+ *  the window cannot reach it.
+ *
+ *  So after the windowed probes fail, a FIGURE clears if its token appears in ONE single cited
+ *  record/you row. Three constraints keep this from loosening the gate:
+ *
+ *    FIGURES ONLY. probesFor's own rule — "NEVER one word alone: a bare 'only' appears in half the
+ *    corpus" — is about low-entropy English words. A figure is the opposite: "90%+", "3-21",
+ *    "$350K", "1993" are high-entropy tokens whose bare presence in a row the field ALREADY CITES
+ *    is the sourcing. Exclusivity words and reach claims still require a window, so nothing the
+ *    original rule protected is weakened. (Test 8 is the standing proof.)
+ *
+ *    ONE ROW, NEVER ASSEMBLED. The token must be in a single row. Concatenating the cited rows
+ *    would let two rows jointly "source" a figure neither of them states. (Test 7.)
+ *
+ *    SECOND, NOT INSTEAD. The windowed probes run first and still decide `sourced`; this only
+ *    rescues what they miss, so every field that sourced before sources the same way now.
+ *
+ *  It lives BESIDE specificIsSourced rather than inside it: voiceLabel.test.ts:182 pins that call
+ *  line verbatim, and PASS 2 (classSourcingScope) must get the IDENTICAL rule — which it does, by
+ *  importing this function rather than re-deriving it (G3). One rule, one authority.
+ */
+export function specificIsSourcedWithSecondChance(s: Specific, citedTexts: readonly string[]): boolean {
+  if (specificIsSourced(s, citedTexts)) return true;
+  if (s.kind !== "figure") return false;
+  return citedTexts.some((c) => verbatimProvable(s.token, c));
 }
 
 export type FieldClassInput = {
@@ -162,7 +215,7 @@ export function decideFieldClass(input: FieldClassInput): FieldClassDecision {
   }
   const specifics = extractSpecifics(text);
   const unsourced = specifics
-    .filter((s) => !specificIsSourced(s, input.citedSourceTexts))
+    .filter((s) => !specificIsSourcedWithSecondChance(s, input.citedSourceTexts))
     .map((s) => ({ kind: s.kind, token: s.token }));
   return {
     field, cls,
