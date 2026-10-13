@@ -125,3 +125,93 @@ export async function promoteStagedReads(
   }
   return { promoted, cascade_routing: cascadeRouting };
 }
+
+// ── PROMOTE AUDIT (Part B, 2026-10-12) ───────────────────────────────────────────────────────────
+//
+// The promote branch returned before recordKindIntegrity was ever defined, so the one act that makes
+// a staged read the company's live read left no integrity_runs row — the two Edgewood promotes of
+// 2026-10-12 had to be backfilled by hand (rows 9428, 9429). recordKindIntegrity cannot simply be
+// hoisted: it closes over `ledger`, which the promote path never builds. So promote gets its own
+// writer with the same component name and the same `excluded_by_rule` shape, plus the ids and the
+// reversal a promote needs to be undoable from its own row.
+//
+// WRITTEN AFTER THE FLIP, and never able to fail it: every error here is swallowed, exactly as the
+// generation path's own audit writer does. An audit row that broke the act it describes would be a
+// worse bug than a missing one.
+
+/** The reversal a promoted kind carries. Names what re-flipping does NOT undo. */
+export function promoteReversal(p: Promoted): { reversal_sql: string; reversal_note: string } {
+  const notes = [
+    "Re-flipping restores public_reads only.",
+    "R6 (first_read_slots_supersede_on_read_change) fires on is_current true->false, so any slot superseded by this promote is NOT restored by the reverse flip — reset its superseded_at/superseded_reason explicitly.",
+  ];
+  if (p.kind === "strategy") {
+    notes.push("A strategy promote also re-routed the cascade gaps (writeCascadeGaps): the reverse flip does not re-route them.");
+  }
+  return {
+    reversal_sql: p.superseded
+      ? `update public.public_reads set is_current=false where id='${p.staged}'; update public.public_reads set is_current=true, superseded_by=null where id='${p.superseded}';`
+      : `update public.public_reads set is_current=false where id='${p.staged}';`,
+    reversal_note: notes.join(" "),
+  };
+}
+
+/** One integrity_runs row per kind the promote touched. Never throws. */
+export async function recordPromoteIntegrity(
+  supabase: AnySupabase,
+  companyId: string,
+  promoted: readonly Promoted[],
+  cascadeRouting: CascadeRouting | null,
+): Promise<void> {
+  for (const p of promoted) {
+    // A kind with no staged row was a no-op, not a promote: nothing was flipped, so nothing to audit.
+    if (!p.staged) continue;
+    const rev = promoteReversal(p);
+    try {
+      await supabase.from("integrity_runs").insert({
+        company_id: companyId,
+        component: `first_read_public_read_${p.kind}`,
+        surface_type: "public_reads",
+        surface_id: companyId,
+        status: "completed",
+        examined: 1,
+        admitted: 1,
+        excluded_by_rule: {
+          kind: p.kind, guard: null, detail: null, mode: "promote",
+          staged_id: p.staged,
+          superseded_id: p.superseded,
+          cascade_run_id: p.kind === "strategy" ? (cascadeRouting?.run_id ?? null) : null,
+          ...rev,
+        },
+      });
+    } catch { /* observability must never break the act it describes */ }
+  }
+}
+
+/** The refusal row a PromoteRefused leaves, so a refused promote is as visible as a completed one. */
+export async function recordPromoteRefusal(
+  supabase: AnySupabase,
+  companyId: string,
+  kind: string,
+  readId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await supabase.from("integrity_runs").insert({
+      company_id: companyId,
+      component: `first_read_public_read_${kind}`,
+      surface_type: "public_reads",
+      surface_id: companyId,
+      status: "rejected",
+      examined: 1,
+      admitted: 0,
+      excluded_by_rule: {
+        kind, guard: "promote_refused", detail: reason, mode: "promote",
+        read_id: readId,
+        reversal_sql: null,
+        reversal_note: "Nothing was flipped or routed — there is nothing to reverse.",
+      },
+      error: `guard=promote_refused detail=${reason}`,
+    });
+  } catch { /* observability must never break the refusal it describes */ }
+}

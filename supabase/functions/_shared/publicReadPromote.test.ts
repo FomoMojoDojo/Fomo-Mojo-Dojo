@@ -9,7 +9,7 @@
 //   (d) FAIL CLOSED (amendment 2026-09-18): a staged strategy WITHOUT cascade_source → promote refused with an error
 //       naming the read id; the prior row stays current, the 913b716a-style row stays live, zero writes
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { CASCADE_SOURCE_KEY, cascadeItemsForPromotedStrategy, cascadeSourceOf, hasCascadeSource, PromoteRefused, promoteStagedReads } from "./publicReadPromote.ts";
+import { CASCADE_SOURCE_KEY, cascadeItemsForPromotedStrategy, cascadeSourceOf, hasCascadeSource, PromoteRefused, promoteStagedReads, recordPromoteIntegrity, recordPromoteRefusal } from "./publicReadPromote.ts";
 
 type Row = Record<string, unknown>;
 const read = (p: string) => Deno.readTextFile(new URL(p, import.meta.url));
@@ -30,7 +30,9 @@ function fakeDb(seed: Record<string, Row[]>) {
     Object.assign(b, {
       select: () => b,
       update: (patch: Row) => { pending = patch; return b; },
-      insert: (newRows: Row[]) => { for (const r of newRows) tables[table].push({ id: `new-${tables[table].length + 1}`, ...r }); log.push(`${table}:insert:${newRows.length}`); return Promise.resolve({ data: null, error: null }); },
+      // The real client accepts a single object OR an array; the double must too, or a writer that
+      // passes one object (recordKindIntegrity, recordPromoteIntegrity) silently inserts nothing.
+      insert: (newRows: Row[] | Row) => { const arr = Array.isArray(newRows) ? newRows : [newRows]; for (const r of arr) tables[table].push({ id: `new-${tables[table].length + 1}`, ...r }); log.push(`${table}:insert:${arr.length}`); return Promise.resolve({ data: null, error: null }); },
       eq: (c: string, v: unknown) => chain((r) => r.filter((x) => x[c] === v)),
       is: (c: string, v: unknown) => chain((r) => r.filter((x) => x[c] == v)),
       in: (c: string, vs: unknown[]) => chain((r) => r.filter((x) => vs.includes(x[c]))),
@@ -129,7 +131,11 @@ Deno.test("(c) a strategy that failed a guard was never staged — promote finds
 Deno.test("source guard: the generator stages cascade_source on a strategy row, promotes through the shared path, and the direct write calls the same writeCascadeGaps", async () => {
   const gen = await read("../generate-public-read/index.ts");
   assert(gen.includes("const { promoted, cascade_routing } = await promoteStagedReads(supabase, company_id, activeKinds);"), "promote goes through publicReadPromote");
-  assert(gen.includes("if (e instanceof PromoteRefused) return json({ ok: false, error: e.message, refused: { kind: e.kind, read_id: e.readId } }, 409);"), "a refused promote is a 409 naming the read");
+  assert(gen.includes("return json({ ok: false, error: e.message, refused: { kind: e.kind, read_id: e.readId } }, 409);"), "a refused promote is a 409 naming the read");
+  // Part B (2026-10-12): the promote branch audits itself — a completed promote AFTER the flip, a refusal on the refused path.
+  assert(gen.includes("await recordPromoteIntegrity(supabase, company_id, promoted, cascade_routing);"), "the promote writes its own audit row per kind");
+  assert(gen.indexOf("await promoteStagedReads(") < gen.indexOf("await recordPromoteIntegrity("), "the audit row is written AFTER the flip, never before");
+  assert(gen.includes("await recordPromoteRefusal(supabase, company_id, e.kind, e.readId, e.message);"), "a refused promote leaves a refusal row");
   const prm = await read("./publicReadPromote.ts");
   assert(prm.includes('if (kind === "strategy" && !hasCascadeSource(stagedRow!)) {') && !prm.includes("?? payload) as StrategyPayload"), "fail closed: refusal before any write, no payload fallback");
   // Part F (2026-09-18): the stage row's cascade_source is built by buildStoredPayloads (publicReadStorage.ts); the generator inserts `built.staged`
@@ -149,4 +155,61 @@ Deno.test("source guard: the generator stages cascade_source on a strategy row, 
   const commitAt = per.indexOf("await deps.commit(kind, payload, g.verdict);");
   assert(notAcceptedAt > 0 && commitAt > notAcceptedAt, "commit sits AFTER the not_accepted branch returns — no fall-through to a write");
   assert(per.includes("if (!reasked && deps.reaskOnClassRefusal) {") && per.includes("reasked = true; continue;"), "the re-ask is bounded to one");
+});
+
+// ── Part B (2026-10-12): the promote's own audit row ─────────────────────────────────────────────
+Deno.test("(e) a promote writes ONE completed audit row per kind, with both ids and a reversal", async () => {
+  const db = world({ stagedKind: "promise" });
+  const r = await promoteStagedReads(db as never, CO, ["promise"]);
+  await recordPromoteIntegrity(db as never, CO, r.promoted, r.cascade_routing);
+  const rows = db.tables.integrity_runs.filter((x: Record<string, unknown>) => x.mode !== "pre-existing");
+  assertEquals(rows.length, 1, "one row, one kind");
+  const row = rows[0] as Record<string, unknown>;
+  assertEquals(row.component, "first_read_public_read_promise");
+  assertEquals(row.status, "completed");
+  assertEquals(row.admitted, 1);
+  const by = row.excluded_by_rule as Record<string, unknown>;
+  assertEquals(by.mode, "promote");
+  assertEquals(by.staged_id, "r-staged-p");
+  assertEquals(by.superseded_id, "r-cur-promise");
+  assertEquals(by.cascade_run_id, null, "only a strategy carries a cascade run id");
+  assert(String(by.reversal_sql).includes("r-staged-p") && String(by.reversal_sql).includes("r-cur-promise"));
+  assert(String(by.reversal_note).includes("R6"), "the reversal names what re-flipping does NOT undo");
+});
+
+Deno.test("(f) a promoted STRATEGY carries the cascade run id on its audit row", async () => {
+  const db = world({ stagedKind: "strategy" });
+  const r = await promoteStagedReads(db as never, CO, ["strategy"]);
+  await recordPromoteIntegrity(db as never, CO, r.promoted, r.cascade_routing);
+  const row = db.tables.integrity_runs.at(-1) as Record<string, unknown>;
+  const by = row.excluded_by_rule as Record<string, unknown>;
+  assertEquals(by.kind, "strategy");
+  assertEquals(by.cascade_run_id, r.cascade_routing?.run_id ?? null);
+  assert(by.cascade_run_id !== null, "the strategy promote routed gaps, so the run id is on the row");
+  assert(String(by.reversal_note).includes("cascade"), "the reversal names the routing it cannot undo");
+});
+
+Deno.test("(g) a REFUSED promote writes a rejected row and nothing else", async () => {
+  const db = world({ stagedKind: "strategy-no-source" });
+  let refused: PromoteRefused | null = null;
+  try { await promoteStagedReads(db as never, CO, ["strategy"]); } catch (e) { refused = e as PromoteRefused; }
+  assert(refused instanceof PromoteRefused, "the promote refused");
+  await recordPromoteRefusal(db as never, CO, refused!.kind, refused!.readId, refused!.message);
+  const row = db.tables.integrity_runs.at(-1) as Record<string, unknown>;
+  assertEquals(row.component, "first_read_public_read_strategy");
+  assertEquals(row.status, "rejected");
+  assertEquals(row.admitted, 0);
+  const by = row.excluded_by_rule as Record<string, unknown>;
+  assertEquals(by.guard, "promote_refused");
+  assertEquals(by.mode, "promote");
+  assertEquals(by.reversal_sql, null, "nothing was flipped, so there is nothing to reverse");
+  // and the refusal did not flip anything
+  assertEquals(db.tables.public_reads.find((x: Record<string, unknown>) => x.id === "r-cur-strategy")?.is_current, true);
+});
+
+Deno.test("(h) a kind with no staged row is a no-op, not an audited promote", async () => {
+  const db = world({ stagedKind: null });
+  const r = await promoteStagedReads(db as never, CO, ["strategy"]);
+  await recordPromoteIntegrity(db as never, CO, r.promoted, r.cascade_routing);
+  assertEquals(db.tables.integrity_runs.length, 0, "no staged row ⇒ no flip ⇒ no audit row");
 });

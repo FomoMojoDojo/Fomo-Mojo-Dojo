@@ -33,7 +33,7 @@ import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, specif
 import { searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
-import { PromoteRefused, promoteStagedReads, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
+import { PromoteRefused, promoteStagedReads, recordPromoteIntegrity, recordPromoteRefusal, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
 import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type OfferingSeenOn } from "../_shared/publicReadStorage.ts";
 import { loadOwnSiteRecord } from "../_shared/offeringNamedOnSite.ts";
 import { SELECTION_VERSION } from "../_shared/publicReadSelection.ts";
@@ -247,10 +247,18 @@ Deno.serve(async (req) => {
       // re-routes the cascade gaps from the staged row's cascade_source + judge coherence via writeCascadeGaps.
       try {
         const { promoted, cascade_routing } = await promoteStagedReads(supabase, company_id, activeKinds);
+        // Part B (2026-10-12): the promote writes its own audit row per kind, AFTER the flip. This
+        // branch returns before recordKindIntegrity is defined (and that helper closes over `ledger`,
+        // which promote never builds), so the row comes from recordPromoteIntegrity — same component
+        // name, same excluded_by_rule shape, mode 'promote', plus the ids and the reversal.
+        await recordPromoteIntegrity(supabase, company_id, promoted, cascade_routing);
         return json({ ok: true, promoted, cascade_routing });
       } catch (e) {
         // FAIL CLOSED (amendment 2026-09-18): a refused promote names the read; nothing was flipped or routed for it.
-        if (e instanceof PromoteRefused) return json({ ok: false, error: e.message, refused: { kind: e.kind, read_id: e.readId } }, 409);
+        if (e instanceof PromoteRefused) {
+          await recordPromoteRefusal(supabase, company_id, e.kind, e.readId, e.message);
+          return json({ ok: false, error: e.message, refused: { kind: e.kind, read_id: e.readId } }, 409);
+        }
         throw e;
       }
     }
