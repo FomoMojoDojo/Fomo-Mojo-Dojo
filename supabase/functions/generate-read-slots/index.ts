@@ -34,6 +34,7 @@ import {
 import { promoteStagedSlots, rejectStagedSlots, SlotPromoteRefused } from "../_shared/readSlotsPromote.ts";
 import { runKind, lengthsOf, getSlotAt, type GenerateFn, type JudgeFn } from "../_shared/readSlotsRun.ts";
 import { decideFieldClass, fieldClassOk, type FieldClassDecision } from "../_shared/classFactCheck.ts";
+import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -61,13 +62,22 @@ function genSystemFor(kind: SlotKind): string {
     // COMPRESSION, and the cheapest thing to lose when shortening is the hedge or the scope that made
     // the specific sourceable. A line that drops "in the Bay Area" to fit the cap turns a sourced
     // claim into an unsourced one.
+    // ── P2 (operator ruling, 2026-10-13): the cap pressures the PROSE, never the fact ───────────
+    // The old last bullet let the character cap decide what was true: "drop the specific and name
+    // the plain thing instead". A slot is a compression, and the cheapest thing to lose when
+    // shortening is exactly the figure or the scope that made the claim sourceable — so the cap was
+    // quietly editing the record. Now the cap shortens the words AROUND the specific, and if the
+    // specific with its scope cannot fit at all, the LINE goes rather than the fact inside it.
     `SPECIFICS. A specific is a superlative, an exclusivity word, a figure, or a reach claim.\n` +
-    `- Keep a specific ONLY in the words the source field already uses, and keep the citations that carry it.\n` +
+    `- Keep a specific in the words the source field uses, and keep the citations that carry it. A figure keeps its unit: '90%+' is not '90' and not 'high'.\n` +
     `- Never strengthen one while shortening: 'one of the only' stays 'one of the only'; it never becomes 'the only' or 'sole'.\n` +
+    `- Never soften one while shortening either. 'the first kinship program in the country' does not become 'a nationally pioneering kinship program': the source field earned that wording and the shortening must not spend it.\n` +
     `- Keep the SCOPE attached to the specific. 'the only CSU serving youth under 12 in the Bay Area' may shorten to\n` +
     `  'the only CSU for youth under 12 in the Bay Area', never to 'the only CSU for youth under 12': the place is\n` +
     `  part of what makes the claim true.\n` +
-    `- If the cap will not fit the specific WITH its scope and its hedge, drop the specific and name the plain thing instead.\n`;
+    `- If the cap will not fit the specific WITH its scope, shorten the WORDS AROUND it — drop the framing, not the fact.\n` +
+    `  Only if the specific with its scope cannot fit the cap at all, omit that line and say so; never keep the line\n` +
+    `  with the fact hollowed out.\n`;
   if (kind === "positioning") {
     return shared +
       `SLOTS for positioning — the DIFFERENTIATORS LEAD and the category is context:\n` +
@@ -443,6 +453,8 @@ serve(async (req) => {
           input_ledger: { source_read_id: src.id, source_fields: Object.keys(visible), caps: SLOT_CAPS[kind] },
           model_provider: genChoice.provider, model_name: genChoice.model,
           judge_model: judgeChoice.model, judge_verdict: verdict,
+          // P3 (2026-10-13): which generation rules shortened this slot. Attribution only.
+          criterion_version: GEN_RULES_VERSION,
           is_current: false,
         }).select("id").single();
         if (insErr) throw new Error(`stage failed (${kind}): ${insErr.message}`);

@@ -37,6 +37,7 @@ import { PromoteRefused, promoteStagedReads, recordPromoteIntegrity, recordPromo
 import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type OfferingSeenOn } from "../_shared/publicReadStorage.ts";
 import { loadOwnSiteRecord } from "../_shared/offeringNamedOnSite.ts";
 import { SELECTION_VERSION } from "../_shared/publicReadSelection.ts";
+import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
 import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass } from "../_shared/publicReadInputs.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
@@ -83,6 +84,10 @@ async function ledgerOf(inputs: InputRow[]) {
     count: inputs.length,
     // ruling 5: which selection built this read (absent on rows written before 2026-09-18 = physical-order selection)
     selection_version: SELECTION_VERSION,
+    // P3 (2026-10-13): which GENERATION RULES wrote it. selection_version says which rows entered the
+    // pool; this says which instructions turned them into prose. Attribution only — it retracts
+    // nothing. Absent = written before the ruling.
+    gen_rules_version: GEN_RULES_VERSION,
   };
 }
 const KINDS_INPUT = ["signal", "own_word", "finding", "delta"] as const;
@@ -371,13 +376,26 @@ Deno.serve(async (req) => {
     //   3. one sentence added: cite the row whose words you used. The live failure was a CITATION
     //      omission as much as a wording one — the under-12 claim was made while citing two findings
     //      and the mightycause row, and never the filing row that actually carries it.
+    // ── P1 (operator ruling, 2026-10-13): rewritten for the FIXED figure gate ───────────────────
+    // The old rule was written when a percentage could not be sourced at all (the FIGURE_RE defect,
+    // fixed 2026-10-13), so it taught the model to retreat: clause (2) offered a hedge as an equal
+    // alternative to omission, and clause (4) told it to prefer the plain claim over a superlative
+    // the record carries. Both did exactly what they said on the first run under the fixed gate —
+    // "the first kinship program in the country" came back as "a nationally pioneering kinship
+    // program", and a sourced differentiator was dropped because nothing said to keep it.
+    //
+    // The three changes: a SOURCED specific is stated as its row states it (2); an UNSOURCED one is
+    // left out and NOT hedged (3); and the differentiator count is pinned to the current read (7).
+    // Nothing here loosens the gate — (1) still requires the row and the citation.
     const SPECIFICS_RULE = `SPECIFICS. A specific is a superlative, an exclusivity word, a figure, or a reach claim (a place or market you say you cover).
 (1) Use a specific only in the exact words of a ledger row whose class is 'the record' or 'you', and CITE THAT ROW. If you use a row's words, its token must be in that field's citations — a specific sourced to a row you did not cite reads as unsourced.
-(2) A specific you cannot find in such a row is either written as our reading ('we read you as…', 'the record suggests…') or left out.
-(3) Never strengthen a source: 'one of the only' stays 'one of the only'; it never becomes 'the only' or 'sole'.
-(4) Prefer the plain claim over the superlative when the record carries both.
-(5) Keep the scope the row states. Do not end a claim on a bare number — 'serving youth under 12 in the Bay Area' carries the row's scope, 'serving youth under 12' drops it.
-EXAMPLE. A row of class 'the record' says 'the only level 14 residential facility in northern California'. Write: 'the only Level 14 residential facility in Northern California' and cite that row. Do NOT write 'sole'. If NO row carries the under-12 CSU claim, write 'we read you as one of few crisis stabilization units serving youth under 12 in the Bay Area' — or leave it out.`;
+(2) A specific that appears in such a row is STATED AS THAT ROW STATES IT. Do not soften it, generalise it, or turn it into a reading: if a row says 'the first kinship program in the country', write that and cite the row — never 'a nationally pioneering kinship program'. A sourced fact is the record speaking, and hedging it misreports the record.
+(3) A specific you cannot find in any cited row of class 'the record' or 'you' is LEFT OUT. Do not write it as our reading instead — a reading is for a judgement we are making, not for a fact we could not source.
+(4) Never strengthen a source: 'one of the only' stays 'one of the only'; it never becomes 'the only' or 'sole'.
+(5) When the record carries both a superlative and a plain claim for the SAME fact, use the one the row states. Prefer the plain claim only when no row states the superlative.
+(6) Keep the scope the row states. Do not end a claim on a bare number — 'serving youth under 12 in the Bay Area' carries the row's scope, 'serving youth under 12' drops it.
+(7) Keep every differentiator the company's CURRENT read carries, unless the rows that sourced it are no longer in the ledger or the line no longer passes the specifics check. Dropping a sourced line is a loss, not a simplification.
+EXAMPLE. A row of class 'the record' says 'the only level 14 residential facility in northern California'. Write: 'the only Level 14 residential facility in Northern California' and cite that row. Do NOT write 'sole' and do NOT write 'a high-acuity residential facility'. If NO row carries the under-12 CSU claim, leave it out.`;
     // ── GENERATE each kind ───────────────────────────────────────────────────────────────────────
     const GEN_POSITIONING = `You read a company's PUBLIC record and state its positioning as a hypothesis for the room to test. ${CITE_RULE}
 ${SPECIFICS_RULE}
