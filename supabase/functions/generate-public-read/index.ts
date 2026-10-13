@@ -30,7 +30,7 @@ import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage }
 import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
 import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, specificIsSourced, type FieldClassDecision } from "../_shared/classFactCheck.ts";
-import { liveRecordCandidates, searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
+import { liveRecordCandidates, reReadRowTexts, searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { StageRefusal, detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
 import { PromoteRefused, promoteStagedReads, recordPromoteIntegrity, recordPromoteRefusal, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
@@ -830,15 +830,13 @@ Respond with ONLY JSON:
       // extract-own-words' snapshot_drift (index.ts:111).
       const carriedNow = carriedBlocks[kind] ?? {};
       if (Object.keys(carriedNow).length > 0) {
-        const rowTextNow: Record<string, string> = {};
         const wanted = [...new Set(Object.values(carriedNow).flatMap((c) =>
           [c.primary.row_id, ...(c.second ? [c.second.row_id] : [])]))];
-        for (const [table, col] of [["signals", "claim_text"], ["findings", "body"], ["own_words_candidates", "quote"]] as const) {
-          const { data } = await supabase.from(table).select(`id, ${col}`).in("id", wanted);
-          for (const r of ((data ?? []) as Array<Record<string, unknown>>)) {
-            const t = r[col]; if (typeof t === "string") rowTextNow[String(r.id)] = t;
-          }
-        }
+        // R6: the re-read rebuilds each row's text through rowTextOf — the SAME function that built
+        // it at selection time, over every column that function reads. This loop used to select one
+        // column per table and hash that, which is why row 9830 saw sha_drift on two rows that had
+        // not moved. The re-read now asks the selection's own question.
+        const rowTextNow = await reReadRowTexts(supabase, wanted);
         const drifted = await driftedSpans(carriedNow, rowTextNow);
         if (drifted.length > 0) {
           throw new StageRefusal(

@@ -38,6 +38,68 @@ export type SourcingSearch = {
 // deno-lint-ignore no-explicit-any
 type AnySupabase = { from: (t: string) => any };
 
+// ── V1-R6 (operator ruling, 2026-10-13): ONE function builds a row's text ────────────────────────
+//
+// Row 9830 refused the Edgewood positioning stage with carried_span_drift on both carried rows, and
+// nothing had drifted. Selection hashed a signal's text as `claim_text + " " + evidence_excerpt`
+// (463 chars for dfb6da68); the drift re-read in generate-public-read hashed `claim_text` alone
+// (231 chars). Two places assembled the same row's text, so the sha could never match and no carry
+// could ever stage. Fail-closed worked exactly as designed — it was the question that was wrong.
+//
+// R6 removes the second question. rowTextOf is the only place a row's text is assembled, and
+// ROW_TEXT_COLUMNS is the only statement of which columns that takes. The re-read derives its
+// SELECT from the same constant (rowTextSelect), so a column added to a kind's text reaches both
+// sides in one edit and cannot reach only one.
+export type RowTextKind = "signal" | "own_word" | "finding";
+
+/** The columns a kind's text is built from, in join order. The re-read's SELECT is derived from this
+ *  — never written out a second time. */
+export const ROW_TEXT_COLUMNS: Readonly<Record<RowTextKind, readonly string[]>> = {
+  signal: ["claim_text", "evidence_excerpt"],
+  own_word: ["quote"],
+  finding: ["body"],
+} as const;
+
+/** The table each kind lives in. Used by the re-read, which is given ids and not kinds. */
+export const ROW_TEXT_TABLES: ReadonlyArray<{ table: string; kind: RowTextKind }> = [
+  { table: "signals", kind: "signal" },
+  { table: "findings", kind: "finding" },
+  { table: "own_words_candidates", kind: "own_word" },
+] as const;
+
+/** THE one assembly. Every caller — selection, PASS 2, the hedge question, the drift re-read —
+ *  comes through here, so no two callers can disagree about what a row says. */
+export function rowTextOf(kind: RowTextKind, row: Readonly<Record<string, unknown>>): string {
+  return ROW_TEXT_COLUMNS[kind].map((c) => String(row[c] ?? "")).join(" ").trim();
+}
+
+/** The SELECT list the re-read needs for a kind: the id plus every column rowTextOf reads. */
+export function rowTextSelect(kind: RowTextKind): string {
+  return ["id", ...ROW_TEXT_COLUMNS[kind]].join(", ");
+}
+
+/**
+ * THE drift re-read. Given the row ids a carried block names, return each row's text as rowTextOf
+ * builds it — the same function, over every column that function reads for that kind.
+ *
+ * A row that is present but now empty keeps its entry (""), so driftedSpans calls it sha_drift (the
+ * row was emptied) rather than row_missing (the row is gone). Those are different facts.
+ */
+export async function reReadRowTexts(
+  supabase: AnySupabase,
+  rowIds: readonly string[],
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  if (rowIds.length === 0) return out;
+  for (const { table, kind } of ROW_TEXT_TABLES) {
+    const { data } = await supabase.from(table).select(rowTextSelect(kind)).in("id", rowIds);
+    for (const r of ((data ?? []) as Array<Record<string, unknown>>)) {
+      out[String(r.id)] = rowTextOf(kind, r);
+    }
+  }
+  return out;
+}
+
 /** The class of a live signal, by the standing rule: the analysis mark FIRST, then the voice label.
  *  An analysis row is OUR read and can never be sourcing evidence, so it is dropped, not classed. */
 function sourcingClassOfSignal(s: { voice_class?: string | null; raw_payload?: unknown }): SourcingClass | null {
@@ -82,7 +144,7 @@ export async function liveRecordCandidates(
     searched.signals++;
     const cls = sourcingClassOfSignal(r);
     if (!cls || alreadyCited.has(r.id)) continue;
-    const text = `${r.claim_text ?? ""} ${r.evidence_excerpt ?? ""}`.trim();
+    const text = rowTextOf("signal", r);                    // R6: the ONE assembly
     if (text) candidates.push({ id: r.id, kind: "signal", text, cls });
   }
 
@@ -98,7 +160,7 @@ export async function liveRecordCandidates(
     searched.own_words++;
     if (!r.content_identity || !activeIdentities.has(r.content_identity)) continue;
     if (alreadyCited.has(r.id)) continue;
-    const text = (r.quote ?? "").trim();
+    const text = rowTextOf("own_word", r);                   // R6: the ONE assembly
     if (text) candidates.push({ id: r.id, kind: "own_word", text, cls: "you" });
   }
   return { candidates, searched };
@@ -150,9 +212,9 @@ export async function specificsCarriedByOurOwnRows(
   const texts: string[] = [];
   for (const r of ((sg.data ?? []) as Array<{ claim_text: string | null; evidence_excerpt: string | null; voice_class: string | null; raw_payload?: unknown }>)) {
     if (!isAnalysisRow(r)) continue;                       // ours ONLY — the rest is sourcing evidence
-    texts.push(`${r.claim_text ?? ""} ${r.evidence_excerpt ?? ""}`.trim());
+    texts.push(rowTextOf("signal", r));                      // R6: the ONE assembly
   }
-  for (const r of ((fd.data ?? []) as Array<{ body: string | null }>)) texts.push(r.body ?? "");
+  for (const r of ((fd.data ?? []) as Array<{ body: string | null }>)) texts.push(rowTextOf("finding", r));
   // the same rule here too: whether a specific is ours to hedge must not depend on word order
   // either, or PASS 3 would call a figure our own rows plainly carry "unsupported" — which is final.
   for (const sp of specifics) if (texts.some((t) => specificIsSourcedWithSecondChance(sp, [t]))) out.add(sp.token);

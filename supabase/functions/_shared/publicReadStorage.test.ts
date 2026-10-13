@@ -70,7 +70,10 @@ Deno.test("Part F: for every kind the staged payload equals the direct-write pay
 Deno.test("source guard: the generator inserts built.stored on write and built.staged on stage, from the one builder", async () => {
   const gen = await read("../generate-public-read/index.ts");
   assert(gen.includes("company_id, kind, payload: built.stored, input_ledger: ledger,"), "direct write inserts built.stored");
-  assert(gen.includes("company_id, kind, payload: built.staged, input_ledger: ledger,"), "stage inserts built.staged");
+  // b6372777 (V1) split this insert across lines and gave the staged ledger its `carried` block, so
+  // the literal moved; the invariant did not. Both halves are pinned.
+  assert(gen.includes("company_id, kind, payload: built.staged,"), "stage inserts built.staged");
+  assert(gen.includes("input_ledger: { ...ledger, carried: carriedBlocks[kind] ?? {} },"), "the staged ledger is the write ledger plus the carried block");
   assert(gen.includes("const built = buildStoredPayloads({ kind, payload, verdict, uuidByRef, refMeta, ownHosts, ownSiteRecord, refUrl });"), "one builder (with the own-site record, rule 2026-09-18)");
   assert(!gen.includes("function deriveOfferingSeenOn(") && !gen.includes("function translateCitations("), "moved, not copied");
   const sto = await read("./publicReadStorage.ts");
