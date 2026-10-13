@@ -168,9 +168,15 @@ export function continuityBlock(
 ): ContinuityBlock {
   return { required, continued: required - missing.length, missing, softened };
 }
-/** The `detail` string a refusal carries, in the ref:word:shared_run shape C2 names. */
+/** The `detail` string a refusal carries, in the ref:word:shared_run shape C2 names.
+ *
+ *  V2 (operator ruling, 2026-10-13): `field` is the FULL refused text, never a slice. The first
+ *  specific_softened row (9712) stored only its first 60 characters, and because the refusal happens
+ *  before the payload is built, the rest was gone — a refusal that cannot say what it refused is not
+ *  an audit. publicReadPerKind.reject passes this through to excluded_by_rule.detail uncapped; only
+ *  the log line and the `error` column keep the 200-char cap. */
 export function softeningDetail(hits: Array<{ field: string } & SofteningHit>): string {
-  return hits.map((h) => `${h.field} ${h.ref.slice(0, 8)}:${h.word}:"${h.shared_run}"`).join("; ");
+  return hits.map((h) => `"${h.field}" ${h.ref.slice(0, 8)}:${h.word}:"${h.shared_run}"`).join("; ");
 }
 export function continuityDetail(missing: MissingLine[]): string {
   return missing.map((m) => `"${m.statement}"`).join("; ");

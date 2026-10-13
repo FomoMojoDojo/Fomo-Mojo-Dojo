@@ -32,7 +32,7 @@ import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStr
 import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, specificIsSourced, type FieldClassDecision } from "../_shared/classFactCheck.ts";
 import { searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
-import { detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
+import { StageRefusal, detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
 import { PromoteRefused, promoteStagedReads, recordPromoteIntegrity, recordPromoteRefusal, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
 import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type OfferingSeenOn } from "../_shared/publicReadStorage.ts";
 import { loadOwnSiteRecord } from "../_shared/offeringNamedOnSite.ts";
@@ -734,8 +734,9 @@ Respond with ONLY JSON:
       }
 
       // C2 — SOFTENING, on every our_read line of what we are about to store.
+      // V2: the FULL line text, never a slice — the refusal must be able to say what it refused.
       const softened = stagedLines.flatMap((l) =>
-        softenedSpecifics(l, textByUuid, classByUuid).map((h) => ({ field: l.text.slice(0, 60), ...h }))
+        softenedSpecifics(l, textByUuid, classByUuid).map((h) => ({ field: l.text, ...h }))
       );
 
       // C1 — CONTINUITY, against the read this one would replace. No current read ⇒ nothing to
@@ -750,14 +751,12 @@ Respond with ONLY JSON:
       });
       const block: ContinuityBlock = continuityBlock(currentLines.length, missing, softened);
       continuityBlocks[kind] = block;
-      if (softened.length > 0) {
-        await recordKindIntegrity(kind, { status: "rejected", guard: SOFTENING_GUARD, detail: softeningDetail(softened) });
-        throw new Error(`${SOFTENING_GUARD} (${kind}): ${softeningDetail(softened)}`);
-      }
-      if (missing.length > 0) {
-        await recordKindIntegrity(kind, { status: "rejected", guard: CONTINUITY_GUARD, detail: continuityDetail(missing) });
-        throw new Error(`${CONTINUITY_GUARD} (${kind}): ${continuityDetail(missing)}`);
-      }
+      // V3: ONE refusal, ONE row. The check does NOT record its own integrity row — it throws a
+      // typed StageRefusal, and runKindsIsolated records the row with the guard unchanged. Writing a
+      // row here AND letting the wrapper write its own is what produced the duplicate pair 9712
+      // (specific_softened) + 9713 (write_error) on the 2026-10-13 run.
+      if (softened.length > 0) throw new StageRefusal(SOFTENING_GUARD, softeningDetail(softened));
+      if (missing.length > 0) throw new StageRefusal(CONTINUITY_GUARD, continuityDetail(missing));
 
       const built = prepareStorage(kind, payload, verdict);
       const storage = built.storage;

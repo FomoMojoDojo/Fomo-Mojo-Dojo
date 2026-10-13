@@ -136,24 +136,100 @@ Deno.test("hook: both checks run in finalize, BEFORE any persistence and AFTER t
   assert(body.indexOf("softenedSpecifics(") < body.indexOf('from("public_reads").insert'), "checks precede the insert");
   // AFTER the re-ask: the re-ask is wired on the runKindsIsolated options, which come later in the file
   assert(gen.indexOf("const finalize = async") < gen.indexOf("reaskOnClassRefusal:"), "finalize is defined before the re-ask wiring, and runs after it");
-  // REFUSES, never rewrites
-  assert(body.includes(`throw new Error(\`\${SOFTENING_GUARD}`), "C2 throws");
-  assert(body.includes(`throw new Error(\`\${CONTINUITY_GUARD}`), "C1 throws");
+  // REFUSES, never rewrites. V3: the throw is a typed StageRefusal so the wrapper keeps the guard.
+  assert(body.includes("throw new StageRefusal(SOFTENING_GUARD"), "C2 throws typed");
+  assert(body.includes("throw new StageRefusal(CONTINUITY_GUARD"), "C1 throws typed");
   assert(!/softened\s*=\s*\[\]|missing\s*=\s*\[\]/.test(body), "nothing clears a hit by assignment");
 });
 
-Deno.test("hook: the integrity row carries the continuity block on refusal AND on acceptance", async () => {
+Deno.test("hook: the continuity block is computed either way, and the refusal row comes from the wrapper", async () => {
   const gen = await read("../generate-public-read/index.ts");
-  assert(gen.includes("continuityBlocks[kind] = block;"), "the block is recorded either way");
-  assert(gen.includes(`recordKindIntegrity(kind, { status: "rejected", guard: SOFTENING_GUARD`), "C2 refusal is audited");
-  assert(gen.includes(`recordKindIntegrity(kind, { status: "rejected", guard: CONTINUITY_GUARD`), "C1 refusal is audited");
+  assert(gen.includes("continuityBlocks[kind] = block;"), "the block is recorded on accept and on refuse");
+  // V3: the check no longer writes its own row — runKindsIsolated writes exactly one, with the
+  // guard the StageRefusal carries. The V3 tests below assert that end of it.
+  assert(!/recordKindIntegrity\(kind,\s*\{\s*status:\s*"rejected",\s*guard:\s*(SOFTENING|CONTINUITY)_GUARD/.test(gen),
+    "no self-recorded refusal row — that is what duplicated 9712/9713");
 });
 
 Deno.test("hook: the SLOT path runs C2 and not C1", async () => {
   const slots = await read("../generate-read-slots/index.ts");
   assert(slots.includes("softenedSpecifics(line, Object.fromEntries(sourceRowTextById), ledgerClasses)"), "C2 on the slot path");
-  assert(slots.includes(`throw new Error(\`\${SOFTENING_GUARD}`), "and it refuses");
+  assert(slots.includes("throw new StageRefusal(SOFTENING_GUARD"), "and it refuses, typed");
   assert(!slots.includes("droppedLines"), "C1 is NOT on the slot path — a slot has no prior slot to continue");
   // and it refuses before the insert
   assert(slots.indexOf("softenedSpecifics(line") < slots.indexOf('from("first_read_slots").insert'), "before the insert");
+});
+
+// ── V2 / V3 (operator rulings, 2026-10-13) ──────────────────────────────────────────────────────
+import { StageRefusal, detailOf } from "./publicReadPerKind.ts";
+import { softeningDetail as sd, continuityDetail as cd } from "./stageContinuity.ts";
+
+/** The real refused line, in full — 97 characters, which the first refusal stored 60 of. */
+const REFUSED = "nationally pioneering kinship program with 90%+ family-placement retention rate over three decades";
+
+Deno.test("V2. a refusal carries the FULL refused field text, never a slice", () => {
+  const detail = sd([{ field: REFUSED, ref: "99037383-3e52-43d8-bfba-6d941b246b79", word: "first", shared_run: "90%+ family-placement retention" }]);
+  assert(detail.includes(REFUSED), `the whole line must be in the detail:\n${detail}`);
+  assert(detail.includes("over three decades"), "including its tail, which the 60-char slice lost");
+  assertEquals(detail, `"${REFUSED}" 99037383:first:"90%+ family-placement retention"`);
+  // and the continuity detail carries whole statements too
+  const c = cd([{ statement: REFUSED, specifics: ["first"], reason: "r" }]);
+  assert(c.includes("over three decades"));
+});
+
+Deno.test("V2. the source no longer slices the line into the detail", async () => {
+  const gen = await read("../generate-public-read/index.ts");
+  assert(gen.includes("softenedSpecifics(l, textByUuid, classByUuid).map((h) => ({ field: l.text, ...h }))"),
+    "the full text goes in");
+  assert(!/field:\s*l\.text\.slice\(/.test(gen), "no slice of the field text anywhere in the hook");
+});
+
+Deno.test("V2. reject() hands the FULL detail to the integrity row and the capped one to the log", async () => {
+  const perKind = await read("./publicReadPerKind.ts");
+  assert(perKind.includes("await deps.recordIntegrity?.(kind, { status: \"rejected\", guard, detail: full });"),
+    "the row gets the uncapped detail");
+  assert(perKind.includes("deps.onReject?.(kind, guard, detail);"), "the log line keeps its 200-char cap");
+  // detailOf still caps, because the log line and the error column still want that
+  assertEquals(detailOf("x".repeat(300)).length, 200);
+});
+
+Deno.test("V3. a StageRefusal carries its own guard and the wrapper passes it through", () => {
+  const r = new StageRefusal("specific_softened", `"${REFUSED}" 99037383:first:"x"`);
+  assertEquals(r.guard, "specific_softened");
+  assertEquals(r.name, "StageRefusal");
+  assert(r.detail.includes(REFUSED), "the typed error carries the full detail");
+  assert(r instanceof Error, "still an Error, so an un-updated catch still sees it");
+  assertEquals(new StageRefusal("continuity_line_dropped", "d").guard, "continuity_line_dropped");
+});
+
+Deno.test("V3. ONE row per refusal — the check does not record its own", async () => {
+  const gen = await read("../generate-public-read/index.ts");
+  const fin = gen.indexOf("const finalize = async (rawKind: string");
+  const body = gen.slice(fin, gen.indexOf("if (!doWrite) return;", fin));
+  assert(body.includes("throw new StageRefusal(SOFTENING_GUARD"), "C2 throws typed");
+  assert(body.includes("throw new StageRefusal(CONTINUITY_GUARD"), "C1 throws typed");
+  // the duplicate-row bug: the check must NOT call recordKindIntegrity for its own refusal
+  assert(!/recordKindIntegrity\(kind,\s*\{\s*status:\s*"rejected",\s*guard:\s*(SOFTENING|CONTINUITY)_GUARD/.test(body),
+    "the check must not write its own row — runKindsIsolated writes exactly one");
+  // and the wrapper uses the refusal's guard, not write_error
+  const perKind = await read("./publicReadPerKind.ts");
+  assert(perKind.includes("refusal ? refusal.guard : \"write_error\""), "guard passed through");
+  assert(perKind.includes("refusal ? refusal.detail : (e as Error).message"), "detail passed through");
+  // the two names are in the guard vocabulary, so no caller can invent them
+  assert(perKind.includes('| "continuity_line_dropped"') && perKind.includes('| "specific_softened"'));
+});
+
+Deno.test("V3. a genuine write failure is still write_error — a refusal's name is not borrowed", async () => {
+  const perKind = await read("./publicReadPerKind.ts");
+  const blk = perKind.slice(perKind.indexOf("await deps.commit(kind, payload, g.verdict);"));
+  assert(blk.slice(0, 700).includes('"write_error"'), "a non-StageRefusal throw stays write_error");
+});
+
+Deno.test("V2/V3 on the SLOT path too: full detail, named guard, not run_failed", async () => {
+  const slots = await read("../generate-read-slots/index.ts");
+  assert(slots.includes("throw new StageRefusal(SOFTENING_GUARD"), "the slot refusal is typed");
+  assert(slots.includes("const guard = refusal ? refusal.guard : \"run_failed\";"), "named guard survives");
+  assert(slots.includes("excluded_by_rule: { kind, guard, detail: full }"), "and the FULL detail is stored");
+  assert(!/excluded_by_rule: \{ kind, guard: "run_failed", detail: String\(e\)\.slice/.test(slots),
+    "the old run_failed + slice shape is gone");
 });

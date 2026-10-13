@@ -36,6 +36,7 @@ import { runKind, lengthsOf, getSlotAt, type GenerateFn, type JudgeFn } from "..
 import { decideFieldClass, fieldClassOk, type FieldClassDecision } from "../_shared/classFactCheck.ts";
 import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
 import { SOFTENING_GUARD, softenedSpecifics, softeningDetail, type CitedLine } from "../_shared/stageContinuity.ts";
+import { StageRefusal } from "../_shared/publicReadPerKind.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -391,10 +392,17 @@ serve(async (req) => {
           return out;
         }, judge });
       } catch (e) {
-        perKind[kind] = { status: "run_failed", detail: String(e).slice(0, 300) };
+        // V2/V3 (rulings 2026-10-13) apply here too: this catch recorded every throw as
+        // `run_failed` with a 300-char slice, so a C2 refusal on the slot path would have lost both
+        // its name and the text it refused — the same pair of defects the read path had.
+        // A REFUSAL keeps its guard and its FULL detail; anything else is still a run failure.
+        const refusal = e instanceof StageRefusal ? e : null;
+        const guard = refusal ? refusal.guard : "run_failed";
+        const full = refusal ? refusal.detail : String(e);
+        perKind[kind] = { status: refusal ? "rejected" : "run_failed", guard, detail: full.slice(0, 300) };
         await supabase.from("integrity_runs").insert({
           company_id, component: `first_read_slot_${kind}`, status: "rejected", examined: 1, admitted: 0,
-          excluded_by_rule: { kind, guard: "run_failed", detail: String(e).slice(0, 300) }, error: String(e).slice(0, 300),
+          excluded_by_rule: { kind, guard, detail: full }, error: `guard=${guard} ${full}`.slice(0, 300),
         });
         continue;
       }
@@ -467,9 +475,7 @@ serve(async (req) => {
           // path, where the maps are built per run) — convert at the boundary, not in the check.
           return softenedSpecifics(line, Object.fromEntries(sourceRowTextById), ledgerClasses).map((h) => ({ field: f, ...h }));
         });
-        if (softened.length > 0) {
-          throw new Error(`${SOFTENING_GUARD} (${kind}): ${softeningDetail(softened)}`);
-        }
+        if (softened.length > 0) throw new StageRefusal(SOFTENING_GUARD, softeningDetail(softened));
       }
 
       if (allAccepted && doStage) {

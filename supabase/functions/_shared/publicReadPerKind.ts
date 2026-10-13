@@ -37,7 +37,31 @@ export type PerKindGuard =
   | "framing_vocab"
   | "citation_not_live_public"
   | "judge"
-  | "write_error";
+  | "write_error"
+  // V3 (operator ruling, 2026-10-13): the two stage-time checks name their own refusals. They run
+  // inside `commit`, and a bare throw from there was recorded as `write_error` with the real reason
+  // demoted into `detail` — so a refusal produced TWO rows (the check's own, and this wrapper's
+  // mislabelled one) and a reader scanning guards saw a write failure that never happened.
+  | "continuity_line_dropped"
+  | "specific_softened";
+
+/** V3 — a REFUSAL from inside `commit`, as opposed to a write that failed.
+ *
+ *  runKindsIsolated passes the guard through unchanged and records the row itself, so the check does
+ *  NOT write its own integrity row: one refusal, one row, with the name the ruling gave it. Any other
+ *  throw from commit stays `write_error`, because a genuine write failure is not a refusal and must
+ *  not borrow a refusal's name. */
+export class StageRefusal extends Error {
+  constructor(
+    readonly guard: Extract<PerKindGuard, "continuity_line_dropped" | "specific_softened">,
+    /** The FULL refusal detail (V2): never a slice. `detailOf` caps the LOG line and the `error`
+     *  column at 200 chars, but excluded_by_rule.detail stores this verbatim. */
+    readonly detail: string,
+  ) {
+    super(`${guard}: ${detail}`);
+    this.name = "StageRefusal";
+  }
+}
 
 export type PerKindOutcome = {
   kind: string;
@@ -110,9 +134,15 @@ export async function runKindsIsolated(
     payload: Record<string, unknown> | null,
     verdict: Record<string, unknown> | null,
   ): Promise<void> => {
+    // V2 (operator ruling, 2026-10-13): the INTEGRITY ROW carries the full detail; the log line and
+    // the returned outcome keep the 200-char cap they have always had. A refusal that records a
+    // slice of what it refused cannot be audited — the Oct 13 specific_softened row preserved only
+    // the first 60 characters of the line it rejected, and the rest was unrecoverable because the
+    // refusal happens before the payload is built.
     const detail = detailOf(detailValue);
+    const full = typeof detailValue === "string" ? detailValue : detailOf(detailValue);
     deps.onReject?.(kind, guard, detail);
-    await deps.recordIntegrity?.(kind, { status: "rejected", guard, detail });
+    await deps.recordIntegrity?.(kind, { status: "rejected", guard, detail: full });
     outcomes.push({ kind, status: "rejected", guard, detail, payload, verdict });
   };
 
@@ -190,7 +220,14 @@ export async function runKindsIsolated(
         try {
           await deps.commit(kind, payload, g.verdict);
         } catch (e) {
-          await reject(kind, "write_error", (e as Error).message, payload, g.verdict);
+          // V3: a REFUSAL keeps its own guard and its full detail; anything else is a write failure.
+          const refusal = e instanceof StageRefusal ? e : null;
+          await reject(
+            kind,
+            refusal ? refusal.guard : "write_error",
+            refusal ? refusal.detail : (e as Error).message,
+            payload, g.verdict,
+          );
           break;
         }
       }
