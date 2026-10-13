@@ -38,6 +38,10 @@ import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type Off
 import { loadOwnSiteRecord } from "../_shared/offeringNamedOnSite.ts";
 import { SELECTION_VERSION } from "../_shared/publicReadSelection.ts";
 import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
+import {
+  CONTINUITY_GUARD, SOFTENING_GUARD, continuityBlock, continuityDetail, droppedLines,
+  softenedSpecifics, softeningDetail, type CitedLine, type ContinuityBlock,
+} from "../_shared/stageContinuity.ts";
 import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass } from "../_shared/publicReadInputs.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
@@ -91,6 +95,45 @@ async function ledgerOf(inputs: InputRow[]) {
   };
 }
 const KINDS_INPUT = ["signal", "own_word", "finding", "delta"] as const;
+
+/** C1: the cited lines of a STORED payload (UUID citations), for the continuity comparison.
+ *  It reads the same shapes stampFieldClasses walks — a `<base>_citations` array beside its text, or
+ *  a bare `citations` on an array element — but off a stored row rather than a model answer, so it
+ *  cannot reuse that function (which mutates and expects ref tokens). Kept deliberately small: a
+ *  shape it does not recognise contributes no line, and a line it cannot read is a line it cannot
+ *  require, which fails OPEN. That is the right direction for a check that refuses: a missed line
+ *  is a missed refusal, never a false one. */
+const CITE_OR_CLASS_RE = /citation|cites?$|refs?$|ids$|_class$|^class$/i;
+export function linesOfStoredPayload(payload: Record<string, unknown> | null): CitedLine[] {
+  const out: CitedLine[] = [];
+  const walk = (v: unknown): void => {
+    if (Array.isArray(v)) { v.forEach(walk); return; }
+    if (!v || typeof v !== "object") return;
+    const obj = v as Record<string, unknown>;
+    for (const [k, val] of Object.entries(obj)) {
+      const m = /^(.*?)_(?:citations|cites?|refs?)$/.exec(k);
+      const bare = k === "citations" || k === "refs";
+      if ((m || bare) && Array.isArray(val)) {
+        const base = m ? m[1] : "";
+        const clsKey = m ? `${base}_class` : "class";
+        const cls = typeof obj[clsKey] === "string" ? String(obj[clsKey]) : null;
+        let text = "";
+        if (base && typeof obj[base] === "string") text = String(obj[base]);
+        else if (base) {
+          const pk = Object.keys(obj).find((x) => x.startsWith(`${base}_`) && !CITE_OR_CLASS_RE.test(x) && typeof obj[x] === "string");
+          if (pk) text = String(obj[pk]);
+        } else {
+          for (const kk of ["text", "statement", "promise", "body"]) if (typeof obj[kk] === "string") { text = String(obj[kk]); break; }
+        }
+        if (text) out.push({ text, cls, refs: (val as unknown[]).map(String) });
+        continue;
+      }
+      if (!CITE_OR_CLASS_RE.test(k)) walk(val);
+    }
+  };
+  walk(payload);
+  return out;
+}
 
 // A SHORT-REF catalogue: an LLM cannot reliably echo dozens of 36-char uuids (it mangles them), so
 // each input gets a stable, kind-prefixed ref token (S1, O1, F1, M1, D1) mapped to its real id. The
@@ -513,6 +556,8 @@ Respond with ONLY JSON:
 
     const payloads: Partial<Record<Kind, Record<string, unknown>>> = {};
 
+    /** C1/C2: the continuity block per kind — reported, and stored on the integrity row either way. */
+    const continuityBlocks: Partial<Record<Kind, ContinuityBlock>> = {};
     const fieldClasses: Partial<Record<Kind, StampedField[]>> = {};          // 1a-4: per citing field, its class + refs + text
     const classDecisions: Partial<Record<Kind, FieldClassDecision[]>> = {};  // the tightening: (b) sourced, or judge_required
     /** Stamp a candidate payload's field classes and run (b) over it. Used for the FIRST answer and
@@ -666,6 +711,54 @@ Respond with ONLY JSON:
     // and a dry-run persists nothing.
     const finalize = async (rawKind: string, payload: Record<string, unknown>, verdict: Record<string, unknown>): Promise<void> => {
       const kind = rawKind as Kind;
+
+      // ── C1 / C2 (rulings 2026-10-13): the two stage-time checks, BEFORE any persistence ────────
+      // They run here, at the top of finalize, so every persisting path is covered (stage AND the
+      // direct write) and so they sit AFTER the re-ask — the re-ask repairs a CLASS refusal and
+      // returns null for anything else, so neither of these gets one, which is the ruling.
+      // They REFUSE and never rewrite: a throw here is caught by runKindsIsolated, which records the
+      // kind as rejected and leaves every sibling untouched.
+      //
+      // The ref-token/UUID boundary matters. fieldClasses[kind] carries REF TOKENS (S21…) because
+      // that is what the model echoes; the stored payload and the current read carry UUIDs. So the
+      // staged lines are mapped through uuidByRef before anything is compared.
+      const toUuid = (r: string) => uuidByRef.get(r) ?? r;
+      const stagedLines: CitedLine[] = (fieldClasses[kind] ?? []).map((f) => ({
+        text: f.text, cls: f.cls, refs: f.refs.map(toUuid),
+      }));
+      const textByUuid: Record<string, string> = {};
+      const classByUuid: Record<string, string> = {};
+      for (const [ref, uuid] of uuidByRef) {
+        textByUuid[uuid] = textByRef.get(ref) ?? "";
+        classByUuid[uuid] = String(classByRef.get(ref) ?? "");
+      }
+
+      // C2 — SOFTENING, on every our_read line of what we are about to store.
+      const softened = stagedLines.flatMap((l) =>
+        softenedSpecifics(l, textByUuid, classByUuid).map((h) => ({ field: l.text.slice(0, 60), ...h }))
+      );
+
+      // C1 — CONTINUITY, against the read this one would replace. No current read ⇒ nothing to
+      // continue, and the block says so rather than passing vacuously.
+      const { data: curRow } = await supabase.from("public_reads")
+        .select("payload").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
+      const currentLines: CitedLine[] = linesOfStoredPayload((curRow as { payload?: Record<string, unknown> } | null)?.payload ?? null);
+      const missing = droppedLines({
+        currentLines, stagedLines,
+        newLedgerIds: new Set(Object.keys(textByUuid)),
+        textByRef: textByUuid, classByRef: classByUuid,
+      });
+      const block: ContinuityBlock = continuityBlock(currentLines.length, missing, softened);
+      continuityBlocks[kind] = block;
+      if (softened.length > 0) {
+        await recordKindIntegrity(kind, { status: "rejected", guard: SOFTENING_GUARD, detail: softeningDetail(softened) });
+        throw new Error(`${SOFTENING_GUARD} (${kind}): ${softeningDetail(softened)}`);
+      }
+      if (missing.length > 0) {
+        await recordKindIntegrity(kind, { status: "rejected", guard: CONTINUITY_GUARD, detail: continuityDetail(missing) });
+        throw new Error(`${CONTINUITY_GUARD} (${kind}): ${continuityDetail(missing)}`);
+      }
+
       const built = prepareStorage(kind, payload, verdict);
       const storage = built.storage;
       storagePayloads[kind] = storage;

@@ -35,6 +35,7 @@ import { promoteStagedSlots, rejectStagedSlots, SlotPromoteRefused } from "../_s
 import { runKind, lengthsOf, getSlotAt, type GenerateFn, type JudgeFn } from "../_shared/readSlotsRun.ts";
 import { decideFieldClass, fieldClassOk, type FieldClassDecision } from "../_shared/classFactCheck.ts";
 import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
+import { SOFTENING_GUARD, softenedSpecifics, softeningDetail, type CitedLine } from "../_shared/stageContinuity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -444,6 +445,32 @@ serve(async (req) => {
           generator_calls: outcome.generator_calls, retry_used_by: outcome.retry_used_by,
         },
       });
+
+      // ── C2 on the SLOT path (ruling 2026-10-13) ──────────────────────────────────────────────
+      // A slot inherits its source field's citations, so the inputs are identical to the read's and
+      // the same softening is possible — P2's new "never soften while shortening" bullet had no
+      // enforcement either. REFUSES before the insert; no re-ask (the slot retry repairs a REJECTED
+      // slot, and a softened line is accepted-but-wrong, which is a different fault).
+      //
+      // C1 is deliberately NOT here: a slot has no prior slot to continue, and its obligation to its
+      // SOURCE FIELD is already enforced by the verbatim path (verbatimDifferentiatorIndices copies
+      // the field's text outright).
+      if (allAccepted) {
+        const softened = slotFieldPaths(kind, slots).flatMap((f) => {
+          const l = (getSlotAt(slots, f) ?? {}) as { text?: unknown; citations?: unknown; source_class?: unknown };
+          const line: CitedLine = {
+            text: typeof l.text === "string" ? l.text : "",
+            cls: typeof l.source_class === "string" ? l.source_class : null,
+            refs: Array.isArray(l.citations) ? l.citations.map(String) : [],
+          };
+          // sourceRowTextById is a Map; the check takes a plain record (it is shared with the read
+          // path, where the maps are built per run) — convert at the boundary, not in the check.
+          return softenedSpecifics(line, Object.fromEntries(sourceRowTextById), ledgerClasses).map((h) => ({ field: f, ...h }));
+        });
+        if (softened.length > 0) {
+          throw new Error(`${SOFTENING_GUARD} (${kind}): ${softeningDetail(softened)}`);
+        }
+      }
 
       if (allAccepted && doStage) {
         // STAGED, NOT CURRENT, UNSIGNED. Promotion is the operator's signing act (R1).
