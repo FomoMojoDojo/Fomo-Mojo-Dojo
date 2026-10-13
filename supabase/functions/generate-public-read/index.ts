@@ -43,8 +43,9 @@ import {
   softenedSpecifics, softeningDetail, type CitedLine, type ContinuityBlock,
 } from "../_shared/stageContinuity.ts";
 import {
-  CARRIED_DRIFT_GUARD, carriedBlockOf, carryForLine, driftedSpans, searchLiveRecordForSpans,
-  usableSpansOf, type CarriedBlock, type CarriedSpan, type FieldCarry,
+  CARRIED_DRIFT_GUARD, assembleByPath, carriedBlockOf, carryForLine, driftedSpans,
+  rekeyCarriedBlock, searchLiveRecordForSpans, usableSpansOf, type CarriedBlock, type CarriedSpan,
+  type CarryPlacement, type FieldCarry,
 } from "../_shared/carriedSpan.ts";
 import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass } from "../_shared/publicReadInputs.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
@@ -666,20 +667,26 @@ Respond with ONLY JSON:
       return out;
     };
 
-    /** Splice the carried text and its citations over the model's answer at each carried path.
+    /** Assemble unique_attributes BY PATH (S1): a carried path takes its carry, the remaining paths
+     *  take the model's returned lines in order. Never by the model's index — the prompt tells it
+     *  not to write the carried lines, so its array is not index-aligned with the paths.
      *  The citations are REPLACED, not merged: a carried line's citations ARE its span's rows, so
-     *  its inherited class is the span's class (record/you) and never our_read (V1-R3). */
-    const spliceCarries = (payload: Record<string, unknown>, carries: readonly FieldCarry[]): void => {
-      const attrs = Array.isArray(payload.unique_attributes) ? payload.unique_attributes as Array<Record<string, unknown>> : null;
-      if (!attrs) return;
-      for (const c of carries) {
-        const m = /^unique_attributes\[(\d+)\]$/.exec(c.field);
-        if (!m) continue;
-        const i = Number(m[1]);
-        const refs = c.add_refs.map((u) => refByUuid.get(u)).filter((x): x is string => !!x);
-        if (refs.length === 0) continue;                 // the span's row is not in this run's catalogue
-        attrs[i] = { text: c.stored_text, citations: refs };
-      }
+     *  its inherited class is the span's class (record/you) and never our_read (V1-R3).
+     *  The placement rule itself lives in _shared/carriedSpan.ts (assembleByPath); this resolves the
+     *  span's row to a ledger ref and hands the pure assembly the two lists. */
+    const spliceCarries = (payload: Record<string, unknown>, carries: readonly FieldCarry[]): Record<string, string> => {
+      const modelLines = Array.isArray(payload.unique_attributes)
+        ? payload.unique_attributes as Array<Record<string, unknown>> : [];
+      const placements: CarryPlacement[] = carries.flatMap((c) => {
+        if (!/^unique_attributes\[\d+\]$/.test(c.field)) return [];
+        const citations = c.add_refs.map((u) => refByUuid.get(u)).filter((x): x is string => !!x);
+        if (citations.length === 0) return [];           // the span's row is not in this run's catalogue
+        return [{ field: c.field, text: c.stored_text, citations }];
+      });
+      if (placements.length === 0 && !Array.isArray(payload.unique_attributes)) return {};
+      const { lines, placedAt } = assembleByPath(modelLines, placements);
+      payload.unique_attributes = lines;
+      return placedAt;
     };
 
     const stampAndDecide = async (kind: Kind, p: Record<string, unknown>): Promise<FieldClassDecision[]> => {
@@ -977,7 +984,10 @@ Respond with ONLY JSON:
           carries.map((c) => `  ${c.field}: ${c.stored_text}`).join("\n");
 
         const p = await run(genChoice, genSys[kind as Kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}${takenBlock}\n\nProduce the ${kind} JSON.`, 0);
-        spliceCarries(p, carries);
+        // S1: the assembly reports where each carry actually landed. A slot with neither a carry nor
+        // a generated line to fill it shifts every later carry down one, and the block must name the
+        // path the line is STORED at — the drift check and C1-A's anchor both key off it.
+        carriedBlocks[kind as Kind] = rekeyCarriedBlock(carriedBlocks[kind as Kind] ?? {}, spliceCarries(p, carries));
         // 1a-4: the class of every citing field is COMPUTED here from the refs the model returned,
         // weakest-wins, overwriting anything it volunteered. Done BEFORE the judge sees the payload so
         // the judge is told each field's class rather than asked to infer it.

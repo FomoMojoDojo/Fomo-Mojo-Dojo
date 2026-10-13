@@ -4,6 +4,7 @@ import {
   CARRIED_DRIFT_GUARD, carriedBlockOf, carryForLine, chooseSecondSpan, chooseSpan, clausesOf,
   driftedSpans, joinSpans, relevantSpans, renderCarried, spanRelevantTo, spanUsable,
   usableSpansOf, type CarriedSpan,
+  assembleByPath, rekeyCarriedBlock, type CarryPlacement, type CarriedBlock,
 } from "./carriedSpan.ts";
 import { VERBATIM_MAX_CHARS } from "./readSlots.ts";
 import { sha256Hex } from "./contentIdentity.ts";
@@ -216,14 +217,19 @@ Deno.test("hook: carry-before-generate — selection, the prompt notice, then th
   assert(g.includes("const carries = await selectCarries(kind as Kind);"), "selection runs first");
   assert(g.indexOf("selectCarries") < g.indexOf("await run(genChoice"), "BEFORE the model call");
   assert(g.includes("ALREADY WRITTEN"), "the generator is told which lines are taken");
-  assert(g.includes("spliceCarries(p, carries);"), "and the carried text is spliced over the answer");
-  assert(g.indexOf("await run(genChoice") < g.indexOf("spliceCarries(p, carries);"), "splice AFTER the answer");
-  assert(g.indexOf("spliceCarries(p, carries);") < g.indexOf("stampAndDecide"), "and BEFORE classes are stamped");
+  assert(g.includes("spliceCarries(p, carries)"), "and the carried text is spliced over the answer");
+  assert(g.indexOf("await run(genChoice") < g.indexOf("spliceCarries(p, carries)"), "splice AFTER the answer");
+  assert(g.indexOf("spliceCarries(p, carries)") < g.indexOf("stampAndDecide"), "and BEFORE classes are stamped");
 });
 
 Deno.test("hook: a carried line's citations are REPLACED, so its class is the span's", async () => {
   const gen = await readSrc("../generate-public-read/index.ts");
-  assert(gen.includes("attrs[i] = { text: c.stored_text, citations: refs };"),
+  // S1 moved the placement into _shared/carriedSpan.ts; the invariant is unchanged and pinned in
+  // both halves — the hook hands over the span's refs ALONE, and the assembly stores them as-is.
+  assert(gen.includes("const citations = c.add_refs.map((u) => refByUuid.get(u)).filter((x): x is string => !!x);"),
+    "the span's rows, and nothing merged in");
+  const car = await readSrc("./carriedSpan.ts");
+  assert(car.includes("byIndex.set(Number(m[1]), { line: { text: p.text, citations: p.citations }, field: p.field });"),
     "replaced, not merged — a merged finding would drag the class to our_read");
 });
 
@@ -358,34 +364,101 @@ Deno.test("R5. the dry run builds the pool as the generate path does at the carr
   assert(sel.includes("await poolSpans()"), "it builds the pool from the catalogue it has just enlarged");
 });
 
-// ── the splice is BY PATH — established while diagnosing refusal 9868 ──────────────────────────
+// ── S1: unique_attributes is assembled BY PATH, not by the model's index ───────────────────────
 //
-// The question asked of run 9868 was whether spliceCarries preserves a generated entry at a
-// NON-carried path. It does: it assigns attrs[i] at each carried index and never rebuilds or
-// truncates the array. Simulated over model arrays of length 0..4 against carries at [0] and [1]:
-// a model entry at index 2 or 3 survives; one at 0 or 1 is overwritten, which is correct — that is
-// the path the carry owns. Pinned here because section 3's reading of 9868 rests on it.
-Deno.test("splice: a generated line at a NON-carried path survives the splice", async () => {
-  const gen = await readSrc("../generate-public-read/index.ts");
-  const fn = gen.slice(gen.indexOf("const spliceCarries ="), gen.indexOf("const stampAndDecide ="));
-  assert(fn.includes("attrs[i] = { text: c.stored_text, citations: refs };"), "assignment at the carried index");
-  // `attrs` is BOUND once and never rebound: the only `attrs =` in the function is its declaration
-  assertEquals(fn.split("attrs =").length - 1, 1, "attrs is bound once");
-  assert(fn.includes("const attrs = Array.isArray(payload.unique_attributes)"), "and that one is the declaration");
-  for (const banned of ["attrs.splice(", "attrs.filter(", "attrs.slice(", "attrs.length =", "payload.unique_attributes ="]) {
-    assert(!fn.includes(banned), `the array is never replaced or truncated — only indexed, and this does ${banned}`);
-  }
+// Run 9868's defect. The old splice did `attrs[i] = carry` at each carried index, which assumes the
+// model's array is index-aligned with the field paths. The prompt guarantees otherwise: it tells the
+// model not to write the carried lines, so what comes back are the lines it DID write, at indices
+// 0, 1, … — exactly where the carries land. Every generated differentiator was overwritten, the
+// staged read held two carried lines and nothing else, and C1 refused the dropped third line.
+const CARRIES_01: CarryPlacement[] = [
+  { field: "unique_attributes[0]", text: "CARRY-0", citations: ["S21"] },
+  { field: "unique_attributes[1]", text: "CARRY-1", citations: ["S22"] },
+];
+const genLines = (n: number) => Array.from({ length: n }, (_, i) => ({ text: `GEN-${i}`, citations: ["X"] }));
+const shape = (a: { lines: ReadonlyArray<Record<string, unknown>> }) => a.lines.map((x) => String(x.text));
 
-  // the same semantics, run: carries at [0] and [1] over model arrays of each length
-  const splice = (attrs: Array<Record<string, unknown>>, idx: readonly number[]) => {
-    for (const i of idx) attrs[i] = { text: `CARRY-${i}`, citations: ["S"] };
-    return attrs;
-  };
-  const survivors = (n: number) =>
-    splice(Array.from({ length: n }, (_, i) => ({ text: `GEN-${i}` })), [0, 1])
-      .filter((x) => String(x.text).startsWith("GEN-")).map((x) => x.text);
-  assertEquals(survivors(0), []);
-  assertEquals(survivors(2), [], "a model array of 2 is entirely overwritten by 2 carries");
-  assertEquals(survivors(3), ["GEN-2"], "the entry at the non-carried path survives");
-  assertEquals(survivors(4), ["GEN-2", "GEN-3"]);
+Deno.test("S1. carries at [0],[1] + ONE model line ⇒ 3 entries, the generated line at [2]", () => {
+  const out = assembleByPath(genLines(1), CARRIES_01);
+  assertEquals(out.lines.length, 3);
+  assertEquals(shape(out), ["CARRY-0", "CARRY-1", "GEN-0"]);
+  assertEquals(out.lines[2].citations, ["X"], "the generated line keeps its own citations");
+  assertEquals(out.lines[0].citations, ["S21"], "a carried line's citations ARE its span's row (R3)");
+  assertEquals(out.placedAt, { "unique_attributes[0]": "unique_attributes[0]", "unique_attributes[1]": "unique_attributes[1]" }, "nothing shifted");
+});
+
+Deno.test("S1. carries at [0],[1] + ZERO model lines ⇒ 2 entries", () => {
+  assertEquals(shape(assembleByPath(genLines(0), CARRIES_01)), ["CARRY-0", "CARRY-1"]);
+});
+
+Deno.test("S1. the model's lines are placed IN ORDER, never by their index", () => {
+  assertEquals(shape(assembleByPath(genLines(2), CARRIES_01)), ["CARRY-0", "CARRY-1", "GEN-0", "GEN-1"]);
+  assertEquals(shape(assembleByPath(genLines(3), CARRIES_01)), ["CARRY-0", "CARRY-1", "GEN-0", "GEN-1", "GEN-2"]);
+  // and NOTHING the model returned is lost — the 9868 failure mode, stated as a property
+  for (const n of [0, 1, 2, 3, 5]) {
+    const out = assembleByPath(genLines(n), CARRIES_01);
+    assertEquals(shape(out).filter((t) => t.startsWith("GEN-")).length, n, `all ${n} generated line(s) survive`);
+  }
+});
+
+Deno.test("S1. a carry at a NON-leading path still owns its slot, and no hole is stored", () => {
+  const carries: CarryPlacement[] = [
+    { field: "unique_attributes[0]", text: "CARRY-0", citations: ["S21"] },
+    { field: "unique_attributes[2]", text: "CARRY-2", citations: ["S23"] },
+  ];
+  assertEquals(shape(assembleByPath(genLines(1), carries)), ["CARRY-0", "GEN-0", "CARRY-2"]);
+  assertEquals(shape(assembleByPath(genLines(0), carries)), ["CARRY-0", "CARRY-2"], "the gap closes rather than storing an empty slot");
+  for (const x of assembleByPath(genLines(0), carries).lines) assert(x && typeof x.text === "string", "no hole");
+});
+
+Deno.test("S1. NO carries ⇒ the model's array, in its own order, untouched", () => {
+  assertEquals(shape(assembleByPath(genLines(3), [])), ["GEN-0", "GEN-1", "GEN-2"]);
+  const src = genLines(2);
+  assertEquals(assembleByPath(src, []).lines, [...src]);
+  assertEquals(assembleByPath(src, []).placedAt, {}, "nothing was placed");
+});
+
+Deno.test("S1. the hook delegates placement and never indexes the model's array itself", async () => {
+  const src = await readSrc("../generate-public-read/index.ts");
+  const fn = src.slice(src.indexOf("const spliceCarries ="), src.indexOf("const stampAndDecide ="));
+  assert(fn.includes("const { lines, placedAt } = assembleByPath(modelLines, placements);"), "one assembly, in _shared");
+  assert(fn.includes("payload.unique_attributes = lines;"), "and the payload takes exactly what it returned");
+  assert(!/attrs\[/.test(fn) && !/modelLines\[\s*(?:i|Number)/.test(fn), "no index placement in the hook");
+  assert(fn.includes('if (citations.length === 0) return [];'), "a span whose row is not in the catalogue is not placed");
+});
+
+Deno.test("S1. a carry whose slot SHIFTS is re-keyed, so the carried block never lies about its path", () => {
+  // paths [0] and [2] carried, nothing generated: [1] has no filler, so the [2] carry is STORED at [1]
+  const carries: CarryPlacement[] = [
+    { field: "unique_attributes[0]", text: "CARRY-0", citations: ["S21"] },
+    { field: "unique_attributes[2]", text: "CARRY-2", citations: ["S23"] },
+  ];
+  const out = assembleByPath(genLines(0), carries);
+  assertEquals(shape(out), ["CARRY-0", "CARRY-2"]);
+  assertEquals(out.placedAt, {
+    "unique_attributes[0]": "unique_attributes[0]",
+    "unique_attributes[2]": "unique_attributes[1]",     // ← it moved, and says so
+  });
+  // the block follows the line, not the selection
+  const block = {
+    "unique_attributes[0]": { primary: { row_id: "a" }, second: null, stored_text: "CARRY-0", rejected: [] },
+    "unique_attributes[2]": { primary: { row_id: "b" }, second: null, stored_text: "CARRY-2", rejected: [] },
+  } as unknown as CarriedBlock;
+  const rekeyed = rekeyCarriedBlock(block, out.placedAt);
+  assertEquals(Object.keys(rekeyed), ["unique_attributes[0]", "unique_attributes[1]"]);
+  assertEquals((rekeyed["unique_attributes[1]"] as { stored_text: string }).stored_text, "CARRY-2");
+
+  // and when nothing shifts, re-keying is the identity
+  const same = assembleByPath(genLines(1), carries);
+  assertEquals(shape(same), ["CARRY-0", "GEN-0", "CARRY-2"]);
+  assertEquals(Object.keys(rekeyCarriedBlock(block, same.placedAt)), ["unique_attributes[0]", "unique_attributes[2]"]);
+});
+
+Deno.test("S1. the hook re-keys the block from the SAME call that assembles the payload", async () => {
+  const src = await readSrc("../generate-public-read/index.ts");
+  assert(src.includes("carriedBlocks[kind as Kind] = rekeyCarriedBlock(carriedBlocks[kind as Kind] ?? {}, spliceCarries(p, carries));"),
+    "one call, one truth — the block cannot be re-keyed from a different assembly than the one stored");
+  const genBlock = src.slice(src.indexOf("generate: async (kind) => {"), src.indexOf("judge: async (kind, payload)"));
+  assert(genBlock.includes("rekeyCarriedBlock("), "re-keyed inside generate — which runs before finalize is ever called");
+  assert(src.includes("const carriedNow = carriedBlocks[kind] ?? {};"), "and the drift check reads the block as generate left it");
 });

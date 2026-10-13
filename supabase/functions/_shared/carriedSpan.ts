@@ -348,3 +348,73 @@ export async function searchLiveRecordForSpans(
   }
   return out;
 }
+
+// ── S1 (operator ruling, 2026-10-13): unique_attributes is assembled BY PATH ───────────────────
+//
+// The old splice indexed into the model's own array: `attrs[i] = carry` at each carried index. That
+// assumed the model's array is index-aligned with the field paths, and the prompt guarantees it is
+// not — `takenBlock` tells the model "these lines are carried … Do not write them, and write every
+// other line as usual", and GEN_POSITIONING asks for a list with no count. A model that complies
+// returns only the lines it DID write, at indices 0, 1, … — exactly where the carries land. On run
+// 9868 that overwrote every line the model returned: two class decisions, both carried, no generated
+// differentiator at all, and the current read's third line dropped with nothing to continue it.
+//
+// S1: a carried path takes its carry. The remaining paths take the model's returned lines IN ORDER,
+// never by the model's index. So a model that returns one line while two paths are carried yields
+// three entries, its line at [2] — the slot no carry owns.
+//
+// What this trusts: that the model did not also restate a carried line. If it does, that restatement
+// is a line it wrote and is placed as one — it is not silently dropped. The prompt forbids it, C2
+// would see a softened restatement of a record row, and C1 can only be helped by an extra line.
+export type CarryPlacement = { field: string; text: string; citations: string[] };
+
+/** The assembled lines, plus WHERE each carry actually landed.
+ *
+ *  `placedAt` exists because a JSON array has no holes. If a slot is owned by no carry and there is
+ *  no generated line left to fill it, every later carry shifts down one — so a carry selected for
+ *  unique_attributes[2] can end up stored at index 1. The carried block, the drift check and C1-A's
+ *  anchor all key off the field path, so they must be told the path the line is actually AT, not the
+ *  path it was chosen for. Returning the map is cheaper than letting three consumers guess. */
+export type AssembledAttributes = {
+  lines: Array<Record<string, unknown>>;
+  /** the field path a carry was SELECTED for → the field path it is STORED at */
+  placedAt: Record<string, string>;
+};
+
+export function assembleByPath(
+  modelLines: ReadonlyArray<Record<string, unknown>>,
+  placements: readonly CarryPlacement[],
+): AssembledAttributes {
+  const byIndex = new Map<number, { line: Record<string, unknown>; field: string }>();
+  for (const p of placements) {
+    const m = /^unique_attributes\[(\d+)\]$/.exec(p.field);
+    if (!m) continue;
+    byIndex.set(Number(m[1]), { line: { text: p.text, citations: p.citations }, field: p.field });
+  }
+  if (byIndex.size === 0) return { lines: [...modelLines], placedAt: {} };
+
+  const maxCarried = Math.max(...byIndex.keys());
+  const total = Math.max(maxCarried + 1, byIndex.size + modelLines.length);
+  const lines: Array<Record<string, unknown>> = [];
+  const placedAt: Record<string, string> = {};
+  let g = 0;
+  for (let i = 0; i < total; i++) {
+    const carry = byIndex.get(i);
+    if (carry) {
+      placedAt[carry.field] = `unique_attributes[${lines.length}]`;
+      lines.push(carry.line);
+      continue;
+    }
+    if (g < modelLines.length) lines.push(modelLines[g++]);
+    // else: a slot no carry owns and no generated line fills — left out, never stored as a hole
+  }
+  while (g < modelLines.length) lines.push(modelLines[g++]);   // a carry indexed past the array
+  return { lines, placedAt };
+}
+
+/** Re-key a carried block to the paths its lines are STORED at. Identity when nothing shifted. */
+export function rekeyCarriedBlock(block: CarriedBlock, placedAt: Readonly<Record<string, string>>): CarriedBlock {
+  const out: CarriedBlock = {};
+  for (const [field, carry] of Object.entries(block)) out[placedAt[field] ?? field] = carry;
+  return out;
+}
