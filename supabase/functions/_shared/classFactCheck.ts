@@ -60,7 +60,18 @@ const REACH_RE = new RegExp(`\\b(${REACH.join("|")})\\b`, "gi");
 //                           four-digit left side is a year. ISO dates therefore collapse to the
 //                           year alone, which the operator ruled acceptable (year-only, 2026-10-07).
 //   (?:%|\+|bn\b|[kmKM]\b)*   the value suffixes, any run of them: "90%+", "170+", "$1.2M", "$350K".
-const FIGURE_RE = /(?<![\d.,\-])\$?\d(?:[\d,]*\d)?(?:\.\d+)?(?:[-–—]\d{1,3}(?![\d-]))?(?:%|\+|bn\b|[kmKM]\b)*/g;
+// ── F1 (operator ruling, 2026-10-14): a digit run preceded by a LETTER is not a figure ─────────
+// C1 refused Wasabi's positioning (audit 10190) partly on the "specific" 3 — extracted from "S3
+// compatibility". The same defect reads a figure out of B2B, B2C, B2B2C, H4, H6, Q2, Q4 and H100.
+// None of those is a quantity, and a check that demands the record carry "3" verbatim for a line
+// saying "S3" refuses a line the record supports perfectly.
+//
+// The second lookbehind sits AFTER the optional `$` and immediately before the digit, which is what
+// "immediately preceded by a letter" means. Putting it before `\$?` instead would have dropped
+// US$100, where the letter precedes the currency mark and not the digit.
+// A hyphen was already excluded by the first lookbehind, so COVID-19 was never a figure.
+// A TRAILING letter still counts: 3x, 10M and 5k are quantities and keep their figure status.
+const FIGURE_RE = /(?<![\d.,\-])\$?(?<![A-Za-z])\d(?:[\d,]*\d)?(?:\.\d+)?(?:[-–—]\d{1,3}(?![\d-]))?(?:%|\+|bn\b|[kmKM]\b)*/g;
 // A REACH CLAIM is a named place reached through SCOPE language — "in the Bay Area", "across
 // California", "serving Northern California". A capitalised phrase on its own is NOT a reach claim:
 // "Crisis Stabilization Unit" is a service name and naming it asserts no reach, so matching every
@@ -222,6 +233,72 @@ export function decideFieldClass(input: FieldClassInput): FieldClassDecision {
     branch: unsourced.length === 0 ? "sourced" : "judge_required",
     unsourced, examined: specifics.length,
   };
+}
+
+// ── S1 (operator ruling, 2026-10-14): THE STAGE GATE FOR RECORD- AND YOU-CLASSED LINES ─────────
+//
+// THE HOLE IT CLOSES. decideFieldClass returns not_applicable for every line that is not our_read
+// (line 208 above), and C2 gates the same way. So nothing tested a rendered specific for verbatim
+// sourcing on a record- or you-classed line, at stage or at promote — which is what the Sep 18
+// promote law requires. Wasabi's refused run is the measurement: all six fields classed record or
+// you, every one examined: 0. A record-classed line could assert a figure that appears in none of
+// its cited rows and only a model judgment stood between it and a staged read.
+//
+// WHY A SEPARATE FUNCTION AND NOT A WIDENED decideFieldClass. (b) answers "did WE write this as our
+// reading" — its branches (sourced / judge_required / unsupported) feed a judge call and a bounded
+// re-ask. S1 answers a different question with a different consequence: a record line claiming what
+// the record does not say is REFUSED, never re-asked and never rewritten, because rewriting it would
+// be us writing the record's words for it. Widening (b) would have fed these into the re-ask.
+//
+// NO SECOND IMPLEMENTATION. The sourcing test is specificIsSourcedWithSecondChance — the same
+// predicate (b) uses, so "sourced" means one thing in both gates and the G2 figure second chance
+// and F1 ride along for free.
+//
+// A FINDING IS NEVER A SOURCE: the caller passes only record/you rows, and findings are our_read, so
+// they are excluded by class. The caller excludes them by kind as well — belt and brace, because a
+// finding is our synthesis and our synthesis cannot license the record's words.
+
+/** S1's position words. A deliberate SUBSET of EXCLUSIVITY: the ruling names these four. */
+export const S1_POSITION_WORDS: ReadonlySet<string> = new Set(["only", "sole", "first", "largest"]);
+
+export type S1Result = {
+  field: string;
+  cls: string | null;
+  /** how many specifics S1 tested — 0 means the line asserts nothing S1 governs */
+  examined: number;
+  /** the specifics no cited source row carries verbatim. Empty ⇒ the line passes. */
+  unsourced: Array<{ kind: SpecificKind; token: string }>;
+};
+
+/** S1: the specifics a record- or you-classed line asserts that none of ITS OWN cited source rows
+ *  carries verbatim. Figures (so G1-G3 and F1 apply) plus the four position words.
+ *  `citedSourceTexts` must already be restricted to that line's record/you rows, findings removed. */
+export function s1Unsourced(input: {
+  field: string; text: string; cls: string | null; citedSourceTexts: readonly string[];
+}): S1Result {
+  const cls = input.cls ?? null;
+  // S1 governs the record speaking and the company speaking. our_read is (b)'s business, and an
+  // unclassed line cites nothing, so there is no "its own cited rows" for it to be tested against.
+  if (cls !== "record" && cls !== "you") return { field: input.field, cls, examined: 0, unsourced: [] };
+  const text = String(input.text ?? "").trim();
+  // FAIL CLOSED, for the same reason (b) does: the cited-or-omitted rule means a field that cites
+  // always has text, so a blank here is a plumbing fault and must not clear a line silently.
+  if (!text) {
+    return { field: input.field, cls, examined: 0, unsourced: [{ kind: "unresolved", token: "(field text could not be resolved)" }] };
+  }
+  const specs = extractSpecifics(text).filter((s) =>
+    s.kind === "figure" || (s.kind === "exclusivity" && S1_POSITION_WORDS.has(s.token.toLowerCase())));
+  const unsourced = specs
+    .filter((s) => !specificIsSourcedWithSecondChance(s, input.citedSourceTexts))
+    .map((s) => ({ kind: s.kind, token: s.token }));
+  return { field: input.field, cls, examined: specs.length, unsourced };
+}
+
+/** The refusal detail S1 writes: every field that failed, with the specifics it could not source. */
+export function s1Detail(results: readonly S1Result[]): string {
+  return results.filter((r) => r.unsourced.length > 0)
+    .map((r) => `${r.field} (${r.cls}): ${r.unsourced.map((u) => `${u.token} [${u.kind}]`).join(", ")}`)
+    .join("; ");
 }
 
 /** THE COMBINED VERDICT per field: (b) first, then the judge. `judgeHedged` is the judge's class_ok

@@ -29,7 +29,7 @@ import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
-import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, specificIsSourced, type FieldClassDecision } from "../_shared/classFactCheck.ts";
+import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, s1Detail, s1Unsourced, specificIsSourced, type FieldClassDecision, type S1Result } from "../_shared/classFactCheck.ts";
 import { liveRecordCandidates, reReadRowTexts, searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { StageRefusal, detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
@@ -102,45 +102,10 @@ async function ledgerOf(inputs: InputRow[]) {
 }
 const KINDS_INPUT = ["signal", "own_word", "finding", "delta"] as const;
 
-/** C1: the cited lines of a STORED payload (UUID citations), for the continuity comparison.
- *  It reads the same shapes stampFieldClasses walks — a `<base>_citations` array beside its text, or
- *  a bare `citations` on an array element — but off a stored row rather than a model answer, so it
- *  cannot reuse that function (which mutates and expects ref tokens). Kept deliberately small: a
- *  shape it does not recognise contributes no line, and a line it cannot read is a line it cannot
- *  require, which fails OPEN. That is the right direction for a check that refuses: a missed line
- *  is a missed refusal, never a false one. */
-const CITE_OR_CLASS_RE = /citation|cites?$|refs?$|ids$|_class$|^class$/i;
-export function linesOfStoredPayload(payload: Record<string, unknown> | null): CitedLine[] {
-  const out: CitedLine[] = [];
-  const walk = (v: unknown, path = ""): void => {
-    if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
-    if (!v || typeof v !== "object") return;
-    const obj = v as Record<string, unknown>;
-    for (const [k, val] of Object.entries(obj)) {
-      const m = /^(.*?)_(?:citations|cites?|refs?)$/.exec(k);
-      const bare = k === "citations" || k === "refs";
-      if ((m || bare) && Array.isArray(val)) {
-        const base = m ? m[1] : "";
-        const clsKey = m ? `${base}_class` : "class";
-        const cls = typeof obj[clsKey] === "string" ? String(obj[clsKey]) : null;
-        let text = "";
-        if (base && typeof obj[base] === "string") text = String(obj[base]);
-        else if (base) {
-          const pk = Object.keys(obj).find((x) => x.startsWith(`${base}_`) && !CITE_OR_CLASS_RE.test(x) && typeof obj[x] === "string");
-          if (pk) text = String(obj[pk]);
-        } else {
-          for (const kk of ["text", "statement", "promise", "body"]) if (typeof obj[kk] === "string") { text = String(obj[kk]); break; }
-        }
-        const field = bare ? path : `${path ? `${path}.` : ""}${base}`;
-        if (text) out.push({ field, text, cls, refs: (val as unknown[]).map(String) });
-        continue;
-      }
-      if (!CITE_OR_CLASS_RE.test(k)) walk(val, path ? `${path}.${k}` : k);
-    }
-  };
-  walk(payload);
-  return out;
-}
+// The cited-line walker lives in _shared/citedLines.ts (2026-10-14) so S1 at promote runs the SAME
+// walk. Re-exported under its original name — the harness and the specs import it from here.
+export { linesOfStoredPayload } from "../_shared/citedLines.ts";
+import { linesOfStoredPayload } from "../_shared/citedLines.ts";
 
 // A SHORT-REF catalogue: an LLM cannot reliably echo dozens of 36-char uuids (it mangles them), so
 // each input gets a stable, kind-prefixed ref token (S1, O1, F1, M1, D1) mapped to its real id. The
@@ -159,6 +124,36 @@ const REF_PREFIX: Record<string, string> = { signal: "S", own_word: "O", finding
 const SPAN_SOURCE_KINDS: ReadonlySet<string> = new Set(["signal", "own_word"]);
 /** How a class is NAMED to the model in the catalogue (1a-4). */
 export const CLASS_LABEL: Record<SourceClass, string> = { record: "the record", you: "you", our_read: "our read" };
+// ── S2 (operator ruling, 2026-10-14): the catalogue collapses identical halves ──────────────────
+// DISPLAY ONLY. 2269 of 3175 signals carry claim_text = evidence_excerpt, so rowTextOf's assembly
+// (claim_text + " " + evidence_excerpt) renders them doubled. R1 made that text the pool's text on
+// purpose — it is the one assembly the drift re-read can reproduce — so the fix belongs at the point
+// of RENDERING, not in the text. Pool text, span offsets and row hashes stay exactly on rowTextOf;
+// nothing a span is cut from or hashed against is touched here.
+//
+// ONE function for both catalogues (generator and judge), because two renderers would be the same
+// mistake R1 just removed: the judge must read what the generator read.
+/** A row's text with a duplicated second half collapsed to one copy. Display only. */
+export function collapseHalves(text: string): string {
+  const t = String(text ?? "");
+  const mid = t.length / 2;
+  if (!Number.isInteger(mid) || mid === 0) {
+    // rowTextOf joins with a single space, so an exactly-doubled row has odd length: "X X".
+    const sp = (t.length - 1) / 2;
+    if (Number.isInteger(sp) && sp > 0 && t[sp] === " " && t.slice(0, sp) === t.slice(sp + 1)) return t.slice(0, sp);
+    return t;
+  }
+  return t.slice(0, mid) === t.slice(mid) ? t.slice(0, mid) : t;
+}
+/** THE catalogue line, for the generator AND the judge. */
+export function catalogueLine(ref: string, kind: string, cls: SourceClass, text: string, title: string | null): string {
+  // R1 (2026-10-14): the source title is an ATTRIBUTE of the line, after the text, never inside it.
+  // It used to be appended to r.text upstream, which put a span's offsets over words the source
+  // never asserted and made the drift re-read impossible (defect A). The model still sees where the
+  // row was found; a span is only ever cut from the text before this suffix.
+  return `[${ref}] (${kind} · ${CLASS_LABEL[cls]}) ${collapseHalves(text).slice(0, 400)}${title ? ` — source: ${title}` : ""}`;
+}
+
 function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<string, string>; classByRef: Map<string, SourceClass>; textByRef: Map<string, string>; kindByRef: Map<string, string>; tokenSummary: string } {
   const uuidByRef = new Map<string, string>();
   const classByRef = new Map<string, SourceClass>();
@@ -177,11 +172,7 @@ function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<stri
     textByRef.set(ref, r.text);        // the FULL row text, for the class fact-check (not the 400-char catalogue slice)
     kindByRef.set(ref, r.kind);        // R3: what kind of row this is, for the span-source law
     // 1a-4: the class rides WITH the line, so the model sees what each row licenses as it cites it.
-    // R1 (2026-10-14): the source title is an ATTRIBUTE of the line, after the text, never inside it.
-    // It used to be appended to r.text upstream, which put a span's offsets over words the source
-    // never asserted and made the drift re-read impossible (defect A). The model still sees where the
-    // row was found; a span is only ever cut from the text before this suffix.
-    lines.push(`[${ref}] (${r.kind} · ${CLASS_LABEL[r.source_class]}) ${r.text.slice(0, 400)}${r.source_title ? ` — source: ${r.source_title}` : ""}`);
+    lines.push(catalogueLine(ref, r.kind, r.source_class, r.text, r.source_title ?? null));
   }
   // The exact valid token ranges, e.g. "S1–S20, O1–O25, F1–F13, D1–D15" — the model may cite ONLY these.
   const tokenSummary = Object.entries(counters).map(([px, n]) => (n === 1 ? `${px}1` : `${px}1–${px}${n}`)).join(", ");
@@ -590,6 +581,9 @@ Respond with ONLY JSON:
     const promptSha: Partial<Record<Kind, string>> = {};
     /** V1-R4: how much live record the pre-generation span search read, per kind. */
     const carrySearch: Partial<Record<Kind, { lines: number; considered: number; admitted: number }>> = {};
+    /** S1 (2026-10-14): the per-field sourcing results for the LAST payload gated for each kind —
+     *  reported and stored whether S1 refused or a later guard did. */
+    const s1Results: Partial<Record<Kind, S1Result[]>> = {};
     /** V1: the carried block per kind, and the carries themselves for the splice. */
     const carriedBlocks: Partial<Record<Kind, CarriedBlock>> = {};
     const carriesByKind: Partial<Record<Kind, FieldCarry[]>> = {};
@@ -624,7 +618,7 @@ Respond with ONLY JSON:
       (ledger.liveness as Record<string, string>)[row.id] = "live";
       (ledger.classes as Record<string, string>)[row.id] = row.cls;
       ledger.count = ledger.ids.length;
-      CAT_LIVE += `\n[${ref}] (${row.kind} · ${CLASS_LABEL[row.cls]}) ${row.text.slice(0, 400)}`;
+      CAT_LIVE += `\n${catalogueLine(ref, row.kind, row.cls, row.text, null)}`;   // S2: one renderer
       return ref;
     };
 
@@ -815,7 +809,19 @@ Respond with ONLY JSON:
     //    it must NEVER turn a per-kind reject into a 500, so every failure here is swallowed. Status
     //    'rejected' needs the widened CHECK (migration 20260909180000); until that is applied the
     //    insert falls back to 'failed' with the guard preserved in `error`.
-    const recordKindIntegrity = async (kind: string, row: { status: "completed" | "rejected"; guard?: string; detail?: string }): Promise<void> => {
+    const recordKindIntegrity = async (kind: string, row: {
+      status: "completed" | "rejected"; guard?: string; detail?: string;
+      payload?: Record<string, unknown> | null;
+    }): Promise<void> => {
+      // ── V4 (operator ruling, 2026-10-14): a refusal records WHAT IT REFUSED ────────────────────
+      // Audits 10153 and 10190 name their guard and their reason but not the words that were
+      // refused: the payload existed in runKindsIsolated and went only to the HTTP response, so the
+      // refused text was unrecoverable the moment the response was gone. The full payload and the
+      // citations it made now ride on the audit row, for every guard, on every refusal.
+      const refusedPayload = row.status === "rejected" ? (row.payload ?? null) : null;
+      const refusedCitations = refusedPayload
+        ? [...new Set(citedRefs(refusedPayload))].map((ref) => ({ ref, id: uuidByRef.get(ref) ?? null }))
+        : null;
       const base = {
         company_id, component: `first_read_public_read_${kind}`,
         examined: ledger.count, admitted: row.status === "completed" ? 1 : 0,
@@ -829,10 +835,20 @@ Respond with ONLY JSON:
           mode: doStage ? "stage" : (doWrite ? "write" : "dry_run"),
           continuity: continuityBlocks[kind as Kind] ?? null,
           restated_carried: restatedCarried,
+          // V4: the refused read itself, and what it cited. Null on an accepted kind — the row that
+          // was written IS the record there, and duplicating it would make the audit the source.
+          refused_payload: refusedPayload,
+          refused_citations: refusedCitations,
+          // S1's per-field results, so a reader can see which specifics were tested and which failed
+          // even when a LATER guard is the one that refused.
+          s1: s1Results[kind as Kind] ?? null,
         },
         error: row.guard ? `guard=${row.guard} detail=${detailOf(row.detail ?? "")}` : null,
         run_ref: ledger.corpus_md5 ?? null,
       };
+      // V4: EXACTLY ONE row. The old fallback inserted a second row when the first insert errored,
+      // so a refusal could leave two audit rows for one refusal; the retry now reuses the same
+      // single-row budget by downgrading the status, and never runs when the first insert succeeded.
       try {
         const { error } = await supabase.from("integrity_runs").insert({ ...base, status: row.status });
         if (!error) return;
@@ -906,7 +922,7 @@ Respond with ONLY JSON:
       // C1 — CONTINUITY, against the read this one would replace. No current read ⇒ nothing to
       // continue, and the block says so rather than passing vacuously.
       const { data: curRow } = await supabase.from("public_reads")
-        .select("payload").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
+        .select("payload, input_ledger").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
       const currentLines: CitedLine[] = linesOfStoredPayload((curRow as { payload?: Record<string, unknown> } | null)?.payload ?? null);
       const missing = droppedLines({
         currentLines, stagedLines,
@@ -914,14 +930,36 @@ Respond with ONLY JSON:
         textByRef: textByUuid, classByRef: classByUuid,
         carriedFields: new Set(Object.keys(carriedNow)),   // C1-A: which paths are the record's words
       });
-      const block: ContinuityBlock = continuityBlock(currentLines.length, missing, softened);
+      // ── C1-P (operator ruling, 2026-10-14): C1 is REPORT-ONLY against a pre-rules predecessor ──
+      // Wasabi's stage was refused by C1 for dropping 5 of 6 lines of a read generated 2026-08-22:
+      // b4c9e31a predates rules 2026-10-13.1, is wholly unclassed, and cites five ids no longer in
+      // the pool. C1 asks "does the new read still say what the old one said", and that question is
+      // only answerable when the old read was built under the same rules. Against an older read a
+      // refusal blocks every company from ever leaving the old rules — the regeneration C1 exists to
+      // protect would be impossible.
+      //
+      // So the DROPS ARE STILL COMPUTED and still recorded, in full, on the staged row's continuity
+      // block and in the response. Nothing is hidden; the operator reads what the regeneration did
+      // not carry forward and rules on it. Against a predecessor at 2026-10-13.1 or later, C1
+      // refuses exactly as before.
+      const predecessorRules = String(
+        ((curRow as { input_ledger?: Record<string, unknown> } | null)?.input_ledger?.gen_rules_version) ?? "",
+      );
+      const c1Enforced = predecessorRules !== "" && predecessorRules >= "2026-10-13.1";
+      const block: ContinuityBlock = {
+        ...continuityBlock(currentLines.length, missing, softened),
+        // the ruling's own fact, on the row: which mode C1 ran in and what decided it
+        c1_mode: c1Enforced ? "enforced" : "report_only",
+        predecessor_gen_rules_version: predecessorRules || null,
+      } as ContinuityBlock;
       continuityBlocks[kind] = block;
       // V3: ONE refusal, ONE row. The check does NOT record its own integrity row — it throws a
       // typed StageRefusal, and runKindsIsolated records the row with the guard unchanged. Writing a
       // row here AND letting the wrapper write its own is what produced the duplicate pair 9712
       // (specific_softened) + 9713 (write_error) on the 2026-10-13 run.
       if (softened.length > 0) throw new StageRefusal(SOFTENING_GUARD, softeningDetail(softened));
-      if (missing.length > 0) throw new StageRefusal(CONTINUITY_GUARD, continuityDetail(missing));
+      // C1-P: enforced against a rules-current predecessor; reported against an older or absent one.
+      if (missing.length > 0 && c1Enforced) throw new StageRefusal(CONTINUITY_GUARD, continuityDetail(missing));
 
       const built = prepareStorage(kind, payload, verdict);
       const storage = built.storage;
@@ -1007,6 +1045,29 @@ Respond with ONLY JSON:
     };
     const outcomes = await runKindsIsolated(activeKinds, {
       citedRefs,
+      // ── S1 (operator ruling, 2026-10-14) ──────────────────────────────────────────────────────
+      // Every record- or you-classed line must carry its specifics verbatim in one of ITS OWN cited
+      // rows. The sources are that line's refs, narrowed to class record/you (our read cannot
+      // source the record) and with FINDINGS removed by kind — a finding is our synthesis, and the
+      // ruling bars it outright, so it is excluded twice over rather than relying on its class.
+      // stampFieldClasses is re-run here rather than reusing fieldClasses[kind]: the re-ask replaces
+      // the payload, and S1 must judge the payload actually in front of it.
+      s1Refusal: (kind, payload) => {
+        const stamped = stampFieldClasses(payload, classByRef);
+        const results = stamped.map((f) => s1Unsourced({
+          field: f.field, cls: f.cls, text: f.text,
+          citedSourceTexts: f.refs
+            .filter((r) => {
+              const cls = classByRef.get(r);
+              if (cls !== "record" && cls !== "you") return false;     // our_read cannot source
+              return kindByRef.get(r) !== "finding";                   // S1: a finding is never a source
+            })
+            .map((r) => textByRef.get(r) ?? ""),
+        }));
+        s1Results[kind as Kind] = results;
+        const failing = results.filter((r) => r.unsourced.length > 0);
+        return failing.length > 0 ? { detail: s1Detail(results) } : null;
+      },
       validRefs,
       uuidByRef,
       provenances: ledger.provenances,

@@ -43,6 +43,9 @@ export type PerKindGuard =
   // demoted into `detail` — so a refusal produced TWO rows (the check's own, and this wrapper's
   // mislabelled one) and a reader scanning guards saw a write failure that never happened.
   | "continuity_line_dropped"
+  // S1 (operator ruling, 2026-10-14): a record- or you-classed line asserting a specific that none of
+  // its own cited rows carries verbatim. Deterministic, refused and never re-asked.
+  | "record_specific_unsourced"
   | "specific_softened"
   // V1 (2026-10-13): a carried span's source text moved under it. Fail closed — the line is no
   // longer a carry, and must not be persisted on offsets into text that no longer says that.
@@ -91,8 +94,16 @@ export type PerKindDeps = {
   accepts: (kind: string, verdict: Record<string, unknown>) => boolean;
   /** Persist an accepted kind. Omit for dry-run/plan (accepted kinds are reported, nothing written). */
   commit?: (kind: string, payload: Record<string, unknown>, verdict: Record<string, unknown>) => Promise<void>;
-  /** One integrity_runs row per kind: component first_read_public_read_<kind>. Never throws. */
-  recordIntegrity?: (kind: string, row: { status: "completed" | "rejected"; guard?: string; detail?: string }) => Promise<void>;
+  /** S1 (2026-10-14): the record/you sourcing gate, over the payload about to be judged. Returns
+   *  the refusal detail, or null to pass. Deterministic: no model call, so a line the record does
+   *  not support costs no judgment and cannot be cleared by one. */
+  s1Refusal?: (kind: string, payload: Record<string, unknown>) => { detail: string } | null;
+  /** V4 (2026-10-14): one integrity_runs row per kind, carrying the full refused payload and its
+   *  citations. Component first_read_public_read_<kind>. Never throws. */
+  recordIntegrity?: (kind: string, row: {
+    status: "completed" | "rejected"; guard?: string; detail?: string;
+    payload?: Record<string, unknown> | null;
+  }) => Promise<void>;
   /** The reject log line. Called once per rejected kind, before the next kind runs. */
   onReject?: (kind: string, guard: PerKindGuard, detail: string) => void;
   /** BOUNDED RE-ASK (operator ruling, signed 2026-10-08). When `accepts` refuses and the caller
@@ -145,7 +156,10 @@ export async function runKindsIsolated(
     const detail = detailOf(detailValue);
     const full = typeof detailValue === "string" ? detailValue : detailOf(detailValue);
     deps.onReject?.(kind, guard, detail);
-    await deps.recordIntegrity?.(kind, { status: "rejected", guard, detail: full });
+    // V4 (2026-10-14): the PAYLOAD travels to the audit row. It was already in hand here and went
+    // only to the returned outcome, so a refused read's text died with the HTTP response — which is
+    // why audit 10153 and 10190 record what was refused but not the words that were refused.
+    await deps.recordIntegrity?.(kind, { status: "rejected", guard, detail: full, payload });
     outcomes.push({ kind, status: "rejected", guard, detail, payload, verdict });
   };
 
@@ -178,6 +192,16 @@ export async function runKindsIsolated(
     )];
     const livePublic = citationsLivePublic(citedUuids, deps.provenances, deps.liveness);
     if (!livePublic.ok) return { outcome: "rejected", guard: "citation_not_live_public", detail: `bad_ids=${livePublic.bad.join(",")}`, payload, verdict: null };
+
+    // ── GUARD 5 (S1, 2026-10-14): record/you lines say only what their cited rows say ───────────
+    // ORDER. After guards 1 and 4 because S1's question is "does this line's OWN cited row carry
+    // the specific" — a citation that does not resolve, or is not live and public, must be refused
+    // as that, not mis-reported as an unsourced specific. BEFORE the judge because the check is
+    // deterministic and free: an unsourced specific then costs no model call, and a judge that
+    // clears everything cannot clear a line it was never asked about. The carried lines are already
+    // spliced into `payload` by this point, so they are tested here like any other line.
+    const s1 = deps.s1Refusal?.(kind, payload) ?? null;
+    if (s1) return { outcome: "rejected", guard: "record_specific_unsourced", detail: s1.detail, payload, verdict: null };
 
     // ── JUDGE (this kind alone) ────────────────────────────────────────────────────────────────
     let verdict: Record<string, unknown>;

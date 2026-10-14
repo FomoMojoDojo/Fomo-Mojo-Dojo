@@ -189,6 +189,13 @@ export type ContinuityBlock = {
   continued: number;
   missing: MissingLine[];
   softened: Array<{ field: string } & SofteningHit>;
+  /** C1-P (operator ruling, 2026-10-14): which mode C1 ran in for this kind. `enforced` refuses on a
+   *  drop; `report_only` computes and records every drop but does not refuse, because the predecessor
+   *  predates rules 2026-10-13.1 and a drop against it is not a comparable fact. Absent on blocks
+   *  written before the ruling. */
+  c1_mode?: "enforced" | "report_only";
+  /** The predecessor's gen_rules_version, or null when it carried none — the fact that decided the mode. */
+  predecessor_gen_rules_version?: string | null;
 };
 export function continuityBlock(
   required: number, missing: MissingLine[], softened: Array<{ field: string } & SofteningHit>,

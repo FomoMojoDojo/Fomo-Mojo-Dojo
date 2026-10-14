@@ -20,6 +20,12 @@
 //
 // Pure over a client shape ({ from }) so a fake client can exercise the whole promote path.
 import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, type StrategyPayload } from "./cascadeRouting.ts";
+// S1 (operator ruling, 2026-10-14): the stage gate runs AGAIN at promote. Same predicate, same
+// module — a read that passed S1 when it was staged can fail it later, because the rows it cites are
+// live and can be superseded, held or rewritten between the stage and the operator's acceptance.
+import { s1Detail, s1Unsourced, type S1Result } from "./classFactCheck.ts";
+import { reReadRowTexts } from "./classSourcingScope.ts";
+import { linesOfStoredPayload } from "./citedLines.ts";
 
 // deno-lint-ignore no-explicit-any
 type AnySupabase = { from: (t: string) => any };
@@ -89,6 +95,34 @@ export type CascadeRouting = { superseded: number; inserted: number; run_id: str
 
 /** PROMOTE (accept): no generation, no model call. Per kind, flip the staged row current and supersede the prior
  *  current row; for a promoted STRATEGY, re-route the cascade gaps (ruling 6). */
+/** S1 over ONE staged row, using its stored ledger for classes/kinds and a LIVE re-read for texts.
+ *  Returns the refusal detail, or null to pass. */
+export async function promoteS1Refusal(
+  supabase: AnySupabase,
+  row: { payload?: Record<string, unknown> | null; input_ledger?: Record<string, unknown> | null },
+): Promise<string | null> {
+  const payload = row.payload ?? null;
+  const ledger = (row.input_ledger ?? {}) as Record<string, unknown>;
+  const classes = (ledger.classes ?? {}) as Record<string, string>;
+  // A row with NO classes map predates 1a-4; S1 has nothing to test a line against, and inventing a
+  // class here would be guessing. Report-free pass, deliberately: the source-class guard already
+  // holds those reads RED, which is the right place for that fact.
+  if (!payload || Object.keys(classes).length === 0) return null;
+  const byKind = (ledger.by_kind ?? {}) as Record<string, string[]>;
+  const findingIds = new Set(byKind.finding ?? []);
+  const lines = linesOfStoredPayload(payload);
+  const wanted = [...new Set(lines.flatMap((l) => l.refs))]
+    .filter((id) => (classes[id] === "record" || classes[id] === "you") && !findingIds.has(id));
+  const textNow = wanted.length ? await reReadRowTexts(supabase, wanted) : {};
+  const results: S1Result[] = lines.map((l) => s1Unsourced({
+    field: String(l.field ?? ""), text: l.text, cls: l.cls,
+    citedSourceTexts: l.refs
+      .filter((id) => (classes[id] === "record" || classes[id] === "you") && !findingIds.has(id))
+      .map((id) => textNow[id] ?? ""),
+  }));
+  return results.some((r) => r.unsourced.length > 0) ? s1Detail(results) : null;
+}
+
 export async function promoteStagedReads(
   supabase: AnySupabase,
   companyId: string,
@@ -98,15 +132,22 @@ export async function promoteStagedReads(
   let cascadeRouting: CascadeRouting | null = null;
   for (const kind of kinds) {
     const { data: staged } = await supabase.from("public_reads")
-      .select("id, payload, judge_verdict, model_provider, model_name").eq("company_id", companyId).eq("kind", kind).eq("is_current", false).is("superseded_by", null)
+      .select("id, payload, input_ledger, judge_verdict, model_provider, model_name").eq("company_id", companyId).eq("kind", kind).eq("is_current", false).is("superseded_by", null)
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
-    const stagedRow = staged as { id?: string; payload?: Record<string, unknown> | null; judge_verdict?: Record<string, unknown> | null; model_provider?: string | null; model_name?: string | null } | null;
+    const stagedRow = staged as { id?: string; payload?: Record<string, unknown> | null; input_ledger?: Record<string, unknown> | null; judge_verdict?: Record<string, unknown> | null; model_provider?: string | null; model_name?: string | null } | null;
     const stagedId = stagedRow?.id ?? null;
     if (!stagedId) { promoted.push({ kind, staged: "", superseded: null }); continue; }
     // FAIL CLOSED — decided BEFORE any write: a strategy row without cascade_source refuses the promote of this kind.
     if (kind === "strategy" && !hasCascadeSource(stagedRow!)) {
       throw new PromoteRefused(stagedId, kind, "staged row has no cascade_source — cannot re-derive the cascade gaps; stage it again");
     }
+    // ── S1 AT PROMOTE (operator ruling, 2026-10-14) ───────────────────────────────────────────
+    // Decided BEFORE any write, like the cascade_source check above it. The staged row's own ledger
+    // says which class each cited id carries and which ids are findings; the row TEXTS are re-read
+    // live through rowTextOf, because a stage-time pass is no promise about now.
+    const s1 = await promoteS1Refusal(supabase, stagedRow!);
+    if (s1) throw new PromoteRefused(stagedId, kind, `S1: a record/you line asserts what its cited rows do not say — ${s1}`);
+
     const { data: prior } = await supabase.from("public_reads")
       .select("id").eq("company_id", companyId).eq("kind", kind).eq("is_current", true).maybeSingle();
     const priorId = (prior as { id?: string } | null)?.id ?? null;

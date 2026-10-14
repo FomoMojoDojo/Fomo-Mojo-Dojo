@@ -186,8 +186,11 @@ Deno.test("V2. the source no longer slices the line into the detail", async () =
 
 Deno.test("V2. reject() hands the FULL detail to the integrity row and the capped one to the log", async () => {
   const perKind = await read("./publicReadPerKind.ts");
-  assert(perKind.includes("await deps.recordIntegrity?.(kind, { status: \"rejected\", guard, detail: full });"),
+  // V4 (2026-10-14) added the refused payload to this same call; V2's point is the DETAIL, and the
+  // assertion is narrowed to that rather than pinning the whole argument list.
+  assert(/await deps\.recordIntegrity\?\.\(kind, \{ status: "rejected", guard, detail: full[,} ]/.test(perKind),
     "the row gets the uncapped detail");
+  assert(perKind.includes("detail: full, payload }"), "and V4's payload rides with it");
   assert(perKind.includes("deps.onReject?.(kind, guard, detail);"), "the log line keeps its 200-char cap");
   // detailOf still caps, because the log line and the error column still want that
   assertEquals(detailOf("x".repeat(300)).length, 200);

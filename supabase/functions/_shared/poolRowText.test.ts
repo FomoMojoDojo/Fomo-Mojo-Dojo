@@ -66,13 +66,17 @@ Deno.test("R1. a planted pool text that differs from rowTextOf is caught", () =>
 });
 
 Deno.test("R1. the catalogue renders the title AFTER the text, not inside it", async () => {
+  // S2 (2026-10-14) moved this template into catalogueLine, the ONE renderer both catalogues use.
+  // The assertion is unchanged in substance: the title follows the text, so a span is only ever cut
+  // from what precedes it.
   const src = await read("../generate-public-read/index.ts");
-  const i = src.indexOf("lines.push(`[${ref}]");
-  assert(i > 0, "the catalogue line still exists");
-  const line = src.slice(i, src.indexOf("\n", i));
-  assert(line.includes("${r.text.slice(0, 400)}"), "the text is still the body of the line");
+  const i = src.indexOf("export function catalogueLine(");
+  assert(i > 0, "the one catalogue renderer still exists");
+  const fn = src.slice(i);
+  const line = fn.slice(fn.indexOf("return `["), fn.indexOf("\n}"));
+  assert(/\$\{collapseHalves\(text\)\.slice\(0, 400\)\}/.test(line), "the text is still the body of the line");
   assert(
-    line.indexOf("r.source_title") > line.indexOf("r.text.slice(0, 400)"),
+    line.indexOf("title") > line.indexOf("collapseHalves(text).slice(0, 400)"),
     "the title comes after the text — a span is only ever cut from what precedes it",
   );
 });
