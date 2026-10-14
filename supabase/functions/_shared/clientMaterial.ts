@@ -71,3 +71,48 @@ export const PUBLIC_DEFINITION_PROVENANCES: ReadonlySet<string> = new Set(["publ
 export function isPublicDefinition(def: { provenance_type?: string | null }): boolean {
   return PUBLIC_DEFINITION_PROVENANCES.has(String(def?.provenance_type ?? ""));
 }
+
+// ── W1 (operator ruling, 2026-10-13): the public-read wall, as ONE predicate ────────────────────
+//
+// The wall check for Q4 found that nothing kept client-provided material out of a public read.
+// selectPublicInputs filters signals on signal_band, voice_class and liveness and NEVER on
+// source_type, and liveRecordCandidates (the PASS 2 / carry lane) applies the same predicates minus
+// source_type. So a signal the client uploaded could enter a read's ledger, and a carried span could
+// be lifted from one verbatim into the ALREADY WRITTEN notice. Measured on 2026-10-13: 13 Edgewood
+// signals — source_type='uploaded_file', band outside, voice market_context, live — satisfied every
+// predicate both selectors applied. None had reached a stored read, but only because of the cap and
+// the selection order.
+//
+// ALLOWLIST, NOT DENYLIST. A denylist of the five client source_types would pass anything new: a
+// lane added next month, a NULL, a typo. This names the source_types that are PUBLIC by
+// construction and excludes everything else, so an unrecognised value fails CLOSED — it is kept out
+// of the read and the read is poorer, rather than let in and the read is wrong.
+//
+// `mojo_analysis` is OURS, not the client's, and is listed: excluding it here would be a different
+// ruling (1a-4 put our analysis in the base, labelled as ours). It carries no outside-band rows
+// today, so the band filter is what keeps it out of the public base, as before.
+export const PUBLIC_SIGNAL_SOURCE_TYPES: readonly string[] = [
+  "public_baseline_run",        // the public baseline crawl
+  "competitor_discovery_run",   // competitor discovery, public web
+  "outside_recrawl_regen",      // a recrawl of an outside page
+  "outside_listing_regen",      // a regenerated outside listing row
+  "client_voice_regen",         // the company's own PUBLIC site, re-extracted
+  "website",                    // a public page
+  "mojo_analysis",              // OUR analysis of the public record — ours, never the client's
+];
+
+/** The source_types that mean a human handed us the material. The authority is the upload_signal
+ *  entry of CLIENT_PROVIDED_SOURCE_KINDS above; this is the same set, named once for the filters. */
+export const CLIENT_PROVIDED_SIGNAL_SOURCE_TYPES: readonly string[] = [
+  "uploaded_file", "file", "file_proposal", "intake", "interview",
+];
+
+/**
+ * W1: the ONE predicate both public-read selectors apply. May this signal's source_type enter a
+ * public read — as a pool row, as a PASS 2 admission, or as a carried span?
+ *
+ * Fails closed: an unrecognised source_type (a new lane, a NULL, a typo) is NOT public.
+ */
+export function isPublicSignalSourceType(sourceType: unknown): boolean {
+  return typeof sourceType === "string" && PUBLIC_SIGNAL_SOURCE_TYPES.includes(sourceType);
+}

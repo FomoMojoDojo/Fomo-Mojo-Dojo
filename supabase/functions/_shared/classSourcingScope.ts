@@ -22,6 +22,7 @@
 // gate's own second-chance function rather than re-deriving the rule. Two authorities on one rule is
 // how a rule rots — the reason classOkFromVerdict was deleted from publicReadGuards.ts.
 import { extractSpecifics, specificIsSourcedWithSecondChance, type Specific } from "./classFactCheck.ts";
+import { isPublicSignalSourceType } from "./clientMaterial.ts";
 import { isAnalysisRow } from "./voiceLabel.ts";
 
 export type SourcingClass = "record" | "you";
@@ -137,11 +138,15 @@ export async function liveRecordCandidates(
 
   const { data: sigRows } = await supabase
     .from("signals")
-    .select("id, claim_text, evidence_excerpt, voice_class, raw_payload")
+    .select("id, claim_text, evidence_excerpt, voice_class, raw_payload, source_type")
     .eq("company_id", companyId).eq("signal_band", "outside")
     .is("superseded_at", null).is("held_at", null);
-  for (const r of ((sigRows ?? []) as Array<{ id: string; claim_text: string | null; evidence_excerpt: string | null; voice_class: string | null; raw_payload?: unknown }>)) {
+  for (const r of ((sigRows ?? []) as Array<{ id: string; claim_text: string | null; evidence_excerpt: string | null; voice_class: string | null; raw_payload?: unknown; source_type?: unknown }>)) {
     searched.signals++;
+    // W1: the SAME predicate selectPublicInputs applies — a row the pool may not hold is a row this
+    // lane may not admit or carry either. A PASS 2 admission and a carried span both land in the
+    // stored ledger, so this lane is a way into the read exactly as the pool is.
+    if (!isPublicSignalSourceType(r.source_type)) continue;
     const cls = sourcingClassOfSignal(r);
     if (!cls || alreadyCited.has(r.id)) continue;
     const text = rowTextOf("signal", r);                    // R6: the ONE assembly

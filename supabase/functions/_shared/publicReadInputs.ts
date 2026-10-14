@@ -11,6 +11,7 @@
 //   F  findings: register public_inferred ∧ status open ∧ recurrence-backed (opts.excludeFindingKinds drops e.g. 'frontier')
 //   D  claim_deltas public_vs_public echoed|divergent ∧ isPairAdmissible ∧ every claim active
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isPublicSignalSourceType } from "./clientMaterial.ts";
 import { declaredEligibleFor, parseOwnWordsKind } from "./ownWordsKinds.ts";
 import { isAnalysisRow } from "./voiceLabel.ts";
 import { selectDeltas, selectFindings, selectOwnWords, selectSignals, signalText, type Dropped, type SelClaim, type SelDelta, type SelFinding, type SelOwnWord, type SelSignal } from "./publicReadSelection.ts";
@@ -97,7 +98,7 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   //    Ruling 5: then page-shaped ∧ not junk ∧ not listing; dedupe; the preview's beat-2 order; breadth per host.
   const { data: sig } = await supabase
     .from("signals")
-    .select("id, claim_text, evidence_excerpt, source_title, source_url, event_date, topic, created_at, confidence_to_use, evidence_class, voice_class, raw_payload")
+    .select("id, claim_text, evidence_excerpt, source_title, source_url, event_date, topic, created_at, confidence_to_use, evidence_class, voice_class, raw_payload, source_type")
     .eq("company_id", companyId).eq("signal_band", "outside")
     .in("voice_class", PUBLIC_SIGNAL_VOICES).is("superseded_at", null).is("held_at", null)
     .order("created_at", { ascending: true }).order("id", { ascending: true });
@@ -108,7 +109,16 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
     for (const r of (rv ?? []) as Array<{ signal_a_id: string; signal_b_id: string }>) { confirmed.add(r.signal_a_id); confirmed.add(r.signal_b_id); }
     if (!rv || rv.length < 1000) break;
   }
-  const sigSel = selectSignals((sig ?? []) as SelSignal[], READ_CAP.signal, confirmed);
+  // W1 (operator ruling, 2026-10-13): client-provided material never enters a public read. The one
+  // predicate lives in clientMaterial.ts and liveRecordCandidates applies the SAME one — a second
+  // copy here is how the two lanes would drift apart, which is how this hole opened in the first
+  // place. Fails closed on an unrecognised source_type.
+  const sigPublic = ((sig ?? []) as Array<{ id: string; source_type?: unknown }>).filter((r) => {
+    if (isPublicSignalSourceType(r.source_type)) return true;
+    dropped.push({ id: r.id, kind: "signal", reason: `not_public_source_type:${String(r.source_type ?? "null")}` });
+    return false;
+  });
+  const sigSel = selectSignals(sigPublic as unknown as SelSignal[], READ_CAP.signal, confirmed);
   dropped.push(...sigSel.dropped);
   for (const s of sigSel.kept) {
     const text = signalText(s);
