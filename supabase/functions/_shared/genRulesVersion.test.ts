@@ -22,9 +22,12 @@ Deno.test("P3-b. every stored SLOT carries the stamp in criterion_version", asyn
   assert(slots.includes('import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";'),
     "the slot writer imports the same module");
   assert(slots.includes("criterion_version: GEN_RULES_VERSION,"), "the slot insert stamps it");
-  // and it is inside the insert, not somewhere decorative
-  const ins = slots.slice(slots.indexOf('from("first_read_slots").insert({'));
-  assert(ins.slice(0, 700).includes("criterion_version: GEN_RULES_VERSION,"),
+  // and it is inside the insert, not somewhere decorative. Bounded by the insert's own closing
+  // brace rather than a character count — VS1's comment above the stamp pushed it past a 700-char
+  // window, which would have read as the stamp going missing when it had only moved down the object.
+  const from = slots.indexOf('from("first_read_slots").insert({');
+  const ins = slots.slice(from, slots.indexOf("}).select(", from));
+  assert(ins.length > 0 && ins.includes("criterion_version: GEN_RULES_VERSION,"),
     "stamped in the staging insert itself");
 });
 

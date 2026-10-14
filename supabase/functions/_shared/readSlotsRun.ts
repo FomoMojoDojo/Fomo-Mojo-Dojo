@@ -16,7 +16,11 @@
 import { attachSourceClasses, checkSlotsDeterministic, slotFieldPaths, type CitationViolation, type SlotKind } from "./readSlots.ts";
 
 export type SlotVerdict = { entailed?: boolean; vocab_ok?: boolean; category_sanity_ok?: boolean; class_ok?: boolean; accept?: boolean; reason?: string };
-export type PerSlot = { field: string; accepted: boolean; verdict: SlotVerdict | null };
+export type PerSlot = {
+  field: string; accepted: boolean; verdict: SlotVerdict | null;
+  /** VS1: which authority accepted this entry — the verbatim rule, or the containment judge. */
+  path: "verbatim" | "generated";
+};
 
 /** Full regenerate (gate retry) and targeted fix (judge retry) are two different asks. */
 export type GenerateFn = (mode: "initial" | "gate_retry" | "judge_retry", context: {
@@ -109,8 +113,8 @@ async function runGate(
       // 1a-4: a verbatim line INHERITS its source field's class (checkSlotsDeterministic already
       // compared them, for free, above), so it cannot assert more than the source and class_ok holds
       // by construction exactly as entailment does. The judge is still never called for it.
-      ? { field: f, accepted: true, verdict: { entailed: true, vocab_ok: true, class_ok: true, accept: true, reason: "verbatim — the slot IS the source text, so entailment and class hold by construction" } }
-      : { field: f, accepted: slotAccepted(kind, f, vs[f]), verdict: vs[f] ?? null });
+      ? { field: f, accepted: true, path: "verbatim", verdict: { entailed: true, vocab_ok: true, class_ok: true, accept: true, reason: "verbatim — the slot IS the source text, so entailment and class hold by construction" } }
+      : { field: f, accepted: slotAccepted(kind, f, vs[f]), path: "generated", verdict: vs[f] ?? null });
   const ok = perSlot.length > 0 && perSlot.every((s) => s.accepted);
   return { violations: [], verdict, perSlot, stage: "judge", ok };
 }
@@ -171,4 +175,39 @@ export async function runKind(args: {
     attempts, generator_calls: calls, retry_used_by: retryBy,
     retry_unavailable_reason: `the kind's single retry was already spent by the ${retryBy} failure on attempt 1`,
   };
+}
+
+
+// ── VS1 (operator ruling, 2026-10-14): the STORED verdict records the GATE's decision ───────────
+//
+// The slot signed on 2026-10-14 went live with the slots guard RED. The gate accepts a verbatim
+// entry by construction and never asks the judge about it — but generate-read-slots stored the
+// judge's RAW answer, and the judge, which is handed the whole slots object, had volunteered
+// accept:false on a verbatim differentiator ("states as fact without attribution"). The gate decided
+// on one verdict and the row recorded another; guard s2 reads the row, and was right to refuse it.
+//
+// The record now says what was actually decided, and by whom. A verbatim entry stores accept:true
+// with path:"verbatim" — the accepting authority named, not implied — and the judge's answer is kept
+// beside it as judge_opinion, because an opinion that did not decide anything is still worth having:
+// it is how we noticed the slot line reads as an unattributed claim in the first place.
+//
+// A GENERATED entry is unchanged: the judge IS its authority, so its verdict is stored as given.
+export function storedVerdictOf(
+  perSlot: readonly PerSlot[], raw: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const rawSlots = (raw?.slots ?? {}) as Record<string, SlotVerdict>;
+  const slots: Record<string, unknown> = {};
+  for (const s of perSlot) {
+    if (s.path === "verbatim") {
+      const opinion = rawSlots[s.field];
+      slots[s.field] = {
+        ...(s.verdict ?? {}),
+        path: "verbatim",
+        ...(opinion ? { judge_opinion: opinion } : {}),
+      };
+      continue;
+    }
+    slots[s.field] = s.verdict ? { ...s.verdict, path: "generated" } : null;
+  }
+  return { ...(raw ?? {}), slots };
 }

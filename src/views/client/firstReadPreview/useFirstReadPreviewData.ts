@@ -1147,9 +1147,21 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         for (const r of (slotRows ?? []) as Array<{ kind: string; slots: Record<string, unknown> | null }>) {
           if (r.slots) slotByKind.set(r.kind, r.slots);
         }
+        // ── VS3 (operator ruling, 2026-10-14): A2's render reaches the SHORT FORM ────────────────
+        // D2 wired renderCarried on the full read, so a carried line reads "established the first
+        // kinship program in the country" there. The short form lifts the SAME line through the slot
+        // and rendered it raw — "In 1993 Edgewood established …" — so the two surfaces disagreed
+        // about the same sentence. A slot entry is carried when it took the VERBATIM path and its
+        // text is a carried line of its source read: the slot IS that line, byte for byte, which is
+        // what the verbatim path means. Keyed on the source read's carried block — and a current
+        // slot's source read is the current read (guard s4), so it is the block already in hand.
+        const carriedTextsOf = (kind: string): Set<string> => {
+          const carried = (prByKind.get(kind)?.ledger?.carried ?? {}) as Record<string, { stored_text?: unknown }>;
+          return new Set(Object.values(carried).map((c) => String(c?.stored_text ?? "").trim()).filter(Boolean));
+        };
         /** A stored slot line → the render shape. A blank text is treated as absent, never as "". */
         const slotLine = (kind: string) => (v: unknown): FRSlotLine | null => {
-          const o = (v ?? {}) as { text?: unknown; citations?: unknown; source_class?: unknown };
+          const o = (v ?? {}) as { text?: unknown; citations?: unknown; source_class?: unknown; path?: unknown };
           const text = String(o.text ?? "").trim();
           if (!text) return null;
           const citations = Array.isArray(o.citations) ? o.citations.map(String) : [];
@@ -1170,7 +1182,14 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
               sources.push({ host: sv.host, published: sv.published, publishedAt: sv.publishedAt, cls: c, registryFrame: sv.registryFrame });
             }
           }
-          return { text, citations, sourceClass: cls, sources };
+          // VS3: RENDER ONLY. The stored slot text is untouched — the signature covers it, the slot
+          // guard re-checks it against the source field, and a render that rewrote it would put both
+          // out of step. Only a verbatim entry that IS a carried line is rendered; our own prose, and
+          // a verbatim lift of a line the read did not carry, are never trimmed.
+          const rendered = o.path === "verbatim" && carriedTextsOf(kind).has(text)
+            ? renderCarried(text, (co as { name?: string } | null)?.name ?? "")
+            : text;
+          return { text: rendered, citations, sourceClass: cls, sources };
         };
         const posSlotRaw = slotByKind.get("positioning");
         const posDiffLines = (Array.isArray(posSlotRaw?.differentiators) ? posSlotRaw!.differentiators : [])

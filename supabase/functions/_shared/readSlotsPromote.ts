@@ -32,13 +32,13 @@ export type SlotPromoted = { kind: string; staged: string; superseded: string | 
 /** The newest staged, not-superseded slot for a kind — the row an operator just reviewed. */
 export async function stagedSlotFor(
   supabase: AnySupabase, companyId: string, kind: string,
-): Promise<{ id: string; source_read_id: string | null } | null> {
+): Promise<{ id: string; source_read_id: string | null; criterion_version: string | null } | null> {
   const { data } = await supabase.from("first_read_slots")
-    .select("id, source_read_id")
+    .select("id, source_read_id, criterion_version")   // VS2: the signature row names the rules the slot was written under
     .eq("company_id", companyId).eq("kind", kind)
     .eq("is_current", false).is("superseded_at", null)
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
-  return (data as { id: string; source_read_id: string | null } | null) ?? null;
+  return (data as { id: string; source_read_id: string | null; criterion_version: string | null } | null) ?? null;
 }
 
 /** PROMOTE + SIGN. Per kind: refuse a stale source, supersede the prior current slot, flip the staged
@@ -62,10 +62,14 @@ export async function promoteStagedSlots(
       .select("id").eq("company_id", companyId).eq("kind", kind).eq("is_current", true).maybeSingle();
     const currentReadId = (curRead as { id?: string } | null)?.id ?? null;
     if (!staged.source_read_id || staged.source_read_id !== currentReadId) {
-      throw new SlotPromoteRefused(
-        staged.id, kind,
-        `staged against read ${staged.source_read_id ?? "(none)"} but the current read is ${currentReadId ?? "(none)"} — stage it again against the current read`,
-      );
+      const detail = `staged against read ${staged.source_read_id ?? "(none)"} but the current read is ${currentReadId ?? "(none)"} — stage it again against the current read`;
+      // VS2: a refused signature is recorded too. A signature that did not happen is as much a fact
+      // about the slot as one that did, and the refusal is the only place the reason survives.
+      await recordSignature(supabase, {
+        companyId, kind, slotId: staged.id, sourceReadId: staged.source_read_id ?? null,
+        signedBy, criterionVersion: staged.criterion_version ?? null, status: "rejected", detail,
+      });
+      throw new SlotPromoteRefused(staged.id, kind, detail);
     }
 
     const { data: prior } = await supabase.from("first_read_slots")
@@ -83,6 +87,15 @@ export async function promoteStagedSlots(
       .eq("id", staged.id);
     if (e2) throw new Error(`promote-staged-slot failed (${kind}): ${e2.message}`);
 
+    // VS2: AFTER the flip, and it cannot fail it. The signature is the act; the row is the record of
+    // the act, and a record that can undo what it records is worse than no record. Until this ruling
+    // a signature left no integrity row at all — the slot's own signed_at/signed_by were the only
+    // trace, which guard s5 checks but no audit could reconstruct.
+    await recordSignature(supabase, {
+      companyId, kind, slotId: staged.id, sourceReadId: staged.source_read_id ?? null,
+      signedBy, criterionVersion: staged.criterion_version ?? null, status: "completed",
+      supersededSlotId: priorId,
+    });
     promoted.push({ kind, staged: staged.id, superseded: priorId });
   }
   return { promoted };
@@ -103,4 +116,45 @@ export async function rejectStagedSlots(
     rejected.push({ kind, slot: staged.id });
   }
   return { rejected };
+}
+
+
+/**
+ * VS2 (operator ruling, 2026-10-14): ONE integrity row per signature — taken or refused.
+ *
+ * Never throws. An accounting failure must not undo a signature that already happened, so every
+ * error is swallowed here exactly as recordModelCall swallows its own: the act is the truth, the row
+ * is the record, and a record that can fail the act is a liability.
+ */
+async function recordSignature(supabase: AnySupabase, a: {
+  companyId: string; kind: string; slotId: string; sourceReadId: string | null;
+  signedBy: string; criterionVersion: string | null;
+  status: "completed" | "rejected"; detail?: string; supersededSlotId?: string | null;
+}): Promise<void> {
+  try {
+    await supabase.from("integrity_runs").insert({
+      company_id: a.companyId,
+      component: `first_read_slot_signed_${a.kind}`,
+      ran_at: new Date().toISOString(),
+      status: a.status,
+      examined: 1,
+      admitted: a.status === "completed" ? 1 : 0,
+      excluded_by_rule: {
+        act: a.status === "completed" ? "slot_signed" : "slot_sign_refused",
+        kind: a.kind,
+        slot_id: a.slotId,
+        source_read_id: a.sourceReadId,
+        signed_by: a.signedBy,
+        criterion_version: a.criterionVersion,
+        superseded_slot_id: a.supersededSlotId ?? null,
+        detail: a.detail ?? null,
+        reversal_sql: a.status === "completed"
+          ? `update public.first_read_slots set is_current=false, signed_at=null, signed_by=null, superseded_at=now(), superseded_reason='operator_rejected' where id='${a.slotId}';`
+          : null,
+        reversal_note: a.status === "completed"
+          ? "Unsigns the slot and takes it out of the current set, returning the beat to the full read. It does NOT restore a slot this signature superseded — reset that row's superseded_at/superseded_reason explicitly if it should come back."
+          : "Nothing to reverse: the signature was refused before any write.",
+      },
+    });
+  } catch { /* the record must never be able to fail the act it records */ }
 }

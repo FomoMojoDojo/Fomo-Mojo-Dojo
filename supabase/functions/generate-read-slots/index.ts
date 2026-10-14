@@ -32,7 +32,7 @@ import {
   verbatimDifferentiatorIndices, sourceClassFor, type SlotKind,
 } from "../_shared/readSlots.ts";
 import { promoteStagedSlots, rejectStagedSlots, SlotPromoteRefused } from "../_shared/readSlotsPromote.ts";
-import { runKind, lengthsOf, getSlotAt, type GenerateFn, type JudgeFn } from "../_shared/readSlotsRun.ts";
+import { runKind, lengthsOf, getSlotAt, storedVerdictOf, type GenerateFn, type JudgeFn } from "../_shared/readSlotsRun.ts";
 import { decideFieldClass, fieldClassOk, type FieldClassDecision } from "../_shared/classFactCheck.ts";
 import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
 import { SOFTENING_GUARD, softenedSpecifics, softeningDetail, type CitedLine } from "../_shared/stageContinuity.ts";
@@ -485,7 +485,12 @@ serve(async (req) => {
           source_read_id: src.id,
           input_ledger: { source_read_id: src.id, source_fields: Object.keys(visible), caps: SLOT_CAPS[kind] },
           model_provider: genChoice.provider, model_name: genChoice.model,
-          judge_model: judgeChoice.model, judge_verdict: verdict,
+          judge_model: judgeChoice.model,
+          // VS1: the stored verdict records the GATE's decision per entry — a verbatim entry is
+          // accepted by the verbatim rule (path:"verbatim"), with the judge's own answer kept beside
+          // it as judge_opinion. Storing the judge's raw answer is what put a live slot in breach of
+          // guard s2 on 2026-10-14: it had volunteered accept:false on a line it never decided.
+          judge_verdict: storedVerdictOf(perSlot, verdict),
           // P3 (2026-10-13): which generation rules shortened this slot. Attribution only.
           criterion_version: GEN_RULES_VERSION,
           is_current: false,
