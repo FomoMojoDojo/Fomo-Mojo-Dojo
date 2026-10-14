@@ -118,6 +118,11 @@ export type MissingLine = {
   statement: string; specifics: string[]; reason: string;
   /** P2: a dropped line names the rows it rested on, so the cause is checkable without a re-query. */
   citations?: string[]; field?: string;
+  /** C1-S: true when at least one citation is a record/you signal or own_word in the new pool. Such
+   *  a drop refuses whatever the predecessor's gen_rules_version. */
+  still_sourced?: boolean;
+  /** C1-S: exactly which of its citations made it still-sourced. */
+  sourcing_citations?: string[];
 };
 
 /** C1 — the staged read against the read it would replace.
@@ -154,6 +159,60 @@ export function droppedLines(args: {
   return classifyContinuity(args).dropped;
 }
 
+// ── C1-S (operator ruling, 2026-10-14): A STILL-SOURCED LINE MUST BE CONTINUED ──────────────────
+//
+// WHY. Wasabi's second staged read (31f2bba2, discarded as audit 10266) dropped the FedRAMP
+// differentiator while cc5707ad — the row it cites — was IN the pool: P1 had just put it there. So
+// the evidence was in front of the model and the line still went. The reason is that the generation
+// prompt never showed the model the current read's lines: C1 was enforcing continuation of lines the
+// model could not see, and C1-P's report-only mode meant it could not even refuse.
+//
+// C1-S separates two different situations that C1 had been treating alike:
+//
+//   STILL-SOURCED — at least one of the line's citations is a record- or you-class SIGNAL or
+//     OWN_WORD in the new pool. The evidence is there, the line is shown to the model in the prompt,
+//     and dropping it is a real loss. C1 REFUSES, whatever the predecessor's gen_rules_version: the
+//     C1-P licence exists because a pre-rules read is not comparable, and a line whose own source is
+//     sitting in the pool is comparable on any rules.
+//
+//   NOT STILL-SOURCED — nothing it cites survives into the pool as a usable source. Here the
+//     predecessor's rules still decide, exactly as C1-P ruled: report-only against a pre-rules read.
+//
+// FINDINGS AND DELTAS DO NOT COUNT. A finding is our own synthesis and a delta is a composed pair;
+// neither is a row the model can be shown and asked to continue from, and admitting them here would
+// make a line "still-sourced" on evidence P1 deliberately will not admit. Measured over the 22
+// current positioning reads: 94 of 104 lines are still-sourced, so C1 becomes enforcing for the
+// great majority while the 10 that are not keep their licence.
+export type PoolRowForSourcing = { id: string; kind: string; source_class: string };
+
+/** C1-S: the ids a still-sourced test may count — record/you signals and own_words in the pool. */
+export function sourcingIdsOf(pool: readonly PoolRowForSourcing[]): Set<string> {
+  return new Set(pool
+    .filter((r) => (r.kind === "signal" || r.kind === "own_word") &&
+                   (r.source_class === "record" || r.source_class === "you"))
+    .map((r) => r.id));
+}
+
+/** C1-S: is this current line still sourced — does it cite at least one usable pool row? */
+export function isStillSourced(line: Pick<CitedLine, "refs">, sourcingIds: ReadonlySet<string>): boolean {
+  return line.refs.some((r) => sourcingIds.has(r));
+}
+
+/** C1-S: the prompt block. TEXT AND CITATION IDS ONLY — no class, no reason, no specifics, no
+ *  instruction about what to do with them beyond the heading. The model is being shown what the
+ *  current read says and which rows say it, nothing more: anything else here is the enforcer's
+ *  business leaking into the prompt, which is what Q1 took out of clause (7). */
+export function stillSourcedPromptBlock(
+  currentLines: readonly CitedLine[], sourcingIds: ReadonlySet<string>,
+): string {
+  const keep = currentLines.filter((l) => l.text.trim() && isStillSourced(l, sourcingIds));
+  if (keep.length === 0) return "";
+  // The heading is the ruling's own phrase. Each entry is the line's text and the citation ids that
+  // make it still-sourced — nothing else, so no gate vocabulary reaches the model.
+  return `\n\nCURRENT LINES TO CONTINUE OR IMPROVE — the read you are replacing states these, and the rows they cite are in the ledger above:\n` +
+    keep.map((l) => `  ${l.text} [${l.refs.filter((r) => sourcingIds.has(r)).join(", ")}]`).join("\n");
+}
+
 // ── P2 (operator ruling, 2026-10-14): THREE COUNTS, NEVER ARITHMETIC ────────────────────────────
 //
 // The block reported `continued = required - missing.length`, and on Wasabi that read "continued: 2"
@@ -178,7 +237,12 @@ export function classifyContinuity(args: {
   textByRef: Readonly<Record<string, string>>;
   classByRef: Readonly<Record<string, string>>;
   carriedFields?: ReadonlySet<string>;
+  /** C1-S: the record/you signal+own_word ids in the new pool. A dropped line that cites one of
+   *  these is still-sourced, and refuses on any rules. Omitted ⇒ nothing is still-sourced, which is
+   *  the pre-C1-S behaviour. */
+  sourcingIds?: ReadonlySet<string>;
 }): ContinuitySplit {
+  const sourcing = args.sourcingIds ?? new Set<string>();
   const carried = args.carriedFields ?? new Set<string>();
   const missing: MissingLine[] = [];
   const continuedLines: ContinuityLine[] = [];
@@ -224,11 +288,16 @@ export function classifyContinuity(args: {
       continue;
     }
     const anchorCarried = old.field !== undefined && carried.has(old.field);
+    const stillSourced = isStillSourced(old, sourcing);
     missing.push({
       statement: old.text,
       specifics: tokens,
       citations: [...old.refs],
       field: old.field,
+      // C1-S: which of the two situations this drop is. The refusal reads this, not the predecessor's
+      // stamp, for a line whose own source is in the pool.
+      still_sourced: stillSourced,
+      sourcing_citations: old.refs.filter((r) => sourcing.has(r)),
       reason: anchorCarried
         ? `dropped: the line carried at ${old.field} does not carry [${tokens.join(", ")}]`
         : `dropped: no staged line shares a citation and carries [${tokens.join(", ")}]`,
@@ -252,6 +321,10 @@ export type ContinuityBlock = {
   licensed_lines: ContinuityLine[];
   missing: MissingLine[];
   softened: Array<{ field: string } & SofteningHit>;
+  /** C1-S (2026-10-14): how many current lines were still-sourced — shown to the model and
+   *  enforced on any rules — and which they were. */
+  still_sourced_count?: number;
+  still_sourced_lines?: Array<{ field: string; text: string; citations: string[] }>;
   /** C1-P (operator ruling, 2026-10-14): which mode C1 ran in for this kind. `enforced` refuses on a
    *  drop; `report_only` computes and records every drop but does not refuse, because the predecessor
    *  predates rules 2026-10-13.1 and a drop against it is not a comparable fact. Absent on blocks
@@ -288,6 +361,11 @@ export function continuityBlock(
 export function softeningDetail(hits: Array<{ field: string } & SofteningHit>): string {
   return hits.map((h) => `"${h.field}" ${h.ref.slice(0, 8)}:${h.word}:"${h.shared_run}"`).join("; ");
 }
+/** C1-S: the dropped lines that were still-sourced — the ones that refuse on any rules. */
+export function stillSourcedDrops(split: ContinuitySplit): MissingLine[] {
+  return split.dropped.filter((d) => d.still_sourced === true);
+}
+
 export function continuityDetail(missing: MissingLine[]): string {
   return missing.map((m) => `"${m.statement}"`).join("; ");
 }

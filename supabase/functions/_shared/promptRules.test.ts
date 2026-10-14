@@ -76,9 +76,13 @@ Deno.test("Q3. the example's subject appears nowhere in this generator's prompts
 });
 
 Deno.test("P3. the version is bumped — these rules can change what the model writes", () => {
-  assertEquals(GEN_RULES_VERSION, "2026-10-13.2");
+  // C1-S (2026-10-14) bumped it: the generation PROMPT changed — it now shows the model the
+  // current read's still-sourced lines. The invariant is unchanged: the stamp moves when the
+  // rules that shape what the model writes move, and the module explains each bump.
+  assertEquals(GEN_RULES_VERSION, "2026-10-14.1");
   const notes = Deno.readTextFileSync(new URL("./genRulesVersion.ts", import.meta.url));
-  assert(notes.includes("2026-10-13.2"), "and the bump is explained in the version's own log");
+  assert(notes.includes("2026-10-14.1"), "and the bump is explained in the version's own log");
+  assert(notes.includes("C1-S"), "the log names the ruling that moved it");
 });
 
 // LIVE: clause (2)'s example must match nothing in the company's record, or it is the old mistake

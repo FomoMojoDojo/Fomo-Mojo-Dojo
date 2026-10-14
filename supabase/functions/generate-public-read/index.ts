@@ -40,6 +40,7 @@ import { SELECTION_VERSION } from "../_shared/publicReadSelection.ts";
 import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
 import {
   CONTINUITY_GUARD, SOFTENING_GUARD, classifyContinuity, continuityBlock, continuityDetail,
+  isStillSourced, sourcingIdsOf, stillSourcedDrops, stillSourcedPromptBlock,
   softenedSpecifics, softeningDetail, type CitedLine, type ContinuityBlock,
 } from "../_shared/stageContinuity.ts";
 import {
@@ -645,6 +646,11 @@ Respond with ONLY JSON:
     const promptSha: Partial<Record<Kind, string>> = {};
     /** V1-R4: how much live record the pre-generation span search read, per kind. */
     const carrySearch: Partial<Record<Kind, { lines: number; considered: number; admitted: number }>> = {};
+    // C1-S (2026-10-14): the pool rows a current line may be still-sourced BY — record/you signals
+    // and own_words. Built once from the same `inputs` the ledger was built from.
+    const sourcingIds = sourcingIdsOf(inputs as Array<{ id: string; kind: string; source_class: string }>);
+    /** C1-S: the still-sourced current lines per kind, for the response and the audit row. */
+    const stillSourcedByKind: Partial<Record<Kind, Array<{ field: string; text: string; citations: string[] }>>> = {};
     /** S1 (2026-10-14): the per-field sourcing results for the LAST payload gated for each kind —
      *  reported and stored whether S1 refused or a later guard did. */
     const s1Results: Partial<Record<Kind, S1Result[]>> = {};
@@ -997,6 +1003,7 @@ Respond with ONLY JSON:
         newLedgerIds: new Set(Object.keys(textByUuid)),
         textByRef: textByUuid, classByRef: classByUuid,
         carriedFields: new Set(Object.keys(carriedNow)),   // C1-A: which paths are the record's words
+        sourcingIds,                                       // C1-S: which drops refuse on any rules
       });
       // ── C1-P (operator ruling, 2026-10-14): C1 is REPORT-ONLY against a pre-rules predecessor ──
       // Wasabi's stage was refused by C1 for dropping 5 of 6 lines of a read generated 2026-08-22:
@@ -1018,6 +1025,9 @@ Respond with ONLY JSON:
         ...continuityBlock(split, softened),
         // the ruling's own fact, on the row: which mode C1 ran in and what decided it
         c1_mode: c1Enforced ? "enforced" : "report_only",
+        // C1-S: what was shown to the model and therefore enforced on any rules
+        still_sourced_count: stillSourcedByKind[kind]?.length ?? 0,
+        still_sourced_lines: stillSourcedByKind[kind] ?? [],
         predecessor_gen_rules_version: predecessorRules || null,
       } as ContinuityBlock;
       continuityBlocks[kind] = block;
@@ -1027,6 +1037,12 @@ Respond with ONLY JSON:
       // (specific_softened) + 9713 (write_error) on the 2026-10-13 run.
       if (softened.length > 0) throw new StageRefusal(SOFTENING_GUARD, softeningDetail(softened));
       // C1-P: enforced against a rules-current predecessor; reported against an older or absent one.
+      // ── C1-S: TWO REFUSAL CONDITIONS ────────────────────────────────────────────────────────
+      // A STILL-SOURCED drop refuses on any rules: its own source is in the pool and the line was in
+      // the prompt, so the loss is real and comparable whatever the predecessor was built under.
+      // Everything else keeps the C1-P licence — report-only against a pre-rules predecessor.
+      const ssDropped = stillSourcedDrops(split);
+      if (ssDropped.length > 0) throw new StageRefusal(CONTINUITY_GUARD, continuityDetail(ssDropped));
       if (split.dropped.length > 0 && c1Enforced) throw new StageRefusal(CONTINUITY_GUARD, continuityDetail(split.dropped));
 
       const built = prepareStorage(kind, payload, verdict);
@@ -1194,7 +1210,18 @@ Respond with ONLY JSON:
         // What the sha still buys: two reads with the same prompt_sha were written to the same
         // prompt, and a read whose sha differs from today's rebuild was not.
         const systemText = genSys[kind as Kind];
-        const userText = `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}${takenBlock}\n\nProduce the ${kind} JSON.`;
+        // ── C1-S: SHOW THE MODEL THE LINES IT IS BEING ASKED TO CONTINUE ───────────────────────
+        // C1 refused Wasabi for dropping the FedRAMP line while cc5707ad, the row it cites, sat in
+        // the pool — because the prompt never said the line existed. A gate that enforces
+        // continuation of invisible lines is asking the model to guess. Only the STILL-SOURCED lines
+        // are shown: a line whose sources have left the pool cannot be continued from the ledger in
+        // front of the model, so naming it would be asking for an unsourced sentence.
+        const currentForPrompt = await currentLinesFor(kind as Kind);
+        const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds);
+        stillSourcedByKind[kind as Kind] = currentForPrompt
+          .filter((l) => l.text.trim() && isStillSourced(l, sourcingIds))
+          .map((l) => ({ field: String(l.field ?? ""), text: l.text, citations: l.refs.filter((r) => sourcingIds.has(r)) }));
+        const userText = `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}${ssBlock}${takenBlock}\n\nProduce the ${kind} JSON.`;
         promptSha[kind as Kind] = await sha256Hex(`${systemText}\n\n${userText}`);
         const p = await run(genChoice, systemText, userText, 0);
         // S1: the assembly reports where each carry actually landed. A slot with neither a carry nor
@@ -1389,7 +1416,7 @@ Respond with ONLY JSON:
         // D3: the continuity block is returned, not only stored — a caller should not have to read
         // integrity_runs to learn what the staged read continued. D1's removals ride beside it.
         continuity: continuityBlocks, restated_carried: restatedCarried,
-        distinctness_prefilter: distinctnessLog,
+        distinctness_prefilter: distinctnessLog, still_sourced: stillSourcedByKind,
         reasked, sourcing_search: sourcingSearch, admitted_from_live_record: admitted,
         class_decisions: Object.fromEntries(Object.entries(classDecisions).map(([k, ds]) => [k, (ds ?? []).map((d) => ({
           field: d.field, class: d.cls, branch: d.branch, examined: d.examined,

@@ -28,4 +28,8 @@
 //                 was the ALREADY WRITTEN notice it contradicts); the notice now states how many
 //                 further differentiators to write; clause (2)'s worked example no longer quotes a
 //                 live row's sentence back at the model.
-export const GEN_RULES_VERSION = "2026-10-13.2" as const;
+// C1-S (operator ruling, 2026-10-14): bumped because the GENERATION PROMPT changed — it now shows
+// the model the current read's still-sourced lines and asks it to continue or improve each. Wasabi's
+// FedRAMP line was dropped twice while C1 enforced its continuation and the prompt never mentioned
+// it; a gate that enforces continuation of invisible lines is asking the model to guess.
+export const GEN_RULES_VERSION = "2026-10-14.1" as const;
