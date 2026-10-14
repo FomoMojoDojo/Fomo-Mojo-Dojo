@@ -19,7 +19,7 @@
 import { extractSpecifics } from "./classFactCheck.ts";
 import { verbatimProvable } from "./ownWordsExtract.ts";
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
-import { VERBATIM_MAX_CHARS } from "./readSlots.ts";
+import { DIFFERENTIATORS_MIN, VERBATIM_MAX_CHARS } from "./readSlots.ts";
 
 /** The refusal when a carried span's source text moved under it. Fail closed: a row whose text
  *  changed is not a carry any more. Mirrors extract-own-words' snapshot_drift. */
@@ -462,4 +462,22 @@ export function rekeyCarriedBlock(block: CarriedBlock, placedAt: Readonly<Record
   const out: CarriedBlock = {};
   for (const [field, carry] of Object.entries(block)) out[placedAt[field] ?? field] = carry;
   return out;
+}
+
+// ── Q2 (operator ruling, 2026-10-13): how many MORE differentiators the model is asked for ──────
+//
+// The prompt never said a number. GEN_POSITIONING shows an array with one example element,
+// CITE_RULE explicitly licenses returning it empty, and clause (7) pointed at the company's current
+// read — a document the prompt does not contain (Q1 fixed that half). With the carried lines named
+// as ALREADY WRITTEN, a model that writes nothing else is obeying every instruction it was given.
+// Runs 9941 and 9976 did exactly that: every line they returned was a restatement of a carry.
+//
+// N = what the read would lose. The current read's differentiator count minus the number of lines
+// already carried, floored at zero — ask for the lines the carries do NOT cover, and no more. A
+// company with no current read has nothing to lose, so it gets the slot path's own floor instead.
+export function furtherDifferentiatorCount(
+  currentDifferentiators: number, carriedCount: number, noCurrentReadFloor = DIFFERENTIATORS_MIN,
+): number {
+  if (currentDifferentiators === 0) return noCurrentReadFloor;   // no current read ⇒ the floor
+  return Math.max(0, currentDifferentiators - carriedCount);
 }

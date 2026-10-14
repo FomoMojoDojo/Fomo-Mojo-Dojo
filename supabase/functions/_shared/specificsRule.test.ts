@@ -26,7 +26,12 @@ const R99 = "Lists Edgewood as a key resource for families; highlights the Kinsh
 Deno.test("1. a planted SOURCEABLE superlative appears verbatim in the rule's instruction and clears the gate", async () => {
   const p = await readPrompt();
   assert(p.includes("STATED AS THAT ROW STATES IT"), "the rule names the obligation");
-  assert(p.includes("'the first kinship program in the country'"), "and shows it with the real fact");
+  // Q3 (2026-10-13): the worked example no longer quotes a LIVE row. It used to show the obligation
+  // with "the first kinship program in the country" — the exact sentence the carry lifts from
+  // dfb6da68 — which handed the model the carried line and told it to write that and cite the row.
+  // The obligation is unchanged; only the sentence it is demonstrated with is now a neutral one.
+  assert(p.includes("'the longest-running apprenticeship in the state'"), "and shows it with an example from no live row");
+  assert(!p.includes("'the first kinship program in the country'"), "and no longer with a live one");
   // and the gate accepts that exact wording against the row that carries it
   const d = decideFieldClass({
     field: "unique_attributes[1]", cls: "our_read",
@@ -38,8 +43,11 @@ Deno.test("1. a planted SOURCEABLE superlative appears verbatim in the rule's in
 
 Deno.test("2. a planted sourceable superlative is never hedged into a reading", async () => {
   const p = await readPrompt();
-  assert(p.includes("never 'a nationally pioneering kinship program'"),
-    "the rule names the exact hedge the last run produced");
+  // the rule still shows a stated-vs-hedged PAIR, which is what teaches the distinction; after Q3
+  // the pair is neutral. (It used to be "the first kinship program in the country" vs "a nationally
+  // pioneering kinship program" — the real wording of the 2026-10-13 run that prompted P1.)
+  assert(/write that and cite the row — never '[^']+'/.test(p), "a stated-vs-hedged pair is still shown");
+  assert(p.includes("never 'a long-established apprenticeship program'"), "with the neutral hedge");
   assert(p.includes("hedging it misreports the record"), "and says why");
   // the hedge wording must NOT be offered anywhere as an acceptable output
   assert(!/is either written as our reading/.test(p), "the old 'either hedge or omit' door is gone");
@@ -60,19 +68,32 @@ Deno.test("3. a planted UNSOURCEABLE specific is LEFT OUT, not hedged — and th
   assertEquals(d.unsourced.map((u) => u.token).includes("14"), true);
 });
 
-Deno.test("4. a sourced differentiator in the current read must survive a regeneration (clause 7)", async () => {
+Deno.test("4. a sourceable differentiator must survive a regeneration — clause 7, after Q1", async () => {
   const p = await readPrompt();
-  assert(p.includes("Keep every differentiator the company's CURRENT read carries"), "the rule exists");
-  assert(p.includes("Dropping a sourced line is a loss, not a simplification"), "and says why");
+  // Q1 (2026-10-13) rewrote clause (7) to refer only to what the prompt SHOWS. It used to say "keep
+  // every differentiator the company's CURRENT read carries" — and the current read is not in the
+  // prompt at all. Measured on run 9976's 79-row ledger: not one of the three current differentiators
+  // appears verbatim in any row the model saw. So clause (7) had exactly one available referent, the
+  // ALREADY WRITTEN notice, and a model obeying it had to write back the lines the notice forbids.
+  assert(p.includes("Besides the lines listed as ALREADY WRITTEN"), "it refers to the notice");
+  assert(p.includes("keep every differentiator you can source from the ledger"), "and to the ledger");
+  assert(p.includes("dropping a sourceable one is a loss, not a simplification"), "and says why");
+  assert(!p.includes("CURRENT read"), "and names no document outside the prompt");
 });
 
-Deno.test("5. clause 7 names BOTH licensed reasons to drop a line, and no others", async () => {
+Deno.test("5. the two licensed reasons to drop a line live in the ENFORCER, not the prompt", async () => {
+  // They were in clause (7) and Q1 took them out, because the model cannot evaluate either: it
+  // cannot see the line, its citations, or whether they are still in the ledger. They are decided in
+  // code, by C1, and that is where this test now pins them — the invariant did not move, the
+  // statement of it did.
+  const c1 = await read("./stageContinuity.ts");
+  assert(c1.includes("// licensed: its sources left the pool"), "reason 1: the cited rows left the ledger");
+  assert(c1.includes("// licensed: fails the check now"), "reason 2: the line no longer passes the specifics check");
+  const fn = c1.slice(c1.indexOf("export function droppedLines"), c1.indexOf("export type ContinuityBlock"));
+  assert(!/cap/i.test(fn), "a character cap is not a reason to drop a read differentiator");
+  // and the prompt no longer claims to carry rules the model cannot apply
   const p = await readPrompt();
-  const c7 = p.slice(p.indexOf("(7) Keep every differentiator"));
-  assert(c7.includes("no longer in the ledger"), "reason 1: the sources are gone");
-  assert(c7.includes("no longer passes the specifics check"), "reason 2: the line fails the check (P1 amendment)");
-  // and the cap is NOT a licensed reason on the read side
-  assert(!/cap/i.test(c7.slice(0, c7.indexOf("\n"))), "a character cap is not a reason to drop a read differentiator");
+  assert(!p.includes("no longer in the ledger"), "the prompt does not restate a licence it cannot evaluate");
 });
 
 Deno.test("6. the slot shortening keeps the figure's unit", async () => {

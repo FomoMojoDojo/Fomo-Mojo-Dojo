@@ -69,7 +69,9 @@ Deno.test("Part F: for every kind the staged payload equals the direct-write pay
 
 Deno.test("source guard: the generator inserts built.stored on write and built.staged on stage, from the one builder", async () => {
   const gen = await read("../generate-public-read/index.ts");
-  assert(gen.includes("company_id, kind, payload: built.stored, input_ledger: ledger,"), "direct write inserts built.stored");
+  // Q4 split this to stamp prompt_sha on the direct write too; both halves pinned.
+  assert(gen.includes("company_id, kind, payload: built.stored,"), "direct write inserts built.stored");
+  assert(gen.includes("input_ledger: { ...ledger, prompt_sha: promptSha[kind] ?? null },"), "with the prompt stamp");
   // b6372777 (V1) split this insert across lines and gave the staged ledger its `carried` block, so
   // the literal moved; the invariant did not. Both halves are pinned.
   assert(gen.includes("company_id, kind, payload: built.staged,"), "stage inserts built.staged");

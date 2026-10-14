@@ -44,6 +44,7 @@ import {
 } from "../_shared/stageContinuity.ts";
 import {
   CARRIED_DRIFT_GUARD, assembleByPath, carriedBlockOf, carryForLine, driftedSpans,
+  furtherDifferentiatorCount,
   rekeyCarriedBlock, searchLiveRecordForSpans, usableSpansOf, type CarriedBlock, type CarriedSpan,
   type CarryPlacement, type FieldCarry,
 } from "../_shared/carriedSpan.ts";
@@ -438,12 +439,12 @@ Deno.serve(async (req) => {
     // Nothing here loosens the gate — (1) still requires the row and the citation.
     const SPECIFICS_RULE = `SPECIFICS. A specific is a superlative, an exclusivity word, a figure, or a reach claim (a place or market you say you cover).
 (1) Use a specific only in the exact words of a ledger row whose class is 'the record' or 'you', and CITE THAT ROW. If you use a row's words, its token must be in that field's citations — a specific sourced to a row you did not cite reads as unsourced.
-(2) A specific that appears in such a row is STATED AS THAT ROW STATES IT. Do not soften it, generalise it, or turn it into a reading: if a row says 'the first kinship program in the country', write that and cite the row — never 'a nationally pioneering kinship program'. A sourced fact is the record speaking, and hedging it misreports the record.
+(2) A specific that appears in such a row is STATED AS THAT ROW STATES IT. Do not soften it, generalise it, or turn it into a reading: if a row says 'the longest-running apprenticeship in the state', write that and cite the row — never 'a long-established apprenticeship program'. A sourced fact is the record speaking, and hedging it misreports the record.
 (3) A specific you cannot find in any cited row of class 'the record' or 'you' is LEFT OUT. Do not write it as our reading instead — a reading is for a judgement we are making, not for a fact we could not source.
 (4) Never strengthen a source: 'one of the only' stays 'one of the only'; it never becomes 'the only' or 'sole'.
 (5) When the record carries both a superlative and a plain claim for the SAME fact, use the one the row states. Prefer the plain claim only when no row states the superlative.
 (6) Keep the scope the row states. Do not end a claim on a bare number — 'serving youth under 12 in the Bay Area' carries the row's scope, 'serving youth under 12' drops it.
-(7) Keep every differentiator the company's CURRENT read carries, unless the rows that sourced it are no longer in the ledger or the line no longer passes the specifics check. Dropping a sourced line is a loss, not a simplification.
+(7) Besides the lines listed as ALREADY WRITTEN, keep every differentiator you can source from the ledger; dropping a sourceable one is a loss, not a simplification.
 EXAMPLE. A row of class 'the record' says 'the only level 14 residential facility in northern California'. Write: 'the only Level 14 residential facility in Northern California' and cite that row. Do NOT write 'sole' and do NOT write 'a high-acuity residential facility'. If NO row carries the under-12 CSU claim, leave it out.`;
     // ── GENERATE each kind ───────────────────────────────────────────────────────────────────────
     const GEN_POSITIONING = `You read a company's PUBLIC record and state its positioning as a hypothesis for the room to test. ${CITE_RULE}
@@ -566,6 +567,9 @@ Respond with ONLY JSON:
     const continuityBlocks: Partial<Record<Kind, ContinuityBlock>> = {};
     /** D1: generated differentiators removed as restatements of a carried line, for the ledger. */
     const restatedCarried: Array<{ generated_text: string; carried_path: string }> = [];
+    /** Q4: sha256 of the exact prompt each kind was generated from (system + user, ledger included).
+     *  The TEXT is deliberately not stored — see the wall check at the model call. */
+    const promptSha: Partial<Record<Kind, string>> = {};
     /** V1-R4: how much live record the pre-generation span search read, per kind. */
     const carrySearch: Partial<Record<Kind, { lines: number; considered: number; admitted: number }>> = {};
     /** V1: the carried block per kind, and the carries themselves for the splice. */
@@ -911,6 +915,7 @@ Respond with ONLY JSON:
           input_ledger: {
             ...ledger, carried: carriedBlocks[kind] ?? {},
             restated_carried: restatedCarried,       // D1: what the model restated and we removed
+            prompt_sha: promptSha[kind] ?? null,     // Q4: WHICH prompt wrote this read
           },
           model_provider: genChoice.provider, model_name: genChoice.model,
           judge_verdict: verdict, judge_model: judgeChoice.model,
@@ -930,7 +935,10 @@ Respond with ONLY JSON:
         if (upErr) throw new Error(`supersede-prior failed (${kind}): ${upErr.message}`);
       }
       const { data: ins, error: insErr } = await supabase.from("public_reads").insert({
-        company_id, kind, payload: built.stored, input_ledger: ledger,
+        company_id, kind, payload: built.stored,
+        // Q4: EVERY stored read is stamped, not only staged ones — a read with no prompt_sha is a
+        // read nobody can attribute to a prompt, which is the gap Q4 exists to close.
+        input_ledger: { ...ledger, prompt_sha: promptSha[kind] ?? null },
         model_provider: genChoice.provider, model_name: genChoice.model,
         judge_verdict: verdict, judge_model: judgeChoice.model,
         is_current: true, supersedes_legacy_row: legacyFor(kind),
@@ -997,11 +1005,40 @@ Respond with ONLY JSON:
         const carries = await selectCarries(kind as Kind);
         carriesByKind[kind as Kind] = carries;
         carriedBlocks[kind as Kind] = carriedBlockOf(carries);
+        // ── Q2 (operator ruling, 2026-10-13): the notice states a COUNT ─────────────────────────
+        // Nothing in the prompt said how many differentiators to write. GEN_POSITIONING shows an
+        // array with one example element; CITE_RULE explicitly permits an empty one; clause (7)
+        // pointed at the current read, which is not in the prompt at all (that was Q1). On runs
+        // 9941 and 9976 the model wrote only the carried lines back, and D1 removed them, so the
+        // read got thinner each time. N turns an unstated expectation into an instruction.
+        const currentDiffCount = (await currentLinesFor(kind as Kind))
+          .filter((l) => /^unique_attributes\[\d+\]$/.test(l.field ?? "")).length;
+        const furtherWanted = furtherDifferentiatorCount(currentDiffCount, carries.length);
         const takenBlock = carries.length === 0 ? "" :
           `\n\nALREADY WRITTEN — these lines are carried from the record verbatim. Do not write them, do not restate their facts, and write every other line as usual:\n` +
-          carries.map((c) => `  ${c.field}: ${c.stored_text}`).join("\n");
+          carries.map((c) => `  ${c.field}: ${c.stored_text}`).join("\n") +
+          `\nWrite ${furtherWanted} further differentiators.`;
 
-        const p = await run(genChoice, genSys[kind as Kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}${takenBlock}\n\nProduce the ${kind} JSON.`, 0);
+        // ── Q4 (operator ruling, 2026-10-13): STAMP THE PROMPT, STORE ONLY THE SHA ──────────────
+        // Nothing recorded which prompt produced a read. input_ledger carried selection_version,
+        // model_name and gen_rules_version, so the diagnostic of runs 9941/9976 could only
+        // RECONSTRUCT the prompt from source and say so — a reconstruction is as good as the claim
+        // that the source has not moved since.
+        //
+        // THE TEXT IS NOT STORED, and the wall check is why. The ruling said to store it unless the
+        // prompt can carry client-provided material. It can, in two places: the ledger body (the
+        // selector filters signal_band/voice_class/liveness, never source_type — 13 Edgewood signals
+        // with source_type='uploaded_file' satisfy every predicate it applies) and the ALREADY
+        // WRITTEN notice (carries come through liveRecordCandidates, the same predicates minus
+        // source_type, so a carried span can be lifted from one of those 13). Run 9976's ledger held
+        // none of them, but that is the cap and the ordering, not a wall. So: the sha alone.
+        //
+        // What the sha still buys: two reads with the same prompt_sha were written to the same
+        // prompt, and a read whose sha differs from today's rebuild was not.
+        const systemText = genSys[kind as Kind];
+        const userText = `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}${takenBlock}\n\nProduce the ${kind} JSON.`;
+        promptSha[kind as Kind] = await sha256Hex(`${systemText}\n\n${userText}`);
+        const p = await run(genChoice, systemText, userText, 0);
         // S1: the assembly reports where each carry actually landed. A slot with neither a carry nor
         // a generated line to fill it shifts every later carry down one, and the block must name the
         // path the line is STORED at — the drift check and C1-A's anchor both key off it.

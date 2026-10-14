@@ -35,7 +35,7 @@ Deno.test("P3-c. SELECTION_VERSION's literal is UNCHANGED — a prompt change is
 });
 
 Deno.test("P3-d. the version lives in ONE module and is a dated string", () => {
-  assertEquals(GEN_RULES_VERSION, "2026-10-13.1");
+  assertEquals(GEN_RULES_VERSION, "2026-10-13.2");   // Q1/Q2/Q3 bumped it
   assert(/^\d{4}-\d{2}-\d{2}\.\d+$/.test(GEN_RULES_VERSION),
     "dated like PARSER_RULES_VERSION, so a reader sees WHEN the rules changed");
 });

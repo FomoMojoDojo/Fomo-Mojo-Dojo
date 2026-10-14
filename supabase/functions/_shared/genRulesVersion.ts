@@ -23,4 +23,9 @@
 //   2026-10-13.1  P1/P2 — the specifics rules rewritten for the fixed figure gate: a sourced
 //                 specific is stated as its row states it, an unsourced one is left out rather than
 //                 hedged, and a differentiator the current read carries is kept.
-export const GEN_RULES_VERSION = "2026-10-13.1" as const;
+//   2026-10-13.2  Q1/Q2/Q3 — clause (7) refers only to what the prompt SHOWS (it named the
+//                 company's current read, which the prompt does not contain, so its only referent
+//                 was the ALREADY WRITTEN notice it contradicts); the notice now states how many
+//                 further differentiators to write; clause (2)'s worked example no longer quotes a
+//                 live row's sentence back at the model.
+export const GEN_RULES_VERSION = "2026-10-13.2" as const;
