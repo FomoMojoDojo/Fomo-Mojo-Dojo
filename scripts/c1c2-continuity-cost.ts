@@ -27,6 +27,7 @@ const { linesOfStoredPayload } = await import("../supabase/functions/generate-pu
 const { droppedLines, softenedSpecifics } = await import("../supabase/functions/_shared/stageContinuity.ts");
 const { reReadRowTexts } = await import("../supabase/functions/_shared/classSourcingScope.ts");
 const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.57.4");
+const { predecessorOf } = await import("./continuityPairing.ts");
 
 const URL_ = Deno.env.get("SUPABASE_URL") ?? "";
 const KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -62,9 +63,13 @@ const filed = (read: string, statement: string) =>
 type Read = {
   id: string; company_id: string; kind: string; is_current: boolean; created_at: string;
   payload: Record<string, unknown>; input_ledger: Record<string, unknown> | null;
+  superseded_by: string | null;
 };
+
+// H2: the pairing rule lives in ./continuityPairing.ts so a test can reach it without running this
+// sweep — this file does its work at import time and exits.
 const { data: all, error } = await db.from("public_reads")
-  .select("id, company_id, kind, is_current, created_at, payload, input_ledger").order("created_at");
+  .select("id, company_id, kind, is_current, created_at, payload, input_ledger, superseded_by").order("created_at");
 if (error) { console.error(`harness: FAIL ${error.message}`); Deno.exit(2); }
 const rows = (all ?? []) as Read[];
 const subject = rows.filter((r) =>
@@ -80,8 +85,7 @@ for (const r of subject) {
   refTotal += ids.length;
   refResolved += ids.filter((i) => texts[i] !== undefined).length;
 
-  const prior = rows.filter((x) =>
-    x.company_id === r.company_id && x.kind === r.kind && x.created_at < r.created_at).at(-1);
+  const prior = predecessorOf(r, rows);
   const currentLines = linesOfStoredPayload(prior?.payload ?? null);
   const stagedLines = linesOfStoredPayload(r.payload);
 
