@@ -153,10 +153,12 @@ Deno.test("(g) the ledger carries selection_version; the generator selects throu
   // R1 (2026-10-14): it stepped again. A signal's pool text is now rowTextOf's assembly and the
   // source title travels as its own field, so a read stamped 2026-10-07.1 was built from text no
   // drift re-read could reproduce — which is exactly what refusal 10153 was.
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.1");
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.2");   // P1 (2026-10-14): predecessor-cited admission
   const gen = await read("../generate-public-read/index.ts");
   assert(gen.includes("selection_version: SELECTION_VERSION,"), "ledgerOf stamps the version");
-  assert(gen.includes("const { inputs, dropped } = await selectPublicInputs(supabase, company_id);"), "the ONE selection helper feeds the ledger");
+  // P1 (2026-10-14): the call now names the kind whose citations are protected. Still the ONE helper.
+  assert(/const \{ inputs, dropped \} = await selectPublicInputs\(supabase, company_id(, \{ predecessorKind \})?\);/.test(gen),
+    "the ONE selection helper feeds the ledger");
   assert(!gen.includes("async function gatherPublicInputs("), "the physical-order gather is gone");
   // wall brief (2026-09-18): the gather MOVED to publicReadInputs.ts so the bet writer reads the same pool; the generator imports it
   // 1a-4 widened this import with the class helpers, so the guard names what must be imported rather

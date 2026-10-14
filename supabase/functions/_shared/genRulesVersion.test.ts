@@ -13,7 +13,9 @@ Deno.test("P3-a. every stored READ carries gen_rules_version in its ledger", asy
     "ledgerOf stamps it — so EVERY stored read carries it, staged or written");
   // the stamp sits in the ONE ledger builder, so no write path can miss it
   const ledgerBlock = gen.slice(gen.indexOf("selection_version: SELECTION_VERSION,"));
-  assert(ledgerBlock.slice(0, 600).includes("gen_rules_version: GEN_RULES_VERSION,"),
+  // P1 (2026-10-14) added predecessor_cited (and its comment) between the two stamps, so the window
+  // widened. The point is unchanged: both stamps live in the SAME ledger object.
+  assert(ledgerBlock.slice(0, ledgerBlock.indexOf("};")).includes("gen_rules_version: GEN_RULES_VERSION,"),
     "stamped beside selection_version, in the same ledger object");
 });
 
@@ -38,7 +40,7 @@ Deno.test("P3-c. the two stamps are independent — a prompt change never moves 
   // rowTextOf's assembly with the source title carried beside it instead of appended. That is a
   // change to what the selection hands the model, so stamping it is correct — the case P3 forbids
   // is a bump with NO selection change, which pinning the literal still catches.
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.1",
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.2",
     "pinned so a bump is always deliberate; R1 changed the pool's text, so this one is");
   assert(GEN_RULES_VERSION !== SELECTION_VERSION as string, "two different stamps, two different facts");
 });

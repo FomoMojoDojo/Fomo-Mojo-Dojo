@@ -35,7 +35,11 @@ import { compareBeat2, gapVerdictForDeltaType, orderGapPairs, strengthForSignal 
 // R1 (2026-10-14): bumped because the pool's TEXT for a signal changed — it is now rowTextOf's
 // assembly, with the source title carried as its own field instead of appended. Nothing about which
 // rows are admitted, deduped, ordered or capped changed; what a row SAYS to the model did.
-export const SELECTION_VERSION = "gpr-select-2026-10-14.1" as const;
+// P1 (2026-10-14): bumped again — the rows the CURRENT read cites are now admitted ahead of the
+// cap, on their own budget of 12, so WHICH rows enter the pool has changed. A read stamped
+// 2026-10-14.1 was built from a pool where the cap could silently discard the evidence its own
+// predecessor rested on (audit 10228: Wasabi's FedRAMP and AI-product rows, all live, all over_cap).
+export const SELECTION_VERSION = "gpr-select-2026-10-14.2" as const;
 
 export type Dropped = { id: string; kind: "signal" | "own_word" | "finding" | "delta"; reason: string };
 

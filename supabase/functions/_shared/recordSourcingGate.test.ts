@@ -188,7 +188,7 @@ Deno.test("S2. an exactly-doubled row renders once; everything else is untouched
 
 Deno.test("S2. DISPLAY ONLY — the pool's text and the span anchors stay on rowTextOf", async () => {
   const inputs = await read("./publicReadInputs.ts");
-  const push = inputs.slice(inputs.indexOf("for (const s of sigSel.kept) {"));
+  const push = inputs.slice(inputs.indexOf("for (const s of [...p1Sig.kept, ...sigSel.kept]) {"));
   const line = push.slice(0, push.indexOf("\n  }"));
   // EXACTLY rowTextOf(...) and nothing chained onto it. Naming collapseHalves is not enough: any
   // transformation here — an inline regex, a .replace, a slice — reintroduces defect A by making the
@@ -230,10 +230,11 @@ Deno.test("C1-P. C1 refuses against a rules-current predecessor and reports agai
   const src = await read("../generate-public-read/index.ts");
   assert(src.includes('const c1Enforced = predecessorRules !== "" && predecessorRules >= "2026-10-13.1";'),
     "the mode is decided by the predecessor's own stamp");
-  assert(src.includes("if (missing.length > 0 && c1Enforced) throw new StageRefusal(CONTINUITY_GUARD"),
+  // P2 (2026-10-14) renamed the set: the refusal is on split.dropped, the lines that actually dropped.
+  assert(src.includes("if (split.dropped.length > 0 && c1Enforced) throw new StageRefusal(CONTINUITY_GUARD"),
     "the refusal is conditional on the mode");
   // and the drops are computed and recorded either way
-  const i = src.indexOf("const missing = droppedLines({");
+  const i = src.indexOf("const split = classifyContinuity({");
   assert(i > 0 && i < src.indexOf("const c1Enforced"), "the drops are computed BEFORE the mode is consulted");
   assert(src.includes('c1_mode: c1Enforced ? "enforced" : "report_only"'), "the block records which mode ran");
   assert(src.includes("predecessor_gen_rules_version: predecessorRules || null"), "and the fact that decided it");

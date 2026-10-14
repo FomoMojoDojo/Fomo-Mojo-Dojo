@@ -87,9 +87,11 @@ Deno.test("5. the two licensed reasons to drop a line live in the ENFORCER, not 
   // code, by C1, and that is where this test now pins them — the invariant did not move, the
   // statement of it did.
   const c1 = await read("./stageContinuity.ts");
-  assert(c1.includes("// licensed: its sources left the pool"), "reason 1: the cited rows left the ledger");
-  assert(c1.includes("// licensed: fails the check now"), "reason 2: the line no longer passes the specifics check");
-  const fn = c1.slice(c1.indexOf("export function droppedLines"), c1.indexOf("export type ContinuityBlock"));
+  // P2 (2026-10-14) moved these from comments into the licensed lines' own reason strings, so the
+  // two licences are now stated to the reader of the block, not only to the reader of the code.
+  assert(c1.includes("licensed: none of its citations is in the new ledger"), "reason 1: the cited rows left the ledger");
+  assert(c1.includes("it would not pass the fact-check today"), "reason 2: the line no longer passes the specifics check");
+  const fn = c1.slice(c1.indexOf("export function classifyContinuity"), c1.indexOf("export type ContinuityBlock"));
   assert(!/cap/i.test(fn), "a character cap is not a reason to drop a read differentiator");
   // and the prompt no longer claims to carry rules the model cannot apply
   const p = await readPrompt();

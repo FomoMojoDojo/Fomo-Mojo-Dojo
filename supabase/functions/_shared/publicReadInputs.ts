@@ -18,6 +18,9 @@ import { selectDeltas, selectFindings, selectOwnWords, selectSignals, type Dropp
 // R1: the ONE row-text assembly. Imported rather than re-stated so the pool and the drift re-read
 // cannot drift apart again — that divergence IS defect A.
 import { rowTextOf } from "./classSourcingScope.ts";
+// P1 (2026-10-14): the predecessor's citations are read with the SAME walker C1 uses, so "what the
+// current read cites" means one thing in both places.
+import { linesOfStoredPayload } from "./citedLines.ts";
 
 export const PUBLIC_SIGNAL_VOICES = ["outside_voice_about_client", "client_voice", "market_context", "competitor_voice", "analysis"];
 
@@ -77,6 +80,9 @@ export type InputRow = {
   /** R1 (2026-10-14): WHERE the row was found, carried beside the text instead of inside it. The
    *  catalogue renders it as an attribute of the line; no span is ever cut from it. */
   source_title?: string | null;
+  /** P1 (2026-10-14): `predecessor_cited` when this row was admitted because the CURRENT read cites
+   *  it, ahead of the cap. Absent for every row the ordinary selection admitted. */
+  admitted_by?: string;
 };
 
 // Per-kind read caps. A 3-sentence public read needs a tractable, prioritized catalogue — a model
@@ -86,15 +92,58 @@ export type InputRow = {
 // widest caps; signals/deltas are sampled. Every capped row is still 100% public-provenance.
 export const READ_CAP: Record<string, number> = { finding: 25, own_word: 25, signal: 20, delta: 15 };
 
+// ── P1 (operator ruling, 2026-10-14): THE PREDECESSOR'S CITATIONS ARE ADMITTED BEFORE THE CAP ────
+//
+// WHY. Wasabi's regenerated positioning lost its FedRAMP and AI-product differentiators, and the
+// discard (audit 10228) found the cause in the cap, not the model: READ_CAP.signal = 20 dropped 65
+// of 91 eligible signals, and EVERY row carrying FedRAMP, Wasabi Fire or AiR was in that 65 —
+// cc5707ad, 2242bdd1, c93c7c2d, 9373abfc, all class record, all live, all over_cap. The model could
+// not continue a line whose evidence it was never shown, and C1 then licensed the loss because the
+// line's sources had left the pool. The cap was silently deciding what the read may keep.
+//
+// WHAT. Before the cap runs, the rows the CURRENT read cites are admitted on their own budget. They
+// are the evidence the read already rests on, so a regeneration that cannot see them is not a
+// regeneration — it is a different read that happens to replace one.
+//
+// EVERY ADMISSION LAW STILL APPLIES. These rows go through selectSignals / selectOwnWords exactly as
+// the rest do — W1's allowlist and the band/voice/liveness predicates upstream, then empty_text,
+// page-shaped-or-analysis, channel_junk, listing, the dedupe and the order. P1 changes WHEN a cited
+// row meets the cap, never WHETHER the laws apply to it. Measured over all 22 companies: 64 rows
+// admitted fleet-wide, largest single growth 9 (FomoMojoDojo, ~419 prompt tokens), no company
+// reaching the budget.
+//
+// FINDINGS STAY OUT. A finding enters the pool only when it is recurrence-backed, and that rule is
+// about whether our synthesis is corroborated — it is not a cap. Admitting a cited finding here
+// would route around it. 32 cited findings across the fleet stay excluded, and 16 cited deltas: a
+// delta is not a row P1 admits either.
+export const PREDECESSOR_CITED_CAP = 12;
+export const PREDECESSOR_CITED_REASON = "predecessor_cited" as const;
+
 // ── gather PUBLIC inputs — each query's predicate selects public provenance ONLY ──────────────────
 // Ruling 5 (signed 2026-09-18): the queries below are unchanged in WHAT they may read; the SELECTION of which
 // rows enter (admission, dedupe, order, breadth, caps) is the ONE helper selectPublicInputs, built on the
 // preview's own authorities (publicReadSelection.ts). The ledger records the selection version.
 export type Gathered = { inputs: InputRow[]; dropped: Dropped[] };
 
-export async function selectPublicInputs(supabase: SupabaseClient, companyId: string, opts: { excludeFindingKinds?: readonly string[] } = {}): Promise<Gathered> {
+export async function selectPublicInputs(supabase: SupabaseClient, companyId: string, opts: { excludeFindingKinds?: readonly string[]; predecessorKind?: string } = {}): Promise<Gathered> {
   const rows: InputRow[] = [];
   const dropped: Dropped[] = [];
+
+  // ── P1: what the CURRENT read of this kind cites. Read with linesOfStoredPayload — the same walker
+  //    C1 uses — so "cited" means the same thing to the selection and to the continuity check.
+  //    `predecessorKind` is optional: a caller with no kind (the bet writer) gets today's behaviour
+  //    exactly, because there is no predecessor to protect.
+  const predecessorCited = new Set<string>();
+  if (opts.predecessorKind) {
+    const { data: predRow } = await supabase.from("public_reads")
+      .select("payload").eq("company_id", companyId).eq("kind", opts.predecessorKind).eq("is_current", true).maybeSingle();
+    for (const l of linesOfStoredPayload((predRow as { payload?: Record<string, unknown> } | null)?.payload ?? null)) {
+      for (const r of l.refs) predecessorCited.add(r);
+    }
+  }
+  /** P1's shared budget across signals and own_words, spent signals-first: the cap is what starves
+   *  signals (65 of 91 on Wasabi), and own_words are capped at 25 against far fewer rows. */
+  let p1Budget = predecessorCited.size > 0 ? PREDECESSOR_CITED_CAP : 0;
 
   // 1. outside signals — outside band AND a PUBLIC web voice (analysis/NULL voice = our own read, excluded).
   //    LIVE-ONLY (Gate 6a, 2026-08-26): superseded_at IS NULL AND held_at IS NULL — a hypothesis must not
@@ -124,7 +173,19 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
     dropped.push({ id: r.id, kind: "signal", reason: `not_public_source_type:${String(r.source_type ?? "null")}` });
     return false;
   });
-  const sigSel = selectSignals(sigPublic as unknown as SelSignal[], READ_CAP.signal, confirmed);
+  // P1: the cited rows go through selectSignals on their own budget — so every law, the dedupe and
+  // the order apply to them identically — and the REST then meet READ_CAP as before.
+  const sigAll = sigPublic as unknown as SelSignal[];
+  const sigCited = sigAll.filter((r) => predecessorCited.has(r.id));
+  const sigRest = sigAll.filter((r) => !predecessorCited.has(r.id));
+  const p1Sig = p1Budget > 0 && sigCited.length > 0
+    ? selectSignals(sigCited, p1Budget, confirmed)
+    : { kept: [] as SelSignal[], dropped: [] as Dropped[] };
+  // A cited row the LAWS refuse keeps its own reason; only a cap miss is relabelled, so the ledger
+  // never says predecessor_cited about a row that was admitted for any other reason.
+  for (const d of p1Sig.dropped) dropped.push(d.reason === "over_cap" ? { ...d, reason: "over_predecessor_cited_cap" } : d);
+  p1Budget -= p1Sig.kept.length;
+  const sigSel = selectSignals(sigRest, READ_CAP.signal, confirmed);
   dropped.push(...sigSel.dropped);
   // ── R1 (operator ruling, 2026-10-14): the pool's text IS rowTextOf's text ───────────────────────
   // This line used to build `(claim_text ?? evidence_excerpt) + " (" + source_title + ")"`. The drift
@@ -137,8 +198,9 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   // THE TITLE IS NOT WHAT THE ROW SAYS. It is where the row was found, so appending it to the text
   // put a span's offsets over words the source never asserted. It travels as its own field and
   // reaches the prompt as an attribute of the line (buildCatalogue), never as text a span can cut.
-  for (const s of sigSel.kept) {
-    rows.push({ id: s.id, kind: "signal", provenance: "public_observed", source_class: classOfSignal(s), text: rowTextOf("signal", s), source_title: s.source_title ?? null, source_url: s.source_url, event_date: s.event_date });
+  for (const s of [...p1Sig.kept, ...sigSel.kept]) {
+    rows.push({ id: s.id, kind: "signal", provenance: "public_observed", source_class: classOfSignal(s), text: rowTextOf("signal", s), source_title: s.source_title ?? null, source_url: s.source_url, event_date: s.event_date,
+      admitted_by: p1Sig.kept.some((k) => k.id === s.id) ? PREDECESSOR_CITED_REASON : undefined });
   }
 
   // 2. own-words — the company's OWN public-site voice, judge-kept only. own_site=true by construction
@@ -150,12 +212,23 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   const { data: owClaims } = await supabase.from("claims").select("raw_payload").eq("company_id", companyId).eq("claim_type", "own_words").eq("status", "active");
   const activeIdentities = new Set(((owClaims ?? []) as Array<{ raw_payload?: { content_identity?: string } }>).map((c) => c.raw_payload?.content_identity).filter((x): x is string => !!x));
   // ADMISSION CRITERION (2026-09-03): only declared-eligible kinds seed posits (a missing kind is eligible).
-  const owSel = selectOwnWords((ow ?? []) as SelOwnWord[], READ_CAP.own_word, activeIdentities, (w) => declaredEligibleFor(parseOwnWordsKind(w.judge_kind)));
+  // P1, own_words lane: same shape as the signals lane, on whatever budget signals left.
+  const owAll = (ow ?? []) as SelOwnWord[];
+  const owEligible = (w: SelOwnWord) => declaredEligibleFor(parseOwnWordsKind(w.judge_kind));
+  const owCited = owAll.filter((w) => predecessorCited.has(w.id));
+  const owRest = owAll.filter((w) => !predecessorCited.has(w.id));
+  const p1Ow = p1Budget > 0 && owCited.length > 0
+    ? selectOwnWords(owCited, p1Budget, activeIdentities, owEligible)
+    : { kept: [] as SelOwnWord[], dropped: [] as Dropped[] };
+  for (const d of p1Ow.dropped) dropped.push(d.reason === "over_cap" ? { ...d, reason: "over_predecessor_cited_cap" } : d);
+  p1Budget -= p1Ow.kept.length;
+  const owSel = selectOwnWords(owRest, READ_CAP.own_word, activeIdentities, owEligible);
   dropped.push(...owSel.dropped);
   // source_url carried so the offering's own-host test can see WHERE the words were said (a registry-hosted
   // own_word is not the company's own site — rule 2026-09-18); the own_site flag is no longer trusted downstream.
   // 1a-4: own words are the company speaking — class `you`, unconditionally.
-  for (const w of owSel.kept) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", source_class: "you", text: (w.quote ?? "").trim(), source_url: (w as { source_url?: string | null }).source_url ?? null, own_site: true });
+  for (const w of [...p1Ow.kept, ...owSel.kept]) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", source_class: "you", text: (w.quote ?? "").trim(), source_url: (w as { source_url?: string | null }).source_url ?? null, own_site: true,
+    admitted_by: p1Ow.kept.some((k) => k.id === w.id) ? PREDECESSOR_CITED_REASON : undefined });
 
   // 3. findings — the public_inferred register, open, AND RECURRENCE-BACKED (Gate 6a, 2026-08-26):
   //    only findings with a Gate-5c finding_recurrence row (entity-anchored, IDF-coherent, judge-anchored,

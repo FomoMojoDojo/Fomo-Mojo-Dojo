@@ -116,9 +116,14 @@ Deno.test("8. a STRENGTHENED line is refused by the existing gate, not by this c
 Deno.test("the guards are named strings and the block counts both ways", () => {
   assertEquals(CONTINUITY_GUARD, "continuity_line_dropped");
   assertEquals(SOFTENING_GUARD, "specific_softened");
-  assertEquals(continuityBlock(3, [], []), { required: 3, continued: 3, missing: [], softened: [] });
-  const b = continuityBlock(3, [{ statement: "x", specifics: ["first"], reason: "r" }], []);
-  assertEquals([b.required, b.continued], [3, 2]);
+  // P2 (2026-10-14): the block is built from the SPLIT and reports three counts, never arithmetic.
+  const line = (statement: string) => ({ statement, citations: ["r1"], specifics: [], reason: "r" });
+  const clean = continuityBlock({ continued: [line("a"), line("b"), line("c")], licensed: [], dropped: [] }, []);
+  assertEquals([clean.required, clean.continued, clean.licensed_count, clean.dropped_count], [3, 3, 0, 0]);
+  const b = continuityBlock({ continued: [line("a")], licensed: [line("b")],
+    dropped: [{ statement: "x", specifics: ["first"], reason: "r" }] }, []);
+  // the FedRAMP case: the old arithmetic said continued=2 here. It is 1.
+  assertEquals([b.required, b.continued, b.licensed_count, b.dropped_count], [3, 1, 1, 1]);
 });
 
 // ── the hook sites ──────────────────────────────────────────────────────────────────────────────
@@ -130,9 +135,9 @@ Deno.test("hook: both checks run in finalize, BEFORE any persistence and AFTER t
   const body = gen.slice(fin, gen.indexOf("if (!doWrite) return;", fin));
   // both checks inside finalize
   assert(body.includes("softenedSpecifics(l, textByUuid, classByUuid)"), "C2 runs in finalize");
-  assert(body.includes("droppedLines({"), "C1 runs in finalize");
+  assert(body.includes("classifyContinuity({"), "C1 runs in finalize");
   // BEFORE the stage insert and before prepareStorage
-  assert(body.indexOf("droppedLines({") < body.indexOf("prepareStorage(kind"), "checks precede any payload build");
+  assert(body.indexOf("classifyContinuity({") < body.indexOf("prepareStorage(kind"), "checks precede any payload build");
   assert(body.indexOf("softenedSpecifics(") < body.indexOf('from("public_reads").insert'), "checks precede the insert");
   // AFTER the re-ask: the re-ask is wired on the runKindsIsolated options, which come later in the file
   assert(gen.indexOf("const finalize = async") < gen.indexOf("reaskOnClassRefusal:"), "finalize is defined before the re-ask wiring, and runs after it");
@@ -155,7 +160,7 @@ Deno.test("hook: the SLOT path runs C2 and not C1", async () => {
   const slots = await read("../generate-read-slots/index.ts");
   assert(slots.includes("softenedSpecifics(line, Object.fromEntries(sourceRowTextById), ledgerClasses)"), "C2 on the slot path");
   assert(slots.includes("throw new StageRefusal(SOFTENING_GUARD"), "and it refuses, typed");
-  assert(!slots.includes("droppedLines"), "C1 is NOT on the slot path — a slot has no prior slot to continue");
+  assert(!slots.includes("droppedLines") && !slots.includes("classifyContinuity"), "C1 is NOT on the slot path — a slot has no prior slot to continue");
   // and it refuses before the insert
   assert(slots.indexOf("softenedSpecifics(line") < slots.indexOf('from("first_read_slots").insert'), "before the insert");
 });

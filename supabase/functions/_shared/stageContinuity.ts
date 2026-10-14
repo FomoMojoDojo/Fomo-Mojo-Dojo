@@ -114,7 +114,11 @@ export function softenedSpecifics(
   return hits;
 }
 
-export type MissingLine = { statement: string; specifics: string[]; reason: string };
+export type MissingLine = {
+  statement: string; specifics: string[]; reason: string;
+  /** P2: a dropped line names the rows it rested on, so the cause is checkable without a re-query. */
+  citations?: string[]; field?: string;
+};
 
 /** C1 — the staged read against the read it would replace.
  *
@@ -147,17 +151,60 @@ export function droppedLines(args: {
    *  words, spliced over whatever the model wrote, with its citations replaced by the span's row. */
   carriedFields?: ReadonlySet<string>;
 }): MissingLine[] {
+  return classifyContinuity(args).dropped;
+}
+
+// ── P2 (operator ruling, 2026-10-14): THREE COUNTS, NEVER ARITHMETIC ────────────────────────────
+//
+// The block reported `continued = required - missing.length`, and on Wasabi that read "continued: 2"
+// when exactly ONE line had continued. The other was the FedRAMP differentiator, LICENSED away
+// because both of its sources had left the pool — a different fact, and the one that mattered: it is
+// how a regeneration can lose a line and have the report call it continued. A licensed drop is not a
+// continuation and must never be counted as one.
+//
+// So every current line lands in exactly one bucket, each carrying its own lines with text,
+// citations and cause, and the counts are the bucket sizes.
+export type ContinuityLine = { statement: string; citations: string[]; specifics: string[]; reason: string; field?: string };
+export type ContinuitySplit = {
+  continued: ContinuityLine[];
+  licensed: ContinuityLine[];
+  dropped: MissingLine[];
+};
+
+export function classifyContinuity(args: {
+  currentLines: readonly CitedLine[];
+  stagedLines: readonly CitedLine[];
+  newLedgerIds: ReadonlySet<string>;
+  textByRef: Readonly<Record<string, string>>;
+  classByRef: Readonly<Record<string, string>>;
+  carriedFields?: ReadonlySet<string>;
+}): ContinuitySplit {
   const carried = args.carriedFields ?? new Set<string>();
   const missing: MissingLine[] = [];
+  const continuedLines: ContinuityLine[] = [];
+  const licensed: ContinuityLine[] = [];
   for (const old of args.currentLines) {
     if (!old.text.trim()) continue;
+    const base = { statement: old.text, citations: [...old.refs], field: old.field };
     const present = old.refs.filter((r) => args.newLedgerIds.has(r));
-    if (present.length === 0) continue;                        // licensed: its sources left the pool
+    if (present.length === 0) {
+      // LICENSED, cause 1: nothing it cited is in the new pool, so there is no evidence to continue
+      // it from. P1 exists to make this rare: it admits the predecessor's citations ahead of the
+      // ordinary selection ceiling, so a line loses its sources only when they truly left the record.
+      licensed.push({ ...base, specifics: [], reason: "licensed: none of its citations is in the new ledger — its sources left the pool" });
+      continue;
+    }
     const cited = present
       .filter((r) => args.classByRef[r] === "record" || args.classByRef[r] === "you")
       .map((r) => args.textByRef[r] ?? "");
     const d = decideFieldClass({ field: "continuity", cls: old.cls, text: old.text, citedSourceTexts: cited });
-    if (d.branch === "judge_required" || d.branch === "unsupported") continue;  // licensed: fails the check now
+    if (d.branch === "judge_required" || d.branch === "unsupported") {
+      // LICENSED, cause 2: the line would not pass the fact-check today, so requiring it would be
+      // requiring an unsourced line.
+      licensed.push({ ...base, specifics: extractSpecifics(old.text).map((x) => x.token),
+        reason: `licensed: the line is ${d.branch} against the new ledger — it would not pass the fact-check today` });
+      continue;
+    }
     const tokens = extractSpecifics(old.text).map((s) => s.token);
     const continued = args.stagedLines.some((n) => {
       // CARRIAGE — the same test for both kinds of line, and the only test C1-A relaxes around.
@@ -168,25 +215,41 @@ export function droppedLines(args: {
       // a GENERATED line is unchanged: it must share a citation with the line it continues.
       return n.refs.some((r) => old.refs.includes(r));
     });
-    if (!continued) {
-      const anchorCarried = old.field !== undefined && carried.has(old.field);
-      missing.push({
-        statement: old.text,
-        specifics: tokens,
-        reason: anchorCarried
-          ? `still ${d.branch} against the new ledger; the line carried at ${old.field} does not carry [${tokens.join(", ")}]`
-          : `still ${d.branch} against the new ledger; no staged line shares a citation and carries [${tokens.join(", ")}]`,
-      });
+    if (continued) {
+      const byAnchor = old.field !== undefined && carried.has(old.field);
+      continuedLines.push({ ...base, specifics: tokens,
+        reason: byAnchor
+          ? `continued by CARRY ANCHOR at ${old.field} — the carried line holds every specific`
+          : `continued by a staged line sharing a citation and holding every specific [${tokens.join(", ")}]` });
+      continue;
     }
+    const anchorCarried = old.field !== undefined && carried.has(old.field);
+    missing.push({
+      statement: old.text,
+      specifics: tokens,
+      citations: [...old.refs],
+      field: old.field,
+      reason: anchorCarried
+        ? `dropped: the line carried at ${old.field} does not carry [${tokens.join(", ")}]`
+        : `dropped: no staged line shares a citation and carries [${tokens.join(", ")}]`,
+    });
   }
-  return missing;
+  return { continued: continuedLines, licensed, dropped: missing };
 }
 
 /** The block stored on integrity_runs — on ACCEPTANCE too, so a clean run is distinguishable from a
  *  vacuous one (no current read, nothing to continue). */
 export type ContinuityBlock = {
   required: number;
+  /** P2 (2026-10-14): the COUNT of lines that actually continued — never required minus missing. */
   continued: number;
+  /** P2: the count of lines C1 licensed, which is NOT a continuation. */
+  licensed_count: number;
+  /** P2: the count of lines that dropped. required = continued + licensed_count + dropped_count. */
+  dropped_count: number;
+  /** P2: the three sets, each line with its text, citations and cause. */
+  continued_lines: ContinuityLine[];
+  licensed_lines: ContinuityLine[];
   missing: MissingLine[];
   softened: Array<{ field: string } & SofteningHit>;
   /** C1-P (operator ruling, 2026-10-14): which mode C1 ran in for this kind. `enforced` refuses on a
@@ -197,10 +260,23 @@ export type ContinuityBlock = {
   /** The predecessor's gen_rules_version, or null when it carried none — the fact that decided the mode. */
   predecessor_gen_rules_version?: string | null;
 };
+/** P2: the block is built from the SPLIT, so the three counts are bucket sizes and cannot disagree
+ *  with the lines beside them. The old signature (required, missing, softened) computed `continued`
+ *  by subtraction and that is exactly what the ruling removes. */
 export function continuityBlock(
-  required: number, missing: MissingLine[], softened: Array<{ field: string } & SofteningHit>,
+  split: ContinuitySplit, softened: Array<{ field: string } & SofteningHit>,
 ): ContinuityBlock {
-  return { required, continued: required - missing.length, missing, softened };
+  const required = split.continued.length + split.licensed.length + split.dropped.length;
+  return {
+    required,
+    continued: split.continued.length,
+    licensed_count: split.licensed.length,
+    dropped_count: split.dropped.length,
+    continued_lines: split.continued,
+    licensed_lines: split.licensed,
+    missing: split.dropped,
+    softened,
+  };
 }
 /** The `detail` string a refusal carries, in the ref:word:shared_run shape C2 names.
  *

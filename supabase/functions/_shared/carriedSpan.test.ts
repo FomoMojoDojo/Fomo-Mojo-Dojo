@@ -242,7 +242,7 @@ Deno.test("hook: the ledger carries the block, and drift fails closed before C1/
   const fin = gen.indexOf("const finalize = async (rawKind: string");
   const body = gen.slice(fin, gen.indexOf("if (!doWrite) return;", fin));
   assert(body.indexOf("CARRIED_DRIFT_GUARD") < body.indexOf("softenedSpecifics"), "drift is checked before C2");
-  assert(body.indexOf("CARRIED_DRIFT_GUARD") < body.indexOf("droppedLines"), "and before C1");
+  assert(body.indexOf("CARRIED_DRIFT_GUARD") < body.indexOf("classifyContinuity"), "and before C1");
 });
 
 Deno.test("hook: only the differentiator paths carry in slice 1", async () => {

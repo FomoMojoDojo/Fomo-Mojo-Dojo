@@ -27,7 +27,7 @@
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
-import { sha256Hex } from "../_shared/contentIdentity.ts";
+import { normalizeForHash, sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
 import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, s1Detail, s1Unsourced, specificIsSourced, type FieldClassDecision, type S1Result } from "../_shared/classFactCheck.ts";
 import { liveRecordCandidates, reReadRowTexts, searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
@@ -39,7 +39,7 @@ import { loadOwnSiteRecord } from "../_shared/offeringNamedOnSite.ts";
 import { SELECTION_VERSION } from "../_shared/publicReadSelection.ts";
 import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
 import {
-  CONTINUITY_GUARD, SOFTENING_GUARD, continuityBlock, continuityDetail, droppedLines,
+  CONTINUITY_GUARD, SOFTENING_GUARD, classifyContinuity, continuityBlock, continuityDetail,
   softenedSpecifics, softeningDetail, type CitedLine, type ContinuityBlock,
 } from "../_shared/stageContinuity.ts";
 import {
@@ -48,7 +48,7 @@ import {
   rekeyCarriedBlock, searchLiveRecordForSpans, usableSpansOf, type CarriedBlock, type CarriedSpan,
   type CarryPlacement, type FieldCarry,
 } from "../_shared/carriedSpan.ts";
-import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass } from "../_shared/publicReadInputs.ts";
+import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass, PREDECESSOR_CITED_REASON } from "../_shared/publicReadInputs.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
@@ -94,6 +94,10 @@ async function ledgerOf(inputs: InputRow[]) {
     count: inputs.length,
     // ruling 5: which selection built this read (absent on rows written before 2026-09-18 = physical-order selection)
     selection_version: SELECTION_VERSION,
+    // P1 (2026-10-14): the rows admitted because the CURRENT read cites them, ahead of the cap. The
+    // ledger names them so a reader can tell "this row is here because the read before it rested on
+    // it" from "this row won the cap", which is exactly the distinction audit 10228 could not make.
+    predecessor_cited: inputs.filter((r) => r.admitted_by === PREDECESSOR_CITED_REASON).map((r) => r.id),
     // P3 (2026-10-13): which GENERATION RULES wrote it. selection_version says which rows entered the
     // pool; this says which instructions turned them into prose. Attribution only — it retracts
     // nothing. Absent = written before the ruling.
@@ -327,7 +331,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { inputs, dropped } = await selectPublicInputs(supabase, company_id);
+    // P1 (2026-10-14): the kind being generated IS the predecessor whose citations are protected.
+    // A kinds-scoped run names one kind; the default three-kind run protects each kind's own
+    // predecessor, so the pool is built per kind below. For the whole-run ledger we build it against
+    // the first active kind — the pool is the same for every kind except for these admissions, and
+    // the per-kind pool is what each kind is actually generated from.
+    const predecessorKind = activeKinds.length === 1 ? activeKinds[0] : undefined;
+    const { inputs, dropped } = await selectPublicInputs(supabase, company_id, { predecessorKind });
     const ledger = await ledgerOf(inputs);
     const ledgerIds = new Set(ledger.ids);
 
@@ -525,8 +535,62 @@ ${US_ENGLISH_RULE}`;
 
     // The judge prompt, built for ONE kind — byte-identical to what a kinds-scoped single-kind run
     // produced before (offeringActive is now "is this kind the offering kind").
+    // ── P3 (operator ruling, 2026-10-14): DISTINCTNESS ──────────────────────────────────────────
+    // Wasabi's staged read was discarded because its three differentiators restated one claim —
+    // transparent pricing / no egress fees, competitive pricing / no extra egress cost, disruptive
+    // low-cost predictable pricing. Nothing refused it: each line was separately sourced, separately
+    // cited and separately classed, and no gate asks whether two lines say the same thing.
+    //
+    // WHY THE JUDGE AND NOT A RULE. Measured over the 22 current positioning reads plus the
+    // discarded 40ca4370: a shared 3-word content run flags 0 of 23 and MISSES it; a shared citation
+    // flags 1 and misses it (it flags the current read instead); a shared specific flags 0. The
+    // failure is semantic — the same claim in three vocabularies, citing three different rows — and
+    // no lexical rule separates that from three distinct claims sharing a domain noun.
+    //
+    // The deterministic overlap test (>=2 content words after stopwords and the company's own name)
+    // DID isolate it, 1 of 23 with no false positives. It runs — and only LOGS. One true positive is
+    // a sample of one, it catches 2 of the 3 offending pairs, and a rule that refuses on a sample of
+    // one would refuse honest reads as the fleet regenerates. The judge refuses; the filter informs.
+    // P3: the company's own name, so the pre-filter can strip it. Without this the overlap test is
+    // satisfied by the company naming itself in two lines, which every read does.
+    const { data: coNameRow } = await supabase.from("companies").select("name").eq("id", company_id).maybeSingle();
+    const companyName = String((coNameRow as { name?: string } | null)?.name ?? "");
+    /** P3's deterministic pre-filter: any two differentiators sharing >=2 content words once
+     *  stopwords and the COMPANY'S OWN NAME are removed. LOG ONLY — it is never consulted by
+     *  `accepts`, never written into the judge's prompt, and never a refusal. Measured 1/23 with no
+     *  false positives, but on a single true positive, and it catches 2 of 3 offending pairs. */
+    const distinctnessPreFilter = (payload: Record<string, unknown>): Array<{ pair: string; shared: string[] }> => {
+      const STOP = new Set("the a an of in to and or for with its it is are as at by on that this we our you your their from be been has have not no than more most other others them they he she".split(" "));
+      const nameWords = new Set(normalizeForHash(String(companyName ?? "")).split(/\s+/).filter(Boolean));
+      const words = (t: string) => [...new Set(normalizeForHash(t).split(/[^a-z0-9%+.\-]+/)
+        .filter((w) => w && !STOP.has(w) && !nameWords.has(w)))];
+      const lines = Array.isArray(payload.unique_attributes)
+        ? (payload.unique_attributes as Array<{ text?: unknown }>).map((a) => String(a?.text ?? "")) : [];
+      const out: Array<{ pair: string; shared: string[] }> = [];
+      for (let i = 0; i < lines.length; i++) {
+        for (let j = i + 1; j < lines.length; j++) {
+          const A = new Set(words(lines[i]));
+          const shared = words(lines[j]).filter((w) => A.has(w));
+          if (shared.length >= 2) out.push({ pair: `unique_attributes[${i}]~[${j}]`, shared });
+        }
+      }
+      return out;
+    };
+    /** P3: the pre-filter's output per kind, for the response and the audit row. */
+    const distinctnessLog: Partial<Record<Kind, Array<{ pair: string; shared: string[] }>>> = {};
+
     const judgeSysFor = (kind: Kind): string => {
       const offeringActive = kind === "offering";
+      // DISTINCTNESS is asked of the kind that HAS differentiators. The other kinds carry one
+      // statement per rung, so the question has nothing to compare and asking it would invite a
+      // verdict about nothing.
+      const distinctActive = kind === "positioning";
+      const DISTINCTNESS_JUDGE_CLAUSE = distinctActive
+        ? "\n(f) DISTINCTNESS — do any TWO of unique_attributes make the SAME claim? Two lines make the same claim when a reader learns nothing new from the second: the same fact in different words counts as the same claim, however differently it is worded, whichever rows each line cites, and even when each is separately true and separately sourced. Naming the same property twice (two lines both about pricing, two both about speed) is the same claim; two genuinely different properties that happen to share a word are not. Set distinct_ok:false and name the pair and the claim they share."
+        : "";
+      const DISTINCTNESS_VERDICT_FIELD = distinctActive
+        ? '\n "distinctness":{"distinct_ok":true|false,"reason":"<ok, or which two lines make the same claim and what that claim is>"},'
+        : "";
       const OFFERING_JUDGE_CLAUSE = offeringActive
         // 1a-4: CLASS takes (e) by signature, so the offering clause moved from (e)–(h) to (f)–(i).
       // Its four CHECKS and its four verdict flags are unchanged — only the letters shift.
@@ -543,14 +607,14 @@ ${US_ENGLISH_RULE}`;
 (a) GROUNDING — every claim is supported by the cited inputs (the cited excerpts back it; nothing invented);
 (b) PLAIN-SANITY — market_category names what this business ACTUALLY IS per its own words and outside signals (a coffee roaster is NOT "SaaS"; a clinic is NOT "marketplace"). Reject an absurd or aspirational category. If positioning is not in this read, set sanity_ok:true;
 (c) CONSISTENCY — the read describes the SAME business throughout and does not contradict itself. If only one kind is in this read, judge its internal consistency and set consistency_ok:true when coherent;
-(d) CASCADE COHERENCE (strategy only, does NOT affect accept) — does how_to_win plausibly SERVE the stated where_to_play AND winning_aspiration? Does each must_have_capability plausibly SERVE how_to_win? A rung left empty is neither coherent nor incoherent — mark empty rungs coherent:true. Judge only NON-empty rungs on the merits.\n(e) CLASS — each field names its source class. A field of class 'our_read' must read as an openly-held reading, never as an established fact. A field of class 'record' may say what the record shows. A field of class 'you' may say what the company says. Set class_ok:false on any field that asserts more than its class allows, naming the words that do it. A sentence that states a superlative, figure or exclusivity as fact is NOT an openly-held reading, whatever its citations say.${OFFERING_JUDGE_CLAUSE}
+(d) CASCADE COHERENCE (strategy only, does NOT affect accept) — does how_to_win plausibly SERVE the stated where_to_play AND winning_aspiration? Does each must_have_capability plausibly SERVE how_to_win? A rung left empty is neither coherent nor incoherent — mark empty rungs coherent:true. Judge only NON-empty rungs on the merits.\n(e) CLASS — each field names its source class. A field of class 'our_read' must read as an openly-held reading, never as an established fact. A field of class 'record' may say what the record shows. A field of class 'you' may say what the company says. Set class_ok:false on any field that asserts more than its class allows, naming the words that do it. A sentence that states a superlative, figure or exclusivity as fact is NOT an openly-held reading, whatever its citations say.${DISTINCTNESS_JUDGE_CLAUSE}${OFFERING_JUDGE_CLAUSE}
 Respond with ONLY JSON:
 {"grounding_ok":true|false,"sanity_ok":true|false,"consistency_ok":true|false,
  "per_kind":{"positioning":{"ok":true|false,"reason":"..."},"strategy":{"ok":true|false,"reason":"..."},"promise":{"ok":true|false,"reason":"..."}},
  "cascade_coherence":{"how_to_win":{"coherent":true|false,"reason":"<one line: does it serve where-to-play + aspiration?>"},
    "capabilities":[{"text":"<echo the capability text>","coherent":true|false,"reason":"<one line: does it serve how-to-win?>"}]}${OFFERING_VERDICT_FIELD},
  ,
- "class":{"class_ok":true|false,"fields":[{"field":"<the field name as given in FIELD CLASSES>","class":"record|you|our_read","class_ok":true|false,"reason":"<ok, or the words that assert more than the class allows>"}]},
+ "class":{"class_ok":true|false,"fields":[{"field":"<the field name as given in FIELD CLASSES>","class":"record|you|our_read","class_ok":true|false,"reason":"<ok, or the words that assert more than the class allows>"}]},${DISTINCTNESS_VERDICT_FIELD}
  "accept":true|false,"reason":"<one line>"}`;
     };
 
@@ -562,7 +626,7 @@ Respond with ONLY JSON:
       k === "strategy" ? ((legacyCascade as { id?: string } | null)?.id ?? null) : ((legacyCanvas as { id?: string } | null)?.id ?? null);
 
     // Company own-host set — read once, used by the offering seen_on derivation.
-    const { data: coRow } = await supabase.from("companies").select("website").eq("id", company_id).maybeSingle();
+    const { data: coRow } = await supabase.from("companies").select("website, name").eq("id", company_id).maybeSingle();
     const ownHost = hostOf((coRow as { website?: string | null } | null)?.website ?? null);
     const ownHosts = new Set<string>(ownHost ? [ownHost] : []);
     const refMeta = buildRefMeta(inputs, ownHost);
@@ -842,6 +906,10 @@ Respond with ONLY JSON:
           // S1's per-field results, so a reader can see which specifics were tested and which failed
           // even when a LATER guard is the one that refused.
           s1: s1Results[kind as Kind] ?? null,
+          // P3: the judge's distinctness verdict (what refuses) beside the deterministic pre-filter's
+          // hits (what only logs), so the two can be compared as the fleet regenerates.
+          distinctness: (verdicts[kind as Kind]?.distinctness as unknown) ?? null,
+          distinctness_prefilter: distinctnessLog[kind as Kind] ?? null,
         },
         error: row.guard ? `guard=${row.guard} detail=${detailOf(row.detail ?? "")}` : null,
         run_ref: ledger.corpus_md5 ?? null,
@@ -924,7 +992,7 @@ Respond with ONLY JSON:
       const { data: curRow } = await supabase.from("public_reads")
         .select("payload, input_ledger").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
       const currentLines: CitedLine[] = linesOfStoredPayload((curRow as { payload?: Record<string, unknown> } | null)?.payload ?? null);
-      const missing = droppedLines({
+      const split = classifyContinuity({
         currentLines, stagedLines,
         newLedgerIds: new Set(Object.keys(textByUuid)),
         textByRef: textByUuid, classByRef: classByUuid,
@@ -947,7 +1015,7 @@ Respond with ONLY JSON:
       );
       const c1Enforced = predecessorRules !== "" && predecessorRules >= "2026-10-13.1";
       const block: ContinuityBlock = {
-        ...continuityBlock(currentLines.length, missing, softened),
+        ...continuityBlock(split, softened),
         // the ruling's own fact, on the row: which mode C1 ran in and what decided it
         c1_mode: c1Enforced ? "enforced" : "report_only",
         predecessor_gen_rules_version: predecessorRules || null,
@@ -959,7 +1027,7 @@ Respond with ONLY JSON:
       // (specific_softened) + 9713 (write_error) on the 2026-10-13 run.
       if (softened.length > 0) throw new StageRefusal(SOFTENING_GUARD, softeningDetail(softened));
       // C1-P: enforced against a rules-current predecessor; reported against an older or absent one.
-      if (missing.length > 0 && c1Enforced) throw new StageRefusal(CONTINUITY_GUARD, continuityDetail(missing));
+      if (split.dropped.length > 0 && c1Enforced) throw new StageRefusal(CONTINUITY_GUARD, continuityDetail(split.dropped));
 
       const built = prepareStorage(kind, payload, verdict);
       const storage = built.storage;
@@ -1027,6 +1095,12 @@ Respond with ONLY JSON:
       }
     };
 
+    /** P3: the distinctness gate. Asked of positioning only; fail-closed when it is asked. */
+    const distinctnessOk = (kind: string, verdict: Record<string, unknown>): boolean => {
+      if (kind !== "positioning") return true;              // not asked ⇒ nothing to refuse
+      const d = verdict.distinctness as { distinct_ok?: unknown } | undefined;
+      return d?.distinct_ok === true;                        // absent or false ⇒ refuse
+    };
     /** judge class_ok per field, from the verdict's class.fields[] block. */
     const judgeHedgedByField = (verdict: Record<string, unknown>): Record<string, boolean | undefined> => {
       const block = (verdict?.class ?? null) as Record<string, unknown> | null;
@@ -1149,6 +1223,15 @@ Respond with ONLY JSON:
         const refusedBlock = unsupportedFields.length === 0 ? "none"
           : JSON.stringify(unsupportedFields.map((d) => ({ field: d.field, unsupported_specifics: d.unsourced.map((u) => u.token) })));
         const judgeUser = `LEDGER (id-tagged):\n${CAT_LIVE}\n\nFIELD CLASSES (computed from each field's citations, weakest-wins):\n${JSON.stringify(decs.map((d) => ({ field: d.field, class: d.cls, branch: d.branch })))}\n\nFIELDS NEEDING A CLASS JUDGMENT (check (e) — these state specifics carried only by OUR OWN rows, so the question is whether we wrote them as our reading):\n${askBlock}\n\nALREADY REFUSED (specifics found nowhere in the company's record — context only, your answer cannot clear these):\n${refusedBlock}\n\nTHE READ:\n${kind}: ${JSON.stringify(payload)}\n\nJudge and decide accept (accept reflects a,b,c,e${offeringActive ? " and the offering f–i flags" : ""} ONLY — d is reported, never blocks).`;
+        // P3: the pre-filter runs on the SAME payload the judge is about to see, and only logs. It
+        // is computed here rather than inside the judge prompt so it cannot influence the verdict.
+        if (kind === "positioning") {
+          const hits = distinctnessPreFilter(payload);
+          distinctnessLog[kind as Kind] = hits;
+          if (hits.length > 0) {
+            console.log(`[distinctness-prefilter] ${company_id} ${kind} ${JSON.stringify(hits)} — LOG ONLY, the judge decides`);
+          }
+        }
         const v = await run(judgeChoice, judgeSysFor(kind as Kind), judgeUser, 0);
         verdicts[kind as Kind] = v;
         return v;
@@ -1161,7 +1244,11 @@ Respond with ONLY JSON:
       accepts: (kind, verdict) =>
         verdict.grounding_ok === true && verdict.sanity_ok === true && verdict.consistency_ok === true
         && verdict.accept === true && classGateOk(kind, verdict)
-        && (kind === "offering" ? offeringAcceptFromVerdict(verdict) : true),
+        && (kind === "offering" ? offeringAcceptFromVerdict(verdict) : true)
+        // P3: DISTINCTNESS REFUSES. Fail-closed on the kind that is asked: a judge that answers
+        // nothing for positioning refuses it, exactly as the class gate fails closed, because a
+        // missing answer is not a clean one. Other kinds are not asked and are unaffected.
+        && distinctnessOk(kind, verdict),
       // ── THE BOUNDED RE-ASK (2026-10-08) ─────────────────────────────────────────────────────
       // Fires ONLY when the class gate alone refused: grounding, plain-sanity, consistency and the
       // judge's own accept must all hold, and at least one field must be refused on class. Anything
@@ -1302,6 +1389,7 @@ Respond with ONLY JSON:
         // D3: the continuity block is returned, not only stored — a caller should not have to read
         // integrity_runs to learn what the staged read continued. D1's removals ride beside it.
         continuity: continuityBlocks, restated_carried: restatedCarried,
+        distinctness_prefilter: distinctnessLog,
         reasked, sourcing_search: sourcingSearch, admitted_from_live_record: admitted,
         class_decisions: Object.fromEntries(Object.entries(classDecisions).map(([k, ds]) => [k, (ds ?? []).map((d) => ({
           field: d.field, class: d.cls, branch: d.branch, examined: d.examined,
