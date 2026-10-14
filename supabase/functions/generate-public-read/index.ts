@@ -562,8 +562,10 @@ Respond with ONLY JSON:
 
     const payloads: Partial<Record<Kind, Record<string, unknown>>> = {};
 
-    /** C1/C2: the continuity block per kind — reported, and stored on the integrity row either way. */
+    /** C1/C2: the continuity block per kind — stored on the integrity row and returned (D3). */
     const continuityBlocks: Partial<Record<Kind, ContinuityBlock>> = {};
+    /** D1: generated differentiators removed as restatements of a carried line, for the ledger. */
+    const restatedCarried: Array<{ generated_text: string; carried_path: string }> = [];
     /** V1-R4: how much live record the pre-generation span search read, per kind. */
     const carrySearch: Partial<Record<Kind, { lines: number; considered: number; admitted: number }>> = {};
     /** V1: the carried block per kind, and the carries themselves for the splice. */
@@ -684,8 +686,11 @@ Respond with ONLY JSON:
         return [{ field: c.field, text: c.stored_text, citations }];
       });
       if (placements.length === 0 && !Array.isArray(payload.unique_attributes)) return {};
-      const { lines, placedAt } = assembleByPath(modelLines, placements);
+      const { lines, placedAt, restated } = assembleByPath(modelLines, placements);
       payload.unique_attributes = lines;
+      // D1: a removal is recorded, never silent. The ledger names the line that came out and the
+      // carry it duplicated, so the read can be read back against what the model actually returned.
+      if (restated.length > 0) restatedCarried.push(...restated);
       return placedAt;
     };
 
@@ -787,7 +792,17 @@ Respond with ONLY JSON:
       const base = {
         company_id, component: `first_read_public_read_${kind}`,
         examined: ledger.count, admitted: row.status === "completed" ? 1 : 0,
-        excluded_by_rule: { kind, guard: row.guard ?? null, detail: row.detail ?? null, mode: doStage ? "stage" : (doWrite ? "write" : "dry_run") },
+        // D3 (operator ruling, 2026-10-13): the continuity block is WRITTEN here and RETURNED below.
+        // It was computed at the C1 site and then dropped on the floor — assigned to continuityBlocks
+        // and read by nothing — so an accepted run could not show what it continued, and a refusal
+        // showed only the guard's detail string. The block is what tells a clean run from a vacuous
+        // one (required 0 means there was no read to continue), and it belongs on the audit row.
+        excluded_by_rule: {
+          kind, guard: row.guard ?? null, detail: row.detail ?? null,
+          mode: doStage ? "stage" : (doWrite ? "write" : "dry_run"),
+          continuity: continuityBlocks[kind as Kind] ?? null,
+          restated_carried: restatedCarried,
+        },
         error: row.guard ? `guard=${row.guard} detail=${detailOf(row.detail ?? "")}` : null,
         run_ref: ledger.corpus_md5 ?? null,
       };
@@ -893,7 +908,10 @@ Respond with ONLY JSON:
           company_id, kind, payload: built.staged,
           // V1: the `carried` block records every carried span — sha/start/end, its class, and what
           // the field was chosen over — so the operator can see which lines are the record's words.
-          input_ledger: { ...ledger, carried: carriedBlocks[kind] ?? {} },
+          input_ledger: {
+            ...ledger, carried: carriedBlocks[kind] ?? {},
+            restated_carried: restatedCarried,       // D1: what the model restated and we removed
+          },
           model_provider: genChoice.provider, model_name: genChoice.model,
           judge_verdict: verdict, judge_model: judgeChoice.model,
           is_current: false, supersedes_legacy_row: legacyFor(kind),
@@ -1160,6 +1178,9 @@ Respond with ONLY JSON:
       // ones an operator is about to accept, so the branch that decided each field, the specifics
       // the fact-check could not source, and the rows admitted from the live record all belong here.
       return json({ ok: true, staged, per_kind: perKind, rejected,
+        // D3: the continuity block is returned, not only stored — a caller should not have to read
+        // integrity_runs to learn what the staged read continued. D1's removals ride beside it.
+        continuity: continuityBlocks, restated_carried: restatedCarried,
         reasked, sourcing_search: sourcingSearch, admitted_from_live_record: admitted,
         class_decisions: Object.fromEntries(Object.entries(classDecisions).map(([k, ds]) => [k, (ds ?? []).map((d) => ({
           field: d.field, class: d.cls, branch: d.branch, examined: d.examined,
@@ -1171,6 +1192,7 @@ Respond with ONLY JSON:
     }
     if (!doWrite) {
       return json({ ok: true, dry_run: true, per_kind: perKind, rejected, payloads, resolved_payloads: resolvedPayloads,
+        continuity: continuityBlocks, restated_carried: restatedCarried,   // D3/D1 on every path
         // 1a-4 tightened: per field, the class, the branch that decided it, and what (b) could not source
         reasked: reasked,
         sourcing_search: sourcingSearch,
@@ -1183,7 +1205,8 @@ Respond with ONLY JSON:
         }))])), derived_seen_on: derivedSeenOn, citation_resolution: citationResolution, cascade_gaps: cascadeGapsPreview, judge_verdicts: judgeVerdicts, router_resolution: routerResolution, ledger_summary: ledgerSummary, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
     }
 
-    return json({ ok: true, written, per_kind: perKind, rejected, cascade_routing: cascadeRouting, cascade_gaps: cascadeGapsPreview, payloads, derived_seen_on: derivedSeenOn, judge_verdicts: judgeVerdicts, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+    return json({ ok: true, written, per_kind: perKind, rejected,
+      continuity: continuityBlocks, restated_carried: restatedCarried, cascade_routing: cascadeRouting, cascade_gaps: cascadeGapsPreview, payloads, derived_seen_on: derivedSeenOn, judge_verdicts: judgeVerdicts, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
   } catch (e) {
     return json({ error: `unexpected: ${(e as Error).message}` }, 500);
   }

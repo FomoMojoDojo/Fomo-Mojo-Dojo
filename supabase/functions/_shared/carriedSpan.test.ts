@@ -235,7 +235,9 @@ Deno.test("hook: a carried line's citations are REPLACED, so its class is the sp
 
 Deno.test("hook: the ledger carries the block, and drift fails closed before C1/C2", async () => {
   const gen = await readSrc("../generate-public-read/index.ts");
-  assert(gen.includes("input_ledger: { ...ledger, carried: carriedBlocks[kind] ?? {} },"), "the block is stored");
+  // D1 split this across lines and added restated_carried beside it; both halves pinned.
+  assert(gen.includes("...ledger, carried: carriedBlocks[kind] ?? {},"), "the block is stored");
+  assert(gen.includes("restated_carried: restatedCarried,"), "and so is what D1 removed");
   assert(gen.includes("throw new StageRefusal(\n            CARRIED_DRIFT_GUARD,"), "drift refuses");
   const fin = gen.indexOf("const finalize = async (rawKind: string");
   const body = gen.slice(fin, gen.indexOf("if (!doWrite) return;", fin));
@@ -421,7 +423,7 @@ Deno.test("S1. NO carries ⇒ the model's array, in its own order, untouched", (
 Deno.test("S1. the hook delegates placement and never indexes the model's array itself", async () => {
   const src = await readSrc("../generate-public-read/index.ts");
   const fn = src.slice(src.indexOf("const spliceCarries ="), src.indexOf("const stampAndDecide ="));
-  assert(fn.includes("const { lines, placedAt } = assembleByPath(modelLines, placements);"), "one assembly, in _shared");
+  assert(fn.includes("const { lines, placedAt, restated } = assembleByPath(modelLines, placements);"), "one assembly, in _shared");
   assert(fn.includes("payload.unique_attributes = lines;"), "and the payload takes exactly what it returned");
   assert(!/attrs\[/.test(fn) && !/modelLines\[\s*(?:i|Number)/.test(fn), "no index placement in the hook");
   assert(fn.includes('if (citations.length === 0) return [];'), "a span whose row is not in the catalogue is not placed");
@@ -461,4 +463,71 @@ Deno.test("S1. the hook re-keys the block from the SAME call that assembles the 
   const genBlock = src.slice(src.indexOf("generate: async (kind) => {"), src.indexOf("judge: async (kind, payload)"));
   assert(genBlock.includes("rekeyCarriedBlock("), "re-keyed inside generate — which runs before finalize is ever called");
   assert(src.includes("const carriedNow = carriedBlocks[kind] ?? {};"), "and the drift check reads the block as generate left it");
+});
+
+// ── D1: a generated line that RESTATES a carried line is removed ────────────────────────────────
+//
+// The real staged read dbdf897c, verbatim from public_reads.payload. 01 and 02 are the carries; 03
+// and 04 are what the model returned — 04 byte-identical to 02's stored text, 03 differing from 01
+// only by the quote marks. The operator refused the read for exactly this.
+const D1_CARRY_0 = "CSU 'one of only a few CSUs designed to serve youth 5-17 in all of California and the only one serving youth under 12 in the Bay Area'";
+const D1_CARRY_1 = "in 1993 Edgewood established the first kinship program in the country";
+const D1_GEN_2 = "CSU one of only a few CSUs designed to serve youth 5-17 in all of California and the only one serving youth under 12 in the Bay Area";
+const D1_GEN_3 = "in 1993 Edgewood established the first kinship program in the country";
+const D1_CARRIES: CarryPlacement[] = [
+  { field: "unique_attributes[0]", text: D1_CARRY_0, citations: ["S21"] },
+  { field: "unique_attributes[1]", text: D1_CARRY_1, citations: ["S22"] },
+];
+
+Deno.test("D1. the real dbdf897c case: 03 and 04 are removed, 01 and 02 kept, both listed", () => {
+  const out = assembleByPath(
+    [{ text: D1_GEN_2, citations: ["93989558", "24bad748"] }, { text: D1_GEN_3, citations: ["99037383"] }],
+    D1_CARRIES,
+  );
+  assertEquals(shape(out), [D1_CARRY_0, D1_CARRY_1], "two entries, both the record's own words");
+  assertEquals(out.restated, [
+    { generated_text: D1_GEN_2, carried_path: "unique_attributes[0]" },
+    { generated_text: D1_GEN_3, carried_path: "unique_attributes[1]" },
+  ], "the ledger names each removal and the carry it duplicated");
+  assertEquals(out.lines[0].citations, ["S21"], "the carries are untouched");
+  assertEquals(out.lines[1].citations, ["S22"]);
+});
+
+Deno.test("D1. a generated line sharing a run but MISSING a specific is kept", () => {
+  // same sentence, same subject, but it does not claim `first` — a different factual claim
+  const near = "Edgewood has run a kinship program in the country since the 1990s";
+  const out = assembleByPath([{ text: near, citations: ["X"] }], D1_CARRIES);
+  assertEquals(out.restated, [], "not a restatement");
+  assertEquals(shape(out), [D1_CARRY_0, D1_CARRY_1, near], "and it keeps its place in the read");
+});
+
+Deno.test("D1. a generated line with every specific but NO shared run is kept", () => {
+  // carries `1993` and `first` — and says something else entirely with them
+  const other = "first accredited in 1993 by the Joint Commission for residential care";
+  const out = assembleByPath([{ text: other, citations: ["X"] }], D1_CARRIES);
+  assertEquals(out.restated, [], "specifics alone are not a restatement");
+  assertEquals(shape(out), [D1_CARRY_0, D1_CARRY_1, other]);
+});
+
+Deno.test("D1. removal happens BEFORE placement — the survivors leave no gap", () => {
+  const out = assembleByPath(
+    [{ text: D1_GEN_3, citations: ["X"] }, { text: "a 170+ year institutional history", citations: ["Y"] }],
+    D1_CARRIES,
+  );
+  assertEquals(shape(out), [D1_CARRY_0, D1_CARRY_1, "a 170+ year institutional history"]);
+  assertEquals(out.placedAt, { "unique_attributes[0]": "unique_attributes[0]", "unique_attributes[1]": "unique_attributes[1]" });
+  assertEquals(out.restated.length, 1);
+});
+
+Deno.test("D1. NO carries ⇒ nothing is ever removed", () => {
+  const out = assembleByPath([{ text: D1_GEN_2 }, { text: D1_GEN_3 }], []);
+  assertEquals(out.restated, []);
+  assertEquals(out.lines.length, 2, "with no carry there is nothing to restate");
+});
+
+Deno.test("D1. the hook records every removal in the ledger as restated_carried", async () => {
+  const src = await readSrc("../generate-public-read/index.ts");
+  assert(src.includes("if (restated.length > 0) restatedCarried.push(...restated);"), "collected from the assembly");
+  assert(src.includes("restated_carried: restatedCarried,"), "and written to the stored ledger");
+  assert(!src.includes("CONTINUITY_GUARD, `restat"), "D1 removes, it never refuses");
 });

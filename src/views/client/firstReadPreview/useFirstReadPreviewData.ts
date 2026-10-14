@@ -14,6 +14,7 @@
 // claims are structurally excluded via the shared predicate.
 
 import { selectUnstatedRows } from "./unstatedSelect";
+import { renderCarried } from "../../../../supabase/functions/_shared/carriedRender.ts";
 import { firstSeenByKey, orderWhoYouServe } from "./whoYouServeOrder";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { useEffect, useState } from "react";
@@ -1206,8 +1207,34 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           (Array.isArray(posRaw.unique_attributes) ? posRaw.unique_attributes as Array<Record<string, unknown>> : [])
             .forEach((a, i) => put(`differentiators.${i}`, elementSourceOf("positioning", a)));
         }
+        // ── D2 (operator ruling, 2026-10-13): A2's render, on CARRIED lines only ───────────────
+        // A carried line is the record's own words lifted verbatim, so it arrives with whatever
+        // preamble the row had — "in 1993 Edgewood established the first kinship program in the
+        // country". A2 renders that as "established the first kinship program in the country": the
+        // leading date phrase and the company's own name are what the row needed and the read does
+        // not. renderCarried was written for this on 2026-10-13 and had NO CALLER until now, which
+        // is why staged read dbdf897c rendered the raw span.
+        //
+        // STORED TEXT IS UNCHANGED. This is a render, not a rewrite: the payload keeps the verbatim
+        // span, the carried block keeps the offsets that prove it, and the drift check still
+        // compares the stored text against the row. Only what the reader sees is shortened.
+        //
+        // CARRIED LINES ONLY, by field path. The carried block's keys ARE the paths (S1 re-keys them
+        // to where each line is actually stored), so a generated line at any other index is never
+        // touched — our own prose is not the record's and must not be trimmed as if it were.
+        const posCarriedPaths = new Set(Object.keys(
+          (posRow?.ledger?.carried ?? {}) as Record<string, unknown>,
+        ));
         const posDiffs = Array.isArray(posPayload?.unique_attributes)
-          ? posPayload!.unique_attributes.map((a) => String(a?.text ?? "").trim()).filter(Boolean)
+          ? posPayload!.unique_attributes
+              .map((a, i) => {
+                const stored = String(a?.text ?? "").trim();
+                if (!stored) return "";
+                return posCarriedPaths.has(`unique_attributes[${i}]`)
+                  ? renderCarried(stored, (co as { name?: string } | null)?.name ?? "")
+                  : stored;
+              })
+              .filter(Boolean)
           : [];
         const positioning = posRow && posPayload && (posPayload.market_category || posPayload.value_for_customer || posDiffs.length)
           ? { category: posPayload.market_category ?? null, value: posPayload.value_for_customer ?? null, bestFit: posPayload.best_fit_customers ?? null, differentiators: posDiffs, sourceTag: publicReadTag(posRow.created_at), ...(Object.keys(posFieldSources).length > 0 ? { fieldSources: posFieldSources } : {}) }

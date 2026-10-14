@@ -73,7 +73,9 @@ Deno.test("source guard: the generator inserts built.stored on write and built.s
   // b6372777 (V1) split this insert across lines and gave the staged ledger its `carried` block, so
   // the literal moved; the invariant did not. Both halves are pinned.
   assert(gen.includes("company_id, kind, payload: built.staged,"), "stage inserts built.staged");
-  assert(gen.includes("input_ledger: { ...ledger, carried: carriedBlocks[kind] ?? {} },"), "the staged ledger is the write ledger plus the carried block");
+  // D1 added restated_carried beside the carried block, so the object spans lines; both halves pinned.
+  assert(gen.includes("...ledger, carried: carriedBlocks[kind] ?? {},"), "the staged ledger is the write ledger plus the carried block");
+  assert(gen.includes("restated_carried: restatedCarried,"), "and what D1 removed as a restatement");
   assert(gen.includes("const built = buildStoredPayloads({ kind, payload, verdict, uuidByRef, refMeta, ownHosts, ownSiteRecord, refUrl });"), "one builder (with the own-site record, rule 2026-09-18)");
   assert(!gen.includes("function deriveOfferingSeenOn(") && !gen.includes("function translateCitations("), "moved, not copied");
   const sto = await read("./publicReadStorage.ts");

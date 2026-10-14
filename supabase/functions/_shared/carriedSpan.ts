@@ -200,18 +200,14 @@ export function joinSpans(primary: CarriedSpan, second: CarriedSpan | null): str
   return `${primary.text},${joiner}${second.text}`.replace(/\s+/g, " ").trim();
 }
 
-/** A2 (amendment 2026-10-13) — RENDER ONLY. A leading date phrase and the company's own name may be
- *  dropped for display. The STORED text is untouched, so verbatimProvable against the span still
- *  holds; this is the same display-only licence the slot path has for sentence casing. */
-export function renderCarried(stored: string, companyName: string): string {
-  let out = stored;
-  // a leading date phrase: "in 1993 ", "since 1993 ", "in January 2014 "
-  out = out.replace(/^(?:in|since|from|as of)\s+(?:[A-Z][a-z]+\s+)?\d{4},?\s+/i, "");
-  // the company's own name, once, at the start of what remains
-  const n = companyName.trim();
-  if (n) out = out.replace(new RegExp(`^${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`, "i"), "");
-  return out.trim();
-}
+// ── A2: the render lives in its own module ─────────────────────────────────────────────────────
+// renderCarried is a pure string function with no dependencies, and D2 wires it on the READ RENDER
+// path — which is browser code. This module imports readSlots.ts, which touches Deno.*, so pulling
+// carriedSpan into the client bundle to reach one string function would drag a Deno-targeted module
+// in with it. The function therefore lives in ./carriedRender.ts and is re-exported here, so there
+// is still exactly ONE renderCarried and both sides import the same one.
+export { renderCarried } from "./carriedRender.ts";
+
 
 /** The ledger block. Records the span(s) AND what each field was chosen over. */
 export type CarriedBlock = Record<string, {
@@ -379,7 +375,44 @@ export type AssembledAttributes = {
   lines: Array<Record<string, unknown>>;
   /** the field path a carry was SELECTED for → the field path it is STORED at */
   placedAt: Record<string, string>;
+  /** D1: the generated lines removed as restatements of a carried line, for the ledger */
+  restated: Array<{ generated_text: string; carried_path: string }>;
 };
+
+// ── D1 (operator ruling, 2026-10-13): a generated line that restates a carry is REMOVED ──────────
+//
+// Staged read dbdf897c said each differentiator twice. The prompt tells the model the carried lines
+// are already written and not to restate their facts; it restated both anyway — line 04 byte-
+// identical to the stored text of the carry at unique_attributes[1], line 03 differing from the
+// carry at [0] only by the quote marks. Before S1 those restatements were the thing the index splice
+// silently overwrote. S1 keeps everything the model returns, which is right, so the duplication had
+// to be answered here instead.
+//
+// A restatement is BOTH: it carries every specific token of a carried line (so it is making the same
+// factual claim, not a neighbouring one) AND it shares a 3-word content run with it (so it is the
+// same sentence, not a different claim that happens to share a figure). Either test alone is wrong:
+// specifics alone would eat a line about a different aspect of the same number, and a shared run
+// alone would eat a line that merely talks about the same subject.
+//
+// REMOVED, never refused. The read is better without the duplicate and no worse for its absence —
+// refusing the whole kind over a line the model should not have written would spend an operator's
+// run on a defect we can simply undo. The ledger records every removal with the carry it duplicated.
+const RESTATEMENT_RUN_WORDS = 3;
+
+/** The carried line this generated line restates, or null. */
+function restatementOf(
+  generated: string, placements: readonly CarryPlacement[],
+): CarryPlacement | null {
+  if (!generated.trim()) return null;
+  for (const c of placements) {
+    const specifics = extractSpecifics(c.text);
+    if (specifics.length === 0) continue;              // a usable span always has one; never vacuous
+    if (!specifics.every((sp) => verbatimProvable(sp.token, generated))) continue;
+    if (!spanRelevantTo({ text: c.text }, generated, RESTATEMENT_RUN_WORDS)) continue;
+    return c;
+  }
+  return null;
+}
 
 export function assembleByPath(
   modelLines: ReadonlyArray<Record<string, unknown>>,
@@ -391,7 +424,19 @@ export function assembleByPath(
     if (!m) continue;
     byIndex.set(Number(m[1]), { line: { text: p.text, citations: p.citations }, field: p.field });
   }
-  if (byIndex.size === 0) return { lines: [...modelLines], placedAt: {} };
+  if (byIndex.size === 0) return { lines: [...modelLines], placedAt: {}, restated: [] };
+
+  // D1: restatements come out BEFORE placement, so the lines that survive fill the free slots in
+  // order and no gap is left where a duplicate used to sit.
+  const restated: Array<{ generated_text: string; carried_path: string }> = [];
+  const kept: Array<Record<string, unknown>> = [];
+  for (const line of modelLines) {
+    const text = String(line?.text ?? "");
+    const dup = restatementOf(text, placements);
+    if (dup) { restated.push({ generated_text: text, carried_path: dup.field }); continue; }
+    kept.push(line);
+  }
+  modelLines = kept;
 
   const maxCarried = Math.max(...byIndex.keys());
   const total = Math.max(maxCarried + 1, byIndex.size + modelLines.length);
@@ -409,7 +454,7 @@ export function assembleByPath(
     // else: a slot no carry owns and no generated line fills — left out, never stored as a hole
   }
   while (g < modelLines.length) lines.push(modelLines[g++]);   // a carry indexed past the array
-  return { lines, placedAt };
+  return { lines, placedAt, restated };
 }
 
 /** Re-key a carried block to the paths its lines are STORED at. Identity when nothing shifted. */

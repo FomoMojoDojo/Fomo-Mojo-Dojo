@@ -338,3 +338,69 @@ Deno.test("C1-A.7 the hook passes the carried paths and the staged line's field 
   assert(gen.includes("field: f.field, text: f.text, cls: f.cls, refs: f.refs.map(toUuid),"), "a staged line carries its field path, or no carry could ever be its own anchor");
   assert(gen.indexOf("carriedFields: new Set(Object.keys(carriedNow)),") > gen.indexOf("const carriedNow ="), "the paths come from this run's block");
 });
+
+// ── D3 (operator ruling, 2026-10-13): the continuity block is STORED and RETURNED ───────────────
+//
+// It was computed at the C1 site and assigned to continuityBlocks[kind], and nothing ever read it:
+// not the response, not integrity_runs, not the ledger. The comment above the declaration claimed
+// it was "reported, and stored on the integrity row either way"; it was neither. So an accepted run
+// could not show what it continued, and `required 0` (no current read — nothing to continue) was
+// indistinguishable from `required 6, continued 6`.
+Deno.test("D3. the hook puts the block on the integrity row AND in the response", async () => {
+  const gen = await Deno.readTextFile(new URL("../generate-public-read/index.ts", import.meta.url));
+  assert(gen.includes("continuity: continuityBlocks[kind as Kind] ?? null,"), "written to excluded_by_rule");
+  assert(gen.includes("continuity: continuityBlocks, restated_carried: restatedCarried,"), "and returned");
+  // the write happens in the ONE place that builds every integrity row, so a refusal carries it too
+  const recStart = gen.indexOf("const recordKindIntegrity =");
+  const rec = gen.slice(recStart, gen.indexOf("\n    };", recStart));
+  assert(rec.includes("continuity:"), "on the shared builder, so refused runs carry it as well as accepted ones");
+});
+
+// LIVE read-back. A DRY RUN (write:false) takes the same path through runKindsIsolated and writes
+// the same integrity row with mode "dry_run" — and persists no public_reads row — so the block can
+// be read back from the table without staging anything. Gated on the stack's env, house pattern.
+const D3_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const D3_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+Deno.test({
+  name: "D3. LIVE: the block is read back from the integrity row it was written to",
+  ignore: D3_URL === "" || D3_KEY === "",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.57.4");
+    const db = createClient(D3_URL, D3_KEY);
+    // the company comes from a LOOKUP: one that holds a current positioning read with a classes map
+    const { data: reads } = await db.from("public_reads")
+      .select("company_id, input_ledger").eq("kind", "positioning").eq("is_current", true);
+    const co = ((reads ?? []) as Array<{ company_id: string; input_ledger: { classes?: unknown } | null }>)
+      .find((r) => r.input_ledger?.classes)?.company_id;
+    assert(co, "no company holds a classed current positioning read — nothing to read back");
+
+    const before = await db.from("integrity_runs").select("id")
+      .eq("company_id", co).eq("component", "first_read_public_read_positioning")
+      .order("id", { ascending: false }).limit(1).maybeSingle();
+    const priorId = (before.data as { id: number } | null)?.id ?? 0;
+
+    const resp = await fetch(`${D3_URL}/functions/v1/generate-public-read`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${D3_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ company_id: co, kinds: ["positioning"], write: false }),
+    });
+    const body = await resp.json() as { continuity?: Record<string, unknown> };
+    assertEquals(resp.status, 200);
+    assert(body.continuity !== undefined, "the response carries the block (D3 half two)");
+
+    const { data: row } = await db.from("integrity_runs")
+      .select("id, excluded_by_rule").eq("company_id", co).eq("component", "first_read_public_read_positioning")
+      .gt("id", priorId).order("id", { ascending: false }).limit(1).maybeSingle();
+    const rule = (row as { id: number; excluded_by_rule: Record<string, unknown> } | null)?.excluded_by_rule;
+    assert(rule, "the dry run wrote an integrity row");
+    assertEquals(rule.mode, "dry_run", "and it is a dry run — nothing was staged");
+    const block = rule.continuity as { required: number; continued: number; missing: unknown[]; softened: unknown[] } | null;
+    assert(block, "THE READ-BACK: excluded_by_rule.continuity is on the row");
+    assertEquals(typeof block.required, "number");
+    assertEquals(typeof block.continued, "number");
+    assert(Array.isArray(block.missing) && Array.isArray(block.softened));
+    assert(block.required >= 1, "a company with a current read has lines to continue — not a vacuous block");
+  },
+});
