@@ -31,9 +31,15 @@ Deno.test("P3-b. every stored SLOT carries the stamp in criterion_version", asyn
     "stamped in the staging insert itself");
 });
 
-Deno.test("P3-c. SELECTION_VERSION's literal is UNCHANGED — a prompt change is not a selection change", () => {
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-07.1",
-    "P3 says SELECTION_VERSION is untouched; bumping it would falsely claim the selection changed");
+Deno.test("P3-c. the two stamps are independent — a prompt change never moves SELECTION_VERSION", () => {
+  // P3's point stands and is what this guards: GEN_RULES_VERSION and SELECTION_VERSION record two
+  // different facts, and a prompt-only change must move only the first. The literal pinned here was
+  // bumped by R1 (2026-10-14), which DID change the selection: a signal's pool text is now
+  // rowTextOf's assembly with the source title carried beside it instead of appended. That is a
+  // change to what the selection hands the model, so stamping it is correct — the case P3 forbids
+  // is a bump with NO selection change, which pinning the literal still catches.
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.1",
+    "pinned so a bump is always deliberate; R1 changed the pool's text, so this one is");
   assert(GEN_RULES_VERSION !== SELECTION_VERSION as string, "two different stamps, two different facts");
 });
 

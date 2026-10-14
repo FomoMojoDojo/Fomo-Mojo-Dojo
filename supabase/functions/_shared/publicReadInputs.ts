@@ -14,7 +14,10 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isPublicSignalSourceType } from "./clientMaterial.ts";
 import { declaredEligibleFor, parseOwnWordsKind } from "./ownWordsKinds.ts";
 import { isAnalysisRow } from "./voiceLabel.ts";
-import { selectDeltas, selectFindings, selectOwnWords, selectSignals, signalText, type Dropped, type SelClaim, type SelDelta, type SelFinding, type SelOwnWord, type SelSignal } from "./publicReadSelection.ts";
+import { selectDeltas, selectFindings, selectOwnWords, selectSignals, type Dropped, type SelClaim, type SelDelta, type SelFinding, type SelOwnWord, type SelSignal } from "./publicReadSelection.ts";
+// R1: the ONE row-text assembly. Imported rather than re-stated so the pool and the drift re-read
+// cannot drift apart again — that divergence IS defect A.
+import { rowTextOf } from "./classSourcingScope.ts";
 
 export const PUBLIC_SIGNAL_VOICES = ["outside_voice_about_client", "client_voice", "market_context", "competitor_voice", "analysis"];
 
@@ -71,6 +74,9 @@ export type InputRow = {
   // own_site is true for own-words (the company's own public site by construction) or when the domain
   // matches the company's own host. Absent (findings/deltas are syntheses with no single source).
   source_url?: string | null; event_date?: string | null; own_site?: boolean;
+  /** R1 (2026-10-14): WHERE the row was found, carried beside the text instead of inside it. The
+   *  catalogue renders it as an attribute of the line; no span is ever cut from it. */
+  source_title?: string | null;
 };
 
 // Per-kind read caps. A 3-sentence public read needs a tractable, prioritized catalogue — a model
@@ -120,9 +126,19 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   });
   const sigSel = selectSignals(sigPublic as unknown as SelSignal[], READ_CAP.signal, confirmed);
   dropped.push(...sigSel.dropped);
+  // ── R1 (operator ruling, 2026-10-14): the pool's text IS rowTextOf's text ───────────────────────
+  // This line used to build `(claim_text ?? evidence_excerpt) + " (" + source_title + ")"`. The drift
+  // re-read asks rowTextOf (claim_text + " " + evidence_excerpt), so no re-read could ever reproduce
+  // what a span had been cut from: every carried span taken from a base-selection signal failed
+  // sha_drift — 20 of 20 of Wasabi's pool signals, refusal 10153 (defect A). The two assemblies are
+  // now ONE: rowTextOf, the same function liveRecordCandidates already used, which is why an
+  // R4-admitted carry was the only kind that ever re-verified.
+  //
+  // THE TITLE IS NOT WHAT THE ROW SAYS. It is where the row was found, so appending it to the text
+  // put a span's offsets over words the source never asserted. It travels as its own field and
+  // reaches the prompt as an attribute of the line (buildCatalogue), never as text a span can cut.
   for (const s of sigSel.kept) {
-    const text = signalText(s);
-    rows.push({ id: s.id, kind: "signal", provenance: "public_observed", source_class: classOfSignal(s), text: `${text}${s.source_title ? ` (${s.source_title})` : ""}`, source_url: s.source_url, event_date: s.event_date });
+    rows.push({ id: s.id, kind: "signal", provenance: "public_observed", source_class: classOfSignal(s), text: rowTextOf("signal", s), source_title: s.source_title ?? null, source_url: s.source_url, event_date: s.event_date });
   }
 
   // 2. own-words — the company's OWN public-site voice, judge-kept only. own_site=true by construction

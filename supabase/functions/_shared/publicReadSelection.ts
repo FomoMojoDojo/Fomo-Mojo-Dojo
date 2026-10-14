@@ -32,7 +32,10 @@ import { normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 import { isPairAdmissible } from "./relevanceActive.ts";
 import { compareBeat2, gapVerdictForDeltaType, orderGapPairs, strengthForSignal } from "./previewOrder.ts";
 
-export const SELECTION_VERSION = "gpr-select-2026-10-07.1" as const;
+// R1 (2026-10-14): bumped because the pool's TEXT for a signal changed — it is now rowTextOf's
+// assembly, with the source title carried as its own field instead of appended. Nothing about which
+// rows are admitted, deduped, ordered or capped changed; what a row SAYS to the model did.
+export const SELECTION_VERSION = "gpr-select-2026-10-14.1" as const;
 
 export type Dropped = { id: string; kind: "signal" | "own_word" | "finding" | "delta"; reason: string };
 

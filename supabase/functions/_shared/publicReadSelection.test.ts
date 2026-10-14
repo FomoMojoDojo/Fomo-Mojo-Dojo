@@ -150,7 +150,10 @@ Deno.test("(h) breadth for pairs: 3 observed claims, cap 3 → one pair per obse
 Deno.test("(g) the ledger carries selection_version; the generator selects through the helper and imports every predicate", async () => {
   // 1a-4 (2026-10-07): the selection CHANGED — analysis rows are now admitted and every row carries a
   // source class — so the version stepped. A read stamped with the old version has an unclassed pool.
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-07.1");
+  // R1 (2026-10-14): it stepped again. A signal's pool text is now rowTextOf's assembly and the
+  // source title travels as its own field, so a read stamped 2026-10-07.1 was built from text no
+  // drift re-read could reproduce — which is exactly what refusal 10153 was.
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.1");
   const gen = await read("../generate-public-read/index.ts");
   assert(gen.includes("selection_version: SELECTION_VERSION,"), "ledgerOf stamps the version");
   assert(gen.includes("const { inputs, dropped } = await selectPublicInputs(supabase, company_id);"), "the ONE selection helper feeds the ledger");

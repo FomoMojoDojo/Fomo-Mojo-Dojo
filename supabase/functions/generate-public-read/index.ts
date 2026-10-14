@@ -147,12 +147,25 @@ export function linesOfStoredPayload(payload: Record<string, unknown> | null): C
 // model cites refs; we validate refs against the map (unknown ref → reject, fail loud) and translate
 // accepted refs BACK to the real ledger ids for storage, so stored citations resolve to the ledger.
 const REF_PREFIX: Record<string, string> = { signal: "S", own_word: "O", finding: "F", delta: "D" };
+// ── R3 (operator ruling, 2026-10-14): WHAT A CARRIED SPAN MAY BE CUT FROM ───────────────────────
+// A span is a byte range into ONE stored row's text, re-verified at stage time by hashing that row
+// again (rowTextOf + reReadRowTexts). So a span is only legitimate where a single stored row backs
+// it. A DELTA has no such row: its pool text is composed here out of two claim statements
+// (`[type] declared: "..." · public: "..."`), and rowTextOf has no delta table, so reReadRowTexts
+// returns nothing for it and driftedSpans reports row_missing — every delta carry, always (defect B;
+// Riverlane 99adc9d7, Brand AI 7ab1a1aa, SIAA fb2ac69f). Findings are class our_read and the class
+// test already excludes them. Deltas STAY in the pool and stay citable: this bars them from being a
+// span SOURCE, nothing else.
+const SPAN_SOURCE_KINDS: ReadonlySet<string> = new Set(["signal", "own_word"]);
 /** How a class is NAMED to the model in the catalogue (1a-4). */
 export const CLASS_LABEL: Record<SourceClass, string> = { record: "the record", you: "you", our_read: "our read" };
-function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<string, string>; classByRef: Map<string, SourceClass>; textByRef: Map<string, string>; tokenSummary: string } {
+function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<string, string>; classByRef: Map<string, SourceClass>; textByRef: Map<string, string>; kindByRef: Map<string, string>; tokenSummary: string } {
   const uuidByRef = new Map<string, string>();
   const classByRef = new Map<string, SourceClass>();
   const textByRef = new Map<string, string>();
+  // R3: the row KIND travels with the ref, so poolSpans can apply SPAN_SOURCE_KINDS. The ref prefix
+  // already encodes it, but parsing a prefix back into a kind is a second statement of the mapping.
+  const kindByRef = new Map<string, string>();
   const counters: Record<string, number> = {};
   const lines: string[] = [];
   for (const r of inputs) {
@@ -162,12 +175,17 @@ function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<stri
     uuidByRef.set(ref, r.id);
     classByRef.set(ref, r.source_class);
     textByRef.set(ref, r.text);        // the FULL row text, for the class fact-check (not the 400-char catalogue slice)
+    kindByRef.set(ref, r.kind);        // R3: what kind of row this is, for the span-source law
     // 1a-4: the class rides WITH the line, so the model sees what each row licenses as it cites it.
-    lines.push(`[${ref}] (${r.kind} · ${CLASS_LABEL[r.source_class]}) ${r.text.slice(0, 400)}`);
+    // R1 (2026-10-14): the source title is an ATTRIBUTE of the line, after the text, never inside it.
+    // It used to be appended to r.text upstream, which put a span's offsets over words the source
+    // never asserted and made the drift re-read impossible (defect A). The model still sees where the
+    // row was found; a span is only ever cut from the text before this suffix.
+    lines.push(`[${ref}] (${r.kind} · ${CLASS_LABEL[r.source_class]}) ${r.text.slice(0, 400)}${r.source_title ? ` — source: ${r.source_title}` : ""}`);
   }
   // The exact valid token ranges, e.g. "S1–S20, O1–O25, F1–F13, D1–D15" — the model may cite ONLY these.
   const tokenSummary = Object.entries(counters).map(([px, n]) => (n === 1 ? `${px}1` : `${px}1–${px}${n}`)).join(", ");
-  return { text: lines.join("\n"), uuidByRef, classByRef, textByRef, tokenSummary };
+  return { text: lines.join("\n"), uuidByRef, classByRef, textByRef, kindByRef, tokenSummary };
 }
 
 // Collect every ref token a payload cites (from any "citations"/"cite" array).
@@ -398,7 +416,7 @@ Deno.serve(async (req) => {
       return callLocal(choice.model, system, user, temperature);
     };
 
-    const { text: CAT, uuidByRef, classByRef, textByRef, tokenSummary } = buildCatalogue(inputs);
+    const { text: CAT, uuidByRef, classByRef, textByRef, kindByRef, tokenSummary } = buildCatalogue(inputs);
     // The ref set and the catalogue TEXT both grow when a row is admitted from the live record,
     // so guard 1 accepts the new token and the judge can see the line it cites.
     const validRefs = new Set(uuidByRef.keys());
@@ -597,6 +615,7 @@ Respond with ONLY JSON:
       uuidByRef.set(ref, row.id);
       classByRef.set(ref, row.cls);
       textByRef.set(ref, row.text);
+      kindByRef.set(ref, row.kind);    // R3: SourcingRow.kind is already signal|own_word by type
       validRefs.add(ref);
       ledger.ids.push(row.id);
       (ledger.by_kind as Record<string, string[]>)[row.kind] =
@@ -628,6 +647,10 @@ Respond with ONLY JSON:
     const poolSpans = async (): Promise<CarriedSpan[]> => {
       const out: CarriedSpan[] = [];
       for (const [ref, uuid] of uuidByRef) {
+        // R3: the span-source law FIRST — a kind with no single stored row behind its text can never
+        // be re-verified, so it is not a span source at all. Before the class test, because a delta
+        // is class `record` and would otherwise sail straight through it.
+        if (!SPAN_SOURCE_KINDS.has(String(kindByRef.get(ref) ?? ""))) continue;
         const cls = String(classByRef.get(ref) ?? "");
         if (cls !== "record" && cls !== "you") continue;   // rule 2, before any clause work
         const { spans } = await usableSpansOf(uuid, textByRef.get(ref) ?? "", cls);
