@@ -97,10 +97,15 @@ Deno.test("source guard: CITE_RULE carries the S1 class clause and judgeSysFor c
   assert(gpr.includes("const stampAndDecide = async (kind: Kind, p: Record<string, unknown>)") && gpr.includes("const stamped = stampFieldClasses(p, classByRef);"), "classes stamped from the returned citations, by the one helper the re-ask reuses");
   assert(gpr.includes("&& verdict.accept === true && classGateOk(kind, verdict)"), "the class gate refuses where grounding refuses");
   // the tightening (2026-10-07): (b) deterministic and FIRST, the judge only on the fields it failed
-  // (b) runs inside stampAndDecide, which generate calls before returning and the re-ask calls on
-  // its rewrite — so both answers are decided by the same rule, and neither reaches the judge first.
-  assert(gpr.includes("classDecisions[kind] = decs;") && gpr.includes("await stampAndDecide(kind as Kind, p);"), "(b) runs at generate time, before any judge call");
-  assert(gpr.includes("await stampAndDecide(kind as Kind, payload);"), "and again on the re-asked answer");
+  // (b) runs inside stampAndDecide. F1 (2026-10-15) moved the single call to it out of `generate`
+  // and each re-ask branch, to the head of the attempt loop — so the SAME rule still decides both
+  // answers before either reaches the judge, and now it cannot be skipped on the second one.
+  assert(gpr.includes("classDecisions[kind] = decs;") && gpr.includes("await stampAndDecide(kind as Kind, payload);"),
+    "(b) runs before any judge call");
+  const pk = await read("./publicReadPerKind.ts");
+  const stampAt = pk.indexOf("await deps.stampPayload?.(kind, payload);");
+  assert(stampAt > pk.indexOf("for (;;) {"), "on the re-asked answer too — the stamp is inside the attempt loop");
+  assert(stampAt < pk.indexOf("const g = await runGates(kind, payload);"), "and before the gates that judge it");
   assert(gpr.includes('const needJudgment = decs.filter((d) => d.branch === "judge_required");'), "only unsourced fields are put to the judge");
   assert(gpr.includes("A sentence that states a superlative, figure or exclusivity as fact is NOT an openly-held reading, whatever its citations say."), "the ordered judge sentence, verbatim");
   const gpg = await read("./publicReadGuards.ts");

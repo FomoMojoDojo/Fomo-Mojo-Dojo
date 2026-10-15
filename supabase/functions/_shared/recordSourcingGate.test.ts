@@ -119,7 +119,9 @@ Deno.test("S1. FAILS CLOSED on a record line whose text could not be resolved", 
 Deno.test("S1. a figure carried ONLY by a cited finding is refused — a finding is never a source", async () => {
   // The exclusion is the caller's: it filters by class AND by kind. This pins both halves.
   const src = await read("../generate-public-read/index.ts");
-  const fn = src.slice(src.indexOf("s1Refusal: (kind, payload) =>"));
+  // F1: the closure reads fieldClasses[kind] instead of stamping the payload itself, so its
+  // signature dropped the payload. The filter this test pins is unchanged.
+  const fn = src.slice(src.indexOf("s1Refusal: (kind, _payload) =>"));
   const body = fn.slice(0, fn.indexOf("\n      },"));
   assert(body.includes('if (cls !== "record" && cls !== "you") return false;'), "our_read cannot source");
   assert(body.includes('kindByRef.get(r) !== "finding"'), "and a finding is excluded by KIND as well");
@@ -284,7 +286,9 @@ Deno.test("V4. EVERY guard routes through that one funnel, so none can omit the 
   // ("attempt 1 of 2; re-asked"), and a regex that stopped there would truncate the call before
   // `payload` and report a false failure.
   const rejectedCalls = [...fn.matchAll(/recordIntegrity\?\.\(kind, \{ status: "rejected"[\s\S]*?\}\);/g)].map((m) => m[0]);
-  assertEquals(rejectedCalls.length, 2, "the reject funnel and N1c's attempt-1 record");
+  // C1-R (2026-10-15) added a third: its own attempt-1 record, inside the commit catch. V4's
+  // invariant is unchanged — no rejected-status audit call may omit the payload, and none does.
+  assertEquals(rejectedCalls.length, 3, "the reject funnel, N1c's and C1-R's attempt-1 records");
   for (const c of rejectedCalls) assert(c.includes("payload"), `every rejected-status audit carries the payload: ${c.slice(0, 70)}`);
 });
 

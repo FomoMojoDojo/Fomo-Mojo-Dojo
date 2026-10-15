@@ -1151,10 +1151,14 @@ Respond with ONLY JSON:
       // rows. The sources are that line's refs, narrowed to class record/you (our read cannot
       // source the record) and with FINDINGS removed by kind — a finding is our synthesis, and the
       // ruling bars it outright, so it is excluded twice over rather than relying on its class.
-      // stampFieldClasses is re-run here rather than reusing fieldClasses[kind]: the re-ask replaces
-      // the payload, and S1 must judge the payload actually in front of it.
-      s1Refusal: (kind, payload) => {
-        const stamped = stampFieldClasses(payload, classByRef);
+      // F1: S1 READS THE STAMP, it no longer takes its own. This closure used to call
+      // stampFieldClasses itself, with the note "the re-ask replaces the payload, and S1 must judge
+      // the payload actually in front of it" — correct about the hazard, and the only gate that had
+      // been given a private fix for it. The loop head now stamps every attempt's payload before any
+      // gate runs, so `fieldClasses[kind]` IS this payload's stamp; a private re-stamp here would be
+      // a second stamping site and could disagree with what C1/C2 and the judge were given.
+      s1Refusal: (kind, _payload) => {
+        const stamped = fieldClasses[kind as Kind] ?? [];
         const results = stamped.map((f) => s1Unsourced({
           field: f.field, cls: f.cls, text: f.text, companyName,   // N1: own name excluded
           citedSourceTexts: f.refs
@@ -1239,10 +1243,13 @@ Respond with ONLY JSON:
         // a generated line to fill it shifts every later carry down one, and the block must name the
         // path the line is STORED at — the drift check and C1-A's anchor both key off it.
         carriedBlocks[kind as Kind] = rekeyCarriedBlock(carriedBlocks[kind as Kind] ?? {}, spliceCarries(p, carries));
-        // 1a-4: the class of every citing field is COMPUTED here from the refs the model returned,
-        // weakest-wins, overwriting anything it volunteered. Done BEFORE the judge sees the payload so
+        // 1a-4: the class of every citing field is COMPUTED from the refs the model returned,
+        // weakest-wins, overwriting anything it volunteered, and BEFORE the judge sees the payload so
         // the judge is told each field's class rather than asked to infer it.
-        await stampAndDecide(kind as Kind, p);
+        // F1 (2026-10-15): that stamp no longer happens HERE. `generate` runs once, before the attempt
+        // loop, so a stamp taken here belonged to attempt 1 for the rest of the run. It is taken at
+        // the head of every attempt instead — see `stampPayload` below — which covers attempt 1 too:
+        // the loop head runs before any gate, so this payload is stamped before it is guarded.
         payloads[kind as Kind] = p;
         return p;
       },
@@ -1300,7 +1307,33 @@ Respond with ONLY JSON:
       // live pool rows that state each one verbatim. It may cite those rows, or write the line
       // differently, or drop the claim. CODE NEVER REWRITES THE LINE: the model answers, and the
       // answer faces every gate from the top.
-      reaskOnSourcingRefusal: async (kind, payload, detail) => {
+      reaskOnSourcingRefusal: async (kind, payload, detail, because) => {
+        // ── C1-R (operator ruling, 2026-10-15): the CONTINUITY branch of the one re-ask ─────────
+        // A C1-S drop is a different fault from an unsourced specific, so it gets a different
+        // prompt: the dropped line's own text, the ids of the rows that still source it, and the
+        // rule it broke. The budget is shared — runKindsIsolated holds the single `reasked` flag —
+        // so a stage refused first by N1 and then by C1-S still gets one attempt in total.
+        if (because === "continuity") {
+          const block = continuityBlocks[kind as Kind];
+          const dropped = (block?.missing ?? []).filter((m) => m.still_sourced === true);
+          if (dropped.length === 0) return null;            // nothing a re-ask could repair
+          const lines = dropped.map((m) =>
+            `  "${m.statement}" — still stated by ${(m.sourcing_citations ?? []).map((id) => refByUuid.get(id) ?? id).join(", ")}`).join("\n");
+          const sys = genSys[kind as Kind];
+          const user = `LEDGER (cite only the bracketed tokens on these lines):\n${CAT_LIVE || CAT}\n\n` +
+            `YOUR PREVIOUS ANSWER WAS REFUSED. It dropped a line the read you are replacing states, ` +
+            `whose sources are still in the ledger above:\n${lines}\n\n` +
+            `THE RULE: keep or improve EVERY line listed here — you may reword it or cite it better, ` +
+            `but it must still say what it says. A new line may replace only a line that is NOT ` +
+            `listed here. Produce the ${kind} JSON again, in full.`;
+          try {
+            const again = await run(genChoice, sys, user, 0.2);
+            reasked[kind as Kind] = { specifics: dropped.map((m) => m.statement), fields: dropped.map((m) => String(m.field ?? "")) };
+            return again;
+          } catch {
+            return null;                                    // a failed re-ask leaves the refusal standing
+          }
+        }
         const results = s1Results[kind as Kind] ?? [];
         const failing = results.filter((r) => r.unsourced.length > 0);
         if (failing.length === 0) return null;
@@ -1422,9 +1455,18 @@ Respond with ONLY JSON:
         }
         if (spliced === 0) return null;      // nothing usable came back — reject exactly as before
         reasked[kind as Kind] = { specifics: words, fields: askedFields };
+        // F1: no re-stamp here. This branch splices the model's per-field fixes into `payload` and
+        // returns it; the loop head stamps what it returns, before any gate sees it. Stamping here
+        // as well would be a second stamping site, which is the thing F1 forbids — and the stamp
+        // would be taken while the payload is still mid-splice if a later fix is ever added below.
+        return payload;
+      },
+      // F1: THE ONE STAMP. Called by runKindsIsolated at the head of each attempt, on that
+      // attempt's payload. `payloads[kind]` is set with it so the report and the audit rows name the
+      // payload that was actually stamped and guarded.
+      stampPayload: async (kind, payload) => {
         await stampAndDecide(kind as Kind, payload);
         payloads[kind as Kind] = payload;
-        return payload;
       },
       commit: finalize,
       recordIntegrity: recordKindIntegrity,

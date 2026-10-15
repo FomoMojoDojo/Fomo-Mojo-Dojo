@@ -230,7 +230,21 @@ Deno.test("V3. ONE row per refusal — the check does not record its own", async
 Deno.test("V3. a genuine write failure is still write_error — a refusal's name is not borrowed", async () => {
   const perKind = await read("./publicReadPerKind.ts");
   const blk = perKind.slice(perKind.indexOf("await deps.commit(kind, payload, g.verdict);"));
-  assert(blk.slice(0, 700).includes('"write_error"'), "a non-StageRefusal throw stays write_error");
+  // the catch block, to its own exit — NOT a fixed character window. C1-R (2026-10-15) inserted the
+  // continuity re-ask between the commit call and reject(), which pushed "write_error" from offset
+  // ~500 to ~1500 and failed the old 700-char slice without anything in the code having changed.
+  const katch = blk.slice(blk.indexOf("} catch (e) {"), blk.indexOf("break;"));
+  assert(katch.includes('refusal ? refusal.guard : "write_error"'),
+    "a non-StageRefusal throw stays write_error");
+  // and nothing in that region may send a non-refusal back round the loop: no `continue` is reachable
+  // before a test of the refusal's OWN guard name, which is undefined when there is no refusal. A
+  // plain write failure therefore has exactly one path out of the catch — reject(), then break.
+  const firstContinue = katch.indexOf("continue;");
+  const firstGuardTest = katch.search(/refusal\?\.guard === [A-Z_]+/);
+  if (firstContinue >= 0) {
+    assert(firstGuardTest >= 0 && firstGuardTest < firstContinue,
+      "a continue in the commit catch must sit behind a refusal-guard test, else a write failure retries");
+  }
 });
 
 Deno.test("V2/V3 on the SLOT path too: full detail, named guard, not run_failed", async () => {

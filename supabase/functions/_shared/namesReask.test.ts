@@ -79,7 +79,9 @@ Deno.test("N1b. an our_read line whose names ARE in a cited row passes", () => {
 Deno.test("N1b. a name present ONLY in a cited finding does not satisfy it", async () => {
   // The exclusion is the caller's: it passes only NON-FINDING rows as sources. Both halves pinned.
   const src = await read("../generate-public-read/index.ts");
-  const fn = src.slice(src.indexOf("s1Refusal: (kind, payload) =>"));
+  // F1: the closure reads fieldClasses[kind] instead of stamping the payload itself, so its
+  // signature dropped the payload. The filter this test pins is unchanged.
+  const fn = src.slice(src.indexOf("s1Refusal: (kind, _payload) =>"));
   const body = fn.slice(0, fn.indexOf("\n      },"));
   assert(body.includes('kindByRef.get(r) !== "finding"'), "the stage caller excludes findings by kind");
   const prm = await read("./publicReadPromote.ts");
@@ -102,8 +104,10 @@ Deno.test("N1c. exactly ONE re-ask, and only on the S1/N1 refusal", async () => 
   assert(fn.includes("if (g.sourcingDetail !== undefined && !reasked && deps.reaskOnSourcingRefusal) {"),
     "gated on the S1 refusal AND on the shared `reasked` flag");
   // the SAME flag the class re-ask uses, so a kind gets at most one second attempt in total
+  // C1-R (2026-10-15) added a THIRD path — the C1-S trigger inside commit. All three set the one
+  // flag, which is what keeps the budget at one attempt per stage however the first was refused.
   const sets = [...fn.matchAll(/reasked = true;/g)].length;
-  assertEquals(sets, 2, "both re-ask paths set the one flag — a second refusal stands");
+  assertEquals(sets, 3, "sourcing, continuity and class paths all set the one flag");
   assert(fn.includes("if (next) { payload = next; reasked = true; continue; }"),
     "the fresh payload re-enters the loop");
 });
@@ -132,7 +136,9 @@ Deno.test("N1c. the re-asked payload faces EVERY gate again", async () => {
 
 Deno.test("N1c. CODE NEVER REWRITES A LINE — the re-ask returns the model's own answer", async () => {
   const src = await read("../generate-public-read/index.ts");
-  const fn = src.slice(src.indexOf("reaskOnSourcingRefusal: async (kind, payload, detail) =>"));
+  // C1-R (2026-10-15) added the `because` argument and a continuity branch ahead of the sourcing
+  // one, so the slice starts at the SOURCING branch itself rather than at the callback head.
+  const fn = src.slice(src.indexOf("const results = s1Results[kind as Kind] ?? [];"));
   const body = fn.slice(0, fn.indexOf("\n      reaskOnClassRefusal:"));
   assert(body.includes("const again = await run(genChoice, sys, user, 0.2);"), "the model answers again");
   assert(body.includes("return again;"), "and its answer is what is returned");
@@ -143,7 +149,7 @@ Deno.test("N1c. CODE NEVER REWRITES A LINE — the re-ask returns the model's ow
 
 Deno.test("N1c. the re-ask prompt names the refused tokens AND the rows that state each", async () => {
   const src = await read("../generate-public-read/index.ts");
-  const fn = src.slice(src.indexOf("reaskOnSourcingRefusal: async (kind, payload, detail) =>"));
+  const fn = src.slice(src.indexOf("const results = s1Results[kind as Kind] ?? [];"));
   const body = fn.slice(0, fn.indexOf("\n      reaskOnClassRefusal:"));
   assert(body.includes("const supportFor = (token: string): string[]"), "it looks up supporting rows");
   assert(body.includes("stated in ${rows.join(\", \")}"), "and names them in the prompt");

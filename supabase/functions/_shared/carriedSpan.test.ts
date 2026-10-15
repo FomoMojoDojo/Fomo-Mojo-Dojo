@@ -219,7 +219,14 @@ Deno.test("hook: carry-before-generate — selection, the prompt notice, then th
   assert(g.includes("ALREADY WRITTEN"), "the generator is told which lines are taken");
   assert(g.includes("spliceCarries(p, carries)"), "and the carried text is spliced over the answer");
   assert(g.indexOf("await run(genChoice") < g.indexOf("spliceCarries(p, carries)"), "splice AFTER the answer");
-  assert(g.indexOf("spliceCarries(p, carries)") < g.indexOf("stampAndDecide"), "and BEFORE classes are stamped");
+  // F1 (2026-10-15): the stamp left `generate` for the head of the attempt loop, so this ordering is
+  // no longer two statements in one function — it is structural. The splice happens inside generate;
+  // the stamp happens after generate returns, at the loop head, on every attempt. Asserting the old
+  // textual order would now pass vacuously (indexOf -1), so assert the structure instead.
+  assert(!g.includes("stampAndDecide"), "generate does not stamp — F1 moved it to the loop head");
+  const perKind = await readSrc("./publicReadPerKind.ts");
+  assert(perKind.indexOf("payload = await deps.generate(kind);") < perKind.indexOf("await deps.stampPayload?.(kind, payload);"),
+    "and BEFORE classes are stamped — generate returns the spliced payload, then the loop head stamps it");
 });
 
 Deno.test("hook: a carried line's citations are REPLACED, so its class is the span's", async () => {
