@@ -20,9 +20,12 @@ const read = (p: string) => Deno.readTextFile(new URL(p, import.meta.url));
 // ── what counts as a name, and the four narrowing fixes ─────────────────────────────────────────
 
 Deno.test("N1. the shapes the ruling names ARE names", () => {
-  for (const t of ["FedRAMP", "AI/ML", "S3", "AI", "TV", "CRM", "SMBs", "SunRise", "BlueSkySquads", "JRVS", "Medi-Cal/Medicare"]) {
+  // N1a (2026-10-14) removed the two-letter abbreviations from this list: AI and TV name a
+  // CATEGORY, not a thing, and belong to the judge's grounding check. Three letters or more stays.
+  for (const t of ["FedRAMP", "AI/ML", "S3", "CRM", "SMBs", "SunRise", "BlueSkySquads", "JRVS", "Medi-Cal/Medicare"]) {
     assert(nameShaped(t), `${t} is a name by shape`);
   }
+  for (const t of ["AI", "TV"]) assertEquals(nameShaped(t), false, `${t} is a category word under N1a`);
   assertEquals(namesIn("supports AI/ML workloads on S3 with FedRAMP Ready status").sort(),
     ["AI/ML", "FedRAMP Ready", "S3"]);
 });
@@ -53,12 +56,17 @@ Deno.test("N1 fix (c). a plain Capitalized word is NOT a name", () => {
   assertEquals(namesIn("Small and medium-sized businesses seeking Expertise"), [], "neither is a name");
 });
 
-Deno.test("N1 fix (e). a hyphenated category adjective is not a name; the abbreviation in it still is", () => {
+Deno.test("N1 fix (e). a hyphenated category adjective is not a name; a 3+ abbreviation inside it is", () => {
+  // The compound itself is never a name. Whether the ABBREVIATION inside it is now depends on N1a:
+  // AI- compounds yield nothing at all (AI is a category word), while a 3+ stem is still extracted.
   for (const t of ["AI-powered", "AI-driven", "AI-focused", "AI-first", "AI-fueled", "AI-savvy"]) {
     const n = namesIn(`businesses seeking ${t} tools`);
     assert(!n.includes(t), `${t} is the same kind of word as "regulated", which the ruling leaves to the judge`);
-    assert(n.includes("AI"), "but the abbreviation inside it is still checked");
+    assert(!n.includes("AI"), "and under N1a the two-letter stem is not a name either");
   }
+  const crm = namesIn("businesses seeking CRM-integrated tools");
+  assert(!crm.includes("CRM-integrated"), "the compound is still not a name");
+  assert(crm.includes("CRM"), "but a THREE-letter stem inside it is extracted");
 });
 
 Deno.test("N1. the company's own name is excluded — but only when it IS the whole name", () => {
@@ -105,11 +113,13 @@ Deno.test("N1. the same name PRESENT in a cited row passes", () => {
   assertEquals(r.unsourced.filter((u) => u.kind === "name"), []);
 });
 
-Deno.test("N1. our_read and unclassed lines are not N1's business", () => {
-  for (const cls of ["our_read", null]) {
-    assertEquals(unsourcedNames({ text: "Wasabi Fire and AI/ML", cls, citedSourceTexts: [] }), [],
-      `${cls} is left to (b) and the judge`);
-  }
+Deno.test("N1. an UNCLASSED line is not N1's business; our_read is, since N1b", () => {
+  assertEquals(unsourcedNames({ text: "Wasabi Fire and AI/ML", cls: null, citedSourceTexts: [] }), [],
+    "an unclassed line cites nothing to be tested against");
+  // N1b (2026-10-14) brought our_read into scope: calling a line our read licenses the READING, not
+  // the invention of a product name. This is the 2322e6db case, which N1 alone never examined.
+  assertEquals(unsourcedNames({ text: "Wasabi Fire and AI/ML", cls: "our_read", citedSourceTexts: [] }).sort(),
+    ["AI/ML", "Wasabi Fire"]);
 });
 
 Deno.test("N1. names ride in the SAME result and the SAME refusal as the figures", async () => {

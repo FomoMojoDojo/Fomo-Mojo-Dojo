@@ -299,7 +299,14 @@ export function decideFieldClass(input: FieldClassInput): FieldClassDecision {
  *  one carrying a slash or digit. A plain Capitalized word fails this deliberately — fix (c). */
 export function nameShaped(tok: string): boolean {
   if (tok.length < 2) return false;                                    // fix (b)
-  if (/^[A-Z]{2,}$/.test(tok)) return true;                            // FedRAMP-style abbreviation: AI, TV, CRM
+  // ── N1a (operator ruling, 2026-10-14): TWO LETTERS IS NOT A NAME ────────────────────────────
+  // Wasabi's stage was refused (audit 10341) on `value (you): AI [name]` — the line said "backups
+  // and AI datasets", and none of its three cited rows states "AI" though ten rows in the pool do.
+  // A two-letter abbreviation names a CATEGORY, not a thing, exactly as "regulated" does, and a
+  // category claim belongs to the judge's grounding check. THREE letters or more stays a name —
+  // CRM, SMBs, JRVS, NVMe identify something specific enough to be stated or not.
+  if (/^[A-Z]{3,}$/.test(tok)) return true;                            // CRM, SMBs
+  if (/^[A-Z]{2}$/.test(tok)) return false;                            // N1a: AI, TV, ML, UX
   if (/[\/\d]/.test(tok)) return true;                                 // AI/ML, S3, Medi-Cal/Medicare
   // mixed case, but NOT a plain Capitalized word (SunRise and FedRAMP yes, "Small" no)
   return /[a-z]/.test(tok) && /[A-Z]/.test(tok) && !/^[A-Z][a-z]+$/.test(tok);
@@ -340,7 +347,13 @@ export function namesIn(text: string): string[] {
 export function unsourcedNames(input: {
   text: string; cls: string | null; citedSourceTexts: readonly string[]; companyName?: string;
 }): string[] {
-  if (input.cls !== "record" && input.cls !== "you") return [];
+  // ── N1b (operator ruling, 2026-10-14): our_read LINES ARE CHECKED TOO ───────────────────────
+  // On the refused run, ua[2] came back classed our_read because it cites a finding, and N1 never
+  // looked at it — so "Wasabi Fire" and "AI/ML", the exact names this ruling exists to catch, went
+  // unexamined. Calling a line our read licenses the READING, not the invention of a product name.
+  // The caller passes only NON-FINDING cited rows as sources: a finding is our own synthesis, so a
+  // name that appears only there is a name we gave ourselves.
+  if (input.cls !== "record" && input.cls !== "you" && input.cls !== "our_read") return [];
   const own = new Set(String(input.companyName ?? "").toLowerCase().split(/\s+/).filter(Boolean));
   return namesIn(input.text)
     .filter((n) => !(own.size > 0 && n.toLowerCase().split(/[\s\/]+/).every((w) => own.has(w))))
@@ -370,8 +383,17 @@ export function s1Unsourced(input: {
   companyName?: string;
 }): S1Result {
   const cls = input.cls ?? null;
-  // S1 governs the record speaking and the company speaking. our_read is (b)'s business, and an
-  // unclassed line cites nothing, so there is no "its own cited rows" for it to be tested against.
+  // S1's FIGURES and position words govern the record speaking and the company speaking; on an
+  // our_read line those are (b)'s business. N1b adds NAMES to an our_read line, so that branch
+  // returns the name result rather than an empty one. An unclassed line cites nothing and stays out.
+  if (cls === "our_read") {
+    const ourNames = unsourcedNames({ text: String(input.text ?? ""), cls, citedSourceTexts: input.citedSourceTexts, companyName: input.companyName });
+    return {
+      field: input.field, cls, examined: namesIn(String(input.text ?? "")).length,
+      unsourced: ourNames.map((n) => ({ kind: "name" as SpecificKind, token: n })),
+      unsourced_names: ourNames,
+    };
+  }
   if (cls !== "record" && cls !== "you") return { field: input.field, cls, examined: 0, unsourced: [] };
   const text = String(input.text ?? "").trim();
   // FAIL CLOSED, for the same reason (b) does: the cited-or-omitted rule means a field that cites

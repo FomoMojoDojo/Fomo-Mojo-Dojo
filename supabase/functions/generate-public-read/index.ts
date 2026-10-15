@@ -890,9 +890,18 @@ Respond with ONLY JSON:
       // refused: the payload existed in runKindsIsolated and went only to the HTTP response, so the
       // refused text was unrecoverable the moment the response was gone. The full payload and the
       // citations it made now ride on the audit row, for every guard, on every refusal.
-      const refusedPayload = row.status === "rejected" ? (row.payload ?? null) : null;
-      const refusedCitations = refusedPayload
-        ? [...new Set(citedRefs(refusedPayload))].map((ref) => ({ ref, id: uuidByRef.get(ref) ?? null }))
+      // ── V4a (operator ruling, 2026-10-14): the payload is stored with RESOLVED IDS ────────────
+      // Audit 10341 stored the refused read with ref tokens (S5, O3, F1 ...), because the payload is
+      // captured at the reject site BEFORE the write path translates citations. A reader then had to
+      // join the row's own refused_citations map to learn what the read cited, and a ref token means
+      // nothing outside the run that minted it. translateCitations is the SAME translator the write
+      // path uses, so the audit row now carries exactly the ids a stored read would have carried.
+      const refusedRaw = row.status === "rejected" ? (row.payload ?? null) : null;
+      const refusedPayload = refusedRaw
+        ? translateCitations(refusedRaw, uuidByRef) as Record<string, unknown>
+        : null;
+      const refusedCitations = refusedRaw
+        ? [...new Set(citedRefs(refusedRaw))].map((ref) => ({ ref, id: uuidByRef.get(ref) ?? null }))
         : null;
       const base = {
         company_id, component: `first_read_public_read_${kind}`,
@@ -1283,6 +1292,54 @@ Respond with ONLY JSON:
       // judge's own accept must all hold, and at least one field must be refused on class. Anything
       // else is a different fault and gets no re-ask. One call, the refused specifics named back,
       // then the FULL gate again — the driver re-runs every guard in order.
+      // ── N1c (operator ruling, 2026-10-14): THE BOUNDED RE-ASK ON AN S1/N1 REFUSAL ─────────────
+      // Audit 10341 refused Wasabi on `value (you): AI [name]` and stopped there, while TEN rows in
+      // the live pool stated the very token the line needed. The model had no way to know that: the
+      // refusal never reached it. So on an S1/N1 refusal it is asked once more, and told two things
+      // it could not otherwise have — which specifics and names were unsourced, and the ids of the
+      // live pool rows that state each one verbatim. It may cite those rows, or write the line
+      // differently, or drop the claim. CODE NEVER REWRITES THE LINE: the model answers, and the
+      // answer faces every gate from the top.
+      reaskOnSourcingRefusal: async (kind, payload, detail) => {
+        const results = s1Results[kind as Kind] ?? [];
+        const failing = results.filter((r) => r.unsourced.length > 0);
+        if (failing.length === 0) return null;
+        // For every unsourced token, the pool rows that DO state it. record/you only, findings
+        // excluded — a finding cannot license a name under N1b, so offering one would be a trap.
+        const supportFor = (token: string): string[] => {
+          const out: string[] = [];
+          for (const [ref, uuid] of uuidByRef) {
+            const cls = classByRef.get(ref);
+            if (cls !== "record" && cls !== "you") continue;
+            if (kindByRef.get(ref) === "finding") continue;
+            if ((textByRef.get(ref) ?? "").includes(token)) out.push(ref);
+            if (out.length >= 4) break;                   // enough to choose from, not a dump
+          }
+          return out;
+        };
+        const block = failing.map((r) => {
+          const toks = r.unsourced.map((u) => u.token);
+          return `  ${r.field} (${r.cls}): ` + toks.map((t) => {
+            const rows = supportFor(t);
+            return rows.length > 0
+              ? `${JSON.stringify(t)} — stated in ${rows.join(", ")}`
+              : `${JSON.stringify(t)} — stated in NO row of this ledger`;
+          }).join("; ");
+        }).join("\n");
+        const sys = genSys[kind as Kind];
+        const user = `LEDGER (cite only the bracketed tokens on these lines):\n${CAT_LIVE || CAT}\n\n` +
+          `YOUR PREVIOUS ANSWER WAS REFUSED. Each line below states something none of the rows IT CITES says. ` +
+          `For each: either cite a row named here that does state it, or write the line so that what it asserts is ` +
+          `what its own cited rows say, or leave the claim out. Do not keep an assertion no cited row carries.\n${block}\n\n` +
+          `Produce the ${kind} JSON again, in full.`;
+        try {
+          const again = await run(genChoice, sys, user, 0.2);
+          reasked[kind as Kind] = { specifics: failing.flatMap((r) => r.unsourced.map((u) => u.token)), fields: failing.map((r) => r.field) };
+          return again;
+        } catch {
+          return null;                                     // a failed re-ask leaves the refusal standing
+        }
+      },
       reaskOnClassRefusal: async (kind, payload, verdict) => {
         const decs = classDecisions[kind as Kind] ?? [];
         const hedged = judgeHedgedByField(verdict);

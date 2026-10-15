@@ -98,6 +98,15 @@ export type PerKindDeps = {
    *  the refusal detail, or null to pass. Deterministic: no model call, so a line the record does
    *  not support costs no judgment and cannot be cleared by one. */
   s1Refusal?: (kind: string, payload: Record<string, unknown>) => { detail: string } | null;
+  /** N1c (operator ruling, 2026-10-14): ONE bounded re-ask on an S1/N1 refusal. The caller hands the
+   *  model the refused specifics and names together with the ids of live pool rows that state each
+   *  one verbatim, and returns a fresh payload — or null to let the refusal stand. CODE NEVER
+   *  REWRITES A LINE: the model answers again, and the answer faces every gate from the top. */
+  reaskOnSourcingRefusal?: (
+    kind: string,
+    payload: Record<string, unknown>,
+    detail: string,
+  ) => Promise<Record<string, unknown> | null>;
   /** V4 (2026-10-14): one integrity_runs row per kind, carrying the full refused payload and its
    *  citations. Component first_read_public_read_<kind>. Never throws. */
   recordIntegrity?: (kind: string, row: {
@@ -167,7 +176,9 @@ export async function runKindsIsolated(
   // Extracted so the bounded re-ask can run it a second time WITHOUT any guard being skipped or
   // reordered: the re-ask is a second pass of the same gate, never a shortcut past it.
   type GateResult =
-    | { outcome: "rejected"; guard: PerKindGuard; detail: unknown; payload: Record<string, unknown>; verdict: Record<string, unknown> | null }
+    | { outcome: "rejected"; guard: PerKindGuard; detail: unknown; payload: Record<string, unknown>; verdict: Record<string, unknown> | null;
+        /** N1c: set only by the S1/N1 gate, so the loop knows this refusal is the re-askable one. */
+        sourcingDetail?: string }
     | { outcome: "not_accepted"; verdict: Record<string, unknown> }
     | { outcome: "accepted"; verdict: Record<string, unknown> };
 
@@ -201,7 +212,7 @@ export async function runKindsIsolated(
     // clears everything cannot clear a line it was never asked about. The carried lines are already
     // spliced into `payload` by this point, so they are tested here like any other line.
     const s1 = deps.s1Refusal?.(kind, payload) ?? null;
-    if (s1) return { outcome: "rejected", guard: "record_specific_unsourced", detail: s1.detail, payload, verdict: null };
+    if (s1) return { outcome: "rejected", guard: "record_specific_unsourced", detail: s1.detail, payload, verdict: null, sourcingDetail: s1.detail };
 
     // ── JUDGE (this kind alone) ────────────────────────────────────────────────────────────────
     let verdict: Record<string, unknown>;
@@ -229,6 +240,18 @@ export async function runKindsIsolated(
       const g = await runGates(kind, payload);
 
       if (g.outcome === "rejected") {
+        // ── N1c: ONE bounded re-ask, and only on the S1/N1 refusal ──────────────────────────────
+        // The same `reasked` flag the class re-ask uses, so a kind gets at most ONE second attempt
+        // in total however it was refused — a second refusal stands. The fresh payload re-enters
+        // runGates at the top, so citations, offering structure, framing, live-public, S1/N1 and the
+        // judge all run again on it; nothing is skipped because the first answer had been seen.
+        if (g.sourcingDetail !== undefined && !reasked && deps.reaskOnSourcingRefusal) {
+          // The refusal is AUDITED before the retry, so both attempts leave a record.
+          await deps.recordIntegrity?.(kind, { status: "rejected", guard: g.guard, detail: `${g.sourcingDetail} (attempt 1 of 2; re-asked)`, payload: g.payload });
+          deps.onReject?.(kind, g.guard, detailOf(g.sourcingDetail));
+          const next = await deps.reaskOnSourcingRefusal(kind, g.payload, g.sourcingDetail);
+          if (next) { payload = next; reasked = true; continue; }
+        }
         await reject(kind, g.guard, g.detail, g.payload, g.verdict);
         break;
       }

@@ -259,8 +259,13 @@ Deno.test("V4. the refused payload reaches the audit row, from the ONE reject fu
   const src = await read("../generate-public-read/index.ts");
   assert(src.includes("refused_payload: refusedPayload,"), "and the row stores it");
   assert(src.includes("refused_citations: refusedCitations,"), "with the citations it made");
-  assert(src.includes('const refusedPayload = row.status === "rejected" ? (row.payload ?? null) : null;'),
+  // V4a (2026-10-14) put the payload through translateCitations, so the capture is now two steps:
+  // refusedRaw holds the model's answer (ref tokens) and refusedPayload the translated one. The
+  // invariant is unchanged — null on an accepted kind, because the written row is the record there.
+  assert(src.includes('const refusedRaw = row.status === "rejected" ? (row.payload ?? null) : null;'),
     "null on an accepted kind — the written row is the record there");
+  assert(/const refusedPayload = refusedRaw\s*\n\s*\? translateCitations\(refusedRaw, uuidByRef\)/.test(src),
+    "and the stored payload carries resolved ids (V4a)");
 });
 
 Deno.test("V4. EVERY guard routes through that one funnel, so none can omit the payload", async () => {
@@ -269,11 +274,18 @@ Deno.test("V4. EVERY guard routes through that one funnel, so none can omit the 
   const fn = src.slice(src.indexOf("export async function runKindsIsolated("));
   const rejects = [...fn.matchAll(/await reject\(/g)];
   assert(rejects.length >= 3, `expected every rejection path to call reject(), saw ${rejects.length}`);
-  // exactly ONE place in the whole module calls recordIntegrity with a rejected status, and it
-  // carries the payload — so no guard can route around it.
-  const rejectedCalls = [...fn.matchAll(/recordIntegrity\?\.\(kind, \{ status: "rejected"[^;]*;/g)].map((m) => m[0]);
-  assertEquals(rejectedCalls.length, 1, "one rejected-status audit call for every guard");
-  assert(rejectedCalls[0].includes("payload"), "and it carries the refused payload");
+  // TWO places now call recordIntegrity with a rejected status, and BOTH carry the payload:
+  //   reject()  — the one funnel every guard routes through, for the refusal that stands;
+  //   N1c       — the attempt-1 record written BEFORE a bounded re-ask, so a re-asked kind leaves a
+  //               record of both attempts rather than only of the one that stuck.
+  // What V4 guards is that no rejected-status audit call can omit the payload, and that is still
+  // every one of them.
+  // span to the call's own closing `});`, not to the first `;` — N1c's detail template contains one
+  // ("attempt 1 of 2; re-asked"), and a regex that stopped there would truncate the call before
+  // `payload` and report a false failure.
+  const rejectedCalls = [...fn.matchAll(/recordIntegrity\?\.\(kind, \{ status: "rejected"[\s\S]*?\}\);/g)].map((m) => m[0]);
+  assertEquals(rejectedCalls.length, 2, "the reject funnel and N1c's attempt-1 record");
+  for (const c of rejectedCalls) assert(c.includes("payload"), `every rejected-status audit carries the payload: ${c.slice(0, 70)}`);
 });
 
 Deno.test("V4. exactly ONE row per refusal — the fallback only runs when the first insert failed", async () => {
