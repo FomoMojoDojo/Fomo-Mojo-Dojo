@@ -45,6 +45,7 @@ import { makeRoutedModel, type RoutedModel, type OpenAIUsage } from "./modelRout
 import { callOllamaJson } from "./signalRecurrence.ts";
 import { openaiRecord, recordModelCall } from "./recordModelCall.ts";
 import { LOCAL_GENERATOR } from "../../../src/lib/modelRouter/resolveModel.ts";
+import { insertIntegrityRun } from "./integrityWrite.ts";
 
 type AnySupabase = { from: (t: string) => any };
 
@@ -301,7 +302,7 @@ function dedupeBodies(inputs: InputRow[]): string[] {
 
 async function audit(supabase: AnySupabase, companyId: string, component: string, detail: Record<string, unknown>): Promise<void> {
   try {
-    await supabase.from("integrity_runs").insert({
+    await insertIntegrityRun(supabase, {
       company_id: companyId, component, surface_type: "findings", surface_id: (detail.finding_id as string | undefined) ?? null,
       ran_at: new Date().toISOString(), status: component === FRONTIER_REFUSED ? "rejected" : "completed",
       examined: 0, admitted: 0, excluded_by_rule: detail, error: component === FRONTIER_REFUSED ? String(detail.why ?? "") : null, run_ref: detail.run_id != null ? String(detail.run_id) : null,

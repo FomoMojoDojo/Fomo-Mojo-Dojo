@@ -21,6 +21,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { gateRegenUrls, requireRunId } from "../_shared/outsideRecrawlReview.ts";
 import { sha256Hex, contentIdentity, normalizeForHash } from "../_shared/contentIdentity.ts";
 import { admitOutsideEvidence, snapshotReadDate } from "../_shared/outsideEvidenceRegen.ts";
+import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
 
 const nowIso = () => new Date().toISOString();
 const corsHeaders = {
@@ -96,7 +97,7 @@ Deno.serve(async (req) => {
     // and ledgered; nothing is read from the basis.
     const runId: string | null = requireRunId(body as Record<string, unknown>);
     if (!runId) {
-      await supabase.from("integrity_runs").insert({
+      await insertIntegrityRun(supabase, {
         company_id, component: "r3_outside_regen", status: "failed", examined: 0, admitted: 0,
         excluded_by_rule: { refused: "run_id_required", review_gate: true }, run_ref: "r3_outside_regen_refused_no_run_id",
       });
@@ -136,7 +137,7 @@ Deno.serve(async (req) => {
     const reviewRefused = gate.refused;
     urls = gate.allowed;
     if (urls.length === 0) {
-      await supabase.from("integrity_runs").insert({
+      await insertIntegrityRun(supabase, {
         company_id, component: "r3_outside_regen", status: "failed", examined: 0, admitted: 0,
         excluded_by_rule: { refused: "no_approved_urls", review_refused: reviewRefused, run_id: runId, review_gate: true }, run_ref: `r3_outside_regen_${runId}`,
       });

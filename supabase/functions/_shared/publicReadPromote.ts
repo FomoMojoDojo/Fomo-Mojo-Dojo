@@ -26,6 +26,7 @@ import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, 
 import { s1Detail, s1Unsourced, type S1Result } from "./classFactCheck.ts";
 import { reReadRowTexts } from "./classSourcingScope.ts";
 import { linesOfStoredPayload } from "./citedLines.ts";
+import { insertIntegrityRun } from "./integrityWrite.ts";
 
 // deno-lint-ignore no-explicit-any
 type AnySupabase = { from: (t: string) => any };
@@ -216,7 +217,7 @@ export async function recordPromoteIntegrity(
     if (!p.staged) continue;
     const rev = promoteReversal(p);
     try {
-      await supabase.from("integrity_runs").insert({
+      await insertIntegrityRun(supabase, {
         company_id: companyId,
         component: `first_read_public_read_${p.kind}`,
         surface_type: "public_reads",
@@ -245,7 +246,7 @@ export async function recordPromoteRefusal(
   reason: string,
 ): Promise<void> {
   try {
-    await supabase.from("integrity_runs").insert({
+    await insertIntegrityRun(supabase, {
       company_id: companyId,
       component: `first_read_public_read_${kind}`,
       surface_type: "public_reads",

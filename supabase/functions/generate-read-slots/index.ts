@@ -23,6 +23,7 @@
 // refused here by SLICE_1_KINDS even though the table's CHECK already accepts them.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
@@ -230,7 +231,7 @@ serve(async (req) => {
       const src = readRow as { id?: string; payload?: Record<string, unknown>; input_ledger?: Record<string, unknown> | null; model_provider?: string | null } | null;
       if (!src?.id) {
         perKind[kind] = { status: "no_source_read", detail: `no current public_reads row for kind=${kind}` };
-        await supabase.from("integrity_runs").insert({
+        await insertIntegrityRun(supabase, {
           company_id, component: `first_read_slot_${kind}`, status: "rejected", examined: 0, admitted: 0,
           excluded_by_rule: { kind, guard: "no_source_read", mode: doStage ? "stage" : "dry_run" },
         });
@@ -400,7 +401,7 @@ serve(async (req) => {
         const guard = refusal ? refusal.guard : "run_failed";
         const full = refusal ? refusal.detail : String(e);
         perKind[kind] = { status: refusal ? "rejected" : "run_failed", guard, detail: full.slice(0, 300) };
-        await supabase.from("integrity_runs").insert({
+        await insertIntegrityRun(supabase, {
           company_id, component: `first_read_slot_${kind}`, status: "rejected", examined: 1, admitted: 0,
           excluded_by_rule: { kind, guard, detail: full }, error: `guard=${guard} ${full}`.slice(0, 300),
         });
@@ -438,8 +439,12 @@ serve(async (req) => {
         per_slot: perSlot,
       };
 
-      await supabase.from("integrity_runs").insert({
-        company_id, component: `first_read_slot_${kind}`, status: allAccepted ? "ok" : "rejected",
+      await insertIntegrityRun(supabase, {
+        // A1 (2026-10-15): "completed", not "ok". "ok" is not in integrity_runs_status_check
+        // (completed|failed|skipped_empty_input|planned|rejected), so every ACCEPTED slot stage
+        // failed this insert silently — the refusal path kept working because "rejected" is legal,
+        // which is exactly what hid it. Not one successful stage had ever been audited.
+        company_id, component: `first_read_slot_${kind}`, status: allAccepted ? "completed" : "rejected",
         examined: perSlot.length || 0, admitted: perSlot.filter((s) => s.accepted).length,
         surface_type: "public_reads", surface_id: src.id,
         excluded_by_rule: allAccepted ? {

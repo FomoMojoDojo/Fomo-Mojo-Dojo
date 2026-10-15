@@ -36,6 +36,7 @@
 //   neither     → FINALIZE: return the portfolio census. NO PRUNE (Gate 3b — see below).
 
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
+import { insertIntegrityRun, IntegrityWriteRefused } from "./integrityWrite.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { judgeConditionPerspectives } from "./stepPerspectiveJudge.ts";
 // Gate 2 — the vocabulary the generator is SHOWN. Examples only: relationship_kind is free text by
@@ -1031,14 +1032,14 @@ export async function computeMarketDiscovery(
         reasons.error = errorText;
         if (args.write) {
           try {
-            await args.supabase.from("integrity_runs").insert({
+            await insertIntegrityRun(args.supabase, {
               company_id: args.companyId,
               component: CANDIDATE_ERROR_COMPONENT,
               status: "failed",
               run_ref: await marketIdentity(original.job_executor, original.jtbd),
               error: errorText,
             });
-          } catch { /* best-effort: an unrecorded failure simply stays unaccounted */ }
+          } catch (e) { if (e instanceof IntegrityWriteRefused) throw e; /* best-effort: an unrecorded failure simply stays unaccounted */ }
         }
         // The outcome row for the error is NOT best-effort (Gate 7a): it is the row the poll reads.
         const fileErr = await record({ ...original, outcome: "error", judge_reasons: reasons });

@@ -11,6 +11,8 @@
 // surface-level claim — callers set surface_type/surface_id when (and only when)
 // the record is about a specific surface.
 
+import { insertIntegrityRun } from "./integrityWrite.ts";
+
 export type IntegrityRecord = {
   company_id: string;
   component:
@@ -57,7 +59,7 @@ export async function recordIntegrityRun(
   });
   if (!supabase) return;
   try {
-    await supabase.from("integrity_runs").insert({
+    await insertIntegrityRun(supabase, {
       company_id: record.company_id,
       component: record.component,
       surface_type: record.surface_type ?? null,

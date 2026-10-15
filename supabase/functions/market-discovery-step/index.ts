@@ -15,6 +15,7 @@ import { runMarketDiscoveryStep, shouldReopenAdoptedRun, HOLD_NOTE_PREFIX, type 
 // the EXACT content-identity schemes the generator writes under (no new marker column); this file
 // supplies only the equality probe.
 import { marketCandidateAccounted } from "../_shared/marketCandidateAccounted.ts";
+import { insertIntegrityRun, IntegrityWriteRefused } from "../_shared/integrityWrite.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -176,14 +177,14 @@ Deno.serve(async (req) => {
     // knows the pass reached a terminal — the same discipline as the gap-pairs and offering records.
     // Best-effort: a failed integrity write must never turn a completed run into a failed one.
     try {
-      await supabase.from("integrity_runs").insert({
+      await insertIntegrityRun(supabase, {
         company_id,
         component: "first_read_market_outcomes",
         status,
         error: err,
         run_ref: ledgerId,
       });
-    } catch { /* the ledger terminal stands regardless */ }
+    } catch (e) { if (e instanceof IntegrityWriteRefused) throw e; /* the ledger terminal stands regardless */ }
   };
   const selfFire = async () => {
     waitUntil(fetch(`${url}/functions/v1/market-discovery-step`, {

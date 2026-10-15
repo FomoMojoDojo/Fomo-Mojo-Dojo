@@ -18,6 +18,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { runOpenQuestionsStep, type OQChainState } from "../_shared/openQuestionsStepper.ts";
+import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -92,7 +93,7 @@ Deno.serve(async (req) => {
     await supabase.from("long_runner_runs").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", ledgerId);
   };
   const writeIntegrity = async (status: "completed" | "failed", examined: number, admitted: number | null, error: string | null) => {
-    await supabase.from("integrity_runs").insert({
+    await insertIntegrityRun(supabase, {
       company_id, component: INTEGRITY_COMPONENT, surface_type: null, surface_id: null,
       ran_at: new Date().toISOString(), status, examined, admitted, excluded_by_rule: null, error, run_ref: chain.run_id || null,
     });

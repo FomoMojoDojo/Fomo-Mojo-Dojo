@@ -33,6 +33,7 @@ import {
   getIndustryStepAnchors,
   inferStandardMarketCategory,
 } from "../_shared/industryStepAnchors.ts";
+import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1142,7 +1143,7 @@ export async function handleLocalJobmapSynthesis(
     if (!scaffoldAnchors.ok) {
       const journeyKey = spineDefinition?.journey_key ?? "";
       const message = scaffoldRefusalMessage(scaffoldAnchors.industry_key, journeyKey);
-      await supabase.from("integrity_runs").insert({
+      await insertIntegrityRun(supabase, {
         company_id: companyId, component: SCAFFOLD_REFUSED, surface_type: "odi_market_definitions", surface_id: spineDefinition?.id ?? null,
         ran_at: new Date().toISOString(), status: "rejected", examined: 1, admitted: 0,
         excluded_by_rule: { journey_key: journeyKey, industry_key: scaffoldAnchors.industry_key, why: scaffold.why, trigger: trigger || null },

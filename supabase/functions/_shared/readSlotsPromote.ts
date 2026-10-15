@@ -18,6 +18,8 @@
 // it also catches a slot whose source was never current to begin with.
 
 // deno-lint-ignore no-explicit-any
+import { insertIntegrityRun } from "./integrityWrite.ts";
+
 type AnySupabase = { from: (t: string) => any };
 
 export class SlotPromoteRefused extends Error {
@@ -132,7 +134,7 @@ async function recordSignature(supabase: AnySupabase, a: {
   status: "completed" | "rejected"; detail?: string; supersededSlotId?: string | null;
 }): Promise<void> {
   try {
-    await supabase.from("integrity_runs").insert({
+    await insertIntegrityRun(supabase, {
       company_id: a.companyId,
       component: `first_read_slot_signed_${a.kind}`,
       ran_at: new Date().toISOString(),

@@ -20,6 +20,7 @@ import { loadQuestionAnchorsDetailed, orphanQuestionIds, orphanQuestionReasons }
 import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
+import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -112,7 +113,7 @@ Deno.serve(async (req) => {
         await supabase.from("first_read_open_questions").update({ status: "superseded" }).in("id", orphanIds);
         // audited: one integrity row per finalize, per-row reason, reversal SQL (ruling 7 — the retirement is a data act)
         const textById = new Map(((liveRows ?? []) as Array<{ id: string; question_text?: string | null }>).map((r) => [r.id, r.question_text ?? null]));
-        await supabase.from("integrity_runs").insert({
+        await insertIntegrityRun(supabase, {
           company_id, component: "open_questions_finalize", surface_type: "first_read_open_questions", surface_id: null,
           ran_at: new Date().toISOString(), status: "completed", examined: (liveRows ?? []).length, admitted: orphanIds.length,
           excluded_by_rule: {

@@ -12,6 +12,7 @@
 // (reversible). Frozen company → 403.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "POST,OPTIONS" };
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -103,7 +104,7 @@ Deno.serve(async (req) => {
         if (error) throw new Error(`supersede update failed for ${o.id}: ${error.message}`);
         written++;
       }
-      await supabase.from("integrity_runs").insert({
+      await insertIntegrityRun(supabase, {
         company_id, component: "r3b_client_voice_supersede", status: "completed",
         examined: old.length, admitted: written,
         excluded_by_rule: { page_gone: pageGone.length, semantic: toSupersede.length - pageGone.length, kept: kept.length, new_run_id: newRunId },

@@ -13,6 +13,7 @@
 // and not be retracted. The item read goes through _shared/interviewItems.ts (loadCorrectionItem) so
 // this file never names the items table and the census wall keeps its original four allowances.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { IntegrityWriteRefused } from "../_shared/integrityWrite.ts";
 import { loadCorrectionItem } from "../_shared/interviewItems.ts";
 import {
   AUDIT_COMPONENT, CORRECTION_STATEMENT, correctionClaimFor, existingClaimIdFor, reversalSqlFor,
@@ -88,7 +89,9 @@ Deno.serve(async (req) => {
     // ── THE AUDIT ROW, after the write, carrying its own reversal ───────────────────────────────
     let audit_id: number | null = null;
     try {
-      const { data: aud } = await supabase.from("integrity_runs").insert({
+      // A1: this one needs the inserted id back, so it reads { data, error } itself; a refusal
+      // throws rather than returning a correction with a null audit id.
+      const { data: aud, error: audErr } = await supabase.from("integrity_runs").insert({
         company_id, component: AUDIT_COMPONENT, surface_type: "claims", surface_id: company_id,
         status: "completed", examined: 1, admitted: 1,
         excluded_by_rule: {
@@ -100,8 +103,13 @@ Deno.serve(async (req) => {
           reversal_sql: reversalSqlFor(claimId),
         },
       }).select("id").single();
+      if (audErr) throw new IntegrityWriteRefused(AUDIT_COMPONENT, "completed", String(audErr.message ?? audErr));
       audit_id = (aud as { id: number } | null)?.id ?? null;
-    } catch { /* observability must never break the write it describes */ }
+      // A1 (2026-10-15): the catch no longer swallows a REFUSED audit write. It still swallows
+      // anything else thrown here, because an unrelated fault in building the row must not take down
+      // the correction — but a row the database refused is a hole in the record, and this correction
+      // reports its own audit_id, so returning a null one would have been a lie nobody could see.
+    } catch (e) { if (e instanceof IntegrityWriteRefused) throw e; /* observability must never break the write it describes */ }
 
     return json({
       ok: true, wrote: true, claim_id: claimId, audit_id,

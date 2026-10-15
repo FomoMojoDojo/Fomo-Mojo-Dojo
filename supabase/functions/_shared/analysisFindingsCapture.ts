@@ -13,6 +13,8 @@
 // 'failed' (couldn't-check) integrity row — never a silent gap.
 
 // deno-lint-ignore no-explicit-any
+import { insertIntegrityRun, IntegrityWriteRefused } from "./integrityWrite.ts";
+
 type AnySupabase = { from: (t: string) => any };
 
 // first_read_* integrity uses a RAW integrity_runs insert (the IntegrityRecord union in ./integrity.ts
@@ -71,10 +73,10 @@ export async function writeFindingsIntegrityFailed(
   err: unknown,
 ): Promise<void> {
   try {
-    await supabase.from("integrity_runs").insert({
+    await insertIntegrityRun(supabase, {
       company_id: companyId, component: FINDINGS_INTEGRITY_COMPONENT, surface_type: null, surface_id: null,
       ran_at: new Date().toISOString(), status: "failed", examined: null, admitted: null,
       excluded_by_rule: null, error: String(err instanceof Error ? err.message : err).slice(0, 500), run_ref: String(runId),
     });
-  } catch { /* integrity write is best-effort */ }
+  } catch (e) { if (e instanceof IntegrityWriteRefused) throw e; /* integrity write is best-effort */ }
 }

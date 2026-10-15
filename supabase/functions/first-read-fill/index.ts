@@ -27,6 +27,7 @@ import {
 } from "../_shared/firstReadFill.ts";
 import { handOffToResumeStepper, isGatewayCut, newResumeState, resumeHandoffNote } from "../_shared/gatewayResume.ts";
 import { gapPairsAlreadyPresent, gapPairsFreshnessNote, gapPairsStaleness, type FreshnessVerdict } from "../_shared/gapPairsFreshness.ts";
+import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -221,7 +222,7 @@ Deno.serve(async (req) => {
       const st = gen.perKind[k] === "written" ? "completed" : "failed";
       await recordKindLedger(k, st as KindStatus, gen.detail[k] ?? null);
     }
-    await supabase.from("integrity_runs").insert({
+    await insertIntegrityRun(supabase, {
       company_id, component: "first_read_public_reads_gate", status: "completed",
       examined: missing.length,
       admitted: missing.filter((k) => gen.perKind[k] === "written").length,

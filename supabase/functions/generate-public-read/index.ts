@@ -52,6 +52,7 @@ import {
 } from "../_shared/carriedSpan.ts";
 import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass, PREDECESSOR_CITED_REASON, PREDECESSOR_NAMED_REASON } from "../_shared/publicReadInputs.ts";
 import { type ModelCallRecord, openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
+import { insertIntegrityRun, IntegrityWriteRefused } from "../_shared/integrityWrite.ts";
 import { reaskFeedbackBlock, type SourceRow } from "../_shared/reaskFeedback.ts";
 
 const corsHeaders = {
@@ -389,9 +390,12 @@ Deno.serve(async (req) => {
             excluded_by_rule: { kind, guard: "empty_inputs", detail, mode: doStage ? "stage" : (doWrite ? "write" : "dry_run") },
             error: `guard=empty_inputs detail=${detailOf(detail)}`, run_ref: null,
           };
+          // A1: both writes read their error. The first falls back to a 'failed' row when the
+          // 'rejected' one is refused; if the fallback is refused too, that throws and the caller's
+          // catch below records it — it is no longer a write nobody can see fail.
           const { error } = await supabase.from("integrity_runs").insert({ ...base, status: "rejected" });
-          if (error) await supabase.from("integrity_runs").insert({ ...base, status: "failed" });
-        } catch { /* observability must never break the pipeline */ }
+          if (error) await insertIntegrityRun(supabase, { ...base, status: "failed" });
+        } catch (e) { if (e instanceof IntegrityWriteRefused) throw e; /* observability must never break the pipeline */ }
       }
       const perKind = Object.fromEntries(activeKinds.map((k) => [k, { status: "rejected", guard: "empty_inputs", detail }]));
       return json({ ok: false, status: "empty", reason: detail, per_kind: perKind, rejected: activeKinds.map((kind) => ({ kind, guard: "empty_inputs", detail })) });
@@ -1024,9 +1028,9 @@ Respond with ONLY JSON:
         const { error } = await supabase.from("integrity_runs").insert({ ...base, status: row.status });
         if (!error) return;
         if (row.status === "rejected") {
-          await supabase.from("integrity_runs").insert({ ...base, status: "failed" });
+          await insertIntegrityRun(supabase, { ...base, status: "failed" });
         }
-      } catch { /* observability must never break the pipeline */ }
+      } catch (e) { if (e instanceof IntegrityWriteRefused) throw e; /* observability must never break the pipeline */ }
     };
 
     // FINALIZE an accepted kind. Runs for EVERY accepted kind (write, stage AND dry-run) so the

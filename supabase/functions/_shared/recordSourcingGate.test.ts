@@ -296,7 +296,14 @@ Deno.test("V4. exactly ONE row per refusal — the fallback only runs when the f
   const src = await read("../generate-public-read/index.ts");
   const fn = src.slice(src.indexOf("const recordKindIntegrity = async"));
   const body = fn.slice(0, fn.indexOf("\n    };"));
-  const inserts = [...body.matchAll(/from\("integrity_runs"\)\.insert\(/g)];
-  assertEquals(inserts.length, 2, "the insert and its status-downgrade fallback");
+  // A1 (2026-10-15): the FALLBACK now goes through insertIntegrityRun, so a refused downgrade throws
+  // instead of vanishing. Both writes are still counted — the primary, which reads its own { error }
+  // to decide whether to downgrade, and the fallback — because TWO is what "one row per refusal"
+  // depends on: a third would mean a second row for the same refusal.
+  const raw = [...body.matchAll(/from\("integrity_runs"\)\.insert\(/g)].length;
+  const viaHelper = [...body.matchAll(/insertIntegrityRun\(/g)].length;
+  assertEquals(raw + viaHelper, 2, "the insert and its status-downgrade fallback");
+  assertEquals(raw, 1, "the primary reads its own { error } to decide whether to downgrade");
+  assertEquals(viaHelper, 1, "and the downgrade is loud if the database refuses it too");
   assert(body.includes("if (!error) return;"), "the fallback is unreachable once the first insert succeeded");
 });

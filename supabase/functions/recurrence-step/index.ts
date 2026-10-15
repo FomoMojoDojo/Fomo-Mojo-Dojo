@@ -15,6 +15,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { runRecurrenceStep, type RecChainState, type RecPair } from "../_shared/recurrenceStepper.ts";
+import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -84,7 +85,7 @@ Deno.serve(async (req) => {
     await patchLedger({ status, error_text: err, finished_at: new Date().toISOString() });
   };
   const writeIntegrity = async (status: "completed" | "failed", examined: number, clusters: number | null, badged: number | null, error: string | null) => {
-    await supabase.from("integrity_runs").insert({
+    await insertIntegrityRun(supabase, {
       company_id, component: INTEGRITY_COMPONENT, surface_type: null, surface_id: null,
       ran_at: new Date().toISOString(), status,
       examined, admitted: badged,

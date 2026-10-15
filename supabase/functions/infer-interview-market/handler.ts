@@ -25,6 +25,7 @@
 // market" again) and the next run marks the stale row failed. Every window call → one model_calls row
 // (provider 'ollama', prompt_eval_count / eval_count, usd NULL).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { IntegrityWriteRefused } from "../_shared/integrityWrite.ts";
 import { FROZEN_COMPANY_IDS } from "../_shared/frozenCompanies.ts";
 import { recordModelCall } from "../_shared/recordModelCall.ts";
 
@@ -239,7 +240,10 @@ export async function handleInferInterviewMarket(req: Request, deps: Deps = { cr
     const storedSha = String(rec.text_sha256 ?? "").toLowerCase();
     const actualSha = await sha256HexText(verbatim);
     if (!storedSha || actualSha !== storedSha) {
-      const { data: bad } = await db.from("integrity_runs").insert({ company_id: companyId, component: COMPONENT, surface_type: "interview_records", surface_id: recordId, ran_at: new Date(now()).toISOString(), status: "failed", examined: 0, admitted: 0, excluded_by_rule: { reason: "text_hash_mismatch", stored_sha256: storedSha, actual_sha256: actualSha, chars: verbatim.length }, error: "text_hash_mismatch", run_ref: RUN_REF }).select("id").single();
+      // A1: this one needs the inserted id back, so it reads { data, error } rather than going
+      // through insertIntegrityRun — and a refusal now throws instead of returning a null run_id.
+      const { data: bad, error: badErr } = await db.from("integrity_runs").insert({ company_id: companyId, component: COMPONENT, surface_type: "interview_records", surface_id: recordId, ran_at: new Date(now()).toISOString(), status: "failed", examined: 0, admitted: 0, excluded_by_rule: { reason: "text_hash_mismatch", stored_sha256: storedSha, actual_sha256: actualSha, chars: verbatim.length }, error: "text_hash_mismatch", run_ref: RUN_REF }).select("id").single();
+      if (badErr) throw new IntegrityWriteRefused(COMPONENT, "failed", String(badErr.message ?? badErr));
       return json({ ok: false, error: "text_hash_mismatch", message: "The stored transcript does not match its hash — nothing was inferred.", run_id: bad?.id ?? null }, 409);
     }
 
