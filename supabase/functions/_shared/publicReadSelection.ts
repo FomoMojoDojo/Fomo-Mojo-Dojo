@@ -39,7 +39,9 @@ import { compareBeat2, gapVerdictForDeltaType, orderGapPairs, strengthForSignal 
 // cap, on their own budget of 12, so WHICH rows enter the pool has changed. A read stamped
 // 2026-10-14.1 was built from a pool where the cap could silently discard the evidence its own
 // predecessor rested on (audit 10228: Wasabi's FedRAMP and AI-product rows, all live, all over_cap).
-export const SELECTION_VERSION = "gpr-select-2026-10-14.2" as const;
+// N2 (2026-10-14): bumped again — rows that STATE a name a still-sourced current line uses are now
+// admitted before the cap on P1's budget. WHICH rows enter the pool changed, so the stamp moves.
+export const SELECTION_VERSION = "gpr-select-2026-10-14.3" as const;
 
 export type Dropped = { id: string; kind: "signal" | "own_word" | "finding" | "delta"; reason: string };
 

@@ -40,7 +40,7 @@ Deno.test("P3-c. the two stamps are independent — a prompt change never moves 
   // rowTextOf's assembly with the source title carried beside it instead of appended. That is a
   // change to what the selection hands the model, so stamping it is correct — the case P3 forbids
   // is a bump with NO selection change, which pinning the literal still catches.
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.2",
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.3",
     "pinned so a bump is always deliberate; R1 changed the pool's text, so this one is");
   assert(GEN_RULES_VERSION !== SELECTION_VERSION as string, "two different stamps, two different facts");
 });

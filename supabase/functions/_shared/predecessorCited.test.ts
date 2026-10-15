@@ -26,9 +26,10 @@ Deno.test("P1. the cited rows are selected BEFORE the cap, and the rest meet REA
   const src = await read("./publicReadInputs.ts");
   const fn = src.slice(src.indexOf("export async function selectPublicInputs("));
   const p1At = fn.indexOf("const p1Sig = p1Budget > 0");
-  const restAt = fn.indexOf("const sigSel = selectSignals(sigRest, READ_CAP.signal, confirmed);");
+  // N2 (2026-10-14): the ordinary lane now also excludes what the NAME lane took.
+  const restAt = fn.indexOf("const sigSel = selectSignals(sigRest.filter((r) => !namedIds.has(r.id)), READ_CAP.signal, confirmed);");
   assert(p1At > 0, "the predecessor-cited lane exists");
-  assert(restAt > 0, "the ordinary lane now runs over sigRest");
+  assert(restAt > 0, "the ordinary lane runs over what neither P1 nor N2 took");
   assert(p1At < restAt, "the cited rows are admitted FIRST — that is the whole of P1");
   // and the ordinary lane must no longer see them, or the cap could still drop a cited row
   assert(fn.includes("const sigRest = sigAll.filter((r) => !predecessorCited.has(r.id));"),

@@ -99,8 +99,15 @@ export type CascadeRouting = { superseded: number; inserted: number; run_id: str
  *  Returns the refusal detail, or null to pass. */
 export async function promoteS1Refusal(
   supabase: AnySupabase,
-  row: { payload?: Record<string, unknown> | null; input_ledger?: Record<string, unknown> | null },
+  row: { payload?: Record<string, unknown> | null; input_ledger?: Record<string, unknown> | null; company_id?: string },
 ): Promise<string | null> {
+  // N1 at promote: the company's own name is excluded here exactly as at stage, so the two gates
+  // cannot disagree about whether "Wasabi" is a name the record must state.
+  let companyName = "";
+  if (row.company_id) {
+    const { data: co } = await supabase.from("companies").select("name").eq("id", row.company_id).maybeSingle();
+    companyName = String((co as { name?: string } | null)?.name ?? "");
+  }
   const payload = row.payload ?? null;
   const ledger = (row.input_ledger ?? {}) as Record<string, unknown>;
   const classes = (ledger.classes ?? {}) as Record<string, string>;
@@ -115,7 +122,7 @@ export async function promoteS1Refusal(
     .filter((id) => (classes[id] === "record" || classes[id] === "you") && !findingIds.has(id));
   const textNow = wanted.length ? await reReadRowTexts(supabase, wanted) : {};
   const results: S1Result[] = lines.map((l) => s1Unsourced({
-    field: String(l.field ?? ""), text: l.text, cls: l.cls,
+    field: String(l.field ?? ""), text: l.text, cls: l.cls, companyName,   // N1 at promote too
     citedSourceTexts: l.refs
       .filter((id) => (classes[id] === "record" || classes[id] === "you") && !findingIds.has(id))
       .map((id) => textNow[id] ?? ""),
@@ -145,7 +152,7 @@ export async function promoteStagedReads(
     // Decided BEFORE any write, like the cascade_source check above it. The staged row's own ledger
     // says which class each cited id carries and which ids are findings; the row TEXTS are re-read
     // live through rowTextOf, because a stage-time pass is no promise about now.
-    const s1 = await promoteS1Refusal(supabase, stagedRow!);
+    const s1 = await promoteS1Refusal(supabase, { ...stagedRow!, company_id: companyId });
     if (s1) throw new PromoteRefused(stagedId, kind, `S1: a record/you line asserts what its cited rows do not say — ${s1}`);
 
     const { data: prior } = await supabase.from("public_reads")

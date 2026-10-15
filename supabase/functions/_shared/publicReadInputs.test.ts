@@ -78,6 +78,6 @@ Deno.test("source guard: every lane stamps a class, analysis is admitted, and th
   // analysis joined the admitted voices, and the selector lets it past the page gate
   assert(PUBLIC_SIGNAL_VOICES.includes("analysis"), "analysis is admitted");
   const sel = await read("./publicReadSelection.ts");
-  assert(sel.includes('export const SELECTION_VERSION = "gpr-select-2026-10-14.2" as const;'), "selection version stepped (P1, 2026-10-14: the predecessor's citations are admitted ahead of the cap)");
+  assert(sel.includes('export const SELECTION_VERSION = "gpr-select-2026-10-14.3" as const;'), "selection version stepped (P1, 2026-10-14: the predecessor's citations are admitted ahead of the cap)");
   assert(sel.includes("if (!isAnalysisRow(s) && !isPageShapedRow(s))"), "an analysis row is admitted past the page-shape gate");
 });

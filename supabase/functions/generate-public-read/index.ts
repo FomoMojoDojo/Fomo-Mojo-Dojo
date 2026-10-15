@@ -49,7 +49,7 @@ import {
   rekeyCarriedBlock, searchLiveRecordForSpans, usableSpansOf, type CarriedBlock, type CarriedSpan,
   type CarryPlacement, type FieldCarry,
 } from "../_shared/carriedSpan.ts";
-import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass, PREDECESSOR_CITED_REASON } from "../_shared/publicReadInputs.ts";
+import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass, PREDECESSOR_CITED_REASON, PREDECESSOR_NAMED_REASON } from "../_shared/publicReadInputs.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
@@ -99,6 +99,8 @@ async function ledgerOf(inputs: InputRow[]) {
     // ledger names them so a reader can tell "this row is here because the read before it rested on
     // it" from "this row won the cap", which is exactly the distinction audit 10228 could not make.
     predecessor_cited: inputs.filter((r) => r.admitted_by === PREDECESSOR_CITED_REASON).map((r) => r.id),
+    // N2 (2026-10-14): the rows admitted because they STATE a name a still-sourced line uses.
+    predecessor_named: inputs.filter((r) => r.admitted_by === PREDECESSOR_NAMED_REASON).map((r) => r.id),
     // P3 (2026-10-13): which GENERATION RULES wrote it. selection_version says which rows entered the
     // pool; this says which instructions turned them into prose. Attribution only — it retracts
     // nothing. Absent = written before the ruling.
@@ -1145,7 +1147,7 @@ Respond with ONLY JSON:
       s1Refusal: (kind, payload) => {
         const stamped = stampFieldClasses(payload, classByRef);
         const results = stamped.map((f) => s1Unsourced({
-          field: f.field, cls: f.cls, text: f.text,
+          field: f.field, cls: f.cls, text: f.text, companyName,   // N1: own name excluded
           citedSourceTexts: f.refs
             .filter((r) => {
               const cls = classByRef.get(r);

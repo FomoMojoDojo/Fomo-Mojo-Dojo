@@ -188,7 +188,7 @@ Deno.test("S2. an exactly-doubled row renders once; everything else is untouched
 
 Deno.test("S2. DISPLAY ONLY — the pool's text and the span anchors stay on rowTextOf", async () => {
   const inputs = await read("./publicReadInputs.ts");
-  const push = inputs.slice(inputs.indexOf("for (const s of [...p1Sig.kept, ...sigSel.kept]) {"));
+  const push = inputs.slice(inputs.indexOf("const pushSignals = (list: readonly SelSignal[], reason: string | undefined) => {"));
   const line = push.slice(0, push.indexOf("\n  }"));
   // EXACTLY rowTextOf(...) and nothing chained onto it. Naming collapseHalves is not enough: any
   // transformation here — an inline regex, a .replace, a slice — reintroduces defect A by making the

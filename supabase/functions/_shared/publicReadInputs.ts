@@ -18,6 +18,8 @@ import { selectDeltas, selectFindings, selectOwnWords, selectSignals, type Dropp
 // R1: the ONE row-text assembly. Imported rather than re-stated so the pool and the drift re-read
 // cannot drift apart again — that divergence IS defect A.
 import { rowTextOf } from "./classSourcingScope.ts";
+// N2: the name extractor N1 uses — one definition, so the gate and the admission agree on what a name is.
+import { namesIn } from "./classFactCheck.ts";
 // P1 (2026-10-14): the predecessor's citations are read with the SAME walker C1 uses, so "what the
 // current read cites" means one thing in both places.
 import { linesOfStoredPayload } from "./citedLines.ts";
@@ -81,7 +83,8 @@ export type InputRow = {
    *  catalogue renders it as an attribute of the line; no span is ever cut from it. */
   source_title?: string | null;
   /** P1 (2026-10-14): `predecessor_cited` when this row was admitted because the CURRENT read cites
-   *  it, ahead of the cap. Absent for every row the ordinary selection admitted. */
+   *  it, ahead of the cap; `predecessor_named` (N2) when it was admitted because it STATES a name a
+   *  still-sourced current line uses. Absent for every row the ordinary selection admitted. */
   admitted_by?: string;
 };
 
@@ -119,6 +122,23 @@ export const READ_CAP: Record<string, number> = { finding: 25, own_word: 25, sig
 export const PREDECESSOR_CITED_CAP = 12;
 export const PREDECESSOR_CITED_REASON = "predecessor_cited" as const;
 
+// ── N2 (operator ruling, 2026-10-14): THE ROWS THAT STATE A STILL-SOURCED LINE'S NAMES ──────────
+//
+// WHY. N1 refuses a record/you line that names something none of its cited rows states. On Wasabi
+// that is "Wasabi Fire": the three rows that DO name it — 7964d012, 9373abfc, ba7db62d — are outside
+// the pool, because P1 admits only rows the CURRENT READ CITES and the current read never cited
+// them. So N1 alone would refuse the read for naming a product whose evidence the selection
+// deliberately withheld, and the only way to pass would be to stop naming it — a worse read.
+//
+// N2 closes the loop: for each still-sourced current line, the live public record/you rows that
+// state one of that line's N1 names verbatim are admitted before the cap, on the SAME budget of 12
+// P1 spends. The model then sees the row that licenses the name it is being asked to continue.
+//
+// EVERY ADMISSION LAW APPLIES, by construction: the candidates go through selectSignals /
+// selectOwnWords exactly as P1's do. FINDINGS AND DELTAS STAY OUT — a finding is our synthesis and a
+// delta a composed pair, and neither is a row N1 will accept as stating a name.
+export const PREDECESSOR_NAMED_REASON = "predecessor_named" as const;
+
 // ── gather PUBLIC inputs — each query's predicate selects public provenance ONLY ──────────────────
 // Ruling 5 (signed 2026-09-18): the queries below are unchanged in WHAT they may read; the SELECTION of which
 // rows enter (admission, dedupe, order, breadth, caps) is the ONE helper selectPublicInputs, built on the
@@ -139,6 +159,26 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
       .select("payload").eq("company_id", companyId).eq("kind", opts.predecessorKind).eq("is_current", true).maybeSingle();
     for (const l of linesOfStoredPayload((predRow as { payload?: Record<string, unknown> } | null)?.payload ?? null)) {
       for (const r of l.refs) predecessorCited.add(r);
+    }
+  }
+  // ── N2: the NAMES the predecessor's lines use, from the lines themselves. Computed here so the
+  //    signal lane below can admit the rows that state them on the same budget P1 spends.
+  const predecessorNames: string[] = [];
+  if (opts.predecessorKind) {
+    const { data: predRow2 } = await supabase.from("public_reads")
+      .select("payload").eq("company_id", companyId).eq("kind", opts.predecessorKind).eq("is_current", true).maybeSingle();
+    const { data: coRow2 } = await supabase.from("companies").select("name").eq("id", companyId).maybeSingle();
+    const own = new Set(String((coRow2 as { name?: string } | null)?.name ?? "").toLowerCase().split(/\s+/).filter(Boolean));
+    for (const l of linesOfStoredPayload((predRow2 as { payload?: Record<string, unknown> } | null)?.payload ?? null)) {
+      // NO CLASS TEST HERE, deliberately. 21 of the 22 current positioning reads predate 1a-4 and
+      // are wholly UNCLASSED, so requiring record/you on the predecessor's line made N2 a no-op on
+      // exactly the reads that need it — measured: Wasabi admitted 0 rows while "Wasabi Fire" was
+      // one of its names. The class test belongs to N1, which runs on the NEW read's lines, and
+      // those are always classed. What matters here is only that the name will be carried forward.
+      for (const n of namesIn(l.text)) {
+        if (own.size > 0 && n.toLowerCase().split(/[\s\/]+/).every((w) => own.has(w))) continue;
+        if (!predecessorNames.includes(n)) predecessorNames.push(n);
+      }
     }
   }
   /** P1's shared budget across signals and own_words, spent signals-first: the cap is what starves
@@ -185,8 +225,16 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   // never says predecessor_cited about a row that was admitted for any other reason.
   for (const d of p1Sig.dropped) dropped.push(d.reason === "over_cap" ? { ...d, reason: "over_predecessor_cited_cap" } : d);
   p1Budget -= p1Sig.kept.length;
-  const sigSel = selectSignals(sigRest, READ_CAP.signal, confirmed);
-  dropped.push(...sigSel.dropped);
+  // N2's CANDIDATES — the rows that state one of the predecessor's names. Selected further down,
+  // AFTER P1's own_words lane has spent its share: P1's rows are the evidence the read already rests
+  // on and take priority. Measured: selecting N2 here instead starved P1's own_words lane on Wasabi
+  // (3 cited own_words lost their lane to 8 name rows), which inverts the ruling's order.
+  const namedCandidates = predecessorNames.length > 0
+    ? sigRest.filter((r) => {
+        const txt = rowTextOf("signal", r as unknown as Record<string, unknown>);
+        return predecessorNames.some((n) => txt.includes(n));
+      })
+    : [];
   // ── R1 (operator ruling, 2026-10-14): the pool's text IS rowTextOf's text ───────────────────────
   // This line used to build `(claim_text ?? evidence_excerpt) + " (" + source_title + ")"`. The drift
   // re-read asks rowTextOf (claim_text + " " + evidence_excerpt), so no re-read could ever reproduce
@@ -198,10 +246,13 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   // THE TITLE IS NOT WHAT THE ROW SAYS. It is where the row was found, so appending it to the text
   // put a span's offsets over words the source never asserted. It travels as its own field and
   // reaches the prompt as an attribute of the line (buildCatalogue), never as text a span can cut.
-  for (const s of [...p1Sig.kept, ...sigSel.kept]) {
-    rows.push({ id: s.id, kind: "signal", provenance: "public_observed", source_class: classOfSignal(s), text: rowTextOf("signal", s), source_title: s.source_title ?? null, source_url: s.source_url, event_date: s.event_date,
-      admitted_by: p1Sig.kept.some((k) => k.id === s.id) ? PREDECESSOR_CITED_REASON : undefined });
-  }
+  // the signal rows are pushed below, once N2 has run and the ordinary cap has seen what is left.
+  const pushSignals = (list: readonly SelSignal[], reason: string | undefined) => {
+    for (const s of list) {
+      rows.push({ id: s.id, kind: "signal", provenance: "public_observed", source_class: classOfSignal(s), text: rowTextOf("signal", s), source_title: s.source_title ?? null, source_url: s.source_url, event_date: s.event_date, admitted_by: reason });
+    }
+  };
+  pushSignals(p1Sig.kept, PREDECESSOR_CITED_REASON);
 
   // 2. own-words — the company's OWN public-site voice, judge-kept only. own_site=true by construction
   //    (own-words ARE judge-kept quotes from the company's own public site — the seen_on "own site" set).
@@ -229,6 +280,21 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   // 1a-4: own words are the company speaking — class `you`, unconditionally.
   for (const w of [...p1Ow.kept, ...owSel.kept]) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", source_class: "you", text: (w.quote ?? "").trim(), source_url: (w as { source_url?: string | null }).source_url ?? null, own_site: true,
     admitted_by: p1Ow.kept.some((k) => k.id === w.id) ? PREDECESSOR_CITED_REASON : undefined });
+
+  // ── N2, now that BOTH P1 lanes have spent: the rows that state a name the predecessor uses, on
+  //    whatever of the shared budget of 12 is left. Through selectSignals, so every law applies.
+  const p1Named = p1Budget > 0 && namedCandidates.length > 0
+    ? selectSignals(namedCandidates, p1Budget, confirmed)
+    : { kept: [] as SelSignal[], dropped: [] as Dropped[] };
+  for (const d of p1Named.dropped) dropped.push(d.reason === "over_cap" ? { ...d, reason: "over_predecessor_named_cap" } : d);
+  p1Budget -= p1Named.kept.length;
+  pushSignals(p1Named.kept, PREDECESSOR_NAMED_REASON);
+
+  // ── the ORDINARY signal cap, over what neither P1 nor N2 took ───────────────────────────────────
+  const namedIds = new Set(p1Named.kept.map((r) => r.id));
+  const sigSel = selectSignals(sigRest.filter((r) => !namedIds.has(r.id)), READ_CAP.signal, confirmed);
+  dropped.push(...sigSel.dropped);
+  pushSignals(sigSel.kept, undefined);
 
   // 3. findings — the public_inferred register, open, AND RECURRENCE-BACKED (Gate 6a, 2026-08-26):
   //    only findings with a Gate-5c finding_recurrence row (entity-anchored, IDF-coherent, judge-anchored,

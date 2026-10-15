@@ -23,7 +23,8 @@
 // deterministic guard) is the one authority, normalizing both sides through normalizeForHash.
 import { verbatimProvable } from "./ownWordsExtract.ts";
 
-export type SpecificKind = "exclusivity" | "figure" | "reach" | "unresolved";
+// N1 (2026-10-14): `name` joins the kinds, so a refusal can say WHICH sort of specific was missing.
+export type SpecificKind = "exclusivity" | "figure" | "reach" | "unresolved" | "name";
 export type Specific = {
   kind: SpecificKind;
   /** the word or phrase that makes the sentence a factual assertion */
@@ -258,12 +259,102 @@ export function decideFieldClass(input: FieldClassInput): FieldClassDecision {
 // they are excluded by class. The caller excludes them by kind as well — belt and brace, because a
 // finding is our synthesis and our synthesis cannot license the record's words.
 
+// ── N1 (operator ruling, 2026-10-14): S1 ALSO CHECKS NAMES ──────────────────────────────────────
+//
+// WHY. Wasabi's third staged read (2322e6db, audit 10303) named "Wasabi Fire" and "AI/ML" in a
+// record-classed differentiator whose only cited row (2242bdd1) states neither — it quotes Liverpool
+// FC on Wasabi AiR and nothing else. S1 passed it because S1's scope was figures plus four position
+// words, so a product name went unchecked. C1-S makes this worse before it makes it better: it
+// carries pre-rules lines forward word for word, so a name the old read invented travels into the
+// new one with the operator's own continuation rule behind it.
+//
+// WHAT COUNTS AS A NAME, and the FALSE POSITIVES the literal reading produced. Measured over the 10
+// classed current reads plus 2322e6db, the ruling's words taken literally extracted 100 tokens, of
+// which the great majority were not names: 23 read as unsourced. Four shapes of noise, four fixes,
+// all of them narrowing:
+//
+//   (a) SUB-TOKENS of a run. "San Francisco" also emitted "San" and "Francisco"; "Therapeutic
+//       Behavioral Services" emitted all three words. Only the MAXIMAL run is a name — a token
+//       contained in a longer emitted token at the same position is dropped.
+//   (b) SINGLE LETTERS. "U.S." emitted "U" and "S" (9x and 8x). A name is at least two characters.
+//   (c) ORDINARY CAPITALIZED WORDS mid-sentence: "The", "To", "Small", "Clients", "Ability",
+//       "Expertise", "Youth". A lone capitalized word is a name only when its SHAPE says so —
+//       all-caps 2+, genuinely mixed case, or carrying a slash or digit. A plain Capitalized word
+//       on its own is not.
+//   (d) DOTTED ABBREVIATIONS. "U.S." is one name, not two letters; matched as a unit first.
+//   (e) HYPHENATED CATEGORY ADJECTIVES: AI-powered, AI-driven, AI-focused, AI-first, AI-fueled,
+//       AI-savvy. These are the same kind of word as "regulated", which the ruling leaves to the
+//       judge. The ABBREVIATION inside them ("AI") is still checked on its own, so nothing is lost.
+//
+// Those four fixes take 100 tokens to 59 and the unsourced set from 23 to 5, and the 5 that remain
+// are real: San Francisco and Therapeutic Behavioral Services on Edgewood's strategy, Wasabi Fire
+// and AI/ML on the Wasabi read this ruling exists to catch, and "Deliver AI" — the ONE residual
+// false positive, a verb phrase at the start of a line, filed for a ruling rather than guessed at.
+// It fails SAFE: a false positive refuses a stage, it does not pass an unsourced claim.
+//
+// THE COMPANY'S OWN NAME is excluded, and only when it is the whole name: "Wasabi" alone is not
+// checked, "Wasabi Fire" is.
+
+/** A token whose SHAPE makes it a name on its own: an abbreviation, a genuinely mixed-case word, or
+ *  one carrying a slash or digit. A plain Capitalized word fails this deliberately — fix (c). */
+export function nameShaped(tok: string): boolean {
+  if (tok.length < 2) return false;                                    // fix (b)
+  if (/^[A-Z]{2,}$/.test(tok)) return true;                            // FedRAMP-style abbreviation: AI, TV, CRM
+  if (/[\/\d]/.test(tok)) return true;                                 // AI/ML, S3, Medi-Cal/Medicare
+  // mixed case, but NOT a plain Capitalized word (SunRise and FedRAMP yes, "Small" no)
+  return /[a-z]/.test(tok) && /[A-Z]/.test(tok) && !/^[A-Z][a-z]+$/.test(tok);
+}
+
+/** Every NAME in a line, per N1 with the four narrowing fixes applied. */
+export function namesIn(text: string): string[] {
+  const t = String(text ?? "");
+  const hits: Array<{ tok: string; at: number }> = [];
+  const starts = new Set<number>([0]);
+  for (const m of t.matchAll(/[.!?]\s+/g)) starts.add((m.index ?? 0) + m[0].length);
+  // (d) a dotted abbreviation is ONE name
+  for (const m of t.matchAll(/\b(?:[A-Z]\.){2,}/g)) hits.push({ tok: m[0], at: m.index ?? 0 });
+  // a MULTI-WORD capitalized run is a name by construction
+  for (const m of t.matchAll(/\b[A-Z][a-zA-Z]+(?:\s*[A-Z][a-zA-Z]+)+\b/g)) hits.push({ tok: m[0], at: m.index ?? 0 });
+  // single tokens, only when the shape says name
+  for (const m of t.matchAll(/\b[A-Za-z][\w\/.\-]*\b/g)) {
+    const tok = m[0], at = m.index ?? 0;
+    if (starts.has(at) && /^[A-Z][a-z]+$/.test(tok)) continue;         // a plain word opening a sentence
+    // (e) a category adjective is not a name — but the ABBREVIATION inside it still is, and the
+    // token regex swallows the whole compound, so it has to be emitted here or it is lost entirely.
+    const compound = /^([A-Za-z]{2,})-[a-z]+$/.exec(tok);
+    if (compound) {
+      if (nameShaped(compound[1])) hits.push({ tok: compound[1], at });
+      continue;
+    }
+    if (!nameShaped(tok)) continue;                                    // (b) + (c)
+    hits.push({ tok, at });
+  }
+  // (a) keep only MAXIMAL runs
+  const keep = hits.filter((h, i) => !hits.some((o, j) =>
+    j !== i && o.at <= h.at && (o.at + o.tok.length) >= (h.at + h.tok.length) && o.tok.length > h.tok.length));
+  return [...new Set(keep.map((h) => h.tok))];
+}
+
+/** N1: the names a record/you line asserts that none of its cited source rows states verbatim.
+ *  `companyName` is excluded when it IS the whole name — "Wasabi" is not checked, "Wasabi Fire" is. */
+export function unsourcedNames(input: {
+  text: string; cls: string | null; citedSourceTexts: readonly string[]; companyName?: string;
+}): string[] {
+  if (input.cls !== "record" && input.cls !== "you") return [];
+  const own = new Set(String(input.companyName ?? "").toLowerCase().split(/\s+/).filter(Boolean));
+  return namesIn(input.text)
+    .filter((n) => !(own.size > 0 && n.toLowerCase().split(/[\s\/]+/).every((w) => own.has(w))))
+    .filter((n) => !input.citedSourceTexts.some((srcText) => srcText.includes(n)));
+}
+
 /** S1's position words. A deliberate SUBSET of EXCLUSIVITY: the ruling names these four. */
 export const S1_POSITION_WORDS: ReadonlySet<string> = new Set(["only", "sole", "first", "largest"]);
 
 export type S1Result = {
   field: string;
   cls: string | null;
+  /** N1 (2026-10-14): the names this line asserts that no cited row states verbatim. */
+  unsourced_names?: string[];
   /** how many specifics S1 tested — 0 means the line asserts nothing S1 governs */
   examined: number;
   /** the specifics no cited source row carries verbatim. Empty ⇒ the line passes. */
@@ -275,6 +366,8 @@ export type S1Result = {
  *  `citedSourceTexts` must already be restricted to that line's record/you rows, findings removed. */
 export function s1Unsourced(input: {
   field: string; text: string; cls: string | null; citedSourceTexts: readonly string[];
+  /** N1: the company's own name, so "Wasabi" alone is not demanded of the record. */
+  companyName?: string;
 }): S1Result {
   const cls = input.cls ?? null;
   // S1 governs the record speaking and the company speaking. our_read is (b)'s business, and an
@@ -291,7 +384,15 @@ export function s1Unsourced(input: {
   const unsourced = specs
     .filter((s) => !specificIsSourcedWithSecondChance(s, input.citedSourceTexts))
     .map((s) => ({ kind: s.kind, token: s.token }));
-  return { field: input.field, cls, examined: specs.length, unsourced };
+  // N1: names ride in the SAME result and the SAME refusal. They are reported separately so a reader
+  // can tell a missing figure from a missing product name, but either refuses the line.
+  const names = unsourcedNames({ text, cls, citedSourceTexts: input.citedSourceTexts, companyName: input.companyName });
+  return {
+    field: input.field, cls,
+    examined: specs.length + namesIn(text).length,
+    unsourced: [...unsourced, ...names.map((n) => ({ kind: "name" as SpecificKind, token: n }))],
+    unsourced_names: names,
+  };
 }
 
 /** The refusal detail S1 writes: every field that failed, with the specifics it could not source. */

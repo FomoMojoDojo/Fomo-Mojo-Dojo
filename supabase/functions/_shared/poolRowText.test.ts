@@ -26,7 +26,7 @@ const read = (p: string) => Deno.readTextFile(new URL(p, import.meta.url));
 
 Deno.test("R1. selectPublicInputs takes a signal's text from rowTextOf, and appends NOTHING to it", async () => {
   const src = await read("./publicReadInputs.ts");
-  const push = src.slice(src.indexOf('for (const s of [...p1Sig.kept, ...sigSel.kept]) {'));
+  const push = src.slice(src.indexOf('const pushSignals = (list: readonly SelSignal[], reason: string | undefined) => {'));
   const line = push.slice(0, push.indexOf("\n  }"));
   assert(
     line.includes('text: rowTextOf("signal", s)'),
@@ -84,7 +84,7 @@ Deno.test("R1. the catalogue renders the title AFTER the text, not inside it", a
 Deno.test("R1. the selection version was bumped past the pre-fix value", async () => {
   const { SELECTION_VERSION } = await import("./publicReadSelection.ts");
   assert(SELECTION_VERSION !== "gpr-select-2026-10-07.1", "the pre-R1 version must not still be stamped");
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.2");   // P1 bumped it again
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.3");   // P1 bumped it again
 });
 
 // ── R3 ───────────────────────────────────────────────────────────────────────────────────────────
