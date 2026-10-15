@@ -20,6 +20,7 @@
 // question — is this specific sourced — and these answer a different one: did we lose something the
 // record gave us. Keeping them apart is what lets voiceLabel.test.ts's pins on the gate stay meaningful.
 import { decideFieldClass, extractSpecifics } from "./classFactCheck.ts";
+import { reaskFeedbackBlock, type SourceRow } from "./reaskFeedback.ts";
 import { verbatimProvable } from "./ownWordsExtract.ts";
 import { normalizeForHash } from "./contentIdentity.ts";
 
@@ -204,13 +205,27 @@ export function isStillSourced(line: Pick<CitedLine, "refs">, sourcingIds: Reado
  *  business leaking into the prompt, which is what Q1 took out of clause (7). */
 export function stillSourcedPromptBlock(
   currentLines: readonly CitedLine[], sourcingIds: ReadonlySet<string>,
+  // ── NP (operator ruling, 2026-10-15): THE NAME ROWS TRAVEL WITH THE LINE ──────────────────────
+  // The block used to carry the line's text and its sourcing ids. A line can be continued only if it
+  // can also be SOURCED, and a name is sourced by whichever row states it verbatim — which is often
+  // not one of the rows that source the line. Wasabi's attempt 2 continued the AI-products line from
+  // exactly the two ids this block named and was refused by N1 on "Wasabi Fire" and "AI/ML", both of
+  // which were in the pool on other rows. So the pool and the company name come in, and the block is
+  // built by the ONE re-ask feedback builder — the same one both re-ask branches use.
+  pool: readonly SourceRow[] = [], companyName = "",
 ): string {
   const keep = currentLines.filter((l) => l.text.trim() && isStillSourced(l, sourcingIds));
   if (keep.length === 0) return "";
-  // The heading is the ruling's own phrase. Each entry is the line's text and the citation ids that
-  // make it still-sourced — nothing else, so no gate vocabulary reaches the model.
-  return `\n\nCURRENT LINES TO CONTINUE OR IMPROVE — the read you are replacing states these, and the rows they cite are in the ledger above:\n` +
-    keep.map((l) => `  ${l.text} [${l.refs.filter((r) => sourcingIds.has(r)).join(", ")}]`).join("\n");
+  const body = reaskFeedbackBlock({
+    lines: keep.map((l) => ({
+      field: l.field, text: l.text,
+      sourcing_citations: l.refs.filter((r) => sourcingIds.has(r)),
+    })),
+    pool, companyName,
+  });
+  // The heading is the ruling's own phrase. The entries carry text, sourcing ids and name rows —
+  // and no gate vocabulary: no class, no field path, no reason.
+  return `\n\nCURRENT LINES TO CONTINUE OR IMPROVE — the read you are replacing states these, and the rows they cite are in the ledger above:\n` + body;
 }
 
 // ── P2 (operator ruling, 2026-10-14): THREE COUNTS, NEVER ARITHMETIC ────────────────────────────

@@ -69,10 +69,15 @@ Deno.test("C1-R. the prompt carries the dropped line's TEXT and its SOURCING IDS
   const body = fn.slice(0, fn.indexOf("const results = s1Results[kind as Kind] ?? [];"));
   assert(body.includes("m.statement"), "the dropped line's own text");
   assert(body.includes("m.sourcing_citations"), "and the rows that still source it");
-  assert(body.includes("still stated by"), "named in the prompt");
   assert(body.includes("${lines}"), "and the block reaches the user prompt");
+  // NP (2026-10-15): the rendering moved into the ONE feedback builder, which prints the
+  // "still stated by" line and the per-name rows. The branch feeds it; it no longer formats.
+  assert(body.includes("reaskFeedbackBlock({"), "built by the one re-ask feedback builder");
+  const shared = await read("./reaskFeedback.ts");
+  assert(shared.includes("still stated by:"), "named in the prompt");
   // the ids are rendered as REF TOKENS, because those are what the model may cite
-  assert(body.includes("refByUuid.get(id) ?? id"), "translated to the ref tokens the model can cite");
+  assert(body.includes("refByUuid: refByUuidLive()"), "the branch hands it the uuid -> ref map");
+  assert(shared.includes("args.refByUuid?.get(id) ?? id"), "translated to the ref tokens the model can cite");
 });
 
 Deno.test("C1-R. the prompt carries the RULE: keep the still-sourced, replace only the rest", async () => {
@@ -80,7 +85,7 @@ Deno.test("C1-R. the prompt carries the RULE: keep the still-sourced, replace on
   const fn = src.slice(src.indexOf('if (because === "continuity") {'));
   const body = fn.slice(0, fn.indexOf("const results = s1Results[kind as Kind] ?? [];"));
   assert(body.includes("keep or improve EVERY line listed here"), "keep or improve every still-sourced line");
-  assert(body.includes("A new line may replace only a line that is NOT"), "a new line replaces only a non-listed one");
+  assert(body.includes("A new line may ` +\n            `replace only a line that is NOT listed here"), "a new line replaces only a non-listed one");
   assert(body.includes("it must still say what it says"), "improving is allowed, losing the claim is not");
 });
 
@@ -98,7 +103,10 @@ Deno.test("C1-R. CODE NEVER REWRITES A LINE", async () => {
   const src = await read("../generate-public-read/index.ts");
   const fn = src.slice(src.indexOf('if (because === "continuity") {'));
   const body = fn.slice(0, fn.indexOf("const results = s1Results[kind as Kind] ?? [];"));
-  assert(body.includes("const again = await run(genChoice, sys, user, 0.2);"), "the model answers again");
+  // L1 (2026-10-15): the call carries its attempt and its role, so its cost row names them.
+  assert(body.includes("const again = await run(genChoice, sys, user, 0.2,"), "the model answers again");
+  assert(body.includes('attempt: (attemptNo[kind as Kind] ?? 1) + 1, role: "generator"'),
+    "ledgered as the attempt it produces");
   assert(body.includes("return again;"), "and its answer is what is returned");
   assert(!/payload\[/.test(body), "the refused payload is never edited in place");
   assert(!body.includes("...payload"), "nor merged into");

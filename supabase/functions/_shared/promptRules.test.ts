@@ -154,10 +154,16 @@ Deno.test({
 Deno.test("Q4. the sha is computed over the WHOLE prompt, system and user", () => {
   const i = SRC.indexOf("const systemText = genSys[kind as Kind];");
   assert(i > 0, "the prompt halves are named before the call");
-  const block = SRC.slice(i, SRC.indexOf("const p = await run(", i) + 60);
-  assert(block.includes("promptSha[kind as Kind] = await sha256Hex(`${systemText}\\n\\n${userText}`);"),
+  const block = SRC.slice(i, SRC.indexOf("const p = await run(", i) + 140);
+  // L1 (2026-10-15): the sha is no longer taken at this one site. run() takes it, over its OWN
+  // system+user by the same recipe, for EVERY generator call — so a payload produced by a re-ask is
+  // stored naming the prompt that wrote it rather than the prompt of the refused answer (8ef4dc7b
+  // carries attempt 1's sha). The recipe is pinned where it now lives.
+  assert(SRC.includes("const sha = await sha256Hex(`${system}" + String.fromCharCode(92) + "n" + String.fromCharCode(92) + "n${user}`);"),
     "sha256 of system + user, the ledger body included — it identifies the prompt, it does not summarise it");
-  assert(block.includes("const p = await run(genChoice, systemText, userText, 0);"),
+  assert(SRC.includes('if (meta?.kind && meta.role !== "judge") promptSha[meta.kind] = sha;'),
+    "and every generator call stamps the kind's prompt_sha — the judge's prompt is not the read's");
+  assert(block.includes('const p = await run(genChoice, systemText, userText, 0, { kind: kind as Kind, attempt: 1, role: "generator" });'),
     "and the model is sent exactly the text that was hashed, not a rebuild of it");
 });
 

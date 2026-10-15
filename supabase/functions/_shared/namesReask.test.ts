@@ -140,7 +140,10 @@ Deno.test("N1c. CODE NEVER REWRITES A LINE — the re-ask returns the model's ow
   // one, so the slice starts at the SOURCING branch itself rather than at the callback head.
   const fn = src.slice(src.indexOf("const results = s1Results[kind as Kind] ?? [];"));
   const body = fn.slice(0, fn.indexOf("\n      reaskOnClassRefusal:"));
-  assert(body.includes("const again = await run(genChoice, sys, user, 0.2);"), "the model answers again");
+  // L1 (2026-10-15): the call carries its attempt and its role, so its cost row names them.
+  assert(body.includes("const again = await run(genChoice, sys, user, 0.2,"), "the model answers again");
+  assert(body.includes('attempt: (attemptNo[kind as Kind] ?? 1) + 1, role: "generator"'),
+    "ledgered as the attempt it produces");
   assert(body.includes("return again;"), "and its answer is what is returned");
   // no splice, no patch, no field surgery
   assert(!/payload\[/.test(body), "the refused payload is never edited in place");
@@ -151,13 +154,17 @@ Deno.test("N1c. the re-ask prompt names the refused tokens AND the rows that sta
   const src = await read("../generate-public-read/index.ts");
   const fn = src.slice(src.indexOf("const results = s1Results[kind as Kind] ?? [];"));
   const body = fn.slice(0, fn.indexOf("\n      reaskOnClassRefusal:"));
-  assert(body.includes("const supportFor = (token: string): string[]"), "it looks up supporting rows");
-  assert(body.includes("stated in ${rows.join(\", \")}"), "and names them in the prompt");
-  assert(body.includes("stated in NO row of this ledger"), "and says so when there are none");
+  // NP (2026-10-15): the private supportFor lookup is gone — the ONE feedback builder does it, for
+  // this branch and the continuity branch alike, and it also carries each line's continuity status.
+  assert(body.includes("reaskFeedbackBlock({"), "it looks up supporting rows");
+  const shared = await read("./reaskFeedback.ts");
+  assert(shared.includes("export function nameSupport("), "through the shared name-support lookup");
+  assert(shared.includes('`"${n.name}" -> ${n.support.join(", ")}`'), "and names them in the prompt");
+  assert(shared.includes("stated in NO row of this ledger"), "and says so when there are none");
   assert(body.includes("${block}"), "the block reaches the user prompt");
-  // the support set obeys N1b: record/you only, findings excluded
-  assert(body.includes('if (cls !== "record" && cls !== "you") continue;'), "only record/you rows are offered");
-  assert(body.includes('if (kindByRef.get(ref) === "finding") continue;'),
+  // the support set obeys N1b: record/you only, findings excluded — now stated once, in canSource
+  assert(shared.includes('return row.cls === "record" || row.cls === "you";'), "only record/you rows are offered");
+  assert(shared.includes('if (row.kind === "finding") return false;'),
     "and never a finding — offering one would be a trap under N1b");
 });
 

@@ -1,0 +1,131 @@
+// ── NP (operator ruling, 2026-10-15): ONE BUILDER FOR EVERY RE-ASK, CONTINUITY AND NAMES ────────
+//
+// WHY. Wasabi's stage was refused twice in one run, each time by a gate that could only see half the
+// problem (audits 10454 → 10455).
+//
+//   attempt 1  C1-S: the still-sourced AI-products line was dropped. C1-R re-asked, carrying the
+//              line's text and the ids of the rows that still SOURCE it — 2242bdd1 and 7638775d.
+//   attempt 2  the model obeyed exactly: it wrote the line back and cited those two rows. N1 then
+//              refused it, because neither row states the names the line uses — "Wasabi Fire" and
+//              "AI/ML". Both names WERE in the pool: 9373abfc states Wasabi Fire, c30e9189 states
+//              AI/ML, each admitted by N2's name harvest. Nothing told the model they existed.
+//
+// The continuity prompt knew about sourcing rows; the names prompt (N1c) knew about name rows; the
+// budget is one re-ask, and the line needed both. A line can be continued only if it can also be
+// sourced — for its figures AND for its names — so the two facts belong in one block, built once.
+//
+//   THE RULE: one function builds re-ask feedback, for every refusal type, and it covers both
+//   continuity and names for every line it names.
+//
+// A name with no supporting row is SAID SO rather than omitted: "stated in NO row of this ledger" is
+// the one honest answer, and it tells the model to drop the name or the claim instead of guessing.
+import { namesIn } from "./classFactCheck.ts";
+
+/** A pool row, as both the gate and the prompt see it. `cls` is the source class; `kind` matters
+ *  because a finding is our own synthesis and may never source a name (S1/N1). */
+export type SourceRow = { id: string; kind: string; cls: string; text: string };
+
+/** One line the re-ask is about. Both dimensions are optional per line, but the BLOCK always states
+ *  both: a line with no sourcing ids says so, and a line whose names are all sourced says so. */
+export type FeedbackLine = {
+  /** the field path, when the caller knows it. The BLOCK never prints it — a field path is the
+   *  enforcer's business, not the prompt's — but a caller that has one may pass it for the record. */
+  field?: string;
+  text: string;
+  /** C1-S: the ids that make this line still-sourced. Empty for a line the re-ask is about for
+   *  another reason — the block then says it carries no surviving source. */
+  sourcing_citations?: readonly string[];
+  /** S1/N1: the specifics and names this line asserted that its OWN cited rows do not state. When
+   *  absent, every name in the line is still listed with its support, because the model is being
+   *  asked to write the line again and needs to know what it may cite. */
+  unsourced?: readonly string[];
+};
+
+/** Rows that may source a name: class record or you, never a finding. The ruling bars a finding
+ *  outright, so it is excluded by KIND as well as by class — a finding classed `you` would
+ *  otherwise slip through. */
+export function canSource(row: SourceRow): boolean {
+  if (row.kind === "finding") return false;
+  return row.cls === "record" || row.cls === "you";
+}
+
+/** The pool rows that state `token` VERBATIM and are allowed to source it. Capped: enough to choose
+ *  from, not a dump of the ledger. */
+export function nameSupport(
+  token: string, pool: readonly SourceRow[], limit = 4,
+): string[] {
+  const out: string[] = [];
+  for (const row of pool) {
+    if (!canSource(row)) continue;
+    if (!row.text.includes(token)) continue;
+    out.push(row.id);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** The names in a line, minus the company's own name when that is the WHOLE name — the same
+ *  exclusion N1 applies, so the block never asks the model to source "Wasabi". */
+export function namesToSource(text: string, companyName: string): string[] {
+  const own = new Set(String(companyName ?? "").toLowerCase().split(/\s+/).filter(Boolean));
+  return namesIn(text).filter((n) =>
+    !(own.size > 0 && n.toLowerCase().split(/[\s/]+/).every((w) => own.has(w))));
+}
+
+export type FeedbackEntry = {
+  field?: string;
+  text: string;
+  /** the ids that still source the line (C1-S), translated to what the model may cite */
+  sourcing: string[];
+  /** every name the line must be able to source, with the rows that state it */
+  names: Array<{ name: string; support: string[]; unsourced: boolean }>;
+};
+
+/** THE ONE BUILDER. Given the lines a refusal is about and the pool, state for each: its text, the
+ *  rows that still source it, and for every name in it, the rows that state that name verbatim. */
+export function reaskFeedback(args: {
+  lines: readonly FeedbackLine[];
+  pool: readonly SourceRow[];
+  companyName: string;
+  /** uuid → the ref token the model may cite. Ids pass through unchanged when absent. */
+  refByUuid?: ReadonlyMap<string, string>;
+}): FeedbackEntry[] {
+  const tok = (id: string) => args.refByUuid?.get(id) ?? id;
+  return args.lines.map((l) => {
+    const refused = new Set(l.unsourced ?? []);
+    return {
+      field: l.field,
+      text: l.text,
+      sourcing: [...(l.sourcing_citations ?? [])].map(tok),
+      names: namesToSource(l.text, args.companyName).map((name) => {
+        const support = nameSupport(name, args.pool).map(tok);
+        return { name, support, unsourced: support.length === 0 || refused.has(name) };
+      }),
+    };
+  });
+}
+
+/** The block as the model reads it. Every entry states BOTH dimensions, always — a silence about one
+ *  of them is how attempt 2 cited two rows that could not carry its names. */
+export function reaskFeedbackBlock(args: {
+  lines: readonly FeedbackLine[];
+  pool: readonly SourceRow[];
+  companyName: string;
+  refByUuid?: ReadonlyMap<string, string>;
+}): string {
+  const entries = reaskFeedback(args);
+  if (entries.length === 0) return "";
+  return entries.map((e) => {
+    const head = `  "${e.text}"`;
+    const src = e.sourcing.length > 0
+      ? `\n      still stated by: ${e.sourcing.join(", ")}`
+      : `\n      still stated by: no row of this ledger — this line has no surviving source`;
+    const names = e.names.length === 0
+      ? `\n      names to source: none`
+      : `\n      names to source: ` + e.names.map((n) =>
+          n.support.length > 0
+            ? `"${n.name}" -> ${n.support.join(", ")}`
+            : `"${n.name}" -> stated in NO row of this ledger`).join(" | ");
+    return head + src + names;
+  }).join("\n");
+}

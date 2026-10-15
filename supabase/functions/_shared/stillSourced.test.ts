@@ -82,17 +82,21 @@ Deno.test("C1-S. the block carries line TEXT and CITATION IDS ONLY", () => {
     L("unique_attributes[0]", "FedRAMP Ready status", ["sigRec", "find1", "gone"], "record"),
   ], ids);
   assert(block.includes("FedRAMP Ready status"), "the text");
-  assert(block.includes("[sigRec]"), "and the ids that make it still-sourced");
+  // NP (2026-10-15): the entry is now two labelled lines under the text — the rows that still source
+  // it, and the rows that state each of its names. The ids are still the only ids that travel.
+  assert(block.includes("still stated by: sigRec"), "and the ids that make it still-sourced");
+  assert(/names to source:/.test(block), "and the name rows, which is what NP added");
   // nothing else may travel: no class, no field path, no specifics, no reason
-  assert(!block.includes("record"), "the class is the enforcer's business, not the prompt's");
-  assert(!block.includes("unique_attributes[0]"), "nor the field path");
-  // the DATA lines carry no gate vocabulary. The heading is the ruling's own phrase and is not data.
-  const dataLines = block.split("\n").filter((x) => x.startsWith("  "));
-  assertEquals(dataLines.length, 1, "one entry per still-sourced line");
-  assert(!/specific|reason|licens|class|drop/i.test(dataLines.join(" ")), "no gate vocabulary in the data");
+  assert(!block.includes("unique_attributes[0]"), "not the field path");
+  // an entry is a quoted text line; its two labelled lines are indented further under it
+  const dataLines = block.split("\n").filter((x) => /^  "/.test(x));
+  assertEquals(dataLines.length, 1, "one text entry per still-sourced line");
+  assert(!/specific|reason|licens|\bclass\b|drop/i.test(dataLines.join(" ")), "no gate vocabulary in the text line");
+  assertEquals(block.split("\n").filter((x) => /^      still stated by:/.test(x)).length, 1, "with one sourcing line");
+  assertEquals(block.split("\n").filter((x) => /^      names to source:/.test(x)).length, 1, "and one names line");
   // and only the SOURCING citations, not every citation it ever had
   assert(!block.includes("find1"), "a non-sourcing citation is not listed");
-  assert(!block.includes("gone"), "nor one that left the pool");
+  assert(!block.includes("[gone]") && !block.includes("by: gone"), "nor one that left the pool");
 });
 
 Deno.test("C1-S. an empty still-sourced set yields an empty block, not a stray heading", () => {
@@ -102,7 +106,8 @@ Deno.test("C1-S. an empty still-sourced set yields an empty block, not a stray h
 
 Deno.test("C1-S. the generator puts the block in the USER prompt, before the carry notice", async () => {
   const src = await read("../generate-public-read/index.ts");
-  assert(src.includes("const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds);"),
+  // NP: the call gained the pool and the company name, because the block now carries name rows.
+  assert(src.includes("const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName);"),
     "the block is built from this run's pool");
   assert(src.includes("${CAT}${extra}${ssBlock}${takenBlock}"),
     "and interpolated into the user prompt, after the ledger and before the carry notice");
@@ -165,7 +170,7 @@ Deno.test("C1-S. the split and the block are fed the SAME sourcing set", async (
   const src = await read("../generate-public-read/index.ts");
   assert(src.includes("const sourcingIds = sourcingIdsOf(inputs as Array<{ id: string; kind: string; source_class: string }>);"),
     "one set, built from the pool the ledger was built from");
-  assert(src.includes("const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds);"), "the prompt uses it");
+  assert(src.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName)"), "the prompt uses it");
   assert(src.includes("sourcingIds,                                       // C1-S: which drops refuse on any rules"),
     "and so does the classifier — a second set is how the two would disagree about what was shown");
 });

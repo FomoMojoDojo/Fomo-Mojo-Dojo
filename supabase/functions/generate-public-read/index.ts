@@ -50,7 +50,8 @@ import {
   type CarryPlacement, type FieldCarry,
 } from "../_shared/carriedSpan.ts";
 import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass, PREDECESSOR_CITED_REASON, PREDECESSOR_NAMED_REASON } from "../_shared/publicReadInputs.ts";
-import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
+import { type ModelCallRecord, openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
+import { reaskFeedbackBlock, type SourceRow } from "../_shared/reaskFeedback.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -408,19 +409,59 @@ Deno.serve(async (req) => {
       if (!mm) throw new Error(`${model} returned no JSON: ${content.slice(0, 200)}`);
       return JSON.parse(mm[0]) as Record<string, unknown>;
     };
-    const run = async (choice: typeof genChoice, system: string, user: string, temperature: number): Promise<Record<string, unknown>> => {
+    // ── L1 (operator ruling, 2026-10-15): ONE LEDGER ROW PER MODEL CALL ──────────────────────────
+    // Usage was accumulated across every call of a run and written as ONE row at the end. The Wasabi
+    // run of 15:55 made two generator calls and a judge call and left a single row of 15158 prompt
+    // tokens, so "prompt tokens per attempt" was unanswerable, and no row named the prompt that
+    // incurred the spend. Each call now writes its own row carrying its attempt and its prompt sha,
+    // computed by the SAME recipe Q4 stamps a read with — so a read, its audit row and its cost rows
+    // all name one sha. The aggregate `cost` field survives as a response summary, not as a row.
+    //
+    // A GENERATOR call also updates promptSha[kind]: Q4 stamped only the first prompt, so a read
+    // produced by a re-ask was stored naming the prompt of the answer that was REFUSED (8ef4dc7b
+    // carries attempt 1's sha). The sha now tracks the attempt that actually wrote the payload.
+    const attemptNo: Partial<Record<Kind, number>> = {};
+    const run = async (
+      choice: typeof genChoice, system: string, user: string, temperature: number,
+      meta?: { kind?: Kind; attempt?: number; role?: "generator" | "judge" | "class_fix" },
+    ): Promise<Record<string, unknown>> => {
+      const sha = await sha256Hex(`${system}\n\n${user}`);
+      if (meta?.kind && meta.role !== "judge") promptSha[meta.kind] = sha;
+      const ledgerRow = async (rec: ModelCallRecord) => {
+        await recordModelCall(supabase, {
+          companyId: company_id, runId: null,
+          callSite: `generate-public-read${meta?.kind ? `:${meta.kind}` : ""}${meta?.role ? `:${meta.role}` : ""}`,
+          usage: rec, attempt: meta?.attempt ?? null, promptSha: sha,
+        });
+      };
       if (choice.provider === "external_openai") {
         // Large public catalogues (hundreds of inputs) push a single call past the 60s default — give it room.
         const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, temperature, timeoutMs: 180_000 }));
         usage.prompt_tokens += r.usage.prompt_tokens; usage.completion_tokens += r.usage.completion_tokens;
+        // Ledgered BEFORE the parse: the call was billed whether or not its answer was usable, and a
+        // refusal whose cost vanished is the gap this ruling closes.
+        await ledgerRow(openaiRecord(choice.model, r.usage));
         const mm = r.content.match(/\{[\s\S]*\}/);
         if (!mm) throw new Error(`openai ${choice.model} returned no JSON: ${r.content.slice(0, 200)}`);
         return JSON.parse(mm[0]) as Record<string, unknown>;
       }
+      // The local provider returns no usage. Nulls are the honest value — never a 0, which would read
+      // as a free call — and the provider recorded is the one that ran, not openai.
+      await ledgerRow({ provider: choice.provider, model: choice.model, prompt_tokens: null, completion_tokens: null, usd: null });
       return callLocal(choice.model, system, user, temperature);
     };
 
     const { text: CAT, uuidByRef, classByRef, textByRef, kindByRef, tokenSummary } = buildCatalogue(inputs);
+    // ── NP (operator ruling, 2026-10-15): THE POOL, as the ONE re-ask feedback builder sees it ────
+    // Built from the live ref maps, so a row admitted mid-run (PASS 2, N2) is in it: the name a
+    // re-ask needs may well be on a row the original selection never put in front of the model.
+    const feedbackPool = (): SourceRow[] => [...uuidByRef.entries()].map(([ref, id]) => ({
+      id, kind: String(kindByRef.get(ref) ?? ""), cls: String(classByRef.get(ref) ?? ""),
+      text: textByRef.get(ref) ?? "",
+    }));
+    /** uuid → ref token: what the model may actually cite. */
+    const refByUuidLive = (): Map<string, string> =>
+      new Map([...uuidByRef.entries()].map(([ref, id]) => [id, ref]));
     // The ref set and the catalogue TEXT both grow when a row is admitted from the live record,
     // so guard 1 accepts the new token and the judge can see the line it cites.
     const validRefs = new Set(uuidByRef.keys());
@@ -914,6 +955,11 @@ Respond with ONLY JSON:
         excluded_by_rule: {
           kind, guard: row.guard ?? null, detail: row.detail ?? null,
           mode: doStage ? "stage" : (doWrite ? "write" : "dry_run"),
+          // L1: WHICH attempt this row is, and WHICH prompt produced the payload it refused. Without
+          // the sha a refused attempt could not be joined to its own cost rows or to its prompt at
+          // all — audits 10454 and 10455 carry neither.
+          attempt: attemptNo[kind as Kind] ?? null,
+          prompt_sha: promptSha[kind as Kind] ?? null,
           continuity: continuityBlocks[kind as Kind] ?? null,
           restated_carried: restatedCarried,
           // V4: the refused read itself, and what it cited. Null on an accepted kind — the row that
@@ -1232,13 +1278,16 @@ Respond with ONLY JSON:
         // are shown: a line whose sources have left the pool cannot be continued from the ledger in
         // front of the model, so naming it would be asking for an unsourced sentence.
         const currentForPrompt = await currentLinesFor(kind as Kind);
-        const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds);
+        // NP: the generation prompt's still-sourced block carries the name rows too, from the same
+        // builder the re-asks use — so the FIRST attempt already knows which row states each name.
+        const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName);
         stillSourcedByKind[kind as Kind] = currentForPrompt
           .filter((l) => l.text.trim() && isStillSourced(l, sourcingIds))
           .map((l) => ({ field: String(l.field ?? ""), text: l.text, citations: l.refs.filter((r) => sourcingIds.has(r)) }));
         const userText = `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}${ssBlock}${takenBlock}\n\nProduce the ${kind} JSON.`;
-        promptSha[kind as Kind] = await sha256Hex(`${systemText}\n\n${userText}`);
-        const p = await run(genChoice, systemText, userText, 0);
+        // L1: run() stamps promptSha[kind] itself, by the same recipe, for EVERY generator call —
+        // so a payload produced by a re-ask is no longer stored naming the refused answer's prompt.
+        const p = await run(genChoice, systemText, userText, 0, { kind: kind as Kind, attempt: 1, role: "generator" });
         // S1: the assembly reports where each carry actually landed. A slot with neither a carry nor
         // a generated line to fill it shifts every later carry down one, and the block must name the
         // path the line is STORED at — the drift check and C1-A's anchor both key off it.
@@ -1277,7 +1326,8 @@ Respond with ONLY JSON:
             console.log(`[distinctness-prefilter] ${company_id} ${kind} ${JSON.stringify(hits)} — LOG ONLY, the judge decides`);
           }
         }
-        const v = await run(judgeChoice, judgeSysFor(kind as Kind), judgeUser, 0);
+        const v = await run(judgeChoice, judgeSysFor(kind as Kind), judgeUser, 0,
+          { kind: kind as Kind, attempt: attemptNo[kind as Kind] ?? 1, role: "judge" });
         verdicts[kind as Kind] = v;
         return v;
       },
@@ -1317,17 +1367,27 @@ Respond with ONLY JSON:
           const block = continuityBlocks[kind as Kind];
           const dropped = (block?.missing ?? []).filter((m) => m.still_sourced === true);
           if (dropped.length === 0) return null;            // nothing a re-ask could repair
-          const lines = dropped.map((m) =>
-            `  "${m.statement}" — still stated by ${(m.sourcing_citations ?? []).map((id) => refByUuid.get(id) ?? id).join(", ")}`).join("\n");
+          // NP: ONE builder, and it states BOTH dimensions for every line — the rows that still
+          // source the line AND, per name in it, the rows that state that name verbatim. Naming only
+          // the sourcing rows is what sent attempt 2 to cite two rows that could not carry its names
+          // (10454 -> 10455), with the single re-ask already spent.
+          const lines = reaskFeedbackBlock({
+            lines: dropped.map((m) => ({
+              field: m.field, text: m.statement, sourcing_citations: m.sourcing_citations ?? [],
+            })),
+            pool: feedbackPool(), companyName, refByUuid: refByUuidLive(),
+          });
           const sys = genSys[kind as Kind];
           const user = `LEDGER (cite only the bracketed tokens on these lines):\n${CAT_LIVE || CAT}\n\n` +
             `YOUR PREVIOUS ANSWER WAS REFUSED. It dropped a line the read you are replacing states, ` +
             `whose sources are still in the ledger above:\n${lines}\n\n` +
             `THE RULE: keep or improve EVERY line listed here — you may reword it or cite it better, ` +
-            `but it must still say what it says. A new line may replace only a line that is NOT ` +
-            `listed here. Produce the ${kind} JSON again, in full.`;
+            `but it must still say what it says, and every name it uses must be stated by a row IT ` +
+            `CITES — cite the rows named above for each name, or leave that name out. A new line may ` +
+            `replace only a line that is NOT listed here. Produce the ${kind} JSON again, in full.`;
           try {
-            const again = await run(genChoice, sys, user, 0.2);
+            const again = await run(genChoice, sys, user, 0.2,
+              { kind: kind as Kind, attempt: (attemptNo[kind as Kind] ?? 1) + 1, role: "generator" });
             reasked[kind as Kind] = { specifics: dropped.map((m) => m.statement), fields: dropped.map((m) => String(m.field ?? "")) };
             return again;
           } catch {
@@ -1337,36 +1397,48 @@ Respond with ONLY JSON:
         const results = s1Results[kind as Kind] ?? [];
         const failing = results.filter((r) => r.unsourced.length > 0);
         if (failing.length === 0) return null;
-        // For every unsourced token, the pool rows that DO state it. record/you only, findings
-        // excluded — a finding cannot license a name under N1b, so offering one would be a trap.
-        const supportFor = (token: string): string[] => {
-          const out: string[] = [];
-          for (const [ref, uuid] of uuidByRef) {
-            const cls = classByRef.get(ref);
-            if (cls !== "record" && cls !== "you") continue;
-            if (kindByRef.get(ref) === "finding") continue;
-            if ((textByRef.get(ref) ?? "").includes(token)) out.push(ref);
-            if (out.length >= 4) break;                   // enough to choose from, not a dump
-          }
-          return out;
-        };
-        const block = failing.map((r) => {
-          const toks = r.unsourced.map((u) => u.token);
-          return `  ${r.field} (${r.cls}): ` + toks.map((t) => {
-            const rows = supportFor(t);
-            return rows.length > 0
-              ? `${JSON.stringify(t)} — stated in ${rows.join(", ")}`
-              : `${JSON.stringify(t)} — stated in NO row of this ledger`;
-          }).join("; ");
-        }).join("\n");
+        // NP: THE SAME ONE BUILDER, and it carries CONTINUITY too. A line refused for an unsourced
+        // name is about to be rewritten, and a rewrite that drops a line the current read still
+        // states is the next refusal (C1-S) with the budget already gone. So each refused line
+        // arrives with its own sourcing ids when the current read still states it, and the
+        // still-sourced lines it must not lose are listed alongside.
+        const ssForKind = stillSourcedByKind[kind as Kind] ?? [];
+        // KEYED BY FIELD PATH, never by text. A refused line is BY DEFINITION one the model wrote in
+        // its own words, so matching it to the current read's line by text equality misses nearly
+        // always — and the block then tells the model the line "has no surviving source", which is
+        // the opposite of the truth and invites it to drop the line. The field path is stable across
+        // a rewrite and both sides already carry it.
+        const ssByField = new Map(ssForKind.map((l) => [l.field, l]));
+        const stamped = fieldClasses[kind as Kind] ?? [];
+        const textOfField = new Map(stamped.map((f) => [f.field, f.text]));
+        const block = reaskFeedbackBlock({
+          lines: [
+            // the refused lines, each with its unsourced tokens AND its continuity status
+            ...failing.map((r) => ({
+              field: r.field, text: textOfField.get(r.field) ?? "",
+              sourcing_citations: ssByField.get(r.field)?.citations ?? [],
+              unsourced: [...r.unsourced.map((u) => u.token), ...(r.unsourced_names ?? [])],
+            })),
+            // and every OTHER still-sourced line, so the rewrite cannot lose one. Same key: by text
+            // this filter never matched, so a refused field was listed twice — once claiming no
+            // source and once claiming one.
+            ...ssForKind.filter((l) => !failing.some((r) => r.field === l.field))
+              .map((l) => ({ field: l.field, text: l.text, sourcing_citations: l.citations ?? [] })),
+          ],
+          pool: feedbackPool(), companyName, refByUuid: refByUuidLive(),
+        });
         const sys = genSys[kind as Kind];
         const user = `LEDGER (cite only the bracketed tokens on these lines):\n${CAT_LIVE || CAT}\n\n` +
-          `YOUR PREVIOUS ANSWER WAS REFUSED. Each line below states something none of the rows IT CITES says. ` +
-          `For each: either cite a row named here that does state it, or write the line so that what it asserts is ` +
-          `what its own cited rows say, or leave the claim out. Do not keep an assertion no cited row carries.\n${block}\n\n` +
+          `YOUR PREVIOUS ANSWER WAS REFUSED. A line stated something none of the rows IT CITES says. ` +
+          `Below is every line involved: what still sources it, and for each name in it, the rows that ` +
+          `state that name. For each refused line: cite a row named here that does state it, or write ` +
+          `the line so that what it asserts is what its own cited rows say, or leave the claim out. ` +
+          `Do not keep an assertion no cited row carries. And keep every line listed here — dropping ` +
+          `one the read you are replacing still states is a loss, not a fix.\n${block}\n\n` +
           `Produce the ${kind} JSON again, in full.`;
         try {
-          const again = await run(genChoice, sys, user, 0.2);
+          const again = await run(genChoice, sys, user, 0.2,
+            { kind: kind as Kind, attempt: (attemptNo[kind as Kind] ?? 1) + 1, role: "generator" });
           reasked[kind as Kind] = { specifics: failing.flatMap((r) => r.unsourced.map((u) => u.token)), fields: failing.map((r) => r.field) };
           return again;
         } catch {
@@ -1442,7 +1514,8 @@ Respond with ONLY JSON:
           + `Return ONLY the rewritten fields, keyed by the EXACT field names above:\n`
           + `{"fixes":{${askedFields.map((f) => `"${f}":{"text":"...","citations":["<token>"]}`).join(",")}}}`;
         const extra = kind === "strategy" ? positioningContext : "";
-        const fixResp = await run(genChoice, genSys[kind as Kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT_LIVE}${extra}\n\n${ask}`, 0);
+        const fixResp = await run(genChoice, genSys[kind as Kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT_LIVE}${extra}\n\n${ask}`, 0,
+          { kind: kind as Kind, attempt: (attemptNo[kind as Kind] ?? 1) + 1, role: "class_fix" });
         const fixes = ((fixResp?.fixes ?? fixResp ?? {}) as Record<string, unknown>);
         let spliced = 0;
         for (const d of refused) {
@@ -1465,6 +1538,15 @@ Respond with ONLY JSON:
       // attempt's payload. `payloads[kind]` is set with it so the report and the audit rows name the
       // payload that was actually stamped and guarded.
       stampPayload: async (kind, payload) => {
+        // ── F1b (operator ruling, 2026-10-15): THE VERDICT IS CLEARED WITH THE STAMP ───────────
+        // verdicts[kind] is written only when the judge runs, and was never cleared at an attempt
+        // boundary. Attempt 2 of the Wasabi run was refused at GUARD 5, which precedes the judge, so
+        // verdicts.positioning still held ATTEMPT 1's verdict — and the audit row for attempt 2
+        // (10455) therefore carried attempt 1's distinctness block, while the HTTP response reported
+        // null for the same kind. Same family as F1: a per-attempt fact surviving the attempt.
+        delete verdicts[kind as Kind];
+        // L1: the loop head IS the attempt boundary, so it is where the attempt number advances.
+        attemptNo[kind as Kind] = (attemptNo[kind as Kind] ?? 0) + 1;
         await stampAndDecide(kind as Kind, payload);
         payloads[kind as Kind] = payload;
       },
@@ -1491,15 +1573,10 @@ Respond with ONLY JSON:
     }));
     const cascadeGapsPreview = cascadeItems.map((it) => ({ kind: it.kind, rung: it.rung, question: it.question_text }));
     const cost = { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) };
-    // GATE 3 — PERSIST THE COST. This number was computed and then returned in a response body no
-    // caller parsed, so every run's spend vanished. recordModelCall never throws: an accounting
-    // failure must not take down the work it measures.
-    await recordModelCall(supabase, {
-      companyId: company_id,
-      runId: null,
-      callSite: "generate-public-read",
-      usage: openaiRecord(genChoice?.model ?? "gpt-4.1-mini", usage),
-    });
+    // GATE 3 — PERSIST THE COST. L1 (2026-10-15): the run-level row is GONE. `run` writes one row
+    // per model call, each with its own usage, its attempt and its prompt sha, so this aggregate
+    // would double-count every call it summarises. The `cost` field above remains the run summary in
+    // the response; the ledger is the per-call rows.
     const routerResolution = {
       generator: genChoice.provider, judge: judgeChoice.provider,
       all_public: ledger.ids.every((id) => require_public(ledger.provenances[id])),

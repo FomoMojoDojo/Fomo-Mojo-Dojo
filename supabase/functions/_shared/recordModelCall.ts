@@ -48,7 +48,15 @@ type SupabaseLike = { from: (t: string) => any };
  */
 export async function recordModelCall(
   supabase: SupabaseLike,
-  args: { companyId: string; runId?: string | null; callSite: string; usage: ModelCallRecord },
+  args: {
+    companyId: string; runId?: string | null; callSite: string; usage: ModelCallRecord;
+    /** L1 (2026-10-15): which attempt of its kind incurred this call — 1 for the first answer, 2 for
+     *  the one re-ask. Omitted by the sites that have no attempt concept, and stored NULL. */
+    attempt?: number | null;
+    /** L1: the sha of the EXACT prompt that produced this call, so spend joins to the prompt that
+     *  caused it and to the attempt's own audit row. Omitted ⇒ NULL, never a guess. */
+    promptSha?: string | null;
+  },
 ): Promise<boolean> {
   try {
     if (!args.companyId) return false;
@@ -61,6 +69,8 @@ export async function recordModelCall(
       prompt_tokens: args.usage.prompt_tokens,
       completion_tokens: args.usage.completion_tokens,
       usd: args.usage.usd,
+      attempt: args.attempt ?? null,
+      prompt_sha: args.promptSha ?? null,
     });
     if (error) {
       console.warn(`[model-calls] insert failed for ${args.callSite} (non-fatal): ${error.message}`);
