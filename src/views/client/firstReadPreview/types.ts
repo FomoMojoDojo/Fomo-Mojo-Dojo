@@ -289,6 +289,12 @@ export type FRSourceRef = {
   publishedAt?: string | null;
   cls: FRSourceClass;
   registryFrame?: "filing" | "profile" | null;
+  /** V1 (2026-10-15): isOwnDomainUrl(source_url, companyHost) — THE single authority on what "your
+   *  site" means. The renderer reads this flag; it never compares hosts itself. */
+  ownSite?: boolean;
+  /** V1: raw_payload.source_type === "third_party_profile" — the company's own page on someone
+   *  else's host. Already on the row; until now nothing read it. */
+  thirdPartyProfile?: boolean;
 };
 /** A field's inherited class and the record/you rows it cites. */
 export type FRFieldSource = { cls: FRSourceClass; sources: FRSourceRef[] };

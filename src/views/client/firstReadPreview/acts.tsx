@@ -1576,10 +1576,15 @@ function StrategyFullRead({ st }: { st: NonNullable<FirstReadPreviewData["strate
           (+ Management systems when present). Rung text at text-xl paper 500; lists numbered. */}
       <div className="fr-dark-section">
         <div className="fr-rung-cols">
-          {st.whereToPlay ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_WHERE}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:where_to_play" text={st.whereToPlay} as="span">{st.whereToPlay}</MarkTarget></p></div> : null}
-          {st.whereToPlay ? <FieldSource fs={st.fieldSources?.whereToPlay} /> : null}
-          {st.howToWin ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_HOW}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:how_to_win" text={st.howToWin} as="span">{st.howToWin}</MarkTarget></p></div> : null}
-          {st.howToWin ? <FieldSource fs={st.fieldSources?.howToWin} /> : null}
+          {/* The source line belongs INSIDE its rung. .fr-rung-cols is a three-column grid, and a
+              FieldSource rendered as a SIBLING of the rung is a direct grid child: it takes a cell
+              of its own and pushes every later rung along by one. That is how "In the record ·
+              findhelp.org" came to sit at the top of the middle column with no line above it, and
+              the how-to-win source in the bottom-left cell under nothing. Verified identical at
+              274bfd83 in a worktree, so this predates V1 — V1 only made the strings longer, which
+              is what made it visible. The vertical stacks (positioning) were never affected. */}
+          {st.whereToPlay ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_WHERE}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:where_to_play" text={st.whereToPlay} as="span">{st.whereToPlay}</MarkTarget></p><FieldSource fs={st.fieldSources?.whereToPlay} /></div> : null}
+          {st.howToWin ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_HOW}</span><p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="strategy:how_to_win" text={st.howToWin} as="span">{st.howToWin}</MarkTarget></p><FieldSource fs={st.fieldSources?.howToWin} /></div> : null}
           {caps.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_CAPABILITIES}</span><NumberedList items={caps} className="mt-3" itemKey={(i) => `strategy:capabilities:${i}`} /></div> : null}
           {mgmt.length > 0 ? <div className="fr-rung"><span className="fr-eyebrow">{RUNG_MGMT}</span><NumberedList items={mgmt} className="mt-3" itemKey={(i) => `strategy:management_systems:${i}`} /></div> : null}
         </div>

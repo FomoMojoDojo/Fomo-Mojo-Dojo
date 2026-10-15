@@ -354,6 +354,10 @@ export function OurReadTag({ children }: { children?: ReactNode }) {
 // Every segment is OMITTED when absent — no "undated", no invented year, no dangling separator.
 export const RECORD_FRAME_HEAD = "In the record" as const;      // S3
 export const OWN_SITE_FRAME_HEAD = "On your site" as const;     // S4
+/** V1, signed 2026-10-15. The company's OWN words on a host that is not its website and carries no
+ *  registry/profile marker — linkedin, facebook, instagram, x, youtube. "On your site" was a lie
+ *  about where the reader would find it; the row's class is unchanged, only the venue is named. */
+export const CHANNELS_FRAME_HEAD = "In your channels" as const; // V1
 
 /** One cited row behind a commitment: where it was said, and when it was published. */
 export type FRCommitmentSource = {
@@ -365,21 +369,54 @@ export type FRCommitmentSource = {
   cls: "record" | "you" | "our_read";
   /** a `you` row that arrived through a registry wears the filing/profile frame instead of S4 */
   registryFrame?: "filing" | "profile" | null;
+  /** V1: isOwnDomainUrl(source_url, companyHost) — THE single authority on what "your site" means,
+   *  computed by the adapter from the same predicate the stamping guard uses. Never a host compare
+   *  written here: two definitions of "own domain" is how the two came to disagree. */
+  ownSite?: boolean;
+  /** V1: raw_payload.source_type === "third_party_profile" — a profile the company wrote on someone
+   *  else's host. Already on the row, and until now ignored. */
+  thirdPartyProfile?: boolean;
 };
+
+// ── V1 (operator ruling, 2026-10-15): EACH SOURCE IS LABELLED BY ITS OWN VENUE ──────────────────
+//
+// The head used to be the LINE's class, and every cited host was then listed beneath that one word.
+// Wasabi's market_category is class `you` (weakest wins over a crunchbase client_voice row), so
+// en.wikipedia.org — a row classed `record` — rendered under "On your site", as did gartner.com and
+// linkedin.com on the value line. The line's class was right; the eyebrow was answering a different
+// question from the one it appeared to answer.
+//
+// Now each source carries its own venue and the line groups them. Row classes do not change.
+export type FRVenue = typeof OWN_SITE_FRAME_HEAD | typeof FILING_FRAME_HEAD | typeof PROFILE_FRAME_HEAD
+  | typeof CHANNELS_FRAME_HEAD | typeof RECORD_FRAME_HEAD | typeof OUR_READ_HEAD;
+
+/** The signed order groups render in. */
+export const VENUE_ORDER: readonly FRVenue[] = [
+  OWN_SITE_FRAME_HEAD, FILING_FRAME_HEAD, PROFILE_FRAME_HEAD,
+  CHANNELS_FRAME_HEAD, RECORD_FRAME_HEAD, OUR_READ_HEAD,
+] as const;
+
+/** The venue of ONE source. Class decides first — a `record` row is the record wherever it sits, and
+ *  an own-host test must never relabel it. Within class `you`, the registry and third-party-profile
+ *  markers are read BEFORE the own-host flag: both describe a page on someone else's host, so the
+ *  two can never both be true on real data, and reading them first means a marked profile can never
+ *  be relabelled "On your site" by a stale flag. */
+export function venueOf(s: FRCommitmentSource): FRVenue {
+  if (s.cls === "our_read") return OUR_READ_HEAD;
+  if (s.cls === "record") return RECORD_FRAME_HEAD;
+  if (s.registryFrame === "filing") return FILING_FRAME_HEAD;
+  if (s.registryFrame === "profile" || s.thirdPartyProfile === true) return PROFILE_FRAME_HEAD;
+  if (s.ownSite === true) return OWN_SITE_FRAME_HEAD;
+  return CHANNELS_FRAME_HEAD;
+}
 
 /** How many cited hosts a source line names before it summarises the rest. */
 export const SOURCE_HOSTS_SHOWN = 3;
 
-/** The head for a line of this class, given the first cited row (which decides filing vs profile). */
-function headFor(cls: FRCommitmentSource["cls"], first: FRCommitmentSource | undefined): string {
-  if (cls === "our_read") return OUR_READ_HEAD;
-  if (cls === "you") {
-    if (first?.registryFrame === "filing") return FILING_FRAME_HEAD;
-    if (first?.registryFrame === "profile") return PROFILE_FRAME_HEAD;
-    return OWN_SITE_FRAME_HEAD;
-  }
-  return RECORD_FRAME_HEAD;
-}
+// headFor() is GONE (V1, 2026-10-15). It chose ONE head from the LINE's class and the FIRST cited
+// row, and every other cited host was then listed under it — which is how a `record` row on
+// en.wikipedia.org came to render under "On your site". venueOf() answers the same question per
+// SOURCE, which is the question the eyebrow always appeared to be answering.
 
 /** Dedupe by host, newest published first (a dated row outranks an undated one).
  *  ORDERED ON THE RAW ISO DATE (ruling 2026-10-08), never on the rendered segment: the display
@@ -412,11 +449,22 @@ export function CommitmentSource(
   { sourceClass, sources = [] }: { sourceClass?: FRCommitmentSource["cls"] | null; sources?: readonly FRCommitmentSource[] },
 ) {
   if (!sourceClass) return null;
+  // our_read SOURCES still attribute nothing — an our_read line names what it RESTS ON, not itself.
   const named = orderedSources(sources.filter((s) => s.cls !== "our_read"));
   const shown = named.slice(0, SOURCE_HOSTS_SHOWN);
   const more = named.length - shown.length;
-  const head = headFor(sourceClass, shown[0]);
-  const parts = [head, ...shown.map((s) => sourceLineOf([s.host, s.published]))];
+  // V1: one group per venue PRESENT among the shown sources, in the signed order, each host with
+  // its own date. The host cap stays a per-LINE cap, as before — grouping must not make the line
+  // grow without limit — so "+N" still counts whatever the cap left out.
+  const parts: string[] = [];
+  // the LINE's class still speaks when it is OUR READING: that marker lived in this component and
+  // nowhere else, and dropping it would have quietly removed the one word saying the line is ours.
+  if (sourceClass === "our_read") parts.push(OUR_READ_HEAD);
+  for (const venue of VENUE_ORDER) {
+    const inVenue = shown.filter((s) => venueOf(s) === venue);
+    if (inVenue.length === 0) continue;
+    parts.push(venue, ...inVenue.map((s) => sourceLineOf([s.host, s.published])));
+  }
   if (more > 0) parts.push(`+${more}`);
   return (
     <span className="fr-source-line fr-tag fr-mono" data-fr-source-class={sourceClass} data-testid="commitment-source">
