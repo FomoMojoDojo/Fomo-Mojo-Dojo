@@ -39,6 +39,12 @@ export type FeedbackLine = {
    *  absent, every name in the line is still listed with its support, because the model is being
    *  asked to write the line again and needs to know what it may cite. */
   unsourced?: readonly string[];
+  /** CR (operator ruling, 2026-10-15): how many rows this line cited, when that exceeded the cap.
+   *  CITE_RULE has always said "cite AT MOST 3 per claim" and nothing enforced it: Wasabi's attempt
+   *  2 cited FOUR on one line and spent the slot it needed for the AI/ML row on a second row for a
+   *  name already covered (audit 10494). A line told only "too many" cannot tell which to drop, so
+   *  the entry keeps its name rows beside the count — the names say which citations are load-bearing. */
+  over_cited?: { count: number; cap: number };
 };
 
 /** Rows that may source a name: class record or you, never a finding. The ruling bars a finding
@@ -75,6 +81,8 @@ export function namesToSource(text: string, companyName: string): string[] {
 export type FeedbackEntry = {
   field?: string;
   text: string;
+  /** CR: present only when this line cited more rows than the cap allows. */
+  over_cited?: { count: number; cap: number };
   /** the ids that still source the line (C1-S), translated to what the model may cite */
   sourcing: string[];
   /** every name the line must be able to source, with the rows that state it */
@@ -96,6 +104,7 @@ export function reaskFeedback(args: {
     return {
       field: l.field,
       text: l.text,
+      over_cited: l.over_cited,
       sourcing: [...(l.sourcing_citations ?? [])].map(tok),
       names: namesToSource(l.text, args.companyName).map((name) => {
         const support = nameSupport(name, args.pool).map(tok);
@@ -126,6 +135,10 @@ export function reaskFeedbackBlock(args: {
           n.support.length > 0
             ? `"${n.name}" -> ${n.support.join(", ")}`
             : `"${n.name}" -> stated in NO row of this ledger`).join(" | ");
-    return head + src + names;
+    // CR: the count, next to the name rows that say which of its citations are load-bearing.
+    const cap = e.over_cited
+      ? `\n      too many citations: ${e.over_cited.count} cited, at most ${e.over_cited.cap} allowed — keep the rows named above and drop the rest`
+      : "";
+    return head + src + names + cap;
   }).join("\n");
 }

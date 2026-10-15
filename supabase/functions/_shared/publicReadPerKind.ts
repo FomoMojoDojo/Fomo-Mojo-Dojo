@@ -36,6 +36,7 @@ import { CONTINUITY_GUARD } from "./stageContinuity.ts";
 export type PerKindGuard =
   | "generation_error"
   | "citation_outside_ledger"
+  | "citation_cap_exceeded"
   | "offering_structure"
   | "framing_vocab"
   | "citation_not_live_public"
@@ -113,6 +114,11 @@ export type PerKindDeps = {
   accepts: (kind: string, verdict: Record<string, unknown>) => boolean;
   /** Persist an accepted kind. Omit for dry-run/plan (accepted kinds are reported, nothing written). */
   commit?: (kind: string, payload: Record<string, unknown>, verdict: Record<string, unknown>) => Promise<void>;
+  /** CR (operator ruling, 2026-10-15): the three-citation limit, over the stamp of the payload in
+   *  front of the gates. Deterministic — a length comparison, no model call. It sits in the GUARD
+   *  1-4 citation group because its question is about a line's CITATIONS, not about what it says,
+   *  and its refusal carries `sourcingDetail` so the ONE re-ask fires on it like any other. */
+  citationCapRefusal?: (kind: string, payload: Record<string, unknown>) => { detail: string } | null;
   /** S1 (2026-10-14): the record/you sourcing gate, over the payload about to be judged. Returns
    *  the refusal detail, or null to pass. Deterministic: no model call, so a line the record does
    *  not support costs no judgment and cannot be cleared by one. */
@@ -217,6 +223,20 @@ export async function runKindsIsolated(
     // ── GUARD 1: every cited token resolves to a ledger ref ─────────────────────────────────────
     const bad = deps.citedRefs(payload).filter((ref) => !deps.validRefs.has(ref));
     if (bad.length) return { outcome: "rejected", guard: "citation_outside_ledger", detail: `bad_ids=${bad.join(",")}`, payload, verdict: null };
+
+    // ── GUARD 1b (CR, 2026-10-15): at most three citations per claim ───────────────────────────
+    // ORDER. After GUARD 1, because a token that does not resolve must be refused as that and not
+    // counted toward a cap. Before everything else in the group, because a line citing four rows has
+    // already spent a slot it may need: on Wasabi's attempt 2 the fourth citation was a duplicate
+    // name row and the row stating "AI/ML" never got cited (10494). sourcingDetail is set so the one
+    // re-ask fires and the shared feedback block carries the count beside the line's name rows.
+    const capped = deps.citationCapRefusal?.(kind, payload) ?? null;
+    if (capped) {
+      return {
+        outcome: "rejected", guard: "citation_cap_exceeded", detail: capped.detail,
+        payload, verdict: null, sourcingDetail: capped.detail,
+      };
+    }
 
     // ── GUARD 2: offering structure (offering kind only) ────────────────────────────────────────
     if (kind === "offering") {

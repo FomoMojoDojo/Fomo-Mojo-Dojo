@@ -183,3 +183,39 @@ export function offeringAcceptFromVerdict(verdict: Record<string, unknown> | nul
     && o.doubts_placed_ok === true
     && o.banned_vocab_ok === true;
 }
+
+// ── CR (operator ruling, 2026-10-15): THE THREE-CITATION LIMIT IS ENFORCED ───────────────────────
+//
+// CITE_RULE has told the model "cite AT MOST 3 per claim" since it was written, and nothing checked
+// it. Wasabi's attempt 2 cited FOUR rows on unique_attributes[1] — 2242bdd1 and c93c7c2d both for
+// "Wasabi AiR", one of them redundant — and in doing so had no room left for c30e9189, the one row
+// stating "AI/ML", which the feedback block had named. N1 then refused the line for that name
+// (audit 10494). A rule stated to a model and enforced nowhere is a rule the model may ignore for
+// free, and here ignoring it cost the read the citation it actually needed.
+//
+// It belongs with GUARDS 1-4, the citation group: the question is about the CITATIONS of a line, not
+// about what the line says, and it is deterministic — a length comparison, no model, no cost. The
+// limit stays 3.
+export const CITATION_CAP = 3;
+
+export type OverCitedField = { field: string; count: number; refs: string[] };
+
+/** Every field citing more rows than the cap allows. Duplicate tokens on one field count ONCE: the
+ *  cap is about how many distinct rows a claim rests on, and a repeated token is one row cited
+ *  twice, which is a tidiness fault and not an over-claim. */
+export function overCited(
+  fields: ReadonlyArray<{ field: string; refs: readonly string[] }>,
+  cap: number = CITATION_CAP,
+): OverCitedField[] {
+  const out: OverCitedField[] = [];
+  for (const f of fields) {
+    const distinct = [...new Set(f.refs)];
+    if (distinct.length > cap) out.push({ field: f.field, count: distinct.length, refs: distinct });
+  }
+  return out;
+}
+
+/** The refusal detail: which field, how many, and the cap it broke. */
+export function overCitedDetail(hits: readonly OverCitedField[], cap: number = CITATION_CAP): string {
+  return hits.map((h) => `${h.field}: ${h.count} citations (max ${cap}) [${h.refs.join(", ")}]`).join("; ");
+}

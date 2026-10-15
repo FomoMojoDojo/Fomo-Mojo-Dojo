@@ -29,6 +29,7 @@ import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { normalizeForHash, sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
+import { CITATION_CAP, overCited, overCitedDetail, type OverCitedField } from "../_shared/publicReadGuards.ts";
 import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, s1Detail, s1Unsourced, specificIsSourced, type FieldClassDecision, type S1Result } from "../_shared/classFactCheck.ts";
 import { liveRecordCandidates, reReadRowTexts, searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
@@ -462,6 +463,32 @@ Deno.serve(async (req) => {
     /** uuid → ref token: what the model may actually cite. */
     const refByUuidLive = (): Map<string, string> =>
       new Map([...uuidByRef.entries()].map(([ref, id]) => [id, ref]));
+
+    // ── RP (operator ruling, 2026-10-15): ONE PROMPT BUILDER ─────────────────────────────────────
+    // There were FOUR generator prompts: the generation prompt (ledger + context + still-sourced
+    // block + takenBlock + the ask) and three re-ask prompts that each rebuilt a shorter one from
+    // scratch. What the short ones left out mattered. takenBlock is the ONLY place the prompt names
+    // the carried lines and says how many further differentiators to write, so a re-asked attempt
+    // knew neither: the previous round's attempt 2 wrote FIVE differentiators and reworded the
+    // carried pricing line as a new our_read line, because nothing told it either fact.
+    //
+    //   THE RULE: a re-ask sends the FULL generation prompt plus the shared feedback block. No
+    //   separate re-ask prompt exists.
+    //
+    // The parts are computed once per kind, at generation, and reused verbatim — so attempt 2's
+    // prompt differs from attempt 1's by the feedback block and by whatever rows were admitted to
+    // the catalogue in between (CAT_LIVE), and by nothing else.
+    const genUserParts: Partial<Record<Kind, { extra: string; ssBlock: string; takenBlock: string }>> = {};
+    /** The class re-ask asks for a PATCH of named fields, not the read again — the one `ask` that is
+     *  not "produce the JSON". Stated once, here, so the builder stays the only prompt template. */
+    const CLASS_FIX_ASK = (fields: readonly string[]): string =>
+      `Return ONLY the rewritten fields, keyed by the EXACT field names above:\n` +
+      `{"fixes":{${fields.map((f) => `"${f}":{"text":"...","citations":["<token>"]}`).join(",")}}}`;
+    const buildGenUser = (kind: Kind, opts?: { feedback?: string; ask?: string }): string => {
+      const p = genUserParts[kind] ?? { extra: "", ssBlock: "", takenBlock: "" };
+      return `LEDGER (cite only the bracketed tokens on these lines):\n${CAT_LIVE}${p.extra}${p.ssBlock}${p.takenBlock}` +
+        `${opts?.feedback ?? ""}\n\n${opts?.ask ?? `Produce the ${kind} JSON.`}`;
+    };
     // The ref set and the catalogue TEXT both grow when a row is admitted from the live record,
     // so guard 1 accepts the new token and the judge can see the line it cites.
     const validRefs = new Set(uuidByRef.keys());
@@ -831,6 +858,13 @@ Respond with ONLY JSON:
     const stampAndDecide = async (kind: Kind, p: Record<string, unknown>): Promise<FieldClassDecision[]> => {
       const stamped = stampFieldClasses(p, classByRef);
       fieldClasses[kind] = stamped;
+      // ── CR: the citations AS THE MODEL WROTE THEM, snapshotted before PASS 2 ──────────────────
+      // CITE_RULE is an instruction to the MODEL — "cite AT MOST 3 per claim" — so the cap is about
+      // the model's compliance. PASS 2 below APPENDS rows we admit from the live record to a field's
+      // citations, which can carry a field from three to four without the model doing anything. CR
+      // counting the post-admission stamp would refuse the model for our own addition, and tell it
+      // "you cited 4" when it cited 3.
+      modelCitations[kind] = stamped.map((f) => ({ field: f.field, refs: [...f.refs] }));
       const decideOne = (f: StampedField) =>
         decideFieldClass({
           field: f.field, cls: f.cls, text: f.text,
@@ -897,6 +931,10 @@ Respond with ONLY JSON:
     };
     /** per kind, how much live record was searched — reported, never guessed */
     const sourcingSearch: Partial<Record<Kind, { searched: { signals: number; own_words: number }; considered: number }>> = {};
+    /** CR: each field's citations AS THE MODEL WROTE THEM — before PASS 2 admits anything. */
+    const modelCitations: Partial<Record<Kind, Array<{ field: string; refs: string[] }>>> = {};
+    /** CR: which fields cited too many rows, for the feedback block, the report and the audit row. */
+    const crResults: Partial<Record<Kind, OverCitedField[]>> = {};
     /** Which kinds used their one re-ask, for the report. */
     const reasked: Partial<Record<Kind, { specifics: string[]; fields: string[] }>> = {};
     const storagePayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
@@ -960,6 +998,8 @@ Respond with ONLY JSON:
           // all — audits 10454 and 10455 carry neither.
           attempt: attemptNo[kind as Kind] ?? null,
           prompt_sha: promptSha[kind as Kind] ?? null,
+          // CR: which fields cited too many rows, and the cap they broke
+          citation_cap: { cap: CITATION_CAP, over: crResults[kind as Kind] ?? [] },
           continuity: continuityBlocks[kind as Kind] ?? null,
           restated_carried: restatedCarried,
           // V4: the refused read itself, and what it cited. Null on an accepted kind — the row that
@@ -1203,6 +1243,15 @@ Respond with ONLY JSON:
       // been given a private fix for it. The loop head now stamps every attempt's payload before any
       // gate runs, so `fieldClasses[kind]` IS this payload's stamp; a private re-stamp here would be
       // a second stamping site and could disagree with what C1/C2 and the judge were given.
+      // ── CR (operator ruling, 2026-10-15): the three-citation limit, enforced ─────────────────
+      // It reads the STAMP (F1: the loop head stamped this payload before any gate ran), which is
+      // where a line's citations live per field. Deterministic: a distinct-count comparison.
+      citationCapRefusal: (kind, _payload) => {
+        // the model's own citations, not the stamp's post-admission ones — see modelCitations
+        const hits = overCited(modelCitations[kind as Kind] ?? []);
+        crResults[kind as Kind] = hits;
+        return hits.length > 0 ? { detail: overCitedDetail(hits) } : null;
+      },
       s1Refusal: (kind, _payload) => {
         const stamped = fieldClasses[kind as Kind] ?? [];
         const results = stamped.map((f) => s1Unsourced({
@@ -1284,7 +1333,9 @@ Respond with ONLY JSON:
         stillSourcedByKind[kind as Kind] = currentForPrompt
           .filter((l) => l.text.trim() && isStillSourced(l, sourcingIds))
           .map((l) => ({ field: String(l.field ?? ""), text: l.text, citations: l.refs.filter((r) => sourcingIds.has(r)) }));
-        const userText = `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}${ssBlock}${takenBlock}\n\nProduce the ${kind} JSON.`;
+        // RP: the parts are kept so every later re-ask sends the SAME prompt, not a shorter one.
+        genUserParts[kind as Kind] = { extra, ssBlock, takenBlock };
+        const userText = buildGenUser(kind as Kind);
         // L1: run() stamps promptSha[kind] itself, by the same recipe, for EVERY generator call —
         // so a payload produced by a re-ask is no longer stored naming the refused answer's prompt.
         const p = await run(genChoice, systemText, userText, 0, { kind: kind as Kind, attempt: 1, role: "generator" });
@@ -1378,13 +1429,17 @@ Respond with ONLY JSON:
             pool: feedbackPool(), companyName, refByUuid: refByUuidLive(),
           });
           const sys = genSys[kind as Kind];
-          const user = `LEDGER (cite only the bracketed tokens on these lines):\n${CAT_LIVE || CAT}\n\n` +
-            `YOUR PREVIOUS ANSWER WAS REFUSED. It dropped a line the read you are replacing states, ` +
-            `whose sources are still in the ledger above:\n${lines}\n\n` +
-            `THE RULE: keep or improve EVERY line listed here — you may reword it or cite it better, ` +
-            `but it must still say what it says, and every name it uses must be stated by a row IT ` +
-            `CITES — cite the rows named above for each name, or leave that name out. A new line may ` +
-            `replace only a line that is NOT listed here. Produce the ${kind} JSON again, in full.`;
+          // RP: the FULL generation prompt — ledger, context, still-sourced block, carried lines and
+          // the differentiator count — plus this refusal's feedback. Nothing is dropped for a re-ask.
+          const user = buildGenUser(kind as Kind, {
+            feedback: `\n\nYOUR PREVIOUS ANSWER WAS REFUSED. It dropped a line the read you are replacing ` +
+              `states, whose sources are still in the ledger above:\n${lines}\n\n` +
+              `THE RULE: keep or improve EVERY line listed here — you may reword it or cite it better, ` +
+              `but it must still say what it says, and every name it uses must be stated by a row IT ` +
+              `CITES — cite the rows named above for each name, or leave that name out. A new line may ` +
+              `replace only a line that is NOT listed here.`,
+            ask: `Produce the ${kind} JSON again, in full.`,
+          });
           try {
             const again = await run(genChoice, sys, user, 0.2,
               { kind: kind as Kind, attempt: (attemptNo[kind as Kind] ?? 1) + 1, role: "generator" });
@@ -1396,7 +1451,11 @@ Respond with ONLY JSON:
         }
         const results = s1Results[kind as Kind] ?? [];
         const failing = results.filter((r) => r.unsourced.length > 0);
-        if (failing.length === 0) return null;
+        // CR: a citation-cap refusal enters THE SAME feedback. It reaches this branch with
+        // sourcingDetail set, and S1 may have found nothing at all — so the over-cited fields are
+        // unioned in rather than handled by a prompt of their own.
+        const capHits = crResults[kind as Kind] ?? [];
+        if (failing.length === 0 && capHits.length === 0) return null;
         // NP: THE SAME ONE BUILDER, and it carries CONTINUITY too. A line refused for an unsourced
         // name is about to be rewritten, and a rewrite that drops a line the current read still
         // states is the next refusal (C1-S) with the budget already gone. So each refused line
@@ -1409,33 +1468,49 @@ Respond with ONLY JSON:
         // the opposite of the truth and invites it to drop the line. The field path is stable across
         // a rewrite and both sides already carry it.
         const ssByField = new Map(ssForKind.map((l) => [l.field, l]));
+        const capOf = (field: string) => {
+          const h = (crResults[kind as Kind] ?? []).find((x) => x.field === field);
+          return h ? { count: h.count, cap: CITATION_CAP } : undefined;
+        };
         const stamped = fieldClasses[kind as Kind] ?? [];
         const textOfField = new Map(stamped.map((f) => [f.field, f.text]));
         const block = reaskFeedbackBlock({
           lines: [
-            // the refused lines, each with its unsourced tokens AND its continuity status
+            // the refused lines, each with its unsourced tokens, its continuity status, and its
+            // citation count when CR refused it too — one entry per field, never two
             ...failing.map((r) => ({
               field: r.field, text: textOfField.get(r.field) ?? "",
               sourcing_citations: ssByField.get(r.field)?.citations ?? [],
               unsourced: [...r.unsourced.map((u) => u.token), ...(r.unsourced_names ?? [])],
+              over_cited: capOf(r.field),
+            })),
+            // CR's own fields, where S1 cleared them — same block, same shape
+            ...capHits.filter((h) => !failing.some((r) => r.field === h.field)).map((h) => ({
+              field: h.field, text: textOfField.get(h.field) ?? "",
+              sourcing_citations: ssByField.get(h.field)?.citations ?? [],
+              over_cited: { count: h.count, cap: CITATION_CAP },
             })),
             // and every OTHER still-sourced line, so the rewrite cannot lose one. Same key: by text
             // this filter never matched, so a refused field was listed twice — once claiming no
             // source and once claiming one.
             ...ssForKind.filter((l) => !failing.some((r) => r.field === l.field))
+              .filter((l) => !capHits.some((h) => h.field === l.field))
               .map((l) => ({ field: l.field, text: l.text, sourcing_citations: l.citations ?? [] })),
           ],
           pool: feedbackPool(), companyName, refByUuid: refByUuidLive(),
         });
         const sys = genSys[kind as Kind];
-        const user = `LEDGER (cite only the bracketed tokens on these lines):\n${CAT_LIVE || CAT}\n\n` +
-          `YOUR PREVIOUS ANSWER WAS REFUSED. A line stated something none of the rows IT CITES says. ` +
-          `Below is every line involved: what still sources it, and for each name in it, the rows that ` +
-          `state that name. For each refused line: cite a row named here that does state it, or write ` +
-          `the line so that what it asserts is what its own cited rows say, or leave the claim out. ` +
-          `Do not keep an assertion no cited row carries. And keep every line listed here — dropping ` +
-          `one the read you are replacing still states is a loss, not a fix.\n${block}\n\n` +
-          `Produce the ${kind} JSON again, in full.`;
+        // RP: the FULL generation prompt plus this refusal's feedback — see buildGenUser.
+        const user = buildGenUser(kind as Kind, {
+          feedback: `\n\nYOUR PREVIOUS ANSWER WAS REFUSED. A line stated something none of the rows IT ` +
+            `CITES says, or cited more rows than a claim may. Below is every line involved: what still ` +
+            `sources it, for each name in it the rows that state that name, and where a line cited too ` +
+            `many, how many it cited. For each refused line: cite a row named here that does state it, ` +
+            `or write the line so that what it asserts is what its own cited rows say, or leave the ` +
+            `claim out. Do not keep an assertion no cited row carries. And keep every line listed ` +
+            `here — dropping one the read you are replacing still states is a loss, not a fix.\n${block}`,
+          ask: `Produce the ${kind} JSON again, in full.`,
+        });
         try {
           const again = await run(genChoice, sys, user, 0.2,
             { kind: kind as Kind, attempt: (attemptNo[kind as Kind] ?? 1) + 1, role: "generator" });
@@ -1510,11 +1585,14 @@ Respond with ONLY JSON:
           + `  (b) where no row is named, write the claim as our reading ('we read you as…', 'the record suggests…') with its scope attached;\n`
           + `  (c) only if neither works, leave that claim out.\n`
           + (anyCarried ? `At least one refused word IS in the ledger (see above) — deleting that claim instead of restating it is a WRONG answer.\n` : ``)
-          + `Do not strengthen a source. Do not drop a scope to fit.\n`
-          + `Return ONLY the rewritten fields, keyed by the EXACT field names above:\n`
-          + `{"fixes":{${askedFields.map((f) => `"${f}":{"text":"...","citations":["<token>"]}`).join(",")}}}`;
-        const extra = kind === "strategy" ? positioningContext : "";
-        const fixResp = await run(genChoice, genSys[kind as Kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT_LIVE}${extra}\n\n${ask}`, 0,
+          + `Do not strengthen a source. Do not drop a scope to fit.`;
+        // RP: through the ONE builder, so this re-ask also sees the still-sourced block, the carried
+        // lines and the differentiator count it never used to. REPORTED, not hidden: its `ask` is the
+        // one that differs, because this re-ask requests a PATCH of named fields
+        // ({"fixes":{…}}) rather than the read again — that targeted shape is what keeps the
+        // ACCEPTED fields from being rewritten. The two full-regeneration re-asks pass feedback only.
+        const fixResp = await run(genChoice, genSys[kind as Kind],
+          buildGenUser(kind as Kind, { feedback: `\n\n${ask}`, ask: CLASS_FIX_ASK(askedFields) }), 0,
           { kind: kind as Kind, attempt: (attemptNo[kind as Kind] ?? 1) + 1, role: "class_fix" });
         const fixes = ((fixResp?.fixes ?? fixResp ?? {}) as Record<string, unknown>);
         let spliced = 0;
@@ -1595,6 +1673,7 @@ Respond with ONLY JSON:
         // integrity_runs to learn what the staged read continued. D1's removals ride beside it.
         continuity: continuityBlocks, restated_carried: restatedCarried,
         distinctness_prefilter: distinctnessLog, still_sourced: stillSourcedByKind,
+        citation_cap: { cap: CITATION_CAP, over: crResults },
         reasked, sourcing_search: sourcingSearch, admitted_from_live_record: admitted,
         class_decisions: Object.fromEntries(Object.entries(classDecisions).map(([k, ds]) => [k, (ds ?? []).map((d) => ({
           field: d.field, class: d.cls, branch: d.branch, examined: d.examined,

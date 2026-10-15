@@ -109,8 +109,13 @@ Deno.test("C1-S. the generator puts the block in the USER prompt, before the car
   // NP: the call gained the pool and the company name, because the block now carries name rows.
   assert(src.includes("const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName);"),
     "the block is built from this run's pool");
-  assert(src.includes("${CAT}${extra}${ssBlock}${takenBlock}"),
+  // RP (2026-10-15): the generation prompt became buildGenUser, the ONE prompt every generator call
+  // sends. The ORDER this pins is unchanged — ledger, context, still-sourced block, carry notice —
+  // it is now stated once in the builder instead of at the generation site.
+  assert(src.includes("${CAT_LIVE}${p.extra}${p.ssBlock}${p.takenBlock}"),
     "and interpolated into the user prompt, after the ledger and before the carry notice");
+  assert(src.includes("genUserParts[kind as Kind] = { extra, ssBlock, takenBlock };"),
+    "the parts are kept so every re-ask sends the same block, not a shorter prompt");
 });
 
 // ── the refusal ──────────────────────────────────────────────────────────────────────────────────

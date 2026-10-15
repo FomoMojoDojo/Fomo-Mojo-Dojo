@@ -65,7 +65,13 @@ async function guardWrites(page: Page, plants: Plants = {}): Promise<Guard> {
           } catch { /* 406 no-row */ }
           return await route.fulfill({ response: res, body: text });
         } catch (err) {
-          if (/closed/i.test(String(err))) return;
+          // The teardown race the comment above describes arrives under TWO names: Playwright says
+          // "Target page, context or browser has been closed" when the page goes first, and
+          // "apiResponse.text: Response has been disposed" when the fetched response is reaped
+          // before it is read. Only the first was swallowed, so the second failed the run on
+          // 2026-10-15 (p-routes-actions v2) and passed on an immediate re-run — a flake by
+          // construction, in the interceptor and never in the product.
+          if (/closed|disposed/i.test(String(err))) return;
           throw err;
         }
       }

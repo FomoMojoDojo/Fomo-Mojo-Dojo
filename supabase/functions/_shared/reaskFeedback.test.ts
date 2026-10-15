@@ -157,7 +157,8 @@ Deno.test("NP. the N1 re-ask carries CONTINUITY lines, not just names", async ()
   assert(!body.includes("byText"), "no text-equality lookup survives — a rewrite defeats it");
   assert(/ssForKind\.filter\(\(l\) => !failing\.some\(\(r\) => r\.field === l\.field\)\)/.test(body),
     "and every OTHER still-sourced line is listed, de-duplicated by the same key");
-  assert(body.includes("dropping ` +\n          `one the read you are replacing still states is a loss"),
+  // RP: same clause, one indent deeper inside buildGenUser's feedback argument.
+  assert(body.replace(/`\s*\+\s*`/g, "").includes("dropping one the read you are replacing still states is a loss"),
     "the rule says so to the model");
 });
 

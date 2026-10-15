@@ -85,7 +85,10 @@ Deno.test("C1-R. the prompt carries the RULE: keep the still-sourced, replace on
   const fn = src.slice(src.indexOf('if (because === "continuity") {'));
   const body = fn.slice(0, fn.indexOf("const results = s1Results[kind as Kind] ?? [];"));
   assert(body.includes("keep or improve EVERY line listed here"), "keep or improve every still-sourced line");
-  assert(body.includes("A new line may ` +\n            `replace only a line that is NOT listed here"), "a new line replaces only a non-listed one");
+  // RP (2026-10-15): the prompt moved inside buildGenUser's feedback argument, so the string wraps
+  // one indent deeper. The CLAUSE is what is pinned, not where the line breaks fall.
+  assert(body.replace(/`\s*\+\s*`/g, "").includes("A new line may replace only a line that is NOT listed here"),
+    "a new line replaces only a non-listed one");
   assert(body.includes("it must still say what it says"), "improving is allowed, losing the claim is not");
 });
 
