@@ -17,6 +17,10 @@ import {
   type AuthorshipJudge,
   type AuthorshipJudgment,
   type RestampStore,
+  matchGatedUrl,
+  subjectBoilerplateClose,
+  isReleasePathShaped,
+  PRESS_RELEASE_PATTERNS,
 } from "../../../supabase/functions/_shared/aggregatorAuthorship.ts";
 
 const CB1 = "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc";
@@ -242,5 +246,130 @@ describe("backfill — apply writes one audit row per changed row, and skips dri
       ["a", "outside_voice_about_client", "client_voice"],
       ["b", "outside_voice_about_client", "competitor_voice"],
     ]);
+  });
+});
+
+// ── PRESS RELEASES (operator ruling, 2026-10-16) ────────────────────────────────────────────────
+//
+// The 2026-09-03 gate excluded news releases: their dominant voice is a journalist's. True of the
+// reporting, false of the BOILERPLATE — a release carries an "About <company>" paragraph that is the
+// company's own copy, and a third party reprinting it does not make it the third party's words.
+// IAQM's staged positioning cited exactly such a sentence from contractorsupplymagazine.com.
+//
+// Detector (a) is the wire hosts on their release paths. Detector (b) is a boilerplate close naming
+// the SUBJECT's own domain, and it NEVER opens alone: it also needs a release-shaped path and a page
+// that is not a machine summary. Release-shape is read from the PATH, because prose markers were
+// measured against the eight pages (b) finds in the fleet and do not separate them — three true
+// releases carry no SOURCE line, no media contact and no dateline at all.
+const IAQM_PAGE = [
+  "WonderPaint and IAQM team up to co-market Preventex-HDW",
+  "WonderPaint's entire product line has been engineered to be green.",
+  "For more information, visit www.wonderpaint.com .",
+  "IAQM provides remediation and restoration services in both residential and commercial markets.",
+  "The company has pioneered many of the most advanced, efficient and cost-effective decontamination services in the industry.",
+  "For more information, visit http://www.iaqm.com/ .",
+].join("\n");
+const IAQM_URL = "https://contractorsupplymagazine.com/pages/News---20180418-WonderPaint-and-IAQM-team-up-to-co-market-Preventex-HDW.php";
+
+describe("press releases — detector (a), the wire hosts", () => {
+  it("opens on a release path and stays shut on the same host's index", () => {
+    expect(matchGatedUrl("https://www.prnewswire.com/news-releases/wonderpaint-and-iaqm-x.html", {})?.via).toBe("wire");
+    // the AAF row in the fleet: a wire ORGANISATION INDEX listing many releases, not one company's
+    // boilerplate. The path is the gate, exactly as it is for the profile list.
+    expect(matchGatedUrl("https://www.prnewswire.com/news/american-advertising-federation/", {})).toBeNull();
+    expect(matchGatedUrl("https://www.businesswire.com/portal/site/home/news/", {})).toBeNull();
+    for (const p of PRESS_RELEASE_PATTERNS) expect(p.path.source).toMatch(/^\^/);   // anchored, not a substring
+  });
+});
+
+describe("press releases — detector (b), the boilerplate close", () => {
+  it("finds the SUBJECT's close among several, and no one else's", () => {
+    // a joint release carries one close per company and the subject's is not necessarily first
+    expect(subjectBoilerplateClose(IAQM_PAGE, "iaqm.com")).toContain("iaqm.com");
+    expect(subjectBoilerplateClose(IAQM_PAGE, "wonderpaint.com")).toContain("wonderpaint.com");
+    // a company named in NO close on the page gets nothing — this is the discrimination that keeps
+    // one company's boilerplate from opening another company's gate
+    expect(subjectBoilerplateClose(IAQM_PAGE, "example-not-here.com")).toBeNull();
+    expect(matchGatedUrl(IAQM_URL, { pageText: IAQM_PAGE, subjectHost: "example-not-here.com" })).toBeNull();
+    // case-insensitive: the fleet carries "visit www.Coreviva.com ."
+    expect(subjectBoilerplateClose("For more information, visit www.Coreviva.com .", "coreviva.com")).toBeTruthy();
+  });
+
+  it("NEVER opens alone — it needs a release-shaped path and a page that is not a machine summary", () => {
+    expect(matchGatedUrl(IAQM_URL, { pageText: IAQM_PAGE, subjectHost: "iaqm.com" })?.via).toBe("boilerplate");
+    // impala.digital: an aggregator profile whose AI summary ends with a boilerplate close. The
+    // close is there; the page reprints nothing. TWO independent reasons hold it shut.
+    const SUMMARY = "Edgewood runs programs for children. For more information, visit www.edgewood.org. Was this helpful? This summary is AI-generated from ChatGPT.";
+    const PROFILE_URL = "https://impala.digital/public/profiles/94-1186168/overview";
+    expect(subjectBoilerplateClose(SUMMARY, "edgewood.org")).toBeTruthy();      // the close IS found
+    expect(isReleasePathShaped(PROFILE_URL)).toBe(false);                       // reason 1: the path
+    expect(matchGatedUrl(PROFILE_URL, { pageText: SUMMARY, subjectHost: "edgewood.org" })).toBeNull();
+    // reason 2 on its own: the same text on a release path is still refused as a machine summary
+    expect(matchGatedUrl("https://example.com/news/edgewood-update", { pageText: SUMMARY, subjectHost: "edgewood.org" })).toBeNull();
+    // and without the page text (b) cannot be decided, so the gate stays shut — fail toward unchanged
+    expect(matchGatedUrl(IAQM_URL, { pageText: null, subjectHost: "iaqm.com" })).toBeNull();
+  });
+
+  it("the FILED LIMIT: a reprint on a path that names no release stays shut", () => {
+    // Coreviva's release is reprinted by a local paper that publishes articles at the ROOT:
+    // newportbeachindy.com/coreviva-launches-flagship-clinic-... — a real boilerplate close, a page
+    // that is no machine summary, and no news/release segment in the path. The ruling of 2026-10-16
+    // accepts this miss and fails closed rather than widen release-shape on a sample of one. The
+    // limit is asserted so it stays DELIBERATE: this is the shape that must not quietly start
+    // opening, and it is the only thing holding it shut once a release path is absent.
+    const CLEAN = "CoreViva Launches Flagship Clinic in Newport Beach. For more information, visit www.Coreviva.com .";
+    const ROOT_URL = "https://www.newportbeachindy.com/coreviva-launches-flagship-clinic-in-newport-beach/";
+    expect(subjectBoilerplateClose(CLEAN, "coreviva.com")).toBeTruthy();   // the close IS there
+    expect(isReleasePathShaped(ROOT_URL)).toBe(false);                     // the path names no release
+    expect(matchGatedUrl(ROOT_URL, { pageText: CLEAN, subjectHost: "coreviva.com" })).toBeNull();
+  });
+
+  it("release-shape excludes the pages the 2026-09-03 ruling still excludes", () => {
+    for (const u of [
+      "https://example.com/reviews/acme",
+      "https://example.com/news/people/jane-doe",
+      "https://example.com/search?q=acme",
+      "https://example.com/profiles/acme/overview",
+      "https://example.com/jobs/acme",
+    ]) expect(isReleasePathShaped(u), u).toBe(false);
+    expect(isReleasePathShaped("https://example.com/news/acme-launches-thing")).toBe(true);
+  });
+});
+
+describe("press releases — the gate is per PAGE; the JUDGE is per row", () => {
+  it("every row on a multi-voice page passes the same gate, and the judge sees each row's own text", async () => {
+    // The IAQM release carries five rows: the joint lede, the magazine's framing, an announcement
+    // with a quote, and IAQM's own boilerplate. The gate takes a URL, so it opens for all of them —
+    // that is what "detectors only gate" means. What separates the voices is the judge, which is
+    // handed each ROW's text, never the page.
+    const CO = "11111111-1111-4111-8111-111111111111";
+    const rows = [
+      sig({ id: "joint", company_id: CO, source_url: IAQM_URL, claim_text: "WonderPaint Distribution, LLC and IAQM announced an agreement.", evidence_excerpt: "" }),
+      sig({ id: "framing", company_id: CO, source_url: IAQM_URL, claim_text: "Contractor Supply Magazine covered the partnership.", evidence_excerpt: "" }),
+      sig({ id: "boiler", company_id: CO, source_url: IAQM_URL, claim_text: "IAQM provides remediation and restoration services in both residential and commercial markets.", evidence_excerpt: "" }),
+    ];
+    const { store } = fakeStore({ companies: [{ id: CO, name: "Indoor Air Quality Management", website: "https://iaqm.com", frozen: false }], signals: rows });
+    (store as unknown as { loadPageTexts: unknown }).loadPageTexts = vi.fn(async () => new Map([[IAQM_URL, IAQM_PAGE]]));
+    const seen: string[] = [];
+    const plan = await planRestamp(store, {
+      judge: async ({ text }) => { seen.push(text); return { verdict: "third_party", entity: null, reason: "stub", model: "stub" }; },
+    });
+    expect(plan.proposals.map((p) => p.signal_id).sort()).toEqual(["boiler", "framing", "joint"]);
+    expect(plan.proposals.every((p) => p.via === "boilerplate")).toBe(true);
+    // the judge got three DIFFERENT texts — one per row — not the page three times
+    expect(new Set(seen).size).toBe(3);
+    expect(seen.some((t) => t.includes("IAQM provides remediation"))).toBe(true);
+    expect(seen.some((t) => t.includes("Contractor Supply Magazine covered"))).toBe(true);
+    expect(seen.every((t) => !t.includes("wonderpaint.com"))).toBe(true);      // never the whole page
+  });
+
+  it("a shut gate shows it looked: rows with no stored page are counted per company", async () => {
+    const CO = "22222222-2222-4222-8222-222222222222";
+    const rows = [sig({ id: "nopage", company_id: CO, source_url: "https://somepaper.example/news/acme-launches", claim_text: "Acme launches a thing.", evidence_excerpt: "" })];
+    const { store } = fakeStore({ companies: [{ id: CO, name: "Acme", website: "https://acme.example", frozen: false }], signals: rows });
+    (store as unknown as { loadPageTexts: unknown }).loadPageTexts = vi.fn(async () => new Map());
+    const plan = await planRestamp(store, { judge: async () => ({ verdict: "third_party", entity: null, reason: "x", model: "stub" }) });
+    expect(plan.proposals).toHaveLength(0);
+    expect(plan.unreadable_pages).toEqual([{ company_id: CO, company_name: "Acme", rows: 1 }]);
   });
 });

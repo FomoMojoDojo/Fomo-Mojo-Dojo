@@ -39,11 +39,20 @@ export type AuthorshipInput = { subjectName: string; subjectHost: string; url: s
 export type AuthorshipJudge = (input: AuthorshipInput) => Promise<AuthorshipJudgment>;
 
 // ── URL gate ────────────────────────────────────────────────────────────────────
-// Aggregator COMPANY-PROFILE pages only — the pages that reproduce a company's own "about"
-// blurb beside aggregator data. Review pages, salary pages, news releases, person profiles and
-// search pages are deliberately NOT matched: their dominant voice is the public's or a
-// journalist's, and the host stamp is right for them. Per-host path rules, not a bare host
-// list, so the same host can be gated on one path and left alone on another.
+// Aggregator COMPANY-PROFILE pages — the pages that reproduce a company's own "about" blurb
+// beside aggregator data — and, since the amendment below, PRESS RELEASES. Review pages, salary
+// pages, person profiles and search pages are still deliberately NOT matched: their dominant
+// voice is the public's or a journalist's, and the host stamp is right for them. Per-host path
+// rules, not a bare host list, so the same host can be gated on one path and left alone on another.
+//
+// AMENDMENT (operator ruling, 2026-10-16) — PRESS RELEASES ONLY. The 2026-09-03 gate excluded news
+// releases on the grounds that their dominant voice is a journalist's. That is true of the reporting
+// and false of the BOILERPLATE: a release carries an "About <company>" paragraph that is the
+// company's own copy, and a third party reprinting it does not make it the third party's words.
+// IAQM's staged positioning cited exactly such a sentence — "pioneered many of the most advanced,
+// efficient and cost-effective decontamination services in the industry", classed `record` from
+// contractorsupplymagazine.com — which is IAQM describing itself, reprinted. Reviews, salary, person
+// and search pages stay excluded; only releases are added.
 export const AGGREGATOR_PROFILE_PATTERNS: ReadonlyArray<{ host: string; path: RegExp }> = [
   { host: "glassdoor.com", path: /^\/overview\//i },
   { host: "linkedin.com", path: /^\/company\//i },
@@ -69,6 +78,81 @@ export const AGGREGATOR_PROFILE_PATTERNS: ReadonlyArray<{ host: string; path: Re
   // Product / seller profile ONLY — /products/<x>/reviews is a review page and stays ungated.
   { host: "g2.com", path: /^\/(products|sellers)\/[^/?#]+\/?$/i },
 ];
+
+// ── PRESS RELEASES (operator ruling, 2026-10-16) ─────────────────────────────────
+// DETECTOR (a): the wire hosts, on their RELEASE paths only. A wire's own about/search pages are
+// not releases and stay ungated — the path is the gate, exactly as above.
+export const PRESS_RELEASE_PATTERNS: ReadonlyArray<{ host: string; path: RegExp }> = [
+  { host: "prnewswire.com", path: /^\/news-releases\//i },
+  { host: "businesswire.com", path: /^\/news\//i },
+  { host: "globenewswire.com", path: /^\/news-release\//i },
+  { host: "prweb.com", path: /^\/releases\//i },
+];
+
+// RELEASE-SHAPED, defined exactly. Measured against the eight pages detector (b) finds in the
+// fleet: prose markers do NOT separate them — three true releases carry no "SOURCE", no media
+// contact and no dateline at all — so the shape is read from the PATH, which does separate them.
+//
+//   release-shaped  ⇔  the path names news or a release
+//                      AND the path is not a profile / review / person / search page
+//                      AND the page is not a machine-written summary
+//
+// The last clause is the impala.digital case: an aggregator profile whose AI summary ends "For more
+// information, visit www.edgewood.org" — a boilerplate close on a page that reprints nothing.
+export const RELEASE_PATH_RE = /(^|\/)(news|news-release|news-releases|press-release|press-releases|releases|pr)(\/|-|$)/i;
+export const NON_RELEASE_PATH_RE = /(^|\/)(profiles?|overview|reviews?|salary|salaries|people|person|search|jobs?)(\/|$)/i;
+export const MACHINE_SUMMARY_RE = /\bAI[- ]generated\b|\bChatGPT\b|\bthis summary is\b/i;
+
+/** The path half of release-shape. Pure URL — no page text, no I/O. */
+export function isReleasePathShaped(url: string): boolean {
+  let u: URL;
+  try { u = new URL(url); } catch { return false; }
+  const path = u.pathname || "/";
+  return RELEASE_PATH_RE.test(path) && !NON_RELEASE_PATH_RE.test(path);
+}
+
+/** DETECTOR (b): a company-boilerplate close naming the SUBJECT's own domain. Case-insensitive, and
+ *  EVERY close on the page is checked — a joint release carries one per company and the subject's is
+ *  not necessarily the first (on IAQM's release WonderPaint's close comes first). Returns the close
+ *  it matched, so a plan can show the operator what fired. Never opens the gate on its own. */
+export function subjectBoilerplateClose(pageText: string, subjectHost: string): string | null {
+  const own = String(subjectHost || "").toLowerCase().replace(/^www\d*\./, "");
+  const text = String(pageText || "");
+  if (!own || !text) return null;
+  for (const m of text.matchAll(/for more information[\s\S]{0,160}/gi)) {
+    const seg = m[0];
+    for (const d of seg.matchAll(/([a-z0-9-]+(?:\.[a-z0-9-]+)+)/gi)) {
+      const name = d[1].toLowerCase().replace(/^www\d*\./, "").replace(/[.,;:]$/, "");
+      if (name === own || name.endsWith(`.${own}`)) return seg.replace(/\s+/g, " ").trim();
+    }
+  }
+  return null;
+}
+
+/** THE ONE GATE the restamp uses: an aggregator profile (2026-09-03) or a press release
+ *  (2026-10-16). (b) requires the page text AND the subject's host; without them only (a) can open,
+ *  which is the fail-toward-unchanged direction this module has always taken. */
+export function matchGatedUrl(
+  url: string,
+  opts?: { pageText?: string | null; subjectHost?: string | null },
+): { host: string; path: string; via: "profile" | "wire" | "boilerplate" } | null {
+  const profile = matchAggregatorProfileUrl(url);
+  if (profile) return { ...profile, via: "profile" };
+  let u: URL;
+  try { u = new URL(url); } catch { return null; }
+  const host = hostOf(url);
+  const path = u.pathname || "/";
+  if (!host) return null;
+  for (const p of PRESS_RELEASE_PATTERNS) {
+    if ((host === p.host || host.endsWith(`.${p.host}`)) && p.path.test(path)) return { host: p.host, path, via: "wire" };
+  }
+  const text = String(opts?.pageText ?? "");
+  if (!text || !opts?.subjectHost) return null;                 // (b) cannot be decided — stay shut
+  if (MACHINE_SUMMARY_RE.test(text)) return null;               // a machine summary reprints nothing
+  if (!isReleasePathShaped(url)) return null;                   // (b) never opens alone
+  if (!subjectBoilerplateClose(text, opts.subjectHost)) return null;
+  return { host, path, via: "boilerplate" };
+}
 
 function hostOf(url: string): string {
   try {
@@ -415,6 +499,10 @@ export type RestampStore = {
   /** claim_deltas this signal backs on the PUBLIC (observed / echo) side, via claim_signal_refs → public_claim_id. */
   loadDeltaBacking(signalIds: string[]): Promise<Map<string, DeltaBacking>>;
   loadSignalsById(ids: string[]): Promise<CandidateSignal[]>;
+  /** 2026-10-16, detector (b) only: the stored page text for these urls. OPTIONAL — a store that
+   *  does not implement it leaves (b) undecidable, so only the wire-host detector can open the
+   *  gate. That is the fail-toward-unchanged direction this module has always taken. */
+  loadPageTexts?(urls: string[]): Promise<Map<string, string>>;
   openLedger(companyId: string, runRef: string, target: number): Promise<string>;
   closeLedger(runId: string, status: "completed" | "failed", done: number, errorText?: string): Promise<void>;
   insertAudit(row: AuditRow): Promise<void>;
@@ -429,6 +517,9 @@ export type RestampProposal = {
   company_name: string;
   host: string;
   path: string;
+  /** which detector opened the gate: the 2026-09-03 profile list, a wire host, or a boilerplate
+   *  close on a release-shaped page (2026-10-16). */
+  via?: "profile" | "wire" | "boilerplate";
   from: string | null;
   to: VoiceOutcome;
   held: boolean;
@@ -450,7 +541,15 @@ function isFrozen(co: { id: string; frozen: boolean } | undefined): boolean {
 export async function planRestamp(
   store: RestampStore,
   opts: { companyId?: string; judge: AuthorshipJudge; log?: (s: string) => void },
-): Promise<{ proposals: RestampProposal[]; scanned: number; skipped_frozen: string[]; cleaner_text_available: number }> {
+): Promise<{
+  proposals: RestampProposal[];
+  scanned: number;
+  skipped_frozen: string[];
+  cleaner_text_available: number;
+  /** 2026-10-16: candidate rows per company whose page the store could not serve, so detector (b)
+   *  was never decidable for them. A shut gate shows it looked. */
+  unreadable_pages: Array<{ company_id: string; company_name: string; rows: number }>;
+}> {
   const companies = await store.loadCompanies();
   const byId = new Map(companies.map((c) => [c.id, c]));
   if (opts.companyId) {
@@ -461,12 +560,34 @@ export async function planRestamp(
   const skippedFrozen = companies.filter((c) => isFrozen(c)).map((c) => c.id);
   const scope = (opts.companyId ? [byId.get(opts.companyId)!] : companies).filter((c) => !isFrozen(c));
   const signals = await store.loadCandidateSignals(scope.map((c) => c.id));
-  const gated = signals.filter((s) => !!matchAggregatorProfileUrl(String(s.source_url ?? "")));
+  // (b) needs the PAGE, not the row: a release's boilerplate close sits in the page text, not in
+  // the claim the signal carries. Loaded once for every candidate url the store can serve.
+  const hostByCompany = new Map(scope.map((c) => [c.id, hostOf(c.website ?? "")]));
+  const pageTexts = store.loadPageTexts
+    ? await store.loadPageTexts([...new Set(signals.map((s) => String(s.source_url ?? "")).filter(Boolean))])
+    : new Map<string, string>();
+  const gateOf = (s: CandidateSignal) => matchGatedUrl(String(s.source_url ?? ""), {
+    pageText: pageTexts.get(String(s.source_url ?? "")) ?? null,
+    subjectHost: hostByCompany.get(s.company_id) ?? null,
+  });
+  const gated = signals.filter((s) => !!gateOf(s));
+  // A SHUT GATE SHOWS IT LOOKED (operator ruling, 2026-10-16). Detector (b) needs the stored page;
+  // when there is none, the gate stays shut because the question could not be asked — not because
+  // the answer was no. Counted per company so the plan distinguishes "no reprint here" from
+  // "we never read the page". Only rows (a) did not already open are counted: a wire-host release
+  // is gated on its path and needs no page text.
+  const unreadableByCompany = new Map<string, number>();
+  for (const s of signals) {
+    if (gateOf(s)) continue;
+    const url = String(s.source_url ?? "");
+    if (!url || (pageTexts.get(url) ?? "") !== "") continue;
+    unreadableByCompany.set(s.company_id, (unreadableByCompany.get(s.company_id) ?? 0) + 1);
+  }
   const backing = await store.loadDeltaBacking(gated.map((s) => s.id));
   const proposals: RestampProposal[] = [];
   let cleanerTextAvailable = 0;
   for (const s of gated) {
-    const m = matchAggregatorProfileUrl(String(s.source_url))!;
+    const m = gateOf(s)!;
     const co = byId.get(s.company_id);
     if (!co || isFrozen(co)) continue; // belt-and-braces: never judge a frozen company's row
     const jt = judgedTextFor(s);
@@ -479,12 +600,19 @@ export async function planRestamp(
     const b = backing.get(s.id) ?? { echoed: 0, divergent: 0, internally_silent: 0 };
     const to = j.verdict === "judge_failed" ? null : outcomeFor(j, co.name);
     proposals.push({
-      signal_id: s.id, company_id: s.company_id, company_name: co.name, host: m.host, path: m.path,
+      signal_id: s.id, company_id: s.company_id, company_name: co.name, host: m.host, path: m.path, via: m.via,
       from: s.voice_class, to, held: !!s.held_at, text, text_source: jt.source, cleaner_text: cleaner, judge: j, echo_deltas: b.echoed, delta_backing: b,
     });
     opts.log?.(`${co.name} ${s.id.slice(0, 8)} ${m.host} ${s.voice_class} → ${to ?? "(unchanged)"} [${j.verdict}] ${j.reason}`);
   }
-  return { proposals, scanned: signals.length, skipped_frozen: skippedFrozen, cleaner_text_available: cleanerTextAvailable };
+  return {
+    proposals, scanned: signals.length, skipped_frozen: skippedFrozen, cleaner_text_available: cleanerTextAvailable,
+    // per company: candidate rows whose page text the store could not serve, so detector (b) was
+    // never decidable for them
+    unreadable_pages: [...unreadableByCompany.entries()]
+      .map(([company_id, rows]) => ({ company_id, company_name: byId.get(company_id)?.name ?? company_id, rows }))
+      .sort((a, b) => b.rows - a.rows),
+  };
 }
 
 export type PlanRow = {
@@ -603,6 +731,9 @@ type SupabaseLike = { from: (t: string) => any };
 const SIGNAL_COLS = "id, company_id, source_url, voice_class, claim_text, evidence_excerpt, quote_source_text, held_at, raw_payload";
 const PAGE = 1000;
 const IN_CHUNK = 200;
+/** Ids are 36 chars; article urls run past 120. An `.in()` of 200 of them overflows the GET query
+ *  string, so the url reads chunk far smaller than the id reads do. */
+const URL_IN_CHUNK = 25;
 
 async function pageAll<T>(build: (from: number, to: number) => Promise<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
   const out: T[] = [];
@@ -622,6 +753,29 @@ export function makeSupabaseRestampStore(supabase: SupabaseLike): RestampStore {
       const { data, error } = await supabase.from("companies").select("id, name, website, frozen");
       if (error) throw new Error(`companies read failed: ${error.message}`);
       return ((data ?? []) as Array<{ id: string; name: string; website: string | null; frozen: boolean | null }>).map((c) => ({ ...c, frozen: !!c.frozen }));
+    },
+    // 2026-10-16, detector (b): the stored page text for the candidate urls.
+    //
+    // URLS ARE LONG, SO THE CHUNK IS SMALL. An `.in()` filter is a GET query string: 200 article
+    // urls overflow it and the request comes back an error, not a result. Measured on this fleet —
+    // 1 url returned 1 page, 50 returned 36, and all 395 returned ZERO. And because the first cut
+    // of this function ignored `error`, that transport failure read as "no company reprints exist
+    // anywhere", which is the one answer a detector must never give by accident. It THROWS now,
+    // like every other read in this store, and chunks at a size long urls survive.
+    async loadPageTexts(urls) {
+      const out = new Map<string, string>();
+      if (urls.length === 0) return out;
+      for (let i = 0; i < urls.length; i += URL_IN_CHUNK) {
+        const slice = urls.slice(i, i + URL_IN_CHUNK);
+        const { data, error } = await supabase.from("outside_page_snapshots")
+          .select("source_url, clean_text").in("source_url", slice);
+        if (error) throw new Error(`page text read failed (${slice.length} urls): ${error.message}`);
+        for (const r of ((data ?? []) as Array<{ source_url: string; clean_text: string | null }>)) {
+          const t = String(r.clean_text ?? "");
+          if (t && !out.has(r.source_url)) out.set(r.source_url, t);
+        }
+      }
+      return out;
     },
     async loadCandidateSignals(companyIds) {
       if (companyIds.length === 0) return [];
