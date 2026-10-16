@@ -46,6 +46,13 @@
   /* The distance from the shell's content edge to the viewport edge (centered, max 1080, 24px pad). */
   --fr-bleed: calc((100vw - min(100vw, 1080px)) / 2 + 24px);
 
+  /* THE STICKY SHELL HEADER'S HEIGHT (operator ruling, 2026-10-16). Ten rules across eight selectors
+     subtract the header from the viewport, and each one carried the literal number. The header
+     actually measures 54px, so every one of them was three pixels wrong. They now read this
+     variable, which is the only place the number lives. The max-width 640px block below raises it
+     to 73px, the height the header takes once it wraps to two rows. */
+  --fr-shell-h: 54px;
+
   min-height: 100vh;
   background: hsl(var(--fr-paper));
   color: hsl(var(--fr-ink));
@@ -347,6 +354,39 @@
 
 .fr-progress-tick[data-kind="gate"] {
   width: 12px;
+}
+
+/* ── D1 (operator ruling, 2026-10-16): THE HEADER AT 390px ──────────────────────────────────────
+   The header had ONE layout at every width — no media query touched any .fr-shell-* rule. At 390px
+   the inner box is 342px (390 minus the two 24px pads) and the tick row alone is 344px: 6 act ticks
+   at 22px, 11 gate ticks at 12px, 16 gaps at 5px. `.fr-shell-progress { flex: none }` meant it could
+   not shrink, so it kept its full width and ran 10px past the viewport edge; `.fr-shell-id`
+   (min-width: 0, overflow visible) was crushed to zero while `.fr-shell-title` (white-space: nowrap)
+   kept painting its 86px of ink — the dashes drew straight through "First read", 54px of overlap.
+   The identity was not hidden by any rule and not clipped by the viewport: at zero width its own
+   overflow:hidden suppressed it.
+
+   The fix wraps the header onto two rows below 640px and changes nothing else: every tick keeps its
+   22px/12px width and 5px gap, and the type, colours and spacing are untouched. At 1440px this block
+   is out of scope entirely. It is scoped by :has(.fr-progress-tick) — the condition that causes the
+   overflow — so the two other Header consumers (.fr-home-page, .fr-workspace-page), which pass no
+   beats and so carry no ticks, keep the single-row header they have today. */
+@media (max-width: 640px) {
+  /* The header is three rows here — label, identity, tick row — so the rules that subtract it must
+     subtract more. 93px is MEASURED, not computed: 18 + 17 + 12 + 17 + 8 + 3 + 18. An earlier value
+     of 101px was measured while the 17th tick still wrapped to a row of its own; the tick gap below
+     removed that row, and with it the 8px (a 3px row plus its 5px gap) that value carried. */
+  .first-read:has(.fr-progress-tick) { --fr-shell-h: 93px; }
+
+  .fr-shell-header-inner:has(.fr-progress-tick) { flex-wrap: wrap; row-gap: 0.5rem; }
+  /* the identity gets its own line inside the id, so the full "{company} · {host}" fits in 342px */
+  .fr-shell-header-inner:has(.fr-progress-tick) .fr-shell-id { flex: 1 1 100%; flex-wrap: wrap; }
+  .fr-shell-header-inner:has(.fr-progress-tick) .fr-shell-progress { flex: 1 1 100%; }
+  /* THE TICK ROW FITS ON ONE LINE. 17 ticks at the standing gap are 6x22 + 11x12 + 16x5 = 344px
+     against a 342px content box, so the last tick dropped to a row of its own. The gap — and only
+     the gap — narrows here: 6x22 + 11x12 + 16x4 = 328px. Every tick keeps its 22px/12px width, and
+     at 1440px this block is out of scope, so the dash row there is untouched. */
+  .fr-shell-header-inner:has(.fr-progress-tick) .fr-shell-segments { flex-wrap: wrap; gap: 4px; }
 }
 
 /* ---- shell: bottom nav (flag-gated) ---- */
@@ -688,7 +728,7 @@
   margin-right: calc(50% - 50vw);
   padding-left: calc(50vw - 50%);
   padding-right: calc(50vw - 50%);
-  min-height: calc(100vh - 57px);
+  min-height: calc(100vh - var(--fr-shell-h));
 }
 
 .fr-screen--dark .fr-screen-note {
@@ -858,7 +898,7 @@
   column-gap: 0;
   align-items: stretch;
   margin: -48px calc(50% - 50vw) 0;
-  min-height: calc(100vh - 57px);
+  min-height: calc(100vh - var(--fr-shell-h));
 }
 
 @media (max-width: 1023px) {
@@ -873,7 +913,7 @@
 
 .fr-spread-side-inner {
   position: sticky;
-  top: calc(57px + 3.25rem);
+  top: calc(var(--fr-shell-h) + 3.25rem);
 }
 
 .fr-spread[data-fr-sidebar="slate"] .fr-spread-side {
@@ -1363,7 +1403,7 @@
   align-items: center;
   justify-content: center;
   gap: 2.5rem;
-  min-height: calc(100vh - 57px - 48px - 96px);
+  min-height: calc(100vh - var(--fr-shell-h) - 48px - 96px);
   padding: 4rem 0;
 }
 
@@ -1734,8 +1774,8 @@
   flex-shrink: 0;
   align-self: flex-start;
   position: sticky;
-  top: 57px;                          /* under the sticky shell header */
-  height: calc(100vh - 57px);
+  top: var(--fr-shell-h);                          /* under the sticky shell header */
+  height: calc(100vh - var(--fr-shell-h));
   overflow-y: auto;
   padding: 1.25rem 0 1.5rem;
   background: hsl(var(--fr-paper));
@@ -1790,10 +1830,10 @@
 .fr-shell-with-nav {
   display: flex;
   align-items: stretch;
-  min-height: calc(100vh - 57px);
+  min-height: calc(100vh - var(--fr-shell-h));
 }
 .fr-shell-with-nav > .fr-page { flex: 1 1 auto; min-width: 0; }
-.fr-shell-with-nav .fr-spread { margin: 0; min-height: calc(100vh - 57px); }
+.fr-shell-with-nav .fr-spread { margin: 0; min-height: calc(100vh - var(--fr-shell-h)); }
 @media (max-width: 1023px) {
   .fr-shell-with-nav { flex-direction: column; }
   .fr-nav { position: static; width: auto; height: auto; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid hsl(var(--fr-line)); padding: 0.5rem 0.75rem; }
@@ -2270,7 +2310,7 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 /* READ (S:238-280): slate, full-bleed under the header, statement scale, ReadBands on Labeled. */
 .fr-ws-read {
   margin: -48px calc(50% - 50vw) 0;
-  min-height: calc(100vh - 57px);
+  min-height: calc(100vh - var(--fr-shell-h));
   background: hsl(var(--fr-slate));
   color: hsl(var(--fr-paper));
 }
@@ -2465,7 +2505,7 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-opprow-band { display: none; margin-top: 4px; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: hsl(var(--fr-steel)); white-space: nowrap; }
 @media (min-width: 768px) { .fr-ws-opprow-band { display: block; } }
 .fr-ws-oppaside { padding: 24px; background: hsl(var(--fr-periwinkle) / 0.1); }
-@media (min-width: 1024px) { .fr-ws-oppaside { position: sticky; top: calc(57px + 1rem); align-self: start; } }
+@media (min-width: 1024px) { .fr-ws-oppaside { position: sticky; top: calc(var(--fr-shell-h) + 1rem); align-self: start; } }
 .fr-ws-oppaside .fr-ws-band-eyebrow { color: hsl(var(--fr-periwinkle)); letter-spacing: 0.2em; }
 .fr-ws-oppaside-title { margin: 1.25rem 0 0; font-size: 1.125rem; font-weight: 700; line-height: 1.25; }
 .fr-ws-oppaside-facts { margin: 2rem 0 0; padding-top: 1.25rem; border-top: 1px solid hsl(var(--fr-periwinkle) / 0.25); font-size: 0.75rem; }
