@@ -71,7 +71,29 @@ export const ROW_TEXT_TABLES: ReadonlyArray<{ table: string; kind: RowTextKind }
 /** THE one assembly. Every caller — selection, PASS 2, the hedge question, the drift re-read —
  *  comes through here, so no two callers can disagree about what a row says. */
 export function rowTextOf(kind: RowTextKind, row: Readonly<Record<string, unknown>>): string {
-  return ROW_TEXT_COLUMNS[kind].map((c) => String(row[c] ?? "")).join(" ").trim();
+  // ── (operator ruling, 2026-10-16): ONLY DISTINCT COLUMNS ARE JOINED ───────────────────────────
+  //
+  // A signal's text was `claim_text + " " + evidence_excerpt`, unconditionally. On 2269 of 3175
+  // signals — 1791 of 2067 pool-eligible rows — those two columns are BYTE-IDENTICAL, so the row
+  // text handed to the model, to the drift re-read and to every gate was one sentence twice, joined
+  // by a single space and no punctuation. The seam is not cosmetic: the clause splitter sees no
+  // sentence end there, so a clause can run off the end of copy 1 into the start of copy 2. IAQM's
+  // staged positioning carried exactly such a clause — span {102,214} over a seam at 175 — and the
+  // line reads "...dry ice blasting, decontamination BBB accredited since September 7, 2005".
+  //
+  // So a column already said by an earlier column is dropped before the join. Containment, not
+  // equality: a column that merely repeats part of an earlier one adds nothing either. The join
+  // stays a single space, every column's own text is untouched, and a row whose columns differ is
+  // unchanged. THIS IS THE ONE BUILDER — the pool, the drift re-read, the S1/N1 re-check, continuity
+  // and the cost harness all read row text through here, so none of them can see a different text.
+  const kept: string[] = [];
+  for (const c of ROW_TEXT_COLUMNS[kind]) {
+    const v = String(row[c] ?? "").trim();
+    if (!v) continue;
+    if (kept.some((k) => k.includes(v))) continue;
+    kept.push(v);
+  }
+  return kept.join(" ").trim();
 }
 
 /** The SELECT list the re-read needs for a kind: the id plus every column rowTextOf reads. */

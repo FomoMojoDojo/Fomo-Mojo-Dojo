@@ -70,7 +70,11 @@ Deno.test("1. R6 source guard: nothing in the sourcing path names a text column 
 
 Deno.test("1a. and rowTextOf itself names NO column — it reads ROW_TEXT_COLUMNS", async () => {
   const src = await Deno.readTextFile(new URL("./classSourcingScope.ts", import.meta.url));
-  const body = src.slice(src.indexOf("export function rowTextOf"), src.indexOf("export function rowTextSelect"));
+  const whole = src.slice(src.indexOf("export function rowTextOf"), src.indexOf("export function rowTextSelect"));
+  // CODE only. rowTextOf's header explains the duplicate-column defect and has to name the two
+  // columns to do it; a comment assembles no text and states no rule. (Same fault as the earlier
+  // {"fixes" and "No row in the pool states" assertions, which matched their own comments.)
+  const body = whole.split("\n").filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*")).join("\n");
   assert(!TEXT_COLS.some((c) => body.includes(c)), "a column name inside rowTextOf would be a second statement of the rule");
   assert(body.includes("ROW_TEXT_COLUMNS[kind]"), "rowTextOf reads the constant");
 });
@@ -149,14 +153,25 @@ Deno.test("2. the re-read of a known-good carry reports NO drift (the 9830 case,
   assertEquals(db.selects.find((s) => s.table === "signals")?.cols, "id, claim_text, evidence_excerpt");
 });
 
+// The 2026-10-16 ruling collapses a row whose two columns say the same thing, and the fixture above
+// is exactly that shape — so on IT the pre-R6 defect can no longer reproduce: both assemblers now
+// return the same string. The defect was never about duplication; it was about one assembler reading
+// FEWER COLUMNS than another. That still happens, on a row whose columns genuinely differ, and that
+// is the row this test now uses.
+const EVIDENCE = "the program placed 240 youth with relatives between 1993 and 2011";
+const ROW_DISTINCT = { id: SIG, claim_text: CLAIM, evidence_excerpt: EVIDENCE };
+const FULL_DISTINCT = rowTextOf("signal", ROW_DISTINCT);
+
 Deno.test("2b. the PRE-R6 re-read (claim_text alone) is what refused row 9830", async () => {
-  const start = FULL.indexOf("established"), end = start + 52;
-  const block = await blockOn(FULL, start, end);
+  const start = FULL_DISTINCT.indexOf("established"), end = start + 52;
+  const block = await blockOn(FULL_DISTINCT, start, end);
   const pre = { [SIG]: CLAIM };                       // one column, as the old loop built it
   const bad = await driftedSpans(block, pre);
   assertEquals(bad.map((b) => b.why), ["sha_drift"], "the defect reproduces exactly");
   assertEquals(CLAIM.length, 137);
-  assertEquals(FULL.length, 275, "275 vs 137 — two different texts for one row");
+  assertEquals(FULL_DISTINCT.length, CLAIM.length + 1 + EVIDENCE.length,
+    "both columns are kept when they say different things");
+  assert(FULL_DISTINCT.length > CLAIM.length, "two different texts for one row");
 });
 
 Deno.test("3. a MUTATED row reports sha_drift (the guard still bites after the fix)", async () => {
@@ -284,4 +299,38 @@ Deno.test({
     }
     assertEquals(await driftedSpans(block as unknown as CarriedBlock, now), [], "nothing has drifted — the stage may proceed");
   },
+});
+
+// ── ONLY DISTINCT COLUMNS ARE JOINED (operator ruling, 2026-10-16) ─────────────────────────────
+//
+// A signal's text was claim + " " + evidence unconditionally, and on 2196 of 3175 signals the two
+// columns are byte-identical — so the row text was one sentence twice, joined by a space and no
+// punctuation. The clause splitter sees no sentence end at that seam, so a clause can run off the
+// end of copy 1 into the start of copy 2: IAQM's staged positioning carried span {102,214} over a
+// seam at 175 and rendered "...dry ice blasting, decontamination BBB accredited since September 7,
+// 2005". These two tests are the floor and the ceiling of the rule.
+
+Deno.test("DUP. a row whose columns say the same thing is read ONCE, and no clause spans a seam", () => {
+  const one = "BBB accredited since September 7, 2005; services span mold removal, dry ice blasting, decontamination";
+  const text = rowTextOf("signal", { claim_text: one, evidence_excerpt: one });
+  assertEquals(text, one, "the duplicate column is dropped before the join");
+  assertEquals(text.length, one.length);
+  // the seam is what made the defect: with the duplicate gone there is no second copy to run into
+  assert(!text.includes("decontamination BBB"), "the clause splitter can no longer cross a seam");
+  assertEquals((text.match(/BBB accredited/g) ?? []).length, 1, "stated once");
+  // containment, not equality: a column that merely repeats PART of an earlier one adds nothing
+  assertEquals(rowTextOf("signal", { claim_text: one, evidence_excerpt: "dry ice blasting" }), one);
+});
+
+Deno.test("DUP. a row whose columns say DIFFERENT things keeps both, in order", () => {
+  const claim = "Edgewood established the first kinship program in the country";
+  const evidence = "the program placed 240 youth with relatives";
+  assertEquals(rowTextOf("signal", { claim_text: claim, evidence_excerpt: evidence }),
+    `${claim} ${evidence}`, "nothing is dropped when the second column adds something");
+  // a column that CONTAINS an earlier one is still kept — the rule drops the contained, not the container
+  const long = `${claim} and ran it for three decades`;
+  assertEquals(rowTextOf("signal", { claim_text: claim, evidence_excerpt: long }), `${claim} ${long}`);
+  // and the single-column kinds are untouched by any of this
+  assertEquals(rowTextOf("own_word", { quote: "  spoken  " }), "spoken");
+  assertEquals(rowTextOf("finding", { body: "the finding" }), "the finding");
 });
