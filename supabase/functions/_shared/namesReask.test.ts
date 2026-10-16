@@ -49,8 +49,19 @@ Deno.test("N1a. slash and digit tokens are still names, including two-letter ste
 
 Deno.test("N1a. a two-letter token is dropped only when it is ALL-CAPS and alone", () => {
   assertEquals(nameShaped("Hi"), false, "a plain Capitalized word was never a name");
-  assertEquals(namesIn("partnering with AI Labs on delivery").includes("AI Labs"), true,
-    "a multi-word run containing a two-letter token is still a name");
+  // N1e (2026-10-15) REVERSES this: a two-letter all-caps token is a category word WHEREVER it
+  // sits, so it never extends a run. "AI Labs" splits into a single leftover word, which falls to
+  // the token path where nameShaped rejects a plain Capitalized word — so nothing is named here.
+  // The fault it closes: "Wasabi AiR AI recognition technology" yielded "Wasabi AiR AI", and the
+  // cited row states "Wasabi AiR" (audits 10655, 10656).
+  assertEquals(namesIn("partnering with AI Labs on delivery").includes("AI Labs"), false,
+    "a two-letter all-caps token never extends a run");
+  assertEquals(namesIn("Wasabi AiR AI recognition technology"), ["Wasabi AiR"],
+    "the run stops at the category word, and what remains is the name the record states");
+  // and the forms the ruling protects are untouched
+  assertEquals(namesIn("AI/ML workloads"), ["AI/ML"]);
+  assertEquals(namesIn("S3 compatibility"), ["S3"]);
+  assertEquals(namesIn("FedRAMP Ready status"), ["FedRAMP Ready"]);
 });
 
 // ── N1b ─────────────────────────────────────────────────────────────────────────────────────────

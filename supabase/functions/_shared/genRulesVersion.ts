@@ -32,4 +32,10 @@
 // the model the current read's still-sourced lines and asks it to continue or improve each. Wasabi's
 // FedRAMP line was dropped twice while C1 enforced its continuation and the prompt never mentioned
 // it; a gate that enforces continuation of invisible lines is asking the model to guess.
-export const GEN_RULES_VERSION = "2026-10-14.1" as const;
+// NP2 (operator ruling, 2026-10-15): bumped because the GENERATION PROMPT changed again — each
+// still-sourced line now carries, beside it, the words NO row in the pool states verbatim
+// ("no row in the pool states: … — drop them or cite a row that does"). Before this the model
+// learned a word was unsupported only by being refused, and by then its one re-ask was spent:
+// Wasabi's strategy lost "leading"/"unmatched" that way (10653) and its offering a label name
+// (10655, 10656).
+export const GEN_RULES_VERSION = "2026-10-15.1" as const;

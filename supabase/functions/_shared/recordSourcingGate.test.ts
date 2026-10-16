@@ -257,6 +257,7 @@ Deno.test("C1-P. the version comparison is string-ordered on the dated stamp", (
   assertEquals(enforced("2026-10-13.1"), true, "the boundary itself enforces");
   assertEquals(enforced("2026-10-13.2"), true);
   assertEquals(enforced("2026-10-14.1"), true);
+  assertEquals(enforced("2026-10-15.1"), true, "NP2's bump is still at or past the rules threshold");
   assertEquals(enforced("2026-10-07.1"), false, "an older stamp ⇒ report only");
   assertEquals(enforced("2026-09-18.1"), false);
 });

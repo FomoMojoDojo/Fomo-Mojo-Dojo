@@ -19,7 +19,9 @@
 //
 // A name with no supporting row is SAID SO rather than omitted: "stated in NO row of this ledger" is
 // the one honest answer, and it tells the model to drop the name or the claim instead of guessing.
-import { namesIn } from "./classFactCheck.ts";
+import {
+  extractSpecifics, namesIn, reputationWordsIn, S1_POSITION_WORDS,
+} from "./classFactCheck.ts";
 
 /** A pool row, as both the gate and the prompt see it. `cls` is the source class; `kind` matters
  *  because a finding is our own synthesis and may never source a name (S1/N1). */
@@ -39,6 +41,12 @@ export type FeedbackLine = {
    *  absent, every name in the line is still listed with its support, because the model is being
    *  asked to write the line again and needs to know what it may cite. */
   unsourced?: readonly string[];
+  /** NP2 (operator ruling, 2026-10-15): words this line asserts that NO row in the whole pool
+   *  states verbatim — specifics (S1), names (N1) and reputation words (S1b), measured against
+   *  every sourcing row, not just the line's own citations. A line whose words are nowhere in the
+   *  pool cannot be continued as written at any citation, so the model is told BEFORE it writes
+   *  rather than refused afterwards. */
+  unsupported_by_pool?: readonly string[];
   /** CR (operator ruling, 2026-10-15): how many rows this line cited, when that exceeded the cap.
    *  CITE_RULE has always said "cite AT MOST 3 per claim" and nothing enforced it: Wasabi's attempt
    *  2 cited FOUR on one line and spent the slot it needed for the AI/ML row on a second row for a
@@ -70,6 +78,30 @@ export function nameSupport(
   return out;
 }
 
+/** NP2: the words a line asserts that NO row in the pool states verbatim — specifics (S1's governed
+ *  set), names (N1, own name excluded) and reputation words (S1b), measured against EVERY sourcing
+ *  row rather than the line's own citations.
+ *
+ *  WHY IT IS HERE. Wasabi's strategy refused on "leading"/"unmatched" (audit 10653) and its offering
+ *  on a label name (10655/10656) — in each case the model had written a word the pool could not
+ *  support anywhere, and learned so only after spending its one re-ask. The still-sourced block
+ *  already tells it which rows state each NAME; this tells it which words no row states at all.
+ *  Same builder, one implementation. */
+export function unsupportedByPool(
+  text: string, pool: readonly SourceRow[], companyName: string,
+): string[] {
+  const sourcing = pool.filter(canSource);
+  const states = (w: string) => sourcing.some((r) => r.text.includes(w));
+  const words = [
+    ...namesToSource(text, companyName),
+    ...extractSpecifics(text)
+      .filter((sp) => sp.kind === "figure" || (sp.kind === "exclusivity" && S1_POSITION_WORDS.has(sp.token.toLowerCase())))
+      .map((sp) => sp.token),
+    ...reputationWordsIn(text),
+  ];
+  return [...new Set(words)].filter((w) => !states(w));
+}
+
 /** The names in a line, minus the company's own name when that is the WHOLE name — the same
  *  exclusion N1 applies, so the block never asks the model to source "Wasabi". */
 export function namesToSource(text: string, companyName: string): string[] {
@@ -83,6 +115,8 @@ export type FeedbackEntry = {
   text: string;
   /** CR: present only when this line cited more rows than the cap allows. */
   over_cited?: { count: number; cap: number };
+  /** NP2: words no pool row states verbatim. */
+  unsupported_by_pool?: readonly string[];
   /** the ids that still source the line (C1-S), translated to what the model may cite */
   sourcing: string[];
   /** every name the line must be able to source, with the rows that state it */
@@ -105,6 +139,7 @@ export function reaskFeedback(args: {
       field: l.field,
       text: l.text,
       over_cited: l.over_cited,
+      unsupported_by_pool: l.unsupported_by_pool,
       sourcing: [...(l.sourcing_citations ?? [])].map(tok),
       names: namesToSource(l.text, args.companyName).map((name) => {
         const support = nameSupport(name, args.pool).map(tok);
@@ -135,10 +170,15 @@ export function reaskFeedbackBlock(args: {
           n.support.length > 0
             ? `"${n.name}" -> ${n.support.join(", ")}`
             : `"${n.name}" -> stated in NO row of this ledger`).join(" | ");
+    // NP2: the words the pool cannot support, in the ruling's own sentence. It sits with the line
+    // it is about, so "drop them or cite a row that does" has an antecedent.
+    const unsupported = (e.unsupported_by_pool ?? []).length > 0
+      ? `\n      no row in the pool states: ${(e.unsupported_by_pool ?? []).map((w) => `"${w}"`).join(", ")} — drop them or cite a row that does`
+      : "";
     // CR: the count, next to the name rows that say which of its citations are load-bearing.
     const cap = e.over_cited
       ? `\n      too many citations: ${e.over_cited.count} cited, at most ${e.over_cited.cap} allowed — keep the rows named above and drop the rest`
       : "";
-    return head + src + names + cap;
+    return head + src + names + unsupported + cap;
   }).join("\n");
 }

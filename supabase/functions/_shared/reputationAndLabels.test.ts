@@ -23,6 +23,8 @@ import {
 import {
   OFFERING_KIND_HINTS, OFFERING_OQ_REASONS, offeringStructureViolations,
 } from "./publicReadGuards.ts";
+import { reaskFeedbackBlock, type SourceRow, unsupportedByPool } from "./reaskFeedback.ts";
+import { type CitedLine, sourcingIdsOf, stillSourcedPromptBlock } from "./stageContinuity.ts";
 
 const read = (p: string) => Deno.readTextFile(new URL(p, import.meta.url));
 
@@ -97,8 +99,13 @@ Deno.test("N1d. it only fires at a sentence start, and only on the listed words"
     "not at a start — untouched");
   // a run whose first word is NOT in the set keeps every word
   assertEquals(namesIn("Wasabi Fire is the new tier"), ["Wasabi Fire"]);
-  assertEquals(namesIn("Deliver AI to the team"), ["Deliver AI"],
-    "'deliver' is not an opener, so this stays a name — the false positive that was ruled to stay");
+  // N1e (2026-10-15) retires this false positive outright: "AI" is a two-letter all-caps token, so
+  // it never extends a run, and the single word left over falls to nameShaped, which rejects a
+  // plain Capitalized word. It was ruled to STAY under N1d alone; N1e removes it as a consequence
+  // of its own rule, not by special-casing. Measured fleet-wide, this is the ONLY line of 61
+  // classed lines whose names change (BlueSkyAI strategy how_to_win).
+  assertEquals(namesIn("Deliver AI to the team"), [],
+    "'AI' never extends a run, and 'Deliver' alone is not name-shaped");
   // a two-word name whose first word IS in the set loses it at a start: the cost of the closed set
   assertEquals(namesIn("Will Smith joined the board"), ["Smith"]);
 });
@@ -131,11 +138,20 @@ Deno.test("O1. BEHAVIOUR: a label name absent from the item's cited rows refuses
   assertEquals(
     unsourcedLabelNames({
       field: "items[3]", label: "Wasabi AiR AI recognition technology", cls: "record",
+      // the REAL row 2242bdd1 states "Wasabi AiR" — verified against the signals table, not invented
+      citedSourceTexts: ["Wasabi AiR significantly reduces manual efforts due to its seamless use of AI recognition technology"],
+      companyName: "Wasabi Technologies",
+    }), [],
+    "N1e: the run stops at the two-letter category word, so the label asserts 'Wasabi AiR' — which "
+    + "the item's cited row DOES state. The refusal this test was written against (audits 10655, "
+    + "10656) is resolved by the name rule, not by loosening O1.");
+  // and O1 still refuses a label naming something the item's rows do not state
+  assertEquals(
+    unsourcedLabelNames({
+      field: "items[3]", label: "Wasabi Fire recognition technology", cls: "record",
       citedSourceTexts: ["the product reduces manual effort through recognition technology"],
       companyName: "Wasabi Technologies",
-    }), ["Wasabi AiR AI"],
-    "a name the cited row does not state refuses — and the run is MAXIMAL, so the three capitalised "
-    + "words are one name, exactly as namesIn has always read them");
+    }), ["Wasabi Fire"], "a label name absent from the item's cited rows still refuses");
   // the own name alone is never demanded of the record
   assertEquals(unsourcedLabelNames({ field: "items[0]", label: "Wasabi", cls: "you",
     citedSourceTexts: ["storage"], companyName: "Wasabi Technologies" }), []);
@@ -184,3 +200,118 @@ Deno.test("O1. kind_hint and reason were ALREADY closed enums — not re-stated 
   assert(!body.includes("OFFERING_KIND_HINTS") && !body.includes("OFFERING_OQ_REASONS"),
     "a second definition of the same rule is how two checks come to disagree");
 });
+
+// ── N1e / NP2 (operator rulings, 2026-10-15) ────────────────────────────────────────────────────
+//
+// N1e. N1a already said a two-letter all-caps token is a CATEGORY word — but only on the
+// single-token path. The run regex bypasses nameShaped ("a multi-word capitalized run is a name by
+// construction"), so "Wasabi AiR AI recognition technology" yielded "Wasabi AiR AI" and Wasabi's
+// offering refused twice (10655, 10656) because its cited row states "Wasabi AiR".
+//
+// NP2. In both refusals the model had written a word the POOL could not support anywhere, and
+// learned so only by being refused — by which time its one re-ask was spent. The still-sourced
+// block already names the rows that state each name; it now also names the words no row states.
+describe_n1e();
+function describe_n1e() {
+  Deno.test("N1e. a two-letter all-caps token never extends a run", () => {
+    assertEquals(namesIn("Wasabi AiR AI recognition technology"), ["Wasabi AiR"]);
+    assertEquals(namesIn("AI Wasabi Fire"), ["Wasabi Fire"], "at the head, too");
+    assertEquals(namesIn("Wasabi AI Storage"), [],
+      "an interior split leaves single words, which fall to nameShaped and are not names");
+  });
+
+  Deno.test("N1e. slash, digit and mixed-case forms are untouched", () => {
+    assertEquals(namesIn("AI/ML workloads"), ["AI/ML"]);
+    assertEquals(namesIn("S3 compatibility"), ["S3"]);
+    assertEquals(namesIn("FedRAMP Ready status"), ["FedRAMP Ready"]);
+    assertEquals(namesIn("Medi-Cal/Medicare coverage"), ["Medi-Cal/Medicare"]);
+    assertEquals(namesIn("CRM and SMBs").sort(), ["CRM", "SMBs"], "three letters or more stays a name");
+  });
+
+  Deno.test("N1e. N1d still works through it", () => {
+    assertEquals(namesIn("Is Seagate still shipping X?"), ["Seagate"]);
+    assertEquals(namesIn("Wasabi Fire is the new tier"), ["Wasabi Fire"]);
+  });
+
+  // ── NP2 ───────────────────────────────────────────────────────────────────────────────────────
+
+  const POOL2: SourceRow[] = [
+    { id: "S1", kind: "signal", cls: "record", text: "Wasabi AiR brings searchable intelligence" },
+    { id: "S2", kind: "signal", cls: "you", text: "built for backups and AI/ML workloads" },
+    { id: "F1", kind: "finding", cls: "our_read", text: "we read them as the leading provider" },
+  ];
+
+  Deno.test("NP2. a word NO sourcing row states is listed; one a row states is not", () => {
+    assertEquals(unsupportedByPool("Wasabi AiR supports AI/ML", POOL2, "Wasabi Technologies"), [],
+      "both names are in the pool");
+    assertEquals(unsupportedByPool("Wasabi Fire supports AI/ML", POOL2, "Wasabi Technologies"),
+      ["Wasabi Fire"], "a name no row states");
+    // a FINDING cannot support anything — it is our own synthesis
+    assertEquals(unsupportedByPool("the leading provider", POOL2, "Wasabi Technologies"), ["leading"],
+      "only the finding says 'leading', and a finding may not source");
+  });
+
+  Deno.test("NP2. it covers specifics, names AND reputation words — the three gates", () => {
+    const pool: SourceRow[] = [{ id: "S1", kind: "signal", cls: "record", text: "serving 12 counties" }];
+    const got = unsupportedByPool("the only provider serving 12 counties, world-class, with Wasabi Fire",
+      pool, "Wasabi Technologies").sort();
+    assert(got.includes("only"), "S1's position word");
+    assert(got.includes("world-class"), "S1b's reputation word");
+    assert(got.includes("Wasabi Fire"), "N1's name");
+    assert(!got.includes("12"), "a figure the pool DOES state is not listed");
+  });
+
+  Deno.test("NP2. the note is the signed sentence, beside its own line", () => {
+    const block = reaskFeedbackBlock({
+      lines: [{ text: "Wasabi Fire is world-class", sourcing_citations: ["S1"],
+                unsupported_by_pool: ["Wasabi Fire", "world-class"] }],
+      pool: POOL2, companyName: "Wasabi Technologies",
+    });
+    assert(block.includes('no row in the pool states: "Wasabi Fire", "world-class" — drop them or cite a row that does'),
+      "the ruling's own sentence");
+    // it sits under the line it is about
+    const lines = block.split("\n");
+    const textAt = lines.findIndex((l) => l.includes("Wasabi Fire is world-class"));
+    const noteAt = lines.findIndex((l) => l.includes("no row in the pool states"));
+    assert(textAt >= 0 && noteAt > textAt, "beside its line, not in a separate list");
+  });
+
+  Deno.test("NP2. a line the pool fully supports carries no note", () => {
+    const block = reaskFeedbackBlock({
+      lines: [{ text: "Wasabi AiR supports AI/ML", sourcing_citations: ["S1"], unsupported_by_pool: [] }],
+      pool: POOL2, companyName: "Wasabi Technologies",
+    });
+    assert(!block.includes("no row in the pool states"), "no note where there is nothing to say");
+  });
+
+  Deno.test("NP2. BEHAVIOUR: the still-sourced block itself carries the note", () => {
+    // end to end through the real function the generation prompt calls — not a grep for the call.
+    const forSourcing = POOL2.map((r) => ({ id: r.id, kind: r.kind, source_class: r.cls }));
+    const line: CitedLine = {
+      field: "unique_attributes[0]", text: "Wasabi Fire is world-class", cls: "record", refs: ["S1"],
+    };
+    const block = stillSourcedPromptBlock([line], sourcingIdsOf(forSourcing), POOL2, "Wasabi Technologies");
+    assert(block.includes("Wasabi Fire is world-class"), "the line is shown");
+    assert(block.includes('no row in the pool states: "Wasabi Fire", "world-class"'),
+      "with the words the pool cannot support");
+    // and a line the pool fully supports gets the block WITHOUT a note
+    const ok: CitedLine = { field: "x", text: "Wasabi AiR supports AI/ML", cls: "record", refs: ["S1"] };
+    const clean = stillSourcedPromptBlock([ok], sourcingIdsOf(forSourcing), POOL2, "Wasabi Technologies");
+    assert(clean.includes("Wasabi AiR supports AI/ML"));
+    assert(!clean.includes("no row in the pool states"), "nothing to say, so nothing said");
+  });
+
+  Deno.test("NP2. ONE builder — the still-sourced block computes it, nothing re-implements it", async () => {
+    const cont = await read("./stageContinuity.ts");
+    assert(cont.includes("unsupported_by_pool: unsupportedByPool(l.text, pool, companyName),"),
+      "the still-sourced block feeds the one builder");
+    assert(cont.includes('from "./reaskFeedback.ts"'), "importing it, never redefining it");
+    // the computation lives in the NP module and nowhere else
+    const np = await read("./reaskFeedback.ts");
+    assert(np.includes("export function unsupportedByPool("), "one implementation");
+    for (const f of ["stageContinuity.ts", "../generate-public-read/index.ts"]) {
+      const src = await read(`./${f}`.replace("./../", "../"));
+      assert(!/no row in the pool states/.test(src), `${f} must not render the sentence itself`);
+    }
+  });
+}

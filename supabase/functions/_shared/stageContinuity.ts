@@ -20,7 +20,7 @@
 // question — is this specific sourced — and these answer a different one: did we lose something the
 // record gave us. Keeping them apart is what lets voiceLabel.test.ts's pins on the gate stay meaningful.
 import { decideFieldClass, extractSpecifics } from "./classFactCheck.ts";
-import { reaskFeedbackBlock, type SourceRow } from "./reaskFeedback.ts";
+import { reaskFeedbackBlock, type SourceRow, unsupportedByPool } from "./reaskFeedback.ts";
 import { verbatimProvable } from "./ownWordsExtract.ts";
 import { normalizeForHash } from "./contentIdentity.ts";
 
@@ -220,6 +220,12 @@ export function stillSourcedPromptBlock(
     lines: keep.map((l) => ({
       field: l.field, text: l.text,
       sourcing_citations: l.refs.filter((r) => sourcingIds.has(r)),
+      // ── NP2 (operator ruling, 2026-10-15): WHAT THE POOL CANNOT SUPPORT, SAID UP FRONT ───────
+      // S1, N1 and S1b run on each still-sourced line against the WHOLE pool before the first
+      // attempt. A word no sourcing row states verbatim cannot be rescued by any citation, so the
+      // model is told now rather than refused after its one re-ask is gone — which is how Wasabi's
+      // strategy (leading/unmatched, 10653) and offering (a label name, 10655/10656) were lost.
+      unsupported_by_pool: unsupportedByPool(l.text, pool, companyName),
     })),
     pool, companyName,
   });

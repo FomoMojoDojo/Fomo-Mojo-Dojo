@@ -344,6 +344,40 @@ export function namesIn(text: string): string[] {
   for (const m of t.matchAll(/\b[A-Z][a-zA-Z]+(?:\s*[A-Z][a-zA-Z]+)+\b/g)) {
     const at = m.index ?? 0;
     let tok = m[0];
+    // ── N1e (operator ruling, 2026-10-15): A TWO-LETTER ALL-CAPS TOKEN NEVER EXTENDS A RUN ──────
+    // N1a already says a two-letter all-caps token is a CATEGORY word, not a name — but only on the
+    // single-token path. The run regex bypasses nameShaped entirely ("a multi-word capitalized run
+    // is a name by construction"), so "Wasabi AiR AI recognition technology" yielded the maximal run
+    // "Wasabi AiR AI", and Wasabi's offering refused twice (audits 10655, 10656) because its cited
+    // row states "Wasabi AiR" and not "Wasabi AiR AI". The category word was one letter-pair away
+    // from a name the record does state.
+    //
+    // The run SPLITS on such a token. A split that leaves one multi-word piece keeps it as a name by
+    // construction; a split that leaves only single words emits none of them here — they fall to the
+    // single-token path below, where nameShaped decides, so "Wasabi AI Storage" names nothing rather
+    // than inventing "Storage". Slash, digit and mixed-case forms are untouched: AI/ML and S3 carry
+    // a slash or a digit, FedRAMP is mixed case, and none of them matches ^[A-Z]{2}$.
+    {
+      const words = tok.split(/\s+/);
+      if (words.some((w) => /^[A-Z]{2}$/.test(w))) {
+        const pieces: string[][] = [[]];
+        for (const w of words) {
+          if (/^[A-Z]{2}$/.test(w)) { pieces.push([]); continue; }
+          pieces[pieces.length - 1].push(w);
+        }
+        // Only a piece that is STILL multi-word is a name by construction. A single word left over
+        // is not: emitting it turned "Deliver AI" into the name "Deliver", a bare verb, which is
+        // worse than the false positive it replaced. Single words fall through to the token path
+        // below, where nameShaped decides — so "Deliver AI" and "Wasabi AI Storage" name nothing,
+        // while "AI Wasabi Fire" still names Wasabi Fire.
+        const emit = pieces.filter((pc) => pc.length >= 2).map((pc) => pc.join(" "));
+        for (const piece of emit) {
+          const off = tok.indexOf(piece);
+          hits.push({ tok: piece, at: at + (off < 0 ? 0 : off) });
+        }
+        continue;
+      }
+    }
     if (starts.has(at)) {
       const firstSpace = tok.search(/\s/);
       const head = firstSpace > 0 ? tok.slice(0, firstSpace) : "";
