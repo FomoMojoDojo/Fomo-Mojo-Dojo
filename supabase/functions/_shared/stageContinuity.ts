@@ -124,6 +124,9 @@ export type MissingLine = {
   still_sourced?: boolean;
   /** C1-S: exactly which of its citations made it still-sourced. */
   sourcing_citations?: string[];
+  /** C1-U: the specifics C1 stopped requiring because NO pool row states them. Present only when
+   *  there were any, so a line C1-U did not touch reads exactly as before. */
+  excused?: string[];
 };
 
 /** C1 — the staged read against the read it would replace.
@@ -247,7 +250,11 @@ export function stillSourcedPromptBlock(
 //
 // So every current line lands in exactly one bucket, each carrying its own lines with text,
 // citations and cause, and the counts are the bucket sizes.
-export type ContinuityLine = { statement: string; citations: string[]; specifics: string[]; reason: string; field?: string };
+export type ContinuityLine = {
+  statement: string; citations: string[]; specifics: string[]; reason: string; field?: string;
+  /** C1-U: the specifics C1 stopped requiring because no pool row states them. */
+  excused?: string[];
+};
 export type ContinuitySplit = {
   continued: ContinuityLine[];
   licensed: ContinuityLine[];
@@ -265,8 +272,36 @@ export function classifyContinuity(args: {
    *  these is still-sourced, and refuses on any rules. Omitted ⇒ nothing is still-sourced, which is
    *  the pre-C1-S behaviour. */
   sourcingIds?: ReadonlySet<string>;
+  /** C1-U: the new pool, as NP2 sees it. Given, the specifics C1 requires a continuing line to
+   *  carry EXCLUDE every token no pool row states — the same set NP2 puts in the prompt, from the
+   *  same function. Omitted ⇒ nothing is excused, which is the pre-C1-U behaviour. */
+  pool?: readonly SourceRow[];
+  /** C1-U: needed only because unsupportedByPool excludes the company's own name from the names it
+   *  asks the pool to state (N1's own exclusion). */
+  companyName?: string;
 }): ContinuitySplit {
   const sourcing = args.sourcingIds ?? new Set<string>();
+  // ── C1-U (operator ruling, 2026-10-15): C1 NEVER REQUIRES A WORD THE POOL CANNOT SOURCE ───────
+  //
+  // WHY. Wasabi's strategy deadlocked between two gates that each wanted the opposite thing of the
+  // SAME TWO WORDS. The current winning_aspiration says "To be the LEADING global cloud storage
+  // provider ... with UNMATCHED cost-effectiveness"; no row in the pool states either word (verified
+  // against every outside signal and every judge-kept own word, not just the selection). So:
+  //
+  //   S1b/NP2 say   remove "leading" and "unmatched", or cite a row that states them — and none can.
+  //   C1 said       a staged line continues this one only if it carries every specific of it, and
+  //                 extractSpecifics returns exactly ["leading", "unmatched"].
+  //
+  // Audit 10696 is the model dropping the line outright; 10738 is the model COMPLYING — it rewrote
+  // the line as "To store all the world's data ...", citing 0c93c536, a row the current line also
+  // cites — and C1 refused it anyway, because the rewrite does not contain the two words it was
+  // ordered to remove. No re-ask budget can resolve that: obeying either gate violates the other.
+  //
+  // So the required set excludes every token in unsupportedByPool for THAT line. A dropped specific
+  // the pool CAN source still refuses, unchanged: the rule removes an impossible demand, not the
+  // check. The excused tokens are recorded per line so the audit row says what C1 stopped asking for.
+  const excusedOf = (text: string): ReadonlySet<string> =>
+    args.pool ? new Set(unsupportedByPool(text, args.pool, args.companyName ?? "")) : new Set<string>();
   const carried = args.carriedFields ?? new Set<string>();
   const missing: MissingLine[] = [];
   const continuedLines: ContinuityLine[] = [];
@@ -289,11 +324,17 @@ export function classifyContinuity(args: {
     if (d.branch === "judge_required" || d.branch === "unsupported") {
       // LICENSED, cause 2: the line would not pass the fact-check today, so requiring it would be
       // requiring an unsourced line.
-      licensed.push({ ...base, specifics: extractSpecifics(old.text).map((x) => x.token),
+      const all2 = extractSpecifics(old.text).map((x) => x.token);
+      const unsup2 = excusedOf(old.text);
+      licensed.push({ ...base, specifics: all2.filter((t) => !unsup2.has(t)),
+        ...(all2.some((t) => unsup2.has(t)) ? { excused: all2.filter((t) => unsup2.has(t)) } : {}),
         reason: `licensed: the line is ${d.branch} against the new ledger — it would not pass the fact-check today` });
       continue;
     }
-    const tokens = extractSpecifics(old.text).map((s) => s.token);
+    const allTokens = extractSpecifics(old.text).map((s) => s.token);
+    const unsupported = excusedOf(old.text);
+    const excused = allTokens.filter((t) => unsupported.has(t));
+    const tokens = allTokens.filter((t) => !unsupported.has(t));
     const continued = args.stagedLines.some((n) => {
       // CARRIAGE — the same test for both kinds of line, and the only test C1-A relaxes around.
       if (!tokens.every((t) => verbatimProvable(t, n.text))) return false;
@@ -306,9 +347,11 @@ export function classifyContinuity(args: {
     if (continued) {
       const byAnchor = old.field !== undefined && carried.has(old.field);
       continuedLines.push({ ...base, specifics: tokens,
-        reason: byAnchor
+        ...(excused.length > 0 ? { excused } : {}),
+        reason: (byAnchor
           ? `continued by CARRY ANCHOR at ${old.field} — the carried line holds every specific`
-          : `continued by a staged line sharing a citation and holding every specific [${tokens.join(", ")}]` });
+          : `continued by a staged line sharing a citation and holding every specific [${tokens.join(", ")}]`)
+          + (excused.length > 0 ? ` — C1-U excused [${excused.join(", ")}]: no pool row states them` : "") });
       continue;
     }
     const anchorCarried = old.field !== undefined && carried.has(old.field);
@@ -316,15 +359,19 @@ export function classifyContinuity(args: {
     missing.push({
       statement: old.text,
       specifics: tokens,
+      ...(excused.length > 0 ? { excused } : {}),
       citations: [...old.refs],
       field: old.field,
       // C1-S: which of the two situations this drop is. The refusal reads this, not the predecessor's
       // stamp, for a line whose own source is in the pool.
       still_sourced: stillSourced,
       sourcing_citations: old.refs.filter((r) => sourcing.has(r)),
-      reason: anchorCarried
+      reason: (anchorCarried
         ? `dropped: the line carried at ${old.field} does not carry [${tokens.join(", ")}]`
-        : `dropped: no staged line shares a citation and carries [${tokens.join(", ")}]`,
+        : `dropped: no staged line shares a citation and carries [${tokens.join(", ")}]`)
+        // C1-U: say what C1 stopped requiring, so the reason cannot be read as a shorter demand
+        // than it was. "excused" is the ruling's own word for a token no pool row states.
+        + (excused.length > 0 ? ` — C1-U excused [${excused.join(", ")}]: no pool row states them` : ""),
     });
   }
   return { continued: continuedLines, licensed, dropped: missing };

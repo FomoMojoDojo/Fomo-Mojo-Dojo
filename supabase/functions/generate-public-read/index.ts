@@ -54,6 +54,7 @@ import {
 import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass, PREDECESSOR_CITED_REASON, PREDECESSOR_NAMED_REASON } from "../_shared/publicReadInputs.ts";
 import { type ModelCallRecord, openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 import { insertIntegrityRun, IntegrityWriteRefused } from "../_shared/integrityWrite.ts";
+import { BODY_MODE_GUARD, classifyBodyMode, KNOWN_BODY_KEYS } from "../_shared/bodyMode.ts";
 import { reaskFeedbackBlock, type SourceRow } from "../_shared/reaskFeedback.ts";
 
 const corsHeaders = {
@@ -291,10 +292,54 @@ Deno.serve(async (req) => {
     const company_id = String(body.company_id ?? "");
     if (!company_id) return json({ error: "company_id is required" }, 400);
     if (company_id === CB1_FROZEN_ID) return json({ error: "frozen reference company — never written" }, 403);
-    const doPlan = body.plan === true;
-    const doStage = body.stage === true;                 // Gate 6a two-phase: write NOT-current, await accept
-    const doPromote = body.promote === true;             // Gate 6a: flip the staged rows current + supersede
-    const doWrite = body.write !== false && !doPlan && !doStage && !doPromote;
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+    // ── WD (operator ruling, 2026-10-15): THE MODE IS NAMED, OR THE CALL IS REFUSED ──────────────
+    //
+    // WHY. `doWrite = body.write !== false && !doPlan && !doStage && !doPromote` made WRITE the
+    // default for every body that named no mode — including a body that named one WRONGLY. A
+    // re-stage of Wasabi's strategy was sent as {mode:"stage"}: `mode` is not a key this function
+    // reads, so it was ignored, nothing was true, and the default wrote a CURRENT read (04a3d69c,
+    // audits 10777 -> 10778, both stamped mode:"write") over de1efd3f. Discarded as 10779. The call
+    // asked to stage and the function promoted, and nothing in the request or the response said so.
+    //
+    // THE RULE: exactly one mode flag must be `true`, and every key in the body must be one this
+    // function reads. A body that names no mode, names two, or carries a key we do not know is a
+    // 400 with an audited refusal row NAMING THE KEYS — never a run. There is no default mode left.
+    //
+    // dry_run is in the set because it is a real mode and always has been: it is recorded as
+    // mode:"dry_run" on the integrity row, and it was reachable ONLY as `write:false` — a body that
+    // sets nothing to true. Under the ruling as written that body is refused, which would delete the
+    // mode, so it is named positively instead. `write:false` no longer means anything; the one
+    // caller that used it (stageContinuity.test.ts's D3 half-two) now sends dry_run:true.
+    const verdict = classifyBodyMode(body as Record<string, unknown>);
+    if (!verdict.ok) {
+      // the refusal is AUDITED, through the one writer that reads its own error (A1), before any
+      // mode can run — and it names the keys, so a caller can see what it sent and what we read.
+      await insertIntegrityRun(supabase, {
+        company_id,
+        component: "first_read_public_read",
+        status: "rejected",
+        error: `guard=${BODY_MODE_GUARD} detail=${verdict.detail}`,
+        excluded_by_rule: {
+          guard: BODY_MODE_GUARD,
+          detail: verdict.detail,
+          mode: null,
+          keys_sent: verdict.keys_sent,
+          keys_known: [...KNOWN_BODY_KEYS].sort(),
+          modes_named: verdict.modes_named,
+          unknown_keys: verdict.unknown_keys,
+        },
+      });
+      return json(
+        { error: verdict.detail, guard: BODY_MODE_GUARD, keys_known: [...KNOWN_BODY_KEYS].sort() },
+        400,
+      );
+    }
+    const doPlan = verdict.mode === "plan";
+    const doStage = verdict.mode === "stage";             // Gate 6a two-phase: write NOT-current, await accept
+    const doPromote = verdict.mode === "promote";         // Gate 6a: flip the staged rows current + supersede
+    const doWrite = verdict.mode === "write";
     const probeId: string | null = typeof body._probe_internal_id === "string" ? body._probe_internal_id : null;
 
     // ── KINDS-SCOPED RUN (2026-08-31, operator-signed): optional body.kinds narrows this run —
@@ -311,8 +356,6 @@ Deno.serve(async (req) => {
       if (bad.length) return json({ error: `kinds must be a subset of: ${KINDS.join(", ")}`, bad_kinds: bad }, 400);
       if (rawKinds.length > 0) activeKinds = [...new Set(rawKinds.map(String))] as Kind[];
     }
-
-    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
     // ── PROMOTE (accept): no generation, no model call. Per kind, flip the staged row (is_current
     //    false→true) and supersede the prior current row (is_current true→false, superseded_by=staged).
@@ -1106,6 +1149,10 @@ Respond with ONLY JSON:
         textByRef: textByUuid, classByRef: classByUuid,
         carriedFields: new Set(Object.keys(carriedNow)),   // C1-A: which paths are the record's words
         sourcingIds,                                       // C1-S: which drops refuse on any rules
+        // C1-U: the SAME pool NP2 reads, from the same builder — so the words the prompt tells the
+        // model to remove are exactly the words C1 stops requiring. Two implementations of
+        // "what the pool cannot support" is how the deadlock would come back.
+        pool: feedbackPool(), companyName,
       });
       // ── C1-P (operator ruling, 2026-10-14): C1 is REPORT-ONLY against a pre-rules predecessor ──
       // Wasabi's stage was refused by C1 for dropping 5 of 6 lines of a read generated 2026-08-22:

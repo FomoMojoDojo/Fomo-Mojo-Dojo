@@ -43,4 +43,10 @@
 // CITE_RULE forbids the model to cite — and its unsupported-word note says "Keep this line. ...
 // Remove those words, or cite a row that states them." The previous "drop them" was read as drop
 // the LINE: Wasabi's re-asked strategy removed winning_aspiration entirely (10695 -> 10696).
-export const GEN_RULES_VERSION = "2026-10-15.2" as const;
+// C1-U (operator ruling, 2026-10-15): bumped a third time. C1 no longer requires a continuing line
+// to carry a specific that NO pool row states. Wasabi's strategy deadlocked on exactly that:
+// S1b/NP2 ordered "leading" and "unmatched" removed, C1 required them carried, and the model was
+// refused for complying (10738). The required set now excludes unsupportedByPool for that line —
+// the same set NP2 prints in the prompt, from the same function. A dropped specific the pool CAN
+// source still refuses.
+export const GEN_RULES_VERSION = "2026-10-15.3" as const;

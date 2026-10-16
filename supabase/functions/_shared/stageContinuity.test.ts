@@ -406,7 +406,9 @@ Deno.test({
     const resp = await fetch(`${D3_URL}/functions/v1/generate-public-read`, {
       method: "POST",
       headers: { Authorization: `Bearer ${D3_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ company_id: co, kinds: ["positioning"], write: false }),
+      // WD (2026-10-15): the dry run is NAMED. It used to be reachable only as `write: false` — a
+      // body that set no mode flag to true — which WD refuses.
+      body: JSON.stringify({ company_id: co, kinds: ["positioning"], dry_run: true }),
     });
     const body = await resp.json() as { continuity?: Record<string, unknown> };
     assertEquals(resp.status, 200);

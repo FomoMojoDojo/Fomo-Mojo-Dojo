@@ -21,7 +21,7 @@
 //   deno run --allow-all scripts/c1c2-continuity-cost.ts          # the GATE: live reads
 //   deno run --allow-all scripts/c1c2-continuity-cost.ts --all    # diagnostic: every classed read
 //
-// Read-only: three SELECTs and no write of any kind.
+// Read-only: four SELECTs (reads, row texts, companies for C1-U) and no write of any kind.
 Object.defineProperty(Deno, "serve", {   // the emitter lives beside a Deno.serve; don't bind a port
   configurable: true,
   value: () => ({ finished: Promise.resolve(), shutdown: () => {}, ref: () => {}, unref: () => {} }),
@@ -76,6 +76,11 @@ const { data: all, error } = await db.from("public_reads")
   .select("id, company_id, kind, is_current, created_at, payload, input_ledger, superseded_by").order("created_at");
 if (error) { console.error(`harness: FAIL ${error.message}`); Deno.exit(2); }
 const rows = (all ?? []) as Read[];
+// C1-U needs each read's company NAME (unsupportedByPool excludes the company's own name from the
+// names it asks the pool to state). Resolved by query, never from memory.
+const { data: cos, error: coErr } = await db.from("companies").select("id, name");
+if (coErr) { console.error(`harness: FAIL ${coErr.message}`); Deno.exit(2); }
+const companyNameById = new Map(((cos ?? []) as Array<{ id: string; name: string }>).map((c) => [c.id, c.name]));
 const subject = rows.filter((r) =>
   (r.input_ledger as { classes?: unknown } | null)?.classes && (ALL || r.is_current));
 
@@ -118,9 +123,15 @@ for (const r of subject) {
   const sourcingIds = sourcingIdsOf(ids.map((id) => ({
     id, kind: kindById.get(id) ?? "", source_class: classes[id] ?? "",
   })));
+  // C1-U: the pool as NP2 sees it — the same shape feedbackPool() builds in the generator, so the
+  // harness measures the rule the generator enforces and not a looser one.
+  const pool = ids.map((id) => ({
+    id, kind: kindById.get(id) ?? "", cls: classes[id] ?? "", text: texts[id] ?? "",
+  }));
   const split = classifyContinuity({
     currentLines, stagedLines, newLedgerIds: new Set(ids),
     textByRef: texts, classByRef: classes, carriedFields, sourcingIds,
+    pool, companyName: companyNameById.get(r.company_id) ?? "",
   });
   const missing = stillSourcedDrops(split);
   const licensed = [

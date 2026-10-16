@@ -312,7 +312,14 @@ function describe_n1e() {
     assert(np.includes("export function unsupportedByPool("), "one implementation");
     for (const f of ["stageContinuity.ts", "../generate-public-read/index.ts"]) {
       const src = await read(`./${f}`.replace("./../", "../"));
-      assert(!/No row in the pool states/i.test(src), `${f} must not render the sentence itself`);
+      // CODE only. C1-U's own header explains the deadlock in prose — "no row in the pool states
+      // either word" — and a comment can neither render the sentence to the model nor re-implement
+      // the computation, so matching one is a false positive. (The same fault as the earlier
+      // {"fixes" assertion, which matched its own comment before it matched any code.)
+      const code = src.split("\n")
+        .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*") && !l.trim().startsWith("/*"))
+        .join("\n");
+      assert(!/No row in the pool states/i.test(code), `${f} must not render the sentence itself`);
     }
   });
 }
