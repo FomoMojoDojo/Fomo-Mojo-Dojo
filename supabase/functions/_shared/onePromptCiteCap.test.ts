@@ -182,7 +182,7 @@ Deno.test("CR. the block tells the model how many it cited AND which rows carry 
   assert(block.includes("too many citations: 4 cited, at most 3 allowed"), "the count and the cap");
   assert(block.includes("keep the rows named above and drop the rest"),
     "and WHICH to keep — a line told only 'too many' cannot tell which citation is load-bearing");
-  assert(block.includes('"Wasabi Fire" -> S8') && block.includes('"AI/ML" -> S5'),
+  assert(block.includes('"Wasabi Fire" -> [S8]') && block.includes('"AI/ML" -> [S5]'),
     "the name rows are the answer to 'which three'");
 });
 

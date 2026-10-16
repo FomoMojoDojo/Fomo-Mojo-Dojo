@@ -12,8 +12,11 @@
 // ("0 refused over the 10 classed live reads") could not be reproduced afterwards because the script
 // was gone and the live set had moved on. A measurement that cannot be re-run is not a baseline.
 //
-// HOW IT IS READ. A refusal that is NOT in KNOWN_PRE_C1 below fails the run. The filed ones are
-// drops that happened before C1 existed; they are history, not regressions, and each says so.
+// HOW IT IS READ. The harness asks the question C1 asks, with the SAME function and the same
+// inputs: only a STILL-SOURCED drop — one C1-S would refuse — fails the run. A licensed drop (a
+// findings-only line, a pre-rules line whose sourcing rows have left the pool) is LISTED as
+// licensed and does not fail. A still-sourced drop that is NOT in KNOWN_PRE_C1 below fails; the
+// filed ones are drops that happened before C1 existed, history rather than regressions.
 //
 //   deno run --allow-all scripts/c1c2-continuity-cost.ts          # the GATE: live reads
 //   deno run --allow-all scripts/c1c2-continuity-cost.ts --all    # diagnostic: every classed read
@@ -24,7 +27,8 @@ Object.defineProperty(Deno, "serve", {   // the emitter lives beside a Deno.serv
   value: () => ({ finished: Promise.resolve(), shutdown: () => {}, ref: () => {}, unref: () => {} }),
 });
 const { linesOfStoredPayload } = await import("../supabase/functions/generate-public-read/index.ts");
-const { droppedLines, softenedSpecifics } = await import("../supabase/functions/_shared/stageContinuity.ts");
+const { classifyContinuity, sourcingIdsOf, softenedSpecifics, stillSourcedDrops } =
+  await import("../supabase/functions/_shared/stageContinuity.ts");
 const { reReadRowTexts } = await import("../supabase/functions/_shared/classSourcingScope.ts");
 const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.57.4");
 const { predecessorOf } = await import("./continuityPairing.ts");
@@ -81,6 +85,13 @@ let unfiled = 0, filedSeen = 0, c2Seen = 0, comparedN = 0, vacuousN = 0, refTota
 for (const r of subject) {
   const classes = (r.input_ledger as { classes: Record<string, string> }).classes;
   const ids = (r.input_ledger as { ids?: string[] }).ids ?? [];
+  // sourcingIdsOf needs each row's KIND as well as its class — a finding may never source, whatever
+  // class it carries, and that is the distinction this harness was missing.
+  const kindById = new Map<string, string>();
+  for (const [k, list] of Object.entries(
+    ((r.input_ledger as { by_kind?: Record<string, string[]> }).by_kind ?? {}))) {
+    for (const id of list) kindById.set(id, k);
+  }
   const texts = await reReadRowTexts(db as never, ids);
   refTotal += ids.length;
   refResolved += ids.filter((i) => texts[i] !== undefined).length;
@@ -94,10 +105,29 @@ for (const r of subject) {
   // future carried read is measured under the same rule the generator uses.
   const carriedFields = new Set(Object.keys(
     (r.input_ledger as { carried?: Record<string, unknown> }).carried ?? {}));
-  const missing = droppedLines({
+  // ── THE PRODUCTION RULE (operator ruling, 2026-10-15) ────────────────────────────────────────
+  // The harness used droppedLines(), a wrapper that calls classifyContinuity WITHOUT sourcingIds.
+  // Every drop therefore came back still_sourced:false and the licensed bucket was discarded, so
+  // the harness could not tell a drop C1-S would REFUSE from one C1-S licenses — and it failed on
+  // both. Wasabi's promoted offering 523da9ea dropped a line whose only two citations were
+  // FINDINGS (37343b4c, 93914b30): our own synthesis, which can never source, so C1-S did not
+  // refuse it and C1-P licensed it report-only. The harness called it UNFILED and failed the run.
+  //
+  // It now asks the same question C1 asks, with the same function and the same inputs: only a
+  // STILL-SOURCED drop fails. A licensed one is listed as licensed.
+  const sourcingIds = sourcingIdsOf(ids.map((id) => ({
+    id, kind: kindById.get(id) ?? "", source_class: classes[id] ?? "",
+  })));
+  const split = classifyContinuity({
     currentLines, stagedLines, newLedgerIds: new Set(ids),
-    textByRef: texts, classByRef: classes, carriedFields,
+    textByRef: texts, classByRef: classes, carriedFields, sourcingIds,
   });
+  const missing = stillSourcedDrops(split);
+  const licensed = [
+    ...split.licensed.map((l) => ({ statement: l.statement, why: l.reason })),
+    ...split.dropped.filter((d) => d.still_sourced !== true)
+      .map((d) => ({ statement: d.statement, why: `${d.reason} — no surviving sourcing row, so C1-S does not refuse it` })),
+  ];
   const softened = stagedLines.flatMap((l) =>
     softenedSpecifics(l, texts, classes).map((h) => ({ field: l.field ?? "", ...h })));
 
@@ -105,7 +135,11 @@ for (const r of subject) {
   const against = prior ? `vs ${prior.id.slice(0, 8)} (${prior.created_at.slice(0, 10)})` : "no predecessor";
   console.log(`${r.id.slice(0, 8)} ${r.company_id.slice(0, 8)} ${r.kind.padEnd(11)} ` +
     `${String(stagedLines.length).padStart(2)} line(s) ${against.padEnd(28)} ` +
-    `C1=${missing.length} C2=${softened.length}${carriedFields.size ? ` carried=${carriedFields.size}` : ""}`);
+    `C1=${missing.length} C2=${softened.length}${licensed.length ? ` licensed=${licensed.length}` : ""}` +
+    `${carriedFields.size ? ` carried=${carriedFields.size}` : ""}`);
+  for (const l of licensed) {
+    console.log(`    C1 licensed "${l.statement.slice(0, 72)}${l.statement.length > 72 ? "…" : ""}"\n       ${l.why}`);
+  }
   for (const m of missing) {
     const f = filed(r.id, m.statement);
     if (f) { filedSeen++; console.log(`    C1 filed (pre-C1) "${m.statement.slice(0, 72)}…"\n       ${f.why}`); }

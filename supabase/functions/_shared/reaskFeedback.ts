@@ -23,6 +23,9 @@ import {
   extractSpecifics, namesIn, reputationWordsIn, S1_POSITION_WORDS,
 } from "./classFactCheck.ts";
 
+/** U1: what a uuid looks like, so one can never be printed as if it were a citable token. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** A pool row, as both the gate and the prompt see it. `cls` is the source class; `kind` matters
  *  because a finding is our own synthesis and may never source a name (S1/N1). */
 export type SourceRow = { id: string; kind: string; cls: string; text: string };
@@ -132,7 +135,22 @@ export function reaskFeedback(args: {
   /** uuid → the ref token the model may cite. Ids pass through unchanged when absent. */
   refByUuid?: ReadonlyMap<string, string>;
 }): FeedbackEntry[] {
-  const tok = (id: string) => args.refByUuid?.get(id) ?? id;
+  // ── U1 (operator ruling, 2026-10-15): BRACKETED TOKENS, AND NEVER A UUID ────────────────────
+  // CITE_RULE tells the model the valid tokens are the ones "printed in square brackets at the
+  // start of its line (e.g. [S1])", and that any other token INVALIDATES THE WHOLE RESPONSE. The
+  // generation-time still-sourced block was built without refByUuid, so it named rows as raw uuids
+  // — ids the model is forbidden to cite. It was pointing at evidence in a form that could not be
+  // used, which is the mechanism NP and NP2 both rest on.
+  //
+  // An id with no mapping is DROPPED rather than printed: a uuid in a prompt is worse than a
+  // missing one, because the model may copy it and lose the whole response.
+  const tok = (id: string): string | null => {
+    const ref = args.refByUuid?.get(id);
+    if (ref) return `[${ref}]`;
+    // already a ref token (no map given, or the caller passed tokens): bracket it as-is
+    if (!UUID_RE.test(id)) return `[${id}]`;
+    return null;
+  };
   return args.lines.map((l) => {
     const refused = new Set(l.unsourced ?? []);
     return {
@@ -140,9 +158,9 @@ export function reaskFeedback(args: {
       text: l.text,
       over_cited: l.over_cited,
       unsupported_by_pool: l.unsupported_by_pool,
-      sourcing: [...(l.sourcing_citations ?? [])].map(tok),
+      sourcing: [...(l.sourcing_citations ?? [])].map(tok).filter((x): x is string => x !== null),
       names: namesToSource(l.text, args.companyName).map((name) => {
-        const support = nameSupport(name, args.pool).map(tok);
+        const support = nameSupport(name, args.pool).map(tok).filter((x): x is string => x !== null);
         return { name, support, unsourced: support.length === 0 || refused.has(name) };
       }),
     };
@@ -172,8 +190,12 @@ export function reaskFeedbackBlock(args: {
             : `"${n.name}" -> stated in NO row of this ledger`).join(" | ");
     // NP2: the words the pool cannot support, in the ruling's own sentence. It sits with the line
     // it is about, so "drop them or cite a row that does" has an antecedent.
+    // NP2 wording (operator ruling, 2026-10-15): "drop them" was read as DROP THE LINE. Wasabi's
+    // re-asked strategy removed winning_aspiration entirely rather than the two words, and C1-S
+    // refused it with the budget gone (10695 -> 10696). The sentence now says to keep the line
+    // first, and names the remedy as removing the WORDS.
     const unsupported = (e.unsupported_by_pool ?? []).length > 0
-      ? `\n      no row in the pool states: ${(e.unsupported_by_pool ?? []).map((w) => `"${w}"`).join(", ")} — drop them or cite a row that does`
+      ? `\n      Keep this line. No row in the pool states: ${(e.unsupported_by_pool ?? []).map((w) => `"${w}"`).join(", ")}. Remove those words, or cite a row that states them.`
       : "";
     // CR: the count, next to the name rows that say which of its citations are load-bearing.
     const cap = e.over_cited

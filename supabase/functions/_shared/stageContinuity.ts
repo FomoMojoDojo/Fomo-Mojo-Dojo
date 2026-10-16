@@ -213,6 +213,9 @@ export function stillSourcedPromptBlock(
   // which were in the pool on other rows. So the pool and the company name come in, and the block is
   // built by the ONE re-ask feedback builder — the same one both re-ask branches use.
   pool: readonly SourceRow[] = [], companyName = "",
+  // U1 (2026-10-15): the uuid -> ref map, so this block names rows as [S4] — the only form
+  // CITE_RULE lets the model cite. Built without it, it printed raw uuids at generation time.
+  refByUuid?: ReadonlyMap<string, string>,
 ): string {
   const keep = currentLines.filter((l) => l.text.trim() && isStillSourced(l, sourcingIds));
   if (keep.length === 0) return "";
@@ -227,7 +230,7 @@ export function stillSourcedPromptBlock(
       // strategy (leading/unmatched, 10653) and offering (a label name, 10655/10656) were lost.
       unsupported_by_pool: unsupportedByPool(l.text, pool, companyName),
     })),
-    pool, companyName,
+    pool, companyName, refByUuid,
   });
   // The heading is the ruling's own phrase. The entries carry text, sourcing ids and name rows —
   // and no gate vocabulary: no class, no field path, no reason.

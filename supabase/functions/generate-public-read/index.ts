@@ -1365,7 +1365,7 @@ Respond with ONLY JSON:
         const currentForPrompt = await currentLinesFor(kind as Kind);
         // NP: the generation prompt's still-sourced block carries the name rows too, from the same
         // builder the re-asks use — so the FIRST attempt already knows which row states each name.
-        const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName);
+        const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive());
         stillSourcedByKind[kind as Kind] = currentForPrompt
           .filter((l) => l.text.trim() && isStillSourced(l, sourcingIds))
           .map((l) => ({ field: String(l.field ?? ""), text: l.text, citations: l.refs.filter((r) => sourcingIds.has(r)) }));

@@ -23,7 +23,9 @@ import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, 
 // S1 (operator ruling, 2026-10-14): the stage gate runs AGAIN at promote. Same predicate, same
 // module — a read that passed S1 when it was staged can fail it later, because the rows it cites are
 // live and can be superseded, held or rewritten between the stage and the operator's acceptance.
-import { s1Detail, s1Unsourced, type S1Result } from "./classFactCheck.ts";
+import {
+  namesIn, s1Detail, s1Unsourced, type S1Result, unsourcedLabelNames,
+} from "./classFactCheck.ts";
 import { reReadRowTexts } from "./classSourcingScope.ts";
 import { linesOfStoredPayload } from "./citedLines.ts";
 import { insertIntegrityRun } from "./integrityWrite.ts";
@@ -119,7 +121,23 @@ export async function promoteS1Refusal(
   const byKind = (ledger.by_kind ?? {}) as Record<string, string[]>;
   const findingIds = new Set(byKind.finding ?? []);
   const lines = linesOfStoredPayload(payload);
-  const wanted = [...new Set(lines.flatMap((l) => l.refs))]
+  // ── O1 AT PROMOTE (operator ruling, 2026-10-15) ───────────────────────────────────────────────
+  // linesOfStoredPayload takes a line's text from text|statement|promise|body — NEVER `label`. So
+  // the re-check ran S1, N1 and S1b (which rides inside s1Unsourced) and labels were invisible to
+  // it: a label could drift to a name its rows do not state between stage and promote and nothing
+  // would catch it. The whole point of the re-check is that the ROWS are re-read live, so the half
+  // it could not see was exactly the half most able to drift.
+  const labelLines: Array<{ field: string; label: string; cls: string | null; refs: string[] }> = [];
+  for (const [i, raw] of (Array.isArray((payload as Record<string, unknown>).items)
+    ? (payload as Record<string, unknown>).items as unknown[] : []).entries()) {
+    const it = (raw ?? {}) as Record<string, unknown>;
+    const label = typeof it.label === "string" ? it.label : "";
+    if (!label.trim()) continue;
+    const refs = Array.isArray(it.citations) ? (it.citations as unknown[]).map(String)
+      : Array.isArray(it.refs) ? (it.refs as unknown[]).map(String) : [];
+    labelLines.push({ field: `items[${i}].label`, label, cls: typeof it.class === "string" ? it.class : null, refs });
+  }
+  const wanted = [...new Set([...lines.flatMap((l) => l.refs), ...labelLines.flatMap((l) => l.refs)])]
     .filter((id) => (classes[id] === "record" || classes[id] === "you") && !findingIds.has(id));
   const textNow = wanted.length ? await reReadRowTexts(supabase, wanted) : {};
   const results: S1Result[] = lines.map((l) => s1Unsourced({
@@ -128,6 +146,21 @@ export async function promoteS1Refusal(
       .filter((id) => (classes[id] === "record" || classes[id] === "you") && !findingIds.has(id))
       .map((id) => textNow[id] ?? ""),
   }));
+  // O1: each label against the rows ITS OWN item cites, re-read live. Same predicate as at stage,
+  // same exclusions — record/you only, findings barred, the company's own name not demanded.
+  for (const l of labelLines) {
+    const bad = unsourcedLabelNames({
+      field: l.field, label: l.label, cls: l.cls, companyName,
+      citedSourceTexts: l.refs
+        .filter((id) => (classes[id] === "record" || classes[id] === "you") && !findingIds.has(id))
+        .map((id) => textNow[id] ?? ""),
+    });
+    results.push({
+      field: l.field, cls: l.cls, examined: namesIn(l.label).length,
+      unsourced: bad.map((n) => ({ kind: "name" as const, token: n })),
+      unsourced_names: bad,
+    });
+  }
   return results.some((r) => r.unsourced.length > 0) ? s1Detail(results) : null;
 }
 

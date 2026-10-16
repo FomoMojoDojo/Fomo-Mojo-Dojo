@@ -38,4 +38,9 @@
 // learned a word was unsupported only by being refused, and by then its one re-ask was spent:
 // Wasabi's strategy lost "leading"/"unmatched" that way (10653) and its offering a label name
 // (10655, 10656).
-export const GEN_RULES_VERSION = "2026-10-15.1" as const;
+// U1 + NP2 wording (operator ruling, 2026-10-15): bumped again. The still-sourced block now names
+// rows as bracketed tokens on EVERY attempt — at generation it had printed raw uuids, which
+// CITE_RULE forbids the model to cite — and its unsupported-word note says "Keep this line. ...
+// Remove those words, or cite a row that states them." The previous "drop them" was read as drop
+// the LINE: Wasabi's re-asked strategy removed winning_aspiration entirely (10695 -> 10696).
+export const GEN_RULES_VERSION = "2026-10-15.2" as const;

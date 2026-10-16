@@ -77,7 +77,12 @@ Deno.test("C1-R. the prompt carries the dropped line's TEXT and its SOURCING IDS
   assert(shared.includes("still stated by:"), "named in the prompt");
   // the ids are rendered as REF TOKENS, because those are what the model may cite
   assert(body.includes("refByUuid: refByUuidLive()"), "the branch hands it the uuid -> ref map");
-  assert(shared.includes("args.refByUuid?.get(id) ?? id"), "translated to the ref tokens the model can cite");
+  // U1 (2026-10-15): the map yields a BRACKETED token, and an id with no mapping is dropped
+  // rather than printed — a uuid in a prompt is one CITE_RULE forbids the model to cite.
+  assert(shared.includes("const ref = args.refByUuid?.get(id);") && shared.includes("return `[${ref}]`;"),
+    "translated to the ref tokens the model can cite");
+  assert(shared.includes("if (!UUID_RE.test(id)) return `[${id}]`;") && shared.includes("return null;"),
+    "and a raw uuid is never printed");
 });
 
 Deno.test("C1-R. the prompt carries the RULE: keep the still-sourced, replace only the rest", async () => {

@@ -46,7 +46,7 @@ Deno.test("P3-c. the two stamps are independent — a prompt change never moves 
 });
 
 Deno.test("P3-d. the version lives in ONE module and is a dated string", () => {
-  assertEquals(GEN_RULES_VERSION, "2026-10-15.1");   // Q1/Q2/Q3, C1-S, then NP2 bumped it
+  assertEquals(GEN_RULES_VERSION, "2026-10-15.2");   // Q1/Q2/Q3, C1-S, NP2, then U1 + the wording
   assert(/^\d{4}-\d{2}-\d{2}\.\d+$/.test(GEN_RULES_VERSION),
     "dated like PARSER_RULES_VERSION, so a reader sees WHEN the rules changed");
 });

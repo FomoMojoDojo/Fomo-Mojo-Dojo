@@ -84,7 +84,8 @@ Deno.test("C1-S. the block carries line TEXT and CITATION IDS ONLY", () => {
   assert(block.includes("FedRAMP Ready status"), "the text");
   // NP (2026-10-15): the entry is now two labelled lines under the text — the rows that still source
   // it, and the rows that state each of its names. The ids are still the only ids that travel.
-  assert(block.includes("still stated by: sigRec"), "and the ids that make it still-sourced");
+  // U1 (2026-10-15): ids render BRACKETED — the only form CITE_RULE lets the model cite.
+  assert(block.includes("still stated by: [sigRec]"), "and the ids that make it still-sourced");
   assert(/names to source:/.test(block), "and the name rows, which is what NP added");
   // nothing else may travel: no class, no field path, no specifics, no reason
   assert(!block.includes("unique_attributes[0]"), "not the field path");
@@ -107,7 +108,7 @@ Deno.test("C1-S. an empty still-sourced set yields an empty block, not a stray h
 Deno.test("C1-S. the generator puts the block in the USER prompt, before the carry notice", async () => {
   const src = await read("../generate-public-read/index.ts");
   // NP: the call gained the pool and the company name, because the block now carries name rows.
-  assert(src.includes("const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName);"),
+  assert(src.includes("const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive());"),
     "the block is built from this run's pool");
   // RP (2026-10-15): the generation prompt became buildGenUser, the ONE prompt every generator call
   // sends. The ORDER this pins is unchanged — ledger, context, still-sourced block, carry notice —
@@ -175,7 +176,7 @@ Deno.test("C1-S. the split and the block are fed the SAME sourcing set", async (
   const src = await read("../generate-public-read/index.ts");
   assert(src.includes("const sourcingIds = sourcingIdsOf(inputs as Array<{ id: string; kind: string; source_class: string }>);"),
     "one set, built from the pool the ledger was built from");
-  assert(src.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName)"), "the prompt uses it");
+  assert(src.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive())"), "the prompt uses it");
   assert(src.includes("sourcingIds,                                       // C1-S: which drops refuse on any rules"),
     "and so does the classifier — a second set is how the two would disagree about what was shown");
 });
@@ -189,6 +190,6 @@ Deno.test("C1-S. the block and its counts are recorded, not only used", async ()
 
 Deno.test("C1-S. GEN_RULES_VERSION was bumped — the generation PROMPT changed", () => {
   assert(GEN_RULES_VERSION !== "2026-10-13.2", "the pre-C1-S stamp must not still be written");
-  assertEquals(GEN_RULES_VERSION, "2026-10-15.1");
+  assertEquals(GEN_RULES_VERSION, "2026-10-15.2");
   assert(/^\d{4}-\d{2}-\d{2}\.\d+$/.test(GEN_RULES_VERSION), "still a dated stamp");
 });

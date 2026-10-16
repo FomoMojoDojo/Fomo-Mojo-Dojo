@@ -267,12 +267,13 @@ function describe_n1e() {
                 unsupported_by_pool: ["Wasabi Fire", "world-class"] }],
       pool: POOL2, companyName: "Wasabi Technologies",
     });
-    assert(block.includes('no row in the pool states: "Wasabi Fire", "world-class" — drop them or cite a row that does'),
-      "the ruling's own sentence");
+    assert(block.includes('Keep this line. No row in the pool states: "Wasabi Fire", "world-class". '
+      + 'Remove those words, or cite a row that states them.'),
+      "the ruling's own sentence — 'drop them' was read as drop the LINE (10695 -> 10696)");
     // it sits under the line it is about
     const lines = block.split("\n");
     const textAt = lines.findIndex((l) => l.includes("Wasabi Fire is world-class"));
-    const noteAt = lines.findIndex((l) => l.includes("no row in the pool states"));
+    const noteAt = lines.findIndex((l) => l.includes("No row in the pool states"));
     assert(textAt >= 0 && noteAt > textAt, "beside its line, not in a separate list");
   });
 
@@ -281,7 +282,7 @@ function describe_n1e() {
       lines: [{ text: "Wasabi AiR supports AI/ML", sourcing_citations: ["S1"], unsupported_by_pool: [] }],
       pool: POOL2, companyName: "Wasabi Technologies",
     });
-    assert(!block.includes("no row in the pool states"), "no note where there is nothing to say");
+    assert(!block.includes("No row in the pool states"), "no note where there is nothing to say");
   });
 
   Deno.test("NP2. BEHAVIOUR: the still-sourced block itself carries the note", () => {
@@ -292,13 +293,13 @@ function describe_n1e() {
     };
     const block = stillSourcedPromptBlock([line], sourcingIdsOf(forSourcing), POOL2, "Wasabi Technologies");
     assert(block.includes("Wasabi Fire is world-class"), "the line is shown");
-    assert(block.includes('no row in the pool states: "Wasabi Fire", "world-class"'),
+    assert(block.includes('Keep this line. No row in the pool states: "Wasabi Fire", "world-class"'),
       "with the words the pool cannot support");
     // and a line the pool fully supports gets the block WITHOUT a note
     const ok: CitedLine = { field: "x", text: "Wasabi AiR supports AI/ML", cls: "record", refs: ["S1"] };
     const clean = stillSourcedPromptBlock([ok], sourcingIdsOf(forSourcing), POOL2, "Wasabi Technologies");
     assert(clean.includes("Wasabi AiR supports AI/ML"));
-    assert(!clean.includes("no row in the pool states"), "nothing to say, so nothing said");
+    assert(!clean.includes("No row in the pool states"), "nothing to say, so nothing said");
   });
 
   Deno.test("NP2. ONE builder — the still-sourced block computes it, nothing re-implements it", async () => {
@@ -311,7 +312,46 @@ function describe_n1e() {
     assert(np.includes("export function unsupportedByPool("), "one implementation");
     for (const f of ["stageContinuity.ts", "../generate-public-read/index.ts"]) {
       const src = await read(`./${f}`.replace("./../", "../"));
-      assert(!/no row in the pool states/.test(src), `${f} must not render the sentence itself`);
+      assert(!/No row in the pool states/i.test(src), `${f} must not render the sentence itself`);
     }
+  });
+}
+
+// ── O1 AT PROMOTE / the harness's drop rule (operator rulings, 2026-10-15) ──────────────────────
+describe_promote_and_harness();
+function describe_promote_and_harness() {
+  Deno.test("O1 at promote: the re-check reads every items[n].label, not just the statement", async () => {
+    const prom = await read("./publicReadPromote.ts");
+    // linesOfStoredPayload takes a line's text from text|statement|promise|body — never `label`,
+    // so labels were invisible to the re-check. The whole point of the re-check is that the ROWS
+    // are re-read live, which makes the label the half most able to drift unseen.
+    assert(prom.includes("const labelLines:"), "labels are gathered");
+    assert(prom.includes("unsourcedLabelNames({"), "and run through the SAME predicate as at stage");
+    assert(prom.includes('`items[${i}].label`'), "reported under its own field path");
+    // the same exclusions as at stage: record/you only, findings barred, own name not demanded
+    const at = prom.indexOf("for (const l of labelLines) {");
+    const body = prom.slice(at, prom.indexOf("return results.some(", at));
+    assert(body.includes('classes[id] === "record" || classes[id] === "you"'), "record/you only");
+    assert(body.includes("!findingIds.has(id)"), "a finding may not source a label name");
+    assert(body.includes("companyName"), "the own-name exclusion travels");
+    // and the label's rows are fetched live with everything else
+    assert(prom.includes("...labelLines.flatMap((l) => l.refs)"), "their rows are in the live re-read");
+  });
+
+  Deno.test("the harness classifies drops with the PRODUCTION classifier, not its own", async () => {
+    const h = await Deno.readTextFile(new URL("../../../scripts/c1c2-continuity-cost.ts", import.meta.url));
+    assert(h.includes("classifyContinuity({"), "it calls C1's own function");
+    assert(h.includes("sourcingIds,"), "WITH sourcingIds — without them every drop reads still_sourced:false");
+    assert(h.includes("const missing = stillSourcedDrops(split);"),
+      "and fails only on a drop C1-S would refuse");
+    // the CALL is gone; the comment that explains why may still name it
+    const called = h.split("\n").filter((l) => l.includes("droppedLines(") && !l.trim().startsWith("//"));
+    assert(called.length === 0,
+      `droppedLines drops sourcingIds on the floor, which is what made a licensed drop fail the run: ${called.join(" | ")}`);
+    // a licensed drop is REPORTED, not silently swallowed
+    assert(h.includes("C1 licensed"), "licensed drops are listed");
+    assert(h.includes("split.licensed.map"), "both licence causes: no surviving source, and C1-P's");
+    // and the Wasabi line is licensed by the RULE, never by being filed as history
+    assert(!/read:\s*"523da9ea"/.test(h), "523da9ea is not filed in KNOWN_PRE_C1");
   });
 }

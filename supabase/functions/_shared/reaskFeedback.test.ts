@@ -64,11 +64,13 @@ Deno.test("NP. an entry carries its text, its sourcing ids, AND a row per name",
     pool: POOL, companyName: "Wasabi Technologies",
   });
   assertEquals(entries.length, 1);
-  assertEquals(entries[0].sourcing, ["2242bdd1", "7638775d"], "the rows that still source the line");
+  // U1 (2026-10-15): ids render BRACKETED. With no refByUuid these are already ref-token-shaped,
+  // so they bracket as-is; a raw uuid would be dropped rather than printed.
+  assertEquals(entries[0].sourcing, ["[2242bdd1]", "[7638775d]"], "the rows that still source the line");
   const byName = new Map(entries[0].names.map((n) => [n.name, n.support]));
-  assertEquals(byName.get("Wasabi Fire"), ["9373abfc"], "and the row that states THIS name — not a sourcing row");
-  assertEquals(byName.get("AI/ML"), ["c30e9189"]);
-  assertEquals(byName.get("Wasabi AiR"), ["2242bdd1"]);
+  assertEquals(byName.get("Wasabi Fire"), ["[9373abfc]"], "and the row that states THIS name — not a sourcing row");
+  assertEquals(byName.get("AI/ML"), ["[c30e9189]"]);
+  assertEquals(byName.get("Wasabi AiR"), ["[2242bdd1]"]);
 });
 
 Deno.test("NP. THE WASABI CASE: the sourcing rows alone could not have carried the names", () => {
@@ -109,8 +111,9 @@ Deno.test("NP. ids are rendered as the REF TOKENS the model may cite", () => {
     pool: POOL, companyName: "Wasabi Technologies",
     refByUuid: new Map([["2242bdd1", "S4"], ["9373abfc", "S8"], ["c30e9189", "S5"]]),
   });
-  assert(block.includes("still stated by: S4"), "the sourcing id as a token");
-  assert(block.includes("-> S8"), "and the name rows as tokens");
+  // U1: BRACKETED, because CITE_RULE only accepts a token printed in square brackets.
+  assert(block.includes("still stated by: [S4]"), "the sourcing id as a bracketed token");
+  assert(block.includes("-> [S8]"), "and the name rows as bracketed tokens");
   assert(!block.includes("2242bdd1") && !block.includes("9373abfc"), "no raw uuid reaches the prompt");
 });
 
@@ -164,7 +167,7 @@ Deno.test("NP. the N1 re-ask carries CONTINUITY lines, not just names", async ()
 
 Deno.test("NP. the FIRST attempt is told the name rows too — not only a re-ask", async () => {
   const gpr = await read("../generate-public-read/index.ts");
-  assert(gpr.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName)"),
+  assert(gpr.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive())"),
     "the generation prompt's still-sourced block gets the pool and the company name");
 });
 
@@ -175,9 +178,9 @@ Deno.test("NP. the still-sourced block RESOLVES each name to its row — listing
   const forSourcing = POOL.map((r) => ({ id: r.id, kind: r.kind, source_class: r.cls }));
   const line: CitedLine = { field: "unique_attributes[2]", text: LINE, cls: "record", refs: ["2242bdd1"] };
   const block = stillSourcedPromptBlock([line], sourcingIdsOf(forSourcing), POOL, "Wasabi Technologies");
-  assert(block.includes('"Wasabi Fire" -> 9373abfc'), "the row that states the name is NAMED");
-  assert(block.includes('"AI/ML" -> c30e9189'), "and so is the row for the other name");
-  assert(block.includes("still stated by: 2242bdd1"), "alongside what still sources the line");
+  assert(block.includes('"Wasabi Fire" -> [9373abfc]'), "the row that states the name is NAMED");
+  assert(block.includes('"AI/ML" -> [c30e9189]'), "and so is the row for the other name");
+  assert(block.includes("still stated by: [2242bdd1]"), "alongside what still sources the line");
   // and the same call with no pool is visibly worse — which is what the plant does
   const starved = stillSourcedPromptBlock([line], sourcingIdsOf(forSourcing), [], "");
   assert(starved.includes("stated in NO row of this ledger"), "an empty pool can resolve nothing");
@@ -299,3 +302,75 @@ Deno.test("L1. the columns exist, nullable, with the migration that added them",
   assert(/comment on column public\.model_calls\.prompt_sha is/.test(mig));
   assert(!/update public\.model_calls set/.test(mig), "and nothing backfills a sha nobody recorded");
 });
+
+// ── U1 (operator ruling, 2026-10-15): NO UUID REACHES ANY PROMPT ────────────────────────────────
+//
+// CITE_RULE tells the model the valid tokens are the ones "printed in square brackets at the start
+// of its line (e.g. [S1])", and that any other token INVALIDATES THE WHOLE RESPONSE. The
+// generation-time still-sourced block was built WITHOUT refByUuid, so it named rows as raw uuids —
+// ids the model is forbidden to cite. It was pointing at evidence in a form that could not be used,
+// which is the mechanism NP and NP2 both rest on.
+describe_u1();
+function describe_u1() {
+  const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  const POOLU: SourceRow[] = [
+    { id: "2242bdd1-c2b4-4a25-9a39-4dccc729151e", kind: "signal", cls: "record", text: "Wasabi AiR brings intelligence" },
+    { id: "9373abfc-09fa-40ad-ada4-fe1b68fe5a38", kind: "signal", cls: "record", text: "Wasabi Fire is the new tier" },
+  ];
+  const MAP = new Map([
+    ["2242bdd1-c2b4-4a25-9a39-4dccc729151e", "S4"],
+    ["9373abfc-09fa-40ad-ada4-fe1b68fe5a38", "S8"],
+  ]);
+
+  Deno.test("U1. with the map, every id renders as a BRACKETED token and no uuid survives", () => {
+    const block = reaskFeedbackBlock({
+      lines: [{ text: "Wasabi Fire and Wasabi AiR", sourcing_citations: ["2242bdd1-c2b4-4a25-9a39-4dccc729151e"] }],
+      pool: POOLU, companyName: "Wasabi Technologies", refByUuid: MAP,
+    });
+    assert(block.includes("still stated by: [S4]"));
+    assert(block.includes('"Wasabi Fire" -> [S8]'));
+    assert(!UUID.test(block), "no uuid anywhere in the rendered block");
+  });
+
+  Deno.test("U1. an id with NO mapping is DROPPED, never printed as a uuid", () => {
+    const block = reaskFeedbackBlock({
+      lines: [{ text: "Wasabi Fire", sourcing_citations: ["2242bdd1-c2b4-4a25-9a39-4dccc729151e"] }],
+      pool: POOLU, companyName: "Wasabi Technologies",
+      refByUuid: new Map(),   // nothing maps
+    });
+    assert(!UUID.test(block), "a uuid in a prompt is worse than a missing one — the model may copy it");
+  });
+
+  Deno.test("U1. the STILL-SOURCED block carries the map on the FIRST attempt", async () => {
+    const gpr = await read("../generate-public-read/index.ts");
+    assert(gpr.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive())"),
+      "the generation call passes refByUuid — it was the one prompt site that did not");
+    // and the signature accepts it, so the block can honour it
+    const cont = await read("./stageContinuity.ts");
+    assert(cont.includes("refByUuid?: ReadonlyMap<string, string>,"), "the block takes the map");
+    assert(cont.includes("pool, companyName, refByUuid,"), "and hands it to the one builder");
+  });
+
+  Deno.test("U1. BEHAVIOUR: the still-sourced block renders tokens, not uuids", () => {
+    const forSourcing = POOLU.map((r) => ({ id: r.id, kind: r.kind, source_class: r.cls }));
+    const line: CitedLine = {
+      field: "unique_attributes[0]", text: "Wasabi Fire and Wasabi AiR together", cls: "record",
+      refs: ["2242bdd1-c2b4-4a25-9a39-4dccc729151e"],
+    };
+    const block = stillSourcedPromptBlock([line], sourcingIdsOf(forSourcing), POOLU, "Wasabi Technologies", MAP);
+    assert(block.includes("[S4]"), "the sourcing row as a token");
+    assert(block.includes("[S8]"), "and the name row");
+    assert(!UUID.test(block), "no uuid reaches the generation prompt");
+  });
+
+  Deno.test("NP2 wording. the signed sentence, exactly", () => {
+    const block = reaskFeedbackBlock({
+      lines: [{ text: "the leading provider", sourcing_citations: [], unsupported_by_pool: ["leading"] }],
+      pool: POOLU, companyName: "Wasabi Technologies", refByUuid: MAP,
+    });
+    assert(block.includes('Keep this line. No row in the pool states: "leading". Remove those words, or cite a row that states them.'),
+      "KEEP THIS LINE comes first: 'drop them' was read as drop the LINE, and the re-asked strategy "
+      + "removed winning_aspiration entirely (10695 -> 10696)");
+    assert(!block.includes("drop them or cite a row that does"), "the old wording is gone");
+  });
+}
