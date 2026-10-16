@@ -1,0 +1,186 @@
+// ── S1b / N1d / O1 (operator rulings, 2026-10-15) ───────────────────────────────────────────────
+//
+// S1b. Wasabi's staged strategy said "To be the leading global cloud storage provider ... unmatched
+// ...", class `you`, and NEITHER word appears in any of its three cited rows. S1 cleared it with
+// examined:0 — correctly under the rules as they stood, which govern figures plus the four position
+// words. But the read was attributing those words to the company's own voice with nothing behind
+// them, which is the same fault S1 refuses for the four it does govern.
+//
+// N1d. Wasabi's offering refused TWICE (audits 10613, 10614) on `open_questions[0] (record): Is
+// Wasabi [name]`. "Is" is capitalized because it opens the question, the multi-word run regex
+// swallowed it, and the own-name exclusion could not fire because the token was "Is Wasabi", not
+// "Wasabi". It generalises: "Does Wasabi…", "Has Edgewood…". Every open question phrased as a
+// question about the company was unstageable.
+//
+// O1. An offering item stamps as `items[n]` with its STATEMENT as the text, so the LABEL was read
+// by nothing. The refused payload carried "Wasabi GovCloud with FedRAMP Ready status" and "Wasabi
+// AiR AI recognition technology" — names asserted in a field no gate looked at.
+import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import {
+  namesIn, reputationWordsIn, S1B_REPUTATION_WORDS, s1Unsourced, SENTENCE_OPENERS,
+  unsourcedLabelNames, unsourcedReputation,
+} from "./classFactCheck.ts";
+import {
+  OFFERING_KIND_HINTS, OFFERING_OQ_REASONS, offeringStructureViolations,
+} from "./publicReadGuards.ts";
+
+const read = (p: string) => Deno.readTextFile(new URL(p, import.meta.url));
+
+// ── S1b ─────────────────────────────────────────────────────────────────────────────────────────
+
+Deno.test("S1b. the signed set, and 'number one' is two words", () => {
+  assertEquals([...S1B_REPUTATION_WORDS].sort(), [
+    "best", "foremost", "leading", "number one", "premier", "superior", "top", "unmatched",
+    "unparalleled", "world-class",
+  ]);
+  assertEquals(reputationWordsIn("we are number one and world-class"), ["number one", "world-class"]);
+  // hyphen and space are interchangeable in the match, so neither spelling escapes
+  assertEquals(reputationWordsIn("a world class service"), ["world class"]);
+});
+
+Deno.test("S1b. a word with no cited row behind it refuses; one a row states passes", () => {
+  assertEquals(unsourcedReputation({ text: "the leading provider", cls: "you", citedSourceTexts: ["affordable storage"] }),
+    ["leading"]);
+  assertEquals(unsourcedReputation({ text: "the leading provider", cls: "you", citedSourceTexts: ["the leading provider of X"] }),
+    [], "the record says it, so the read may");
+  // THE WASABI LINE, verbatim shape
+  assertEquals(
+    unsourcedReputation({
+      text: "To be the leading global cloud storage provider with unmatched speed",
+      cls: "you", citedSourceTexts: ["affordable, simple, secure cloud storage", "no egress fees"],
+    }).sort(), ["leading", "unmatched"]);
+});
+
+Deno.test("S1b. it governs record and you only — our_read and unclassed are (b)'s business", () => {
+  for (const cls of ["our_read", null, "", "nonsense"]) {
+    assertEquals(unsourcedReputation({ text: "the leading provider", cls, citedSourceTexts: [] }), [],
+      `${cls} is not S1b's`);
+  }
+});
+
+Deno.test("S1b. it rides in the SAME result and the SAME refusal, as its own kind", () => {
+  const r = s1Unsourced({ field: "winning_aspiration", cls: "you", text: "To be the leading provider",
+    citedSourceTexts: ["cloud storage"] });
+  assertEquals(r.unsourced.map((u) => [u.kind, u.token]), [["reputation", "leading"]]);
+  // and a figure in the same line still reports as a figure — the kinds stay distinguishable
+  const r2 = s1Unsourced({ field: "f", cls: "record", text: "the leading provider serving 12 counties",
+    citedSourceTexts: ["a provider"] });
+  assertEquals([...new Set(r2.unsourced.map((u) => u.kind))].sort(), ["figure", "reputation"]);
+});
+
+Deno.test("S1b. C2 is untouched — softening asks a different question", async () => {
+  const cont = await read("./stageContinuity.ts");
+  assert(cont.includes('export const REPUTATIONAL_WORDS = ["best", "leading", "premier", "foremost"] as const;'),
+    "C2 keeps its own list and its own meaning: did WE soften a row's position word");
+  assert(!cont.includes("S1B_REPUTATION_WORDS"), "C2 does not import S1b's set");
+});
+
+// ── N1d ─────────────────────────────────────────────────────────────────────────────────────────
+
+Deno.test("N1d. the closed set, exactly as signed", () => {
+  assertEquals([...SENTENCE_OPENERS].sort(), [
+    "are", "can", "could", "did", "do", "does", "had", "has", "have", "how", "is", "should",
+    "was", "were", "what", "when", "where", "which", "who", "why", "will", "would",
+  ]);
+});
+
+Deno.test("N1d. THE WASABI QUESTION: 'Is Wasabi…' no longer mints a name", () => {
+  assertEquals(namesIn("Is Wasabi's data corruption incident in TX location still an ongoing issue?"),
+    ["Wasabi"], "the company's own name, which the own-name exclusion then drops");
+  assertEquals(namesIn("Does Wasabi still do Y?"), ["Wasabi"]);
+  assertEquals(namesIn("Has Edgewood kept Z?"), ["Edgewood"]);
+});
+
+Deno.test("N1d. it only fires at a sentence start, and only on the listed words", () => {
+  // mid-sentence, the same word is part of the name
+  assert(namesIn("We asked whether Is Wasabi was right").includes("Is Wasabi"),
+    "not at a start — untouched");
+  // a run whose first word is NOT in the set keeps every word
+  assertEquals(namesIn("Wasabi Fire is the new tier"), ["Wasabi Fire"]);
+  assertEquals(namesIn("Deliver AI to the team"), ["Deliver AI"],
+    "'deliver' is not an opener, so this stays a name — the false positive that was ruled to stay");
+  // a two-word name whose first word IS in the set loses it at a start: the cost of the closed set
+  assertEquals(namesIn("Will Smith joined the board"), ["Smith"]);
+});
+
+Deno.test("N1d. the remainder stays a name BY CONSTRUCTION, as the ruling says", () => {
+  // The ruling is "drops its FIRST WORD" — what remains is still the name the run regex had
+  // captured, and a multi-word run is a name by construction (it does not go through nameShaped).
+  // Keeping the remainder is what preserves a single-word name the opener was hiding: "Is Seagate
+  // still shipping X?" must still name Seagate, and "Seagate" alone would not survive nameShaped.
+  assertEquals(namesIn("Is Seagate still shipping X?"), ["Seagate"]);
+  assertEquals(namesIn("Is Wasabi's incident ongoing?"), ["Wasabi"]);
+  // the cost of that, stated: a two-letter remainder is kept too, where a bare token would not be
+  assertEquals(namesIn("Is Ai the answer?"), ["Ai"]);
+  assertEquals(namesIn("Ai is the answer."), [], "the same word NOT behind an opener is not a name");
+  // and a three-word run keeps its remaining two
+  assertEquals(namesIn("What Wasabi AiR does next?"), ["Wasabi AiR"]);
+});
+
+// ── O1 ──────────────────────────────────────────────────────────────────────────────────────────
+
+Deno.test("O1. BEHAVIOUR: a label name absent from the item's cited rows refuses", () => {
+  // THE WASABI LABELS, verbatim. The item cites the row its STATEMENT rests on; the label asserts
+  // names on top of that, and until O1 nothing read them.
+  assertEquals(
+    unsourcedLabelNames({
+      field: "items[2]", label: "Wasabi GovCloud with FedRAMP Ready status", cls: "record",
+      citedSourceTexts: ["Wasabi GovCloud achieves FedRAMP Ready status for federal agencies"],
+      companyName: "Wasabi Technologies",
+    }), [], "every name the label uses is in the row the item cites");
+  assertEquals(
+    unsourcedLabelNames({
+      field: "items[3]", label: "Wasabi AiR AI recognition technology", cls: "record",
+      citedSourceTexts: ["the product reduces manual effort through recognition technology"],
+      companyName: "Wasabi Technologies",
+    }), ["Wasabi AiR AI"],
+    "a name the cited row does not state refuses — and the run is MAXIMAL, so the three capitalised "
+    + "words are one name, exactly as namesIn has always read them");
+  // the own name alone is never demanded of the record
+  assertEquals(unsourcedLabelNames({ field: "items[0]", label: "Wasabi", cls: "you",
+    citedSourceTexts: ["storage"], companyName: "Wasabi Technologies" }), []);
+  // an empty label asserts nothing
+  assertEquals(unsourcedLabelNames({ field: "items[1]", label: "   ", cls: "record", citedSourceTexts: [] }), []);
+  // and class decides, exactly as N1: our_read labels are checked too (N1b), unclassed are not
+  assertEquals(unsourcedLabelNames({ field: "i", label: "Wasabi Fire", cls: null, citedSourceTexts: [] }), []);
+  assertEquals(unsourcedLabelNames({ field: "i", label: "Wasabi Fire", cls: "our_read", citedSourceTexts: [],
+    companyName: "Wasabi Technologies" }), ["Wasabi Fire"]);
+});
+
+Deno.test("O1. the gate calls it for every item, with the item's own refs", async () => {
+  const src = await read("../generate-public-read/index.ts");
+  const at = src.indexOf("for (const f of stamped) {");
+  assert(at > 0, "the label loop exists");
+  const body = src.slice(at, src.indexOf("s1Results[kind as Kind] = results;", at));
+  assert(body.includes('if (!/^items\\[\\d+\\]$/.test(f.field)) continue;'), "items only");
+  assert(body.includes("(f.obj as Record<string, unknown>).label"), "it reads the LABEL, not the statement");
+  assert(body.includes("unsourcedLabelNames({ field: f.field, label"), "through the one label predicate");
+  assert(body.includes("companyName"), "with the own-name exclusion, so a label saying 'Wasabi' is not demanded");
+  assert(body.includes('kindByRef.get(r) !== "finding"'), "a finding may not source a label name either");
+  assert(body.includes("`${f.field}.label`"), "and it reports under its own field path");
+});
+
+Deno.test("O1. kind_hint and reason were ALREADY closed enums — not re-stated here", async () => {
+  // BEHAVIOUR, not shape: a guard that only looks for the constant passes on a validator that has
+  // stopped pushing the violation. Call it and read the verdict.
+  const refs = new Set(["S1"]);
+  const ok = { items: [{ label: "x", statement: "y", refs: ["S1"], kind_hint: "product" }], open_questions: [] };
+  assertEquals(offeringStructureViolations(ok, refs).map((v) => v.code), [], "a legal payload passes");
+  const badHint = { ...ok, items: [{ ...ok.items[0], kind_hint: "widget" }] };
+  assert(offeringStructureViolations(badHint, refs).some((v) => v.code === "item_bad_kind_hint"),
+    "a kind_hint outside the enum REFUSES");
+  const badReason = { ...ok, open_questions: [{ text: "q?", refs: ["S1"], reason: "vibes" }] };
+  assert(offeringStructureViolations(badReason, refs).some((v) => v.code === "oq_bad_reason"),
+    "a reason outside the enum REFUSES");
+  // and the enums are the signed values
+  assertEquals([...OFFERING_OQ_REASONS].sort(), ["currency", "entity", "other"]);
+  assert(OFFERING_KIND_HINTS.has("product") && !OFFERING_KIND_HINTS.has("widget"));
+  // the label check must NOT duplicate them: one rule, one place
+  const src = await read("../generate-public-read/index.ts");
+  const at = src.indexOf("for (const f of stamped) {");
+  const body = src.slice(at, src.indexOf("s1Results[kind as Kind] = results;", at));
+  assert(!body.includes("kind_hint") || body.includes("kind_hint and open_questions"),
+    "the loop may MENTION them in its comment, never re-check them");
+  assert(!body.includes("OFFERING_KIND_HINTS") && !body.includes("OFFERING_OQ_REASONS"),
+    "a second definition of the same rule is how two checks come to disagree");
+});

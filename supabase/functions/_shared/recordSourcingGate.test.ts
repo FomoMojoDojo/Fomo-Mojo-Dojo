@@ -96,10 +96,19 @@ Deno.test("S1. the same position word, present in a cited row, passes", () => {
 
 Deno.test("S1. position words are EXACTLY the four the ruling names", () => {
   assertEquals([...S1_POSITION_WORDS].sort(), ["first", "largest", "only", "sole"]);
-  // a reputational judgement is NOT one of them: a read declining to repeat "leading" is correct
+  // The POSITION set is still exactly those four. What changed is what happens to a reputational
+  // word: S1b (2026-10-15) added its own set, so "leading"/"premier" are no longer cleared — they
+  // refuse as kind "reputation" when no cited row states them. The old expectation ("a read
+  // declining to repeat 'leading' is correct") was right about C2 and wrong about attribution: the
+  // read was ASSERTING the word in the company's voice with nothing behind it.
   const r = s1Unsourced({ field: "value", cls: "record", citedSourceTexts: ["a storage provider"],
     text: "a leading, premier storage provider" });
-  assertEquals(r.unsourced, [], "leading/premier are outside S1 by ruling");
+  assertEquals(r.unsourced.map((u) => u.token).sort(), ["leading", "premier"],
+    "S1b: a reputational word with no cited row behind it refuses");
+  assertEquals([...new Set(r.unsourced.map((u) => u.kind))], ["reputation"],
+    "and it is its OWN kind, so a reader can tell it from a missing figure");
+  // and none of them is a POSITION word — the two sets stay separate
+  for (const u of r.unsourced) assert(!S1_POSITION_WORDS.has(u.token));
 });
 
 Deno.test("S1. our_read and unclassed lines are not S1's business", () => {

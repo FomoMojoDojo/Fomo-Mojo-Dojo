@@ -30,7 +30,8 @@ import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage }
 import { normalizeForHash, sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
 import { CITATION_CAP, overCited, overCitedDetail, type OverCitedField } from "../_shared/publicReadGuards.ts";
-import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, s1Detail, s1Unsourced, specificIsSourced, type FieldClassDecision, type S1Result } from "../_shared/classFactCheck.ts";
+import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, s1Detail, s1Unsourced, specificIsSourced, type FieldClassDecision, type S1Result, namesIn, unsourcedNames, unsourcedLabelNames,
+} from "../_shared/classFactCheck.ts";
 import { liveRecordCandidates, reReadRowTexts, searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { StageRefusal, detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
@@ -1268,6 +1269,37 @@ Respond with ONLY JSON:
             })
             .map((r) => textByRef.get(r) ?? ""),
         }));
+        // ── O1 (operator ruling, 2026-10-15): AN ITEM'S LABEL IS CHECKED LIKE ITS STATEMENT ─────
+        // An offering item stamps as `items[n]` with its STATEMENT as the text, so the LABEL was
+        // never checked by anything. Wasabi's refused offering carried labels like "Wasabi GovCloud
+        // with FedRAMP Ready status" and "Wasabi AiR AI recognition technology" — names asserted in
+        // a field no gate read. The label's names must be stated by the rows the ITEM cites, which
+        // are the same refs its statement cites. Same result shape, same refusal, same re-ask.
+        //
+        // kind_hint and open_questions[].reason are NOT added here: they are already closed enums,
+        // enforced by offeringStructureViolations at GUARD 2 (OFFERING_KIND_HINTS /
+        // OFFERING_OQ_REASONS, publicReadGuards.ts). Re-checking them here would be a second
+        // definition of the same rule.
+        for (const f of stamped) {
+          if (!/^items\[\d+\]$/.test(f.field)) continue;
+          const label = typeof (f.obj as Record<string, unknown>).label === "string"
+            ? String((f.obj as Record<string, unknown>).label) : "";
+          if (!label.trim()) continue;
+          const citedTexts = f.refs
+            .filter((r) => {
+              const cls = classByRef.get(r);
+              if (cls !== "record" && cls !== "you") return false;
+              return kindByRef.get(r) !== "finding";
+            })
+            .map((r) => textByRef.get(r) ?? "");
+          const bad = unsourcedLabelNames({ field: f.field, label, cls: f.cls, citedSourceTexts: citedTexts, companyName });
+          results.push({
+            field: `${f.field}.label`, cls: f.cls,
+            examined: namesIn(label).length,
+            unsourced: bad.map((n) => ({ kind: "name" as const, token: n })),
+            unsourced_names: bad,
+          });
+        }
         s1Results[kind as Kind] = results;
         const failing = results.filter((r) => r.unsourced.length > 0);
         return failing.length > 0 ? { detail: s1Detail(results) } : null;

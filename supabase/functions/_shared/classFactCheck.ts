@@ -24,7 +24,7 @@
 import { verbatimProvable } from "./ownWordsExtract.ts";
 
 // N1 (2026-10-14): `name` joins the kinds, so a refusal can say WHICH sort of specific was missing.
-export type SpecificKind = "exclusivity" | "figure" | "reach" | "unresolved" | "name";
+export type SpecificKind = "exclusivity" | "figure" | "reach" | "unresolved" | "name" | "reputation";
 export type Specific = {
   kind: SpecificKind;
   /** the word or phrase that makes the sentence a factual assertion */
@@ -313,6 +313,14 @@ export function nameShaped(tok: string): boolean {
 }
 
 /** Every NAME in a line, per N1 with the four narrowing fixes applied. */
+/** N1d: words that are capitalized only because they open a sentence or a question. A capitalized
+ *  run starting with one of these drops it — the name is what follows. Closed set, signed. */
+export const SENTENCE_OPENERS: ReadonlySet<string> = new Set([
+  "is", "are", "was", "were", "do", "does", "did", "has", "have", "had",
+  "can", "could", "will", "would", "should",
+  "how", "what", "why", "when", "where", "who", "which",
+]);
+
 export function namesIn(text: string): string[] {
   const t = String(text ?? "");
   const hits: Array<{ tok: string; at: number }> = [];
@@ -321,7 +329,39 @@ export function namesIn(text: string): string[] {
   // (d) a dotted abbreviation is ONE name
   for (const m of t.matchAll(/\b(?:[A-Z]\.){2,}/g)) hits.push({ tok: m[0], at: m.index ?? 0 });
   // a MULTI-WORD capitalized run is a name by construction
-  for (const m of t.matchAll(/\b[A-Z][a-zA-Z]+(?:\s*[A-Z][a-zA-Z]+)+\b/g)) hits.push({ tok: m[0], at: m.index ?? 0 });
+  // ── N1d (operator ruling, 2026-10-15): A SENTENCE-OPENING AUXILIARY IS NOT PART OF THE NAME ──
+  // Wasabi's offering refused TWICE on `open_questions[0] (record): Is Wasabi [name]` (audits 10613,
+  // 10614). The question reads "Is Wasabi's data corruption incident ... still an ongoing issue?" —
+  // "Is" is capitalized because it opens the question, so the run regex swallowed it and minted the
+  // name "Is Wasabi". The own-name exclusion could not fire: the token was not "Wasabi". The single
+  // re-ask was spent and the kind could not stage. It generalises — "Does Wasabi…" gives
+  // "Does Wasabi", "Has Edgewood…" gives "Has Edgewood" — so every open question phrased as a
+  // question about the company was unstageable.
+  //
+  // The single-token path already skips a plain word opening a sentence; the RUN path never did.
+  // Only the listed words are dropped, and only at a sentence start: "Will Smith" mid-sentence is a
+  // name, and a run whose first word is not in the set is untouched.
+  for (const m of t.matchAll(/\b[A-Z][a-zA-Z]+(?:\s*[A-Z][a-zA-Z]+)+\b/g)) {
+    const at = m.index ?? 0;
+    let tok = m[0];
+    if (starts.has(at)) {
+      const firstSpace = tok.search(/\s/);
+      const head = firstSpace > 0 ? tok.slice(0, firstSpace) : "";
+      if (head && SENTENCE_OPENERS.has(head.toLowerCase())) {
+        const restAt = at + tok.length - tok.slice(firstSpace).trimStart().length;
+        tok = tok.slice(firstSpace).trimStart();
+        if (!tok || !/\s/.test(tok)) {
+          // what remains is a SINGLE token — it re-enters by the single-token path below, which
+          // applies nameShaped and the own-name exclusion, so emitting it here would double-count.
+          if (tok) hits.push({ tok, at: restAt });
+          continue;
+        }
+        hits.push({ tok, at: restAt });
+        continue;
+      }
+    }
+    hits.push({ tok, at });
+  }
   // single tokens, only when the shape says name
   for (const m of t.matchAll(/\b[A-Za-z][\w\/.\-]*\b/g)) {
     const tok = m[0], at = m.index ?? 0;
@@ -360,8 +400,65 @@ export function unsourcedNames(input: {
     .filter((n) => !input.citedSourceTexts.some((srcText) => srcText.includes(n)));
 }
 
+// ── O1 (operator ruling, 2026-10-15): AN ITEM'S LABEL IS CHECKED LIKE ITS STATEMENT ────────────
+//
+// An offering item stamps as `items[n]` with its STATEMENT as the text, so the LABEL was read by
+// nothing. Wasabi's refused offering carried "Wasabi GovCloud with FedRAMP Ready status" and
+// "Wasabi AiR AI recognition technology" — names asserted in a field no gate looked at. A label's
+// names must be stated by the rows the ITEM cites: the same refs its statement cites.
+//
+// It lives here, beside the other name checks, rather than inline in the gate closure, so it can be
+// CALLED by a test. Inline it could only be tested by reading the source, and a source test passes
+// on a function body that has been short-circuited.
+export type LabelCheck = { field: string; label: string; cls: string | null; citedSourceTexts: readonly string[] };
+
+/** The names an item's label asserts that none of the item's own cited rows states. */
+export function unsourcedLabelNames(input: LabelCheck & { companyName?: string }): string[] {
+  if (!String(input.label ?? "").trim()) return [];
+  return unsourcedNames({
+    text: input.label, cls: input.cls, citedSourceTexts: input.citedSourceTexts,
+    companyName: input.companyName,
+  });
+}
+
 /** S1's position words. A deliberate SUBSET of EXCLUSIVITY: the ruling names these four. */
 export const S1_POSITION_WORDS: ReadonlySet<string> = new Set(["only", "sole", "first", "largest"]);
+
+// ── S1b (operator ruling, 2026-10-15): A REPUTATIONAL CLAIM IS STILL A CLAIM ────────────────────
+//
+// Wasabi's staged strategy said "To be the leading global cloud storage provider ... unmatched
+// ...", class `you`, and NEITHER word appears in any of its three cited rows. S1 cleared it with
+// examined:0, correctly under the rules as they stood: it governs figures plus the four position
+// words (only/sole/first/largest), and C2 deliberately treats reputational words as what a company
+// says about itself. But the read was ATTRIBUTING those words to the company's own voice with no
+// row saying them — the same fault S1 refuses for the four words it does govern.
+//
+// These words now have to appear VERBATIM in one of the line's own cited rows. Same function
+// family, same refusal, same single re-ask, at stage and at promote. C2 is unchanged: it still
+// asks whether WE softened a row's position word, which is a different question.
+export const S1B_REPUTATION_WORDS: ReadonlySet<string> = new Set([
+  "leading", "best", "premier", "foremost", "top",
+  "unmatched", "unparalleled", "world-class", "superior", "number one",
+]);
+
+/** The S1b words a line asserts. Matched on word boundaries, case-insensitively, over the line's
+ *  own text; "number one" is two words, so the set is matched as alternatives rather than by
+ *  splitting on spaces. */
+export function reputationWordsIn(text: string): string[] {
+  const t = String(text ?? "");
+  const alts = [...S1B_REPUTATION_WORDS].map((w) => w.replace(/[-\s]/g, "[-\\s]")).join("|");
+  const re = new RegExp(`\\b(?:${alts})\\b`, "gi");
+  return [...new Set((t.match(re) ?? []).map((w) => w.toLowerCase().replace(/\s+/g, " ")))];
+}
+
+/** S1b: the reputational words this line asserts that none of its cited rows states. */
+export function unsourcedReputation(input: {
+  text: string; cls: string | null; citedSourceTexts: readonly string[];
+}): string[] {
+  if (input.cls !== "record" && input.cls !== "you") return [];   // our_read is (b)'s business
+  return reputationWordsIn(input.text).filter((w) =>
+    !input.citedSourceTexts.some((src) => reputationWordsIn(src).includes(w)));
+}
 
 export type S1Result = {
   field: string;
@@ -406,6 +503,11 @@ export function s1Unsourced(input: {
   const unsourced = specs
     .filter((s) => !specificIsSourcedWithSecondChance(s, input.citedSourceTexts))
     .map((s) => ({ kind: s.kind, token: s.token }));
+  // S1b (2026-10-15): the reputational words ride in the SAME result and the SAME refusal. They are
+  // their own kind so a reader can tell "leading with no row behind it" from a missing figure.
+  for (const w of unsourcedReputation({ text, cls, citedSourceTexts: input.citedSourceTexts })) {
+    unsourced.push({ kind: "reputation", token: w });
+  }
   // N1: names ride in the SAME result and the SAME refusal. They are reported separately so a reader
   // can tell a missing figure from a missing product name, but either refuses the line.
   const names = unsourcedNames({ text, cls, citedSourceTexts: input.citedSourceTexts, companyName: input.companyName });
