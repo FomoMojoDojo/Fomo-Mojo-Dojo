@@ -273,10 +273,12 @@ Deno.test("L1. a generator re-ask re-stamps promptSha, so a stored read names th
   assert(gpr.includes('if (meta?.kind && meta.role !== "judge") promptSha[meta.kind] = sha;'),
     "every generator call stamps it; the judge's prompt is not the read's");
   // and the stored read reads that same map
-  assert(gpr.includes("prompt_sha: promptSha[kind] ?? null,     // Q4: WHICH prompt wrote this read"),
-    "the staged row stamps from it");
-  assert(gpr.includes("input_ledger: { ...ledger, prompt_sha: promptSha[kind] ?? null },"),
-    "and so does the written row");
+  // both stored rows read that same map through the one stored-ledger builder (MODEL TRIAL,
+  // 2026-10-15) — so a re-ask's sha cannot reach one stored row and not the other
+  assert(gpr.includes("prompt_sha: promptSha[kind] ?? null,          // Q4: WHICH prompt wrote this read"),
+    "the one builder stamps from it");
+  assert(gpr.includes("input_ledger: storedLedger(kind, {"), "the staged row");
+  assert(gpr.includes("input_ledger: storedLedger(kind),"), "and the written row");
 });
 
 Deno.test("L1. a billed call is ledgered even when its answer is unusable", async () => {

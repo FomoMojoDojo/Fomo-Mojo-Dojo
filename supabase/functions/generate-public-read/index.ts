@@ -16,7 +16,7 @@
 // register), strategy_cascades (the admin cascade — market_read is uploaded-augmented), inputs /
 // uploaded files. The public cascade rests ONLY on the public record above.
 //
-// Model via the provenance router (all-public → external gpt-4.1-mini; any non-public/unknown/NULL →
+// Model via the provenance router (all-public → external: generator gpt-4.1, judge gpt-4.1-mini;
 // local, fail-closed). The generator MUST cite input ids; any citation outside the ledger → the output
 // is REJECTED (fail loud, no write). The judge checks (a) grounding, (b) plain-sanity (the category
 // names what the business IS), (c) consistency across the three kinds. Reject → no write, verdict in
@@ -412,6 +412,21 @@ Deno.serve(async (req) => {
     // ── ROUTER: one decision over the provenance of EVERY gathered input. All-public → external. ─────
     const genChoice = resolveModel({ role: "generator", inputs: inputs.map((r) => ({ provenance: r.provenance })) });
     const judgeChoice = resolveModel({ role: "judge", inputs: inputs.map((r) => ({ provenance: r.provenance })) });
+
+    // ── MODEL TRIAL (operator ruling, 2026-10-15): THE MODEL IS PART OF THE RULES ────────────────
+    // The generator model was stamped on public_reads.model_provider / model_name — sibling columns
+    // — and nowhere inside input_ledger, where gen_rules_version lives. The ruling puts it in the
+    // ledger too: a read's ledger should say which rules AND which model produced it, together,
+    // because changing the model changes the read. ONE builder, so the stage insert and the write
+    // insert cannot stamp differently; the existing columns are unchanged.
+    const storedLedger = (kind: Kind, extra: Record<string, unknown> = {}) => ({
+      ...ledger,
+      prompt_sha: promptSha[kind] ?? null,          // Q4: WHICH prompt wrote this read
+      generator_provider: genChoice.provider,
+      generator_model: genChoice.model,
+      judge_model: judgeChoice.model,
+      ...extra,
+    });
 
     if (doPlan) {
       return json({
@@ -1206,11 +1221,12 @@ Respond with ONLY JSON:
           company_id, kind, payload: built.staged,
           // V1: the `carried` block records every carried span — sha/start/end, its class, and what
           // the field was chosen over — so the operator can see which lines are the record's words.
-          input_ledger: {
-            ...ledger, carried: carriedBlocks[kind] ?? {},
+          input_ledger: storedLedger(kind, {
+            // V1: the `carried` block records every carried span — sha/start/end, its class, and
+            // what the field was chosen over — so the operator can see which lines are the record's.
+            carried: carriedBlocks[kind] ?? {},
             restated_carried: restatedCarried,       // D1: what the model restated and we removed
-            prompt_sha: promptSha[kind] ?? null,     // Q4: WHICH prompt wrote this read
-          },
+          }),
           model_provider: genChoice.provider, model_name: genChoice.model,
           judge_verdict: verdict, judge_model: judgeChoice.model,
           is_current: false, supersedes_legacy_row: legacyFor(kind),
@@ -1232,7 +1248,7 @@ Respond with ONLY JSON:
         company_id, kind, payload: built.stored,
         // Q4: EVERY stored read is stamped, not only staged ones — a read with no prompt_sha is a
         // read nobody can attribute to a prompt, which is the gap Q4 exists to close.
-        input_ledger: { ...ledger, prompt_sha: promptSha[kind] ?? null },
+        input_ledger: storedLedger(kind),
         model_provider: genChoice.provider, model_name: genChoice.model,
         judge_verdict: verdict, judge_model: judgeChoice.model,
         is_current: true, supersedes_legacy_row: legacyFor(kind),

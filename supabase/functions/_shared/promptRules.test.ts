@@ -79,9 +79,9 @@ Deno.test("P3. the version is bumped — these rules can change what the model w
   // C1-S (2026-10-14) bumped it: the generation PROMPT changed — it now shows the model the
   // current read's still-sourced lines. The invariant is unchanged: the stamp moves when the
   // rules that shape what the model writes move, and the module explains each bump.
-  assertEquals(GEN_RULES_VERSION, "2026-10-15.3");
+  assertEquals(GEN_RULES_VERSION, "2026-10-15.4");
   const notes = Deno.readTextFileSync(new URL("./genRulesVersion.ts", import.meta.url));
-  assert(notes.includes("2026-10-15.3"), "and the bump is explained in the version's own log");
+  assert(notes.includes("2026-10-15.4"), "and the bump is explained in the version's own log");
   assert(notes.includes("C1-S"), "the log names the ruling that moved it");
 });
 
@@ -168,9 +168,16 @@ Deno.test("Q4. the sha is computed over the WHOLE prompt, system and user", () =
 });
 
 Deno.test("Q4. EVERY stored read is stamped — staged and direct write alike", () => {
-  assert(SRC.includes("prompt_sha: promptSha[kind] ?? null,     // Q4: WHICH prompt wrote this read"), "the staged insert");
-  assert(SRC.includes("input_ledger: { ...ledger, prompt_sha: promptSha[kind] ?? null },"), "the direct write");
-  assertEquals((SRC.match(/prompt_sha: promptSha\[kind\]/g) ?? []).length, 2, "both insert paths, and only those");
+  // The MODEL TRIAL (2026-10-15) put the stored ledger in ONE builder, which is strictly stronger
+  // than the two pinned literals this used to check: the stamp now cannot differ between the two
+  // paths, because there is only one place that writes it. So: the builder stamps it once, and both
+  // inserts go through the builder.
+  assert(SRC.includes("prompt_sha: promptSha[kind] ?? null,          // Q4: WHICH prompt wrote this read"),
+    "the one builder stamps the prompt");
+  assertEquals((SRC.match(/prompt_sha: promptSha\[kind\]/g) ?? []).length, 1, "in exactly one place");
+  assert(SRC.includes("input_ledger: storedLedger(kind, {"), "the staged insert");
+  assert(SRC.includes("input_ledger: storedLedger(kind),"), "the direct write");
+  assertEquals((SRC.match(/input_ledger: storedLedger\(/g) ?? []).length, 2, "both insert paths, and only those");
 });
 
 Deno.test("Q4. NO prompt text is stored anywhere — the wall check forbade it", async () => {

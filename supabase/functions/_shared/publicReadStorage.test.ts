@@ -71,12 +71,17 @@ Deno.test("source guard: the generator inserts built.stored on write and built.s
   const gen = await read("../generate-public-read/index.ts");
   // Q4 split this to stamp prompt_sha on the direct write too; both halves pinned.
   assert(gen.includes("company_id, kind, payload: built.stored,"), "direct write inserts built.stored");
-  assert(gen.includes("input_ledger: { ...ledger, prompt_sha: promptSha[kind] ?? null },"), "with the prompt stamp");
+  // the MODEL TRIAL moved the stored ledger into one builder; the stamp is still on the write path
+  assert(gen.includes("input_ledger: storedLedger(kind),"), "with the prompt stamp");
   // b6372777 (V1) split this insert across lines and gave the staged ledger its `carried` block, so
   // the literal moved; the invariant did not. Both halves are pinned.
   assert(gen.includes("company_id, kind, payload: built.staged,"), "stage inserts built.staged");
-  // D1 added restated_carried beside the carried block, so the object spans lines; both halves pinned.
-  assert(gen.includes("...ledger, carried: carriedBlocks[kind] ?? {},"), "the staged ledger is the write ledger plus the carried block");
+  // D1 added restated_carried beside the carried block, so the object spans lines; both halves
+  // pinned. The MODEL TRIAL (2026-10-15) then made both ledgers come from one builder, which is the
+  // invariant this line was reaching for: the staged ledger IS the write ledger plus `carried`,
+  // because storedLedger(kind, extra) spreads the same base and the stage call passes the extra.
+  assert(gen.includes("input_ledger: storedLedger(kind, {"), "the staged ledger is the write ledger plus the carried block");
+  assert(gen.includes("carried: carriedBlocks[kind] ?? {},"), "which is what the extra carries");
   assert(gen.includes("restated_carried: restatedCarried,"), "and what D1 removed as a restatement");
   assert(gen.includes("const built = buildStoredPayloads({ kind, payload, verdict, uuidByRef, refMeta, ownHosts, ownSiteRecord, refUrl });"), "one builder (with the own-site record, rule 2026-09-18)");
   assert(!gen.includes("function deriveOfferingSeenOn(") && !gen.includes("function translateCitations("), "moved, not copied");

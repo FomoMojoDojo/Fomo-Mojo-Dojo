@@ -243,7 +243,11 @@ Deno.test("hook: a carried line's citations are REPLACED, so its class is the sp
 Deno.test("hook: the ledger carries the block, and drift fails closed before C1/C2", async () => {
   const gen = await readSrc("../generate-public-read/index.ts");
   // D1 split this across lines and added restated_carried beside it; both halves pinned.
-  assert(gen.includes("...ledger, carried: carriedBlocks[kind] ?? {},"), "the block is stored");
+  // The MODEL TRIAL (2026-10-15) moved the stored ledger into one builder, storedLedger(kind, extra),
+  // so the staged insert passes `carried` to it instead of spreading `ledger` inline. The invariant
+  // is unchanged and now holds in one place: the staged ledger carries the block.
+  assert(gen.includes("input_ledger: storedLedger(kind, {"), "the staged ledger comes from the one builder");
+  assert(gen.includes("carried: carriedBlocks[kind] ?? {},"), "the block is stored");
   assert(gen.includes("restated_carried: restatedCarried,"), "and so is what D1 removed");
   assert(gen.includes("throw new StageRefusal(\n            CARRIED_DRIFT_GUARD,"), "drift refuses");
   const fin = gen.indexOf("const finalize = async (rawKind: string");

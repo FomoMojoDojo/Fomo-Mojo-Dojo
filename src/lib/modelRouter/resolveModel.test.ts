@@ -3,17 +3,27 @@
 import { describe, it, expect } from "vitest";
 import {
   resolveModel, isPublicProvenance, signalProvenance, modelStamp,
-  EXTERNAL_MODEL, LOCAL_GENERATOR, LOCAL_JUDGE,
+  EXTERNAL_MODEL, EXTERNAL_GENERATOR, EXTERNAL_JUDGE, LOCAL_GENERATOR, LOCAL_JUDGE,
 } from "./resolveModel";
 
 const pub = (id: string) => ({ id, provenance: "public_observed" });
 
 describe("resolveModel — route by provenance of every input", () => {
-  it("ALL inputs public → external OpenAI (both roles)", () => {
+  // MODEL TRIAL (operator ruling, 2026-10-15): the external branch now splits by ROLE, exactly as
+  // the local branch below always has. It used to return one model for both roles and carry the role
+  // only as a label, which is why neither role's model could be changed without changing the other.
+  // The generator is gpt-4.1; the judge stays gpt-4.1-mini. What is asserted is the SPLIT, not just
+  // the two ids: a change that collapses both roles onto one model fails here however it is spelled.
+  it("ALL inputs public → external OpenAI, each role its own external model", () => {
     const gen = resolveModel({ role: "generator", inputs: [pub("a"), pub("b")] });
     const jdg = resolveModel({ role: "judge", inputs: [pub("a"), { id: "b", provenance: "public_inferred" }] });
-    expect(gen).toEqual({ provider: "external_openai", model: EXTERNAL_MODEL, role: "generator" });
-    expect(jdg).toEqual({ provider: "external_openai", model: EXTERNAL_MODEL, role: "judge" });
+    expect(gen).toEqual({ provider: "external_openai", model: EXTERNAL_GENERATOR, role: "generator" });
+    expect(jdg).toEqual({ provider: "external_openai", model: EXTERNAL_JUDGE, role: "judge" });
+    expect(gen.model).not.toBe(jdg.model);
+    expect(EXTERNAL_GENERATOR).toBe("gpt-4.1");
+    expect(EXTERNAL_JUDGE).toBe("gpt-4.1-mini");
+    // the old name still resolves, and is the role whose model did NOT change
+    expect(EXTERNAL_MODEL).toBe(EXTERNAL_JUDGE);
   });
 
   it("ONE internal input → local (the whole call), each role its local model", () => {

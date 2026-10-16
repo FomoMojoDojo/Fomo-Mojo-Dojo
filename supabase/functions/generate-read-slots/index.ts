@@ -25,7 +25,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
+import { EXTERNAL_GENERATOR, resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 import {
   SLICE_1_KINDS, SLOT_CAPS, SLOT_MIN_CHARS, DIFFERENTIATORS_MIN, DIFFERENTIATORS_MAX,
@@ -48,8 +48,13 @@ const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 const OLLAMA_URL = Deno.env.get("OLLAMA_URL") ?? "http://host.docker.internal:11434";
-// Only the EXTERNAL lane accrues billable usage, and resolveModel's external model is a constant.
-const EXTERNAL_LEDGER_MODEL = "gpt-4.1-mini";
+// Only the EXTERNAL lane accrues billable usage, so the ledger row names the external GENERATOR —
+// the role whose calls produce that usage. It is taken from the router, not written here: the
+// comment that used to stand above this line said "resolveModel's external model is a constant",
+// which was true only while both roles shared one model. The model trial (2026-10-15) split them,
+// and a literal here would have ledgered gpt-4.1-mini for calls actually made to gpt-4.1 — a wrong
+// model id on the cost record, which is the one place the model id has to be right.
+const EXTERNAL_LEDGER_MODEL = EXTERNAL_GENERATOR;
 
 // ── THE GENERATOR PROMPT — select and shorten, never mint ────────────────────────────────────────
 function genSystemFor(kind: SlotKind): string {

@@ -15,7 +15,7 @@
 
 export {
   resolveModel, isPublicProvenance, signalProvenance, modelStamp,
-  PUBLIC_PROVENANCES, EXTERNAL_MODEL, LOCAL_GENERATOR, LOCAL_JUDGE,
+  PUBLIC_PROVENANCES, EXTERNAL_MODEL, EXTERNAL_GENERATOR, EXTERNAL_JUDGE, LOCAL_GENERATOR, LOCAL_JUDGE,
   type ModelRole, type ModelProvider, type ModelChoice,
 } from "../../../src/lib/modelRouter/resolveModel.ts";
 

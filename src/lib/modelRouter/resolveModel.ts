@@ -21,9 +21,33 @@ export type ModelChoice = { provider: ModelProvider; model: string; role: ModelR
 import { PUBLIC_PROVENANCES, isPublicProvenance } from "../../../supabase/functions/_shared/publicReadGuards.ts";
 export { PUBLIC_PROVENANCES, isPublicProvenance };
 
-// No stronger public judge is configured anywhere — the only external model in the stack is
-// gpt-4.1-mini (research-company / refresh-positioning). Use it for BOTH roles on the public branch.
-export const EXTERNAL_MODEL = "gpt-4.1-mini";
+// ── MODEL TRIAL (operator ruling, 2026-10-15): THE EXTERNAL BRANCH SPLITS BY ROLE ───────────────
+//
+// It did not. `if (allPublic) return { model: EXTERNAL_MODEL, role: opts.role }` returned the same
+// model for BOTH roles and used the role only as a label, while the local branch had always split
+// (LOCAL_GENERATOR vs LOCAL_JUDGE). So the generator and the judge were the same model on every
+// public-provenance call, and neither could be changed without changing the other.
+//
+// The ruling: generate-public-read's GENERATOR becomes gpt-4.1; the JUDGE stays gpt-4.1-mini. The
+// split is here rather than at the call site because this module is the single authority for which
+// model a role gets — a model id chosen in a function would be a second authority, and the two
+// would drift. THE PROVENANCE LAW IS UNTOUCHED: all-public still goes external, any non-public /
+// unknown / NULL still forces the whole call local, and an empty input set is still fail-closed.
+//
+// BLAST RADIUS, named because it is wider than the function the ruling names. Six call sites resolve
+// a generator and all of them take gpt-4.1 on the public branch:
+//   generate-public-read/index.ts:413        the ruling's target
+//   generate-read-slots/index.ts:247
+//   generate-open-questions/index.ts:159     (role variable)
+//   generate-conflict-explanation/index.ts:153, :202
+//   _shared/modelRouter.ts:80                makeRoutedModel's routed call (role variable)
+// Narrowing the trial to generate-public-read alone would mean a per-call model override, i.e. a
+// second place where a model id lives. Flagged for the operator rather than decided here.
+export const EXTERNAL_GENERATOR = "gpt-4.1";
+export const EXTERNAL_JUDGE = "gpt-4.1-mini";
+/** The old name, kept so every existing importer keeps resolving. It is the JUDGE model: that is
+ *  the role whose model the ruling did NOT change. */
+export const EXTERNAL_MODEL = EXTERNAL_JUDGE;
 export const LOCAL_GENERATOR = "qwen2.5:14b-instruct";
 export const LOCAL_JUDGE = "llama3:70b";
 
@@ -44,7 +68,15 @@ export function resolveModel(opts: {
   inputs: ReadonlyArray<{ id?: string; provenance: string | null | undefined }>;
 }): ModelChoice {
   const allPublic = opts.inputs.length > 0 && opts.inputs.every((i) => isPublicProvenance(i.provenance));
-  if (allPublic) return { provider: "external_openai", model: EXTERNAL_MODEL, role: opts.role };
+  // both branches split by role, by the same expression shape — so neither role's model can be
+  // changed by editing the other's, on either branch
+  if (allPublic) {
+    return {
+      provider: "external_openai",
+      model: opts.role === "judge" ? EXTERNAL_JUDGE : EXTERNAL_GENERATOR,
+      role: opts.role,
+    };
+  }
   return {
     provider: "local_ollama",
     model: opts.role === "judge" ? LOCAL_JUDGE : LOCAL_GENERATOR,

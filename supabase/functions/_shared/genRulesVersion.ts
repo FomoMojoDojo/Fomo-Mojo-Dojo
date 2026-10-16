@@ -49,4 +49,9 @@
 // refused for complying (10738). The required set now excludes unsupportedByPool for that line —
 // the same set NP2 prints in the prompt, from the same function. A dropped specific the pool CAN
 // source still refuses.
-export const GEN_RULES_VERSION = "2026-10-15.3" as const;
+// MODEL TRIAL (operator ruling, 2026-10-15): bumped a fourth time, because THE MODEL IS PART OF THE
+// RULES. generate-public-read's generator moves from gpt-4.1-mini to gpt-4.1 on the public branch;
+// the judge stays gpt-4.1-mini. A read produced by a different generator is not comparable to one
+// produced by the old generator, so the version has to move with it — and the generator model id is
+// now stamped inside every stored input_ledger beside this version, not only on the sibling columns.
+export const GEN_RULES_VERSION = "2026-10-15.4" as const;
