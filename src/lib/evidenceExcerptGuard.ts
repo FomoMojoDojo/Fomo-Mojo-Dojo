@@ -26,10 +26,13 @@ export function excerptTracesToSource(
 
 /** Apply the guard to a single draft-shaped record, GIVEN the source basis the extractor saw
  *  (sourceText from the retained-source map). Returns the fields to store:
- *   - source basis present AND excerpt does NOT trace → drop the excerpt+claim (attributed-summary),
- *     keeping the untouched interpretation only in raw_payload.
- *   - source basis absent (null/empty) → LEAVE AS-IS (honest limit: nothing to verify against;
- *     the default Claude path with no citation, and gate-3 re-crawl is what supplies a basis).
+ *   - source basis present AND excerpt does NOT trace → drop the EXCERPT (it is not the page's words);
+ *     claim_text STAYS — it is our summary, and the law (signed 2026-10-16: claim_text may be our
+ *     summary; evidence_excerpt is the page's words or absent) lets it. Until that ruling this branch
+ *     also emptied claim_text, which made a blanked row vanish from claims and the pool while the
+ *     no-basis row beside it, with no page to check against at all, kept its summary.
+ *   - source basis absent (null/empty) → LEAVE AS-IS here; the mint guard (applyMintExcerptGuard)
+ *     owns the no-basis rule and empties the excerpt there.
  *   - excerpt traces → unchanged.
  *  Deterministic string op — zero model calls. */
 export function applyExcerptGuard<T extends { evidence_excerpt: string; claim_text: string; voice_class?: string | null }>(
@@ -51,8 +54,9 @@ export function applyExcerptGuard<T extends { evidence_excerpt: string; claim_te
   if (excerptTracesToSource(draft.evidence_excerpt, sourceText)) {
     return { evidence_excerpt: draft.evidence_excerpt, claim_text: draft.claim_text, dropped: false };
   }
-  // Unverifiable excerpt → store no excerpt/claim; the interpretation remains in raw_payload.
-  return { evidence_excerpt: "", claim_text: "", dropped: true };
+  // Unverifiable excerpt → store no excerpt. claim_text stays (our summary); the caller stashes the
+  // dropped text in raw_payload.excerpt_guard.unverified_excerpt.
+  return { evidence_excerpt: "", claim_text: draft.claim_text, dropped: true };
 }
 
 /** UPLOAD variant (rulings 5–7, 2026-09-14). On the upload path claim_text is the FINDING (the model's

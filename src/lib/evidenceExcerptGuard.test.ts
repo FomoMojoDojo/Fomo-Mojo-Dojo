@@ -15,8 +15,8 @@ describe("GATE 2 · E4 ingest guard — evidence_excerpt must trace to the retai
     expect(excerptTracesToSource(fabricated, SOURCE)).toBe(false);
     const g = applyExcerptGuard({ evidence_excerpt: fabricated, claim_text: fabricated }, SOURCE);
     expect(g.dropped).toBe(true);
-    expect(g.evidence_excerpt).toBe(""); // no excerpt stored…
-    expect(g.claim_text).toBe("");       // …and no claim seeded from the fabricated text
+    expect(g.evidence_excerpt).toBe("");       // no excerpt stored — it is not the page's words…
+    expect(g.claim_text).toBe(fabricated);     // …but claim_text STAYS: our summary (law of 2026-10-16)
   });
 
   it("PASS — a clean lifted sentence (a substring of the source) is stored unchanged", () => {
@@ -64,8 +64,8 @@ describe("ANALYSIS CARVE-OUT · E4 preserves analysis reads, still clears non-an
   it("(ii) an outside_voice signal of the SAME shape (non-substring + basis) is STILL cleared — E4 intact", () => {
     const g = applyExcerptGuard({ evidence_excerpt: analysisRead, claim_text: analysisRead, voice_class: "outside_voice_about_client" }, SOURCE);
     expect(g.dropped).toBe(true);
-    expect(g.claim_text).toBe("");       // E4's real target is untouched by the carve-out
-    expect(g.evidence_excerpt).toBe("");
+    expect(g.evidence_excerpt).toBe("");            // E4's real target is untouched by the carve-out: the excerpt goes
+    expect(g.claim_text).toBe(analysisRead);        // claim_text stays — our summary (law of 2026-10-16); only the excerpt is the page's words
   });
 
   it("carve-out keys on voice_class ONLY — a clean-substring analysis read is also left as-is (never gated)", () => {

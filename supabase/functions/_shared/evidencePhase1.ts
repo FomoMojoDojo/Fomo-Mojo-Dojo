@@ -795,9 +795,14 @@ export async function applyMintExcerptGuard(args: {
     const guarded = applyExcerptGuard(draft, src);
     const sha = await basisSha(src);
     if (guarded.dropped) {
+      // BLANKED (ruling 2026-10-16, second step): a basis exists and the excerpt is not on it. Identical
+      // to the no-basis branch except its reason — claim_text stays (our summary), the excerpt is
+      // emptied, and the text goes to excerpt_guard.unverified_excerpt. This branch used to empty
+      // claim_text too, so a row the page DISPROVED vanished from claims and the pool while a row no
+      // page could check kept its summary — the stricter evidence got the weaker standing.
       draft.evidence_excerpt = guarded.evidence_excerpt;
-      draft.claim_text = guarded.claim_text;
-      draft.raw_payload = { ...rp, excerpt_guard: { basis: "retained_page", traced: false, basis_sha: sha, guard_version: EXCERPT_GUARD_VERSION, blanked_excerpt: excerptAtMint } };
+      draft.claim_text = guarded.claim_text; // unchanged by the pure guard — stated, not assumed
+      draft.raw_payload = { ...rp, excerpt_guard: { basis: "retained_page", traced: false, reason: "not_on_retained_page", basis_sha: sha, guard_version: EXCERPT_GUARD_VERSION, unverified_excerpt: excerptAtMint } };
       stats.dropped_unverifiable++;
     } else if (normalizeForHash(excerptAtMint)) {
       draft.raw_payload = { ...rp, excerpt_guard: { basis: "retained_page", traced: true, basis_sha: sha, guard_version: EXCERPT_GUARD_VERSION } };

@@ -20,6 +20,9 @@
 #          raw_payload.excerpt_guard.unverified_excerpt under basis "none" / reason page_not_retained
 #      w2. on a cited_text basis a verbatim excerpt passes (traced:true) and a paraphrase is blanked (traced:false);
 #          a crawl-basis verbatim excerpt passes; an analysis row with no basis is stamped and KEPT (2026-09-02 carve-out)
+#      w2c. (ruling 2026-10-16, second step) the BLANKED branch keeps claim_text, empties the excerpt, stashes the text
+#          in excerpt_guard.unverified_excerpt with reason not_on_retained_page — identical to the no-basis branch but
+#          for its reason; the old blanked_excerpt key is gone. Plant: the blanked branch drops claim_text again => w2c red
 #      w3. the retained row's url EQUALS its signal's url — one row per form the drafts carry, labelled cited_text /
 #          crawl, never the bare normalized key when a signal form exists; a basis no draft cites sits under the
 #          source's own url; one with no meta is labelled unknown; the writer minted no signal
@@ -133,10 +136,13 @@ NB_TEXT="Summary words the model wrote about a page nobody retained."
 [ "$(wq "d['drafts']['no_basis']['excerpt_guard']['basis']+'|'+d['drafts']['no_basis']['excerpt_guard']['reason']+'|'+d['drafts']['no_basis']['excerpt_guard']['unverified_excerpt']")" = "none|page_not_retained|$NB_TEXT" ] || fail w1 "no-basis stamp: $(wq "d['drafts']['no_basis']['excerpt_guard']")"
 echo "w1. no basis: claim_text kept, evidence_excerpt emptied, text kept as excerpt_guard.unverified_excerpt (basis none, page_not_retained)"
 [ "$(wq "d['drafts']['cited_verbatim']['evidence_excerpt']+'|'+str(d['drafts']['cited_verbatim']['excerpt_guard']['traced'])")" = "crisis unit responded within the hour|True" ] || fail w2 "cited verbatim: $(wq "d['drafts']['cited_verbatim']")"
-[ "$(wq "d['drafts']['cited_paraphrase']['evidence_excerpt']+'|'+str(d['drafts']['cited_paraphrase']['excerpt_guard']['traced'])+'|'+d['drafts']['cited_paraphrase']['excerpt_guard']['blanked_excerpt']")" = "|False|the crisis team came in sixty minutes" ] || fail w2 "cited paraphrase: $(wq "d['drafts']['cited_paraphrase']")"
+[ "$(wq "d['drafts']['cited_paraphrase']['evidence_excerpt']+'|'+str(d['drafts']['cited_paraphrase']['excerpt_guard']['traced'])+'|'+d['drafts']['cited_paraphrase']['excerpt_guard']['unverified_excerpt']+'|'+d['drafts']['cited_paraphrase']['excerpt_guard']['reason']")" = "|False|the crisis team came in sixty minutes|not_on_retained_page" ] || fail w2 "cited paraphrase: $(wq "d['drafts']['cited_paraphrase']")"
+# w2c (ruling 2026-10-16, second step): the BLANKED branch keeps claim_text — a row the page disproved is a summary row, like a no-basis row
+[ "$(wq "d['drafts']['cited_paraphrase']['claim_text']")" = "the crisis team came in sixty minutes" ] || fail w2c "blanked branch dropped claim_text: $(wq "d['drafts']['cited_paraphrase']")"
+[ "$(wq "'blanked_excerpt' in d['drafts']['cited_paraphrase']['excerpt_guard']")" = "False" ] || fail w2c "blanked branch still writes blanked_excerpt; the one key is unverified_excerpt"
 [ "$(wq "d['drafts']['crawl_verbatim']['evidence_excerpt']+'|'+str(d['drafts']['crawl_verbatim']['excerpt_guard']['traced'])")" = "roasts every bean in Burbank|True" ] || fail w2 "crawl verbatim: $(wq "d['drafts']['crawl_verbatim']")"
 [ "$(wq "d['drafts']['analysis']['evidence_excerpt']+'|'+str(d['drafts']['analysis']['excerpt_guard'].get('analysis_carve_out'))+'|'+d['drafts']['analysis']['excerpt_guard']['basis']")" = "Our reading: the roastery's wholesale emphasis outruns its retail footprint.|True|none" ] || fail w2 "analysis row: $(wq "d['drafts']['analysis']")"
-echo "w2. cited_text basis: verbatim passed (traced), paraphrase blanked; crawl verbatim passed; analysis row stamped (basis none) and kept"
+echo "w2. cited_text basis: verbatim passed (traced), paraphrase blanked with claim_text KEPT (reason not_on_retained_page, text in unverified_excerpt); crawl verbatim passed; analysis row stamped (basis none) and kept"
 [ "$(wq "';'.join(sorted(r['url']+'='+str(r['kind']) for r in d['retained']))")" = "https://cited.test/p=cited_text;https://crawl.test/about=crawl;https://orphan.test/x/=crawl;https://www.cited.test/p/=cited_text;nometa.test/y=unknown" ] || fail w3 "retained urls/kinds: $(wq "d['retained']")"
 [ "$(psql "select count(*) from outside_page_snapshots where company_id='$CO' and source_url='https://www.cited.test/p/' and structured->>'basis_kind'='cited_text' and structured->>'url_key'='cited.test/p' and structured->>'retained_at_mint'='true'")" = 1 ] || fail w3 "the retained row is not in the store under the signal's own url form"
 [ "$(psql "select count(*) from outside_page_snapshots where company_id='$CO' and source_url='cited.test/p'")" = 0 ] || fail w3 "a basis with a signal form was stored under the bare normalized key"

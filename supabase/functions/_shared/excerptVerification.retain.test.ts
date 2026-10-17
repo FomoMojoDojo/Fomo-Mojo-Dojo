@@ -121,9 +121,14 @@ Deno.test("applyMintExcerptGuard — cited_text basis: verbatim passes and is re
   assertEquals(verbatim.evidence_excerpt, "crisis unit responded within the hour");
   assertEquals(verbatim.raw_payload.excerpt_guard.basis, "retained_page");
   assertEquals(verbatim.raw_payload.excerpt_guard.traced, true);
+  // the blanked branch (ruling 2026-10-16, second step): claim_text stays, excerpt emptied, text stashed, own reason
   assertEquals(paraphrase.evidence_excerpt, "");
+  assertEquals(paraphrase.claim_text, "the crisis team came in sixty minutes", "a blanked row keeps its summary");
   assertEquals(paraphrase.raw_payload.excerpt_guard.traced, false);
-  assertEquals(paraphrase.raw_payload.excerpt_guard.blanked_excerpt, "the crisis team came in sixty minutes");
+  assertEquals(paraphrase.raw_payload.excerpt_guard.basis, "retained_page");
+  assertEquals(paraphrase.raw_payload.excerpt_guard.reason, "not_on_retained_page");
+  assertEquals(paraphrase.raw_payload.excerpt_guard.unverified_excerpt, "the crisis team came in sixty minutes");
+  assertEquals(paraphrase.raw_payload.excerpt_guard.blanked_excerpt, undefined, "one key for the stashed text, in both branches");
   assertEquals(analysis.evidence_excerpt, "Our reading.", "the analysis carve-out keeps our labelled reading");
   assertEquals(analysis.raw_payload.excerpt_guard, { basis: "none", reason: "page_not_retained", guard_version: 1, analysis_carve_out: true });
   assertEquals({ passed: stats.passed, dropped: stats.dropped_unverifiable, no_basis: stats.no_basis_at_mint, blanked_no_basis: stats.blanked_no_basis }, { passed: 1, dropped: 1, no_basis: 1, blanked_no_basis: 0 });
