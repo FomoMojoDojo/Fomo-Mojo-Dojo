@@ -13,6 +13,23 @@
 #   d. a later guard_version writes BESIDE, never over: a v2 row for the same key inserts; the v1 row is unchanged
 #   m. MARK-ONLY: signals / claims byte-identical before and after; the rows are append-only (UPDATE and DELETE refused)
 #   f. a dry run writes nothing
+#   w. STEP (a) OF THE EXCERPT-FIDELITY FIX (operator ruling 2026-10-16) — THE WRITER. applyMintExcerptGuard, the exported
+#      branch public-baseline's ingest runs, is run against this throwaway company with drafts in every basis shape
+#      (scripts/guards/excerpt-writer-check.ts — deno, no model call, no fetch). Asserted:
+#      w1. a draft with NO retained basis keeps claim_text, lands excerpt-less, and carries the dropped text as
+#          raw_payload.excerpt_guard.unverified_excerpt under basis "none" / reason page_not_retained
+#      w2. on a cited_text basis a verbatim excerpt passes (traced:true) and a paraphrase is blanked (traced:false);
+#          a crawl-basis verbatim excerpt passes; an analysis row with no basis is stamped and KEPT (2026-09-02 carve-out)
+#      w3. the retained row's url EQUALS its signal's url — one row per form the drafts carry, labelled cited_text /
+#          crawl, never the bare normalized key when a signal form exists; a basis no draft cites sits under the
+#          source's own url; one with no meta is labelled unknown; the writer minted no signal
+#      w4. the slot path (generate-read-slots) reads row text through rowTextOf and no longer joins the columns itself
+#      Plants (each injected live, confirmed to move a measured value, RED, restored md5-identical — 2026-10-16):
+#        remove the blank in the no-basis branch (evidencePhase1.ts)        => w1 red
+#        store the normalized key as the url (excerptVerification.ts)       => w3 red
+#        label a cited_text snippet as crawl (citationSource.basisMetaFor)  => w3 red (the check derives its labels through
+#                                                                              basisMetaFor, the function public-baseline uses)
+#        restore the slot path's own concatenation (generate-read-slots)    => w4 red
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 DB=supabase_db_dzlgyxcvuwiulgifbmew; API=http://127.0.0.1:54321
@@ -104,5 +121,29 @@ echo "d. guard_version 2 wrote beside the v1 row; v1 still blanked"
 set +e; U=$(psql "update excerpt_verifications set verdict='passed' where company_id='$CO' and signal_id='$S_BLANK' and guard_version=1" 2>&1); D=$(psql "delete from excerpt_verifications where company_id='$CO'" 2>&1); set -e
 echo "$U" | grep -q "append-only" || fail m "UPDATE was not refused: $U"; echo "$D" | grep -q "append-only" || fail m "DELETE was not refused: $D"
 echo "m. mark-only: no signal edited (no raw_payload stamp, no blank); UPDATE and DELETE refused (append-only)"
+# w. step (a) — the writer, run against this throwaway company (see header)
+export PATH="$HOME/.deno/bin:$PATH"
+NSIG_W=$(psql "select count(*) from signals where company_id='$CO'")
+WJ=$(SUPABASE_URL="$API" SERVICE_ROLE_KEY="$SR" GUARD_CO="$CO" deno run --allow-all --no-check scripts/guards/excerpt-writer-check.ts 2>"$TMP/w.err" | tail -1) || fail w "writer check did not run: $(tail -3 "$TMP/w.err")"
+[ -n "$WJ" ] || fail w "writer check printed nothing: $(tail -3 "$TMP/w.err")"
+wq() { echo "$WJ" | python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
+NB_TEXT="Summary words the model wrote about a page nobody retained."
+[ "$(wq "d['drafts']['no_basis']['evidence_excerpt']")" = "" ] || fail w1 "no-basis draft kept an excerpt: $(wq "d['drafts']['no_basis']")"
+[ "$(wq "d['drafts']['no_basis']['claim_text']")" = "$NB_TEXT" ] || fail w1 "no-basis draft lost claim_text: $(wq "d['drafts']['no_basis']")"
+[ "$(wq "d['drafts']['no_basis']['excerpt_guard']['basis']+'|'+d['drafts']['no_basis']['excerpt_guard']['reason']+'|'+d['drafts']['no_basis']['excerpt_guard']['unverified_excerpt']")" = "none|page_not_retained|$NB_TEXT" ] || fail w1 "no-basis stamp: $(wq "d['drafts']['no_basis']['excerpt_guard']")"
+echo "w1. no basis: claim_text kept, evidence_excerpt emptied, text kept as excerpt_guard.unverified_excerpt (basis none, page_not_retained)"
+[ "$(wq "d['drafts']['cited_verbatim']['evidence_excerpt']+'|'+str(d['drafts']['cited_verbatim']['excerpt_guard']['traced'])")" = "crisis unit responded within the hour|True" ] || fail w2 "cited verbatim: $(wq "d['drafts']['cited_verbatim']")"
+[ "$(wq "d['drafts']['cited_paraphrase']['evidence_excerpt']+'|'+str(d['drafts']['cited_paraphrase']['excerpt_guard']['traced'])+'|'+d['drafts']['cited_paraphrase']['excerpt_guard']['blanked_excerpt']")" = "|False|the crisis team came in sixty minutes" ] || fail w2 "cited paraphrase: $(wq "d['drafts']['cited_paraphrase']")"
+[ "$(wq "d['drafts']['crawl_verbatim']['evidence_excerpt']+'|'+str(d['drafts']['crawl_verbatim']['excerpt_guard']['traced'])")" = "roasts every bean in Burbank|True" ] || fail w2 "crawl verbatim: $(wq "d['drafts']['crawl_verbatim']")"
+[ "$(wq "d['drafts']['analysis']['evidence_excerpt']+'|'+str(d['drafts']['analysis']['excerpt_guard'].get('analysis_carve_out'))+'|'+d['drafts']['analysis']['excerpt_guard']['basis']")" = "Our reading: the roastery's wholesale emphasis outruns its retail footprint.|True|none" ] || fail w2 "analysis row: $(wq "d['drafts']['analysis']")"
+echo "w2. cited_text basis: verbatim passed (traced), paraphrase blanked; crawl verbatim passed; analysis row stamped (basis none) and kept"
+[ "$(wq "';'.join(sorted(r['url']+'='+str(r['kind']) for r in d['retained']))")" = "https://cited.test/p=cited_text;https://crawl.test/about=crawl;https://orphan.test/x/=crawl;https://www.cited.test/p/=cited_text;nometa.test/y=unknown" ] || fail w3 "retained urls/kinds: $(wq "d['retained']")"
+[ "$(psql "select count(*) from outside_page_snapshots where company_id='$CO' and source_url='https://www.cited.test/p/' and structured->>'basis_kind'='cited_text' and structured->>'url_key'='cited.test/p' and structured->>'retained_at_mint'='true'")" = 1 ] || fail w3 "the retained row is not in the store under the signal's own url form"
+[ "$(psql "select count(*) from outside_page_snapshots where company_id='$CO' and source_url='cited.test/p'")" = 0 ] || fail w3 "a basis with a signal form was stored under the bare normalized key"
+[ "$(psql "select count(*) from signals where company_id='$CO'")" = "$NSIG_W" ] || fail w3 "the writer check minted a signal"
+echo "w3. retained rows sit under the signals' own url forms (www + slash kept), labelled cited_text / crawl / unknown; no signal minted"
+grep -q 'rowTextOf("signal", r)' supabase/functions/generate-read-slots/index.ts || fail w4 "the slot path does not read signal text through rowTextOf"
+if grep -v '^\s*//' supabase/functions/generate-read-slots/index.ts | grep -q 'claim_text ?? ""} ${r.evidence_excerpt'; then fail w4 "the slot path still joins claim_text and evidence_excerpt itself"; fi
+echo "w4. slot path: row text through rowTextOf (classSourcingScope.ts); the local concatenation is gone"
 cleanup
 echo "GUARD OK"

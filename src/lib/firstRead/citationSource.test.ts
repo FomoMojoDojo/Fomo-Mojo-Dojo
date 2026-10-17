@@ -145,3 +145,55 @@ describe("V2-6c — mergeCitationSourceText (crawl wins on collision)", () => {
     expect(crawl.size).toBe(1);
   });
 });
+
+// ── Step (a) of the excerpt-fidelity fix (operator ruling 2026-10-16) ─────────────────────────────
+import { extractCitationBasis, extractCitationUrls, basisMetaFor } from "./citationSource";
+
+describe("step (a) — extractCitationBasis keeps the tool's url beside the winning snippet", () => {
+  it("the url travels with the LONGEST snippet of a key, and extractCitationSourceText is the same walk", () => {
+    const resp = webSearchResponse([
+      { url: "https://www.yelp.com/biz/edgewood/reviews/", cited_text: REVIEW_SNIPPET.slice(0, 60) },
+      { url: "http://yelp.com/biz/edgewood/reviews?ref=search", cited_text: REVIEW_SNIPPET },
+      { url: "http://sfchronicle.com/edgewood-story?ref=hp#top", cited_text: PRESS_SNIPPET },
+    ]);
+    const basis = extractCitationBasis(resp);
+    expect(basis.get("yelp.com/biz/edgewood/reviews")).toEqual({ url: "http://yelp.com/biz/edgewood/reviews?ref=search", cited_text: REVIEW_SNIPPET });
+    expect(basis.get("sfchronicle.com/edgewood-story")).toEqual({ url: "http://sfchronicle.com/edgewood-story?ref=hp#top", cited_text: PRESS_SNIPPET });
+    expect(extractCitationUrls(resp).get("yelp.com/biz/edgewood/reviews")).toBe("http://yelp.com/biz/edgewood/reviews?ref=search");
+    expect([...extractCitationSourceText(resp)]).toEqual([...basis].map(([k, b]) => [k, b.cited_text]));
+  });
+  it("no citations → empty maps", () => {
+    expect(extractCitationBasis(webSearchResponse([])).size).toBe(0);
+    expect(extractCitationUrls(webSearchResponse([])).size).toBe(0);
+  });
+});
+
+describe("step (a) — basisMetaFor labels each merged key crawl | cited_text under a joinable url, crawl winning on collision", () => {
+  const merged = new Map<string, string>([
+    ["acme.test/about", "a fetched page of forty characters at least, yes"],
+    ["yelp.com/biz/acme", REVIEW_SNIPPET],
+  ]);
+  it("a crawl url whose text entered the map is crawl; a citation key the crawl lacked is cited_text; the url is the source's own form", () => {
+    const meta = basisMetaFor({
+      crawlUrls: ["https://www.acme.test/about/"],
+      citationUrlByKey: new Map([["yelp.com/biz/acme", "https://www.yelp.com/biz/acme/"], ["acme.test/about", "https://acme.test/about"]]),
+      merged,
+    });
+    expect(meta.get("acme.test/about")).toEqual({ url: "https://www.acme.test/about/", kind: "crawl" });
+    expect(meta.get("yelp.com/biz/acme")).toEqual({ url: "https://www.yelp.com/biz/acme/", kind: "cited_text" });
+    expect(meta.size).toBe(2);
+  });
+  it("a crawl url whose text did NOT enter the map is not a crawl basis — the citation that supplied the key is labelled cited_text", () => {
+    const meta = basisMetaFor({
+      crawlUrls: [],                                   // the caller's loop admitted none (too short)
+      citationUrlByKey: new Map([["yelp.com/biz/acme", "https://yelp.com/biz/acme"]]),
+      merged,
+    });
+    expect(meta.get("yelp.com/biz/acme")).toEqual({ url: "https://yelp.com/biz/acme", kind: "cited_text" });
+    expect(meta.has("acme.test/about")).toBe(false);   // no source named it: no label is invented
+  });
+  it("a key not in the merged map gets no meta (never a label for a basis that was not kept)", () => {
+    const meta = basisMetaFor({ crawlUrls: ["https://gone.test/"], citationUrlByKey: new Map([["gone.test/", "https://gone.test/"]]), merged });
+    expect(meta.size).toBe(0);
+  });
+});

@@ -6,7 +6,7 @@ import { mintSiteCrawlSignals, parseSitemapUrls, type SiteReadLedger } from "../
 import { buildBaselineQueryPlan, QUERY_COUNTS, QUERY_KEYS, type PlanKind } from "../_shared/baselineQueryPlan.ts";
 import { recordEvidencePresence } from "../_shared/evidencePresence.ts";
 import { normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
-import { extractCitationSourceText, mergeCitationSourceText } from "../../../src/lib/firstRead/citationSource.ts";
+import { basisMetaFor, extractCitationBasis, mergeCitationSourceText, type RetainedBasisMeta } from "../../../src/lib/firstRead/citationSource.ts";
 // FREEZE GATE — authoritative server-side frozen set (same source the delta guard uses via
 // claimDeltaSynthesis). CB1 is a SELECT-only reference fixture; this function INGESTS signals/
 // claims from scratch, so it must refuse a frozen company before any write.
@@ -1722,7 +1722,7 @@ async function callClaudeWebSearch(opts: {
   ledgerRunId: string | null;
   /** Name-only lane (ruling 2026-09-18): the six passes as search intents; absent ⇒ the domain prompt, byte-identical. */
   nameOnlyBrief?: string | null;
-}): Promise<{ parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string> }> {
+}): Promise<{ parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string>; citationUrlByKey: Map<string, string> }> {
   const schemaHint =
     `{\n` +
     `  "category_archetype": "<string>",\n` +
@@ -1845,9 +1845,14 @@ async function callClaudeWebSearch(opts: {
   // basis keyed to the URLs the minted signals actually carry. Reads `data` (raw
   // blocks + citations), independent of the reclassified `parsed`. Empty when the
   // model cited nothing — honest absence, no lift.
-  const citationSourceTextByUrl = extractCitationSourceText(data);
+  // Step (a) (2026-10-16): the url the tool returned travels beside each snippet, so the retained
+  // page can be stored under a url the signals carry and labelled as a search snippet (cited_text).
+  const citationBasis = extractCitationBasis(data);
+  const citationSourceTextByUrl = new Map<string, string>();
+  const citationUrlByKey = new Map<string, string>();
+  for (const [key, b] of citationBasis) { citationSourceTextByUrl.set(key, b.cited_text); citationUrlByKey.set(key, b.url); }
   // parsed is guaranteed non-null here: the loop above either broke with parsed set or threw.
-  return { parsed: parsed as Record<string, unknown>, citationSourceTextByUrl };
+  return { parsed: parsed as Record<string, unknown>, citationSourceTextByUrl, citationUrlByKey };
 }
 
 const QUALITY_PROMPTS: Record<"no_results" | "thin" | "ambiguous" | "search_unavailable", string> = {
@@ -2084,6 +2089,12 @@ Deno.serve(async (req) => {
       search?: SearchLedger;
       /** Name-only completed runs: which discovery carried it. */
       search_status?: "lane_only" | "searx_and_lane" | null;
+      /** Step (a) (2026-10-16): the V2-6c citation basis, ledgered rather than console-only. How many urls the
+       *  web_search tool cited with a usable snippet, how many of those became a basis the crawl lacked, and how
+       *  many collided with a crawl page (crawl wins). Zero on the OpenAI path. */
+      citation_urls?: number;
+      citation_added?: number;
+      citation_crawl_collisions?: number;
     } = {
       provider: "openai_public",
       model: openaiModel,
@@ -2407,7 +2418,7 @@ Deno.serve(async (req) => {
     // results, the fallback crawl runs over their hosts, and the gate is taken afterwards (resolveNameOnlyOutcome).
     // The lane's parsed result is REUSED as the synthesis (one call, not two). Domain plans: byte-identical path.
     const searxOutageForLedger = isUnambiguousSearchOutage(searchDiag);
-    let nameOnlyLaneOut: { parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string> } | null = null;
+    let nameOnlyLaneOut: { parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string>; citationUrlByKey: Map<string, string> } | null = null;
     let nameOnlyLane: LaneStatus | null = null;
     let laneSources: ReturnType<typeof laneSourcesFromResult> = [];
     if (planKind === "name_only" && synthesis_engine === "claude_websearch") {
@@ -3227,11 +3238,14 @@ Deno.serve(async (req) => {
     // (normalized URL → verbatim snippet) on the claude_websearch path; it stays empty
     // on the OpenAI path (that producer already lifts from the crawl map).
     let claudeCitationSourceText = new Map<string, string>();
+    // Step (a): the tool's url per citation key, so the retained basis is stored under a url the signals carry.
+    let claudeCitationUrlByKey = new Map<string, string>();
     let result: unknown;
     if (synthesis_engine === "claude_websearch" && nameOnlyLaneOut) {
       // NAME-ONLY: the lane already ran (before the gate) — reuse its result; never a second web_search.
       result = nameOnlyLaneOut.parsed;
       claudeCitationSourceText = nameOnlyLaneOut.citationSourceTextByUrl;
+      claudeCitationUrlByKey = nameOnlyLaneOut.citationUrlByKey;
       // past the gate ⇒ the run completes; which discovery carried it is the ledgered search_status
       runLedger.search_status = searchLedger.searx === "ok" ? "searx_and_lane" : "lane_only";
     } else if (synthesis_engine === "claude_websearch") {
@@ -3251,6 +3265,7 @@ Deno.serve(async (req) => {
       });
       result = claudeOut.parsed;
       claudeCitationSourceText = claudeOut.citationSourceTextByUrl;
+      claudeCitationUrlByKey = claudeOut.citationUrlByKey;
     } else {
       result = await callOpenAI({
         apiKey: openaiKey,
@@ -3340,6 +3355,43 @@ Deno.serve(async (req) => {
       status: "ok" as const,
     };
 
+    // V2-6 — hand the crawl's REAL retained source text (evidence[].extracted) to ingest,
+    // keyed by normalized URL, so the quote producer can lift a verbatim line per signal.
+    // Only real fetched text is included; synthetic-label evidence carries none to lift.
+    // STEP (a) (operator ruling 2026-10-16): this block moved ABOVE the run insert. It used to run after it,
+    // so the citation counts it logged could never reach result_json.run_ledger — the ledger was spread into
+    // the insert before the merge happened. Now the counts are ledgered (citation_urls / citation_added /
+    // citation_crawl_collisions) and the console line is a copy, not the record.
+    const sourceTextByUrl = new Map<string, string>();
+    const crawlUrlsRetained: string[] = []; // the urls whose extracted text ENTERED the map — the crawl bases
+    for (const e of evidence) {
+      const rawUrl = String((e as { url?: unknown })?.url || "");
+      const key = normalizeUrlKey(rawUrl);
+      const extracted = String((e as { extracted?: unknown })?.extracted || "");
+      if (key && extracted.trim().length >= 40) { sourceTextByUrl.set(key, extracted); crawlUrlsRetained.push(rawUrl.trim()); }
+    }
+    // V2-6c — on the claude_websearch (default) engine the minted signals carry the
+    // URLs Claude's own web_search returned, NOT the searx-crawl URLs, so the crawl
+    // map above never joins (the V2-6b-D miss class). Merge the per-citation cited
+    // source text — keyed to those same URLs — as the basis the producer lifts from.
+    // Crawl entries win on key collision (a full page beats a snippet). Empty on the
+    // OpenAI path → net-zero.
+    const citationMerge = mergeCitationSourceText(sourceTextByUrl, claudeCitationSourceText);
+    runLedger.citation_urls = claudeCitationSourceText.size;
+    runLedger.citation_added = citationMerge.added;
+    runLedger.citation_crawl_collisions = citationMerge.collisions;
+    // Step (a): per basis key, WHICH kind it is (crawl page vs search snippet) and the url the tool or crawl
+    // returned it under — so retention stores a joinable url and an honest label. Same collision rule.
+    const sourceBasisMeta: Map<string, RetainedBasisMeta> = basisMetaFor({ crawlUrls: crawlUrlsRetained, citationUrlByKey: claudeCitationUrlByKey, merged: sourceTextByUrl });
+    console.log("[baseline] V2-6c citation basis", {
+      engine: synthesis_engine,
+      citation_urls: claudeCitationSourceText.size,
+      added: citationMerge.added,
+      crawl_collisions: citationMerge.collisions,
+      source_text_urls: sourceTextByUrl.size,
+      basis_kinds: { crawl: [...sourceBasisMeta.values()].filter((m) => m.kind === "crawl").length, cited_text: [...sourceBasisMeta.values()].filter((m) => m.kind === "cited_text").length },
+    });
+
     const { data: inserted, error: insErr } = await supabase
       .from("public_baseline_runs")
       .insert({
@@ -3366,29 +3418,7 @@ Deno.serve(async (req) => {
       .single();
 
     if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
-    // V2-6 — hand the crawl's REAL retained source text (evidence[].extracted) to ingest,
-    // keyed by normalized URL, so the quote producer can lift a verbatim line per signal.
-    // Only real fetched text is included; synthetic-label evidence carries none to lift.
-    const sourceTextByUrl = new Map<string, string>();
-    for (const e of evidence) {
-      const key = normalizeUrlKey(String((e as { url?: unknown })?.url || ""));
-      const extracted = String((e as { extracted?: unknown })?.extracted || "");
-      if (key && extracted.trim().length >= 40) sourceTextByUrl.set(key, extracted);
-    }
-    // V2-6c — on the claude_websearch (default) engine the minted signals carry the
-    // URLs Claude's own web_search returned, NOT the searx-crawl URLs, so the crawl
-    // map above never joins (the V2-6b-D miss class). Merge the per-citation cited
-    // source text — keyed to those same URLs — as the basis the producer lifts from.
-    // Crawl entries win on key collision (a full page beats a snippet). Empty on the
-    // OpenAI path → net-zero.
-    const citationMerge = mergeCitationSourceText(sourceTextByUrl, claudeCitationSourceText);
-    console.log("[baseline] V2-6c citation basis", {
-      engine: synthesis_engine,
-      citation_urls: claudeCitationSourceText.size,
-      added: citationMerge.added,
-      crawl_collisions: citationMerge.collisions,
-      source_text_urls: sourceTextByUrl.size,
-    });
+    // The source-text map and its basis meta were built above the insert (step (a)); ingest gets both.
     await ingestPublicBaselineSignals({
       supabase,
       companyId: company_id,
@@ -3400,6 +3430,7 @@ Deno.serve(async (req) => {
         runLedger,
       ),
       sourceTextByUrl,
+      sourceBasisMeta,
     });
 
     // OWN-DOMAIN DETERMINISTIC MINT (design gate 2026-08-18): the crawl's pages

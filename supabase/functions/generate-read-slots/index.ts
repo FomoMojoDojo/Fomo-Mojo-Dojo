@@ -35,6 +35,7 @@ import {
 import { promoteStagedSlots, rejectStagedSlots, SlotPromoteRefused } from "../_shared/readSlotsPromote.ts";
 import { runKind, lengthsOf, getSlotAt, storedVerdictOf, type GenerateFn, type JudgeFn } from "../_shared/readSlotsRun.ts";
 import { decideFieldClass, fieldClassOk, type FieldClassDecision } from "../_shared/classFactCheck.ts";
+import { rowTextOf } from "../_shared/classSourcingScope.ts";
 import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
 import { SOFTENING_GUARD, softenedSpecifics, softeningDetail, type CitedLine } from "../_shared/stageContinuity.ts";
 import { StageRefusal } from "../_shared/publicReadPerKind.ts";
@@ -286,11 +287,14 @@ serve(async (req) => {
             supabase.from("own_words_candidates").select("id, quote").in("id", chunk),
             supabase.from("findings").select("id, body").in("id", chunk),
           ]);
-          for (const r of ((sg.data ?? []) as Array<{ id: string; claim_text: string | null; evidence_excerpt: string | null }>)) {
-            sourceRowTextById.set(r.id, `${r.claim_text ?? ""} ${r.evidence_excerpt ?? ""}`.trim());
-          }
-          for (const r of ((ow.data ?? []) as Array<{ id: string; quote: string | null }>)) sourceRowTextById.set(r.id, r.quote ?? "");
-          for (const r of ((fd.data ?? []) as Array<{ id: string; body: string | null }>)) sourceRowTextById.set(r.id, r.body ?? "");
+          // Step (a) (operator ruling 2026-10-16): the slot path reads row text through rowTextOf — THE one
+          // builder (classSourcingScope.ts) the pool, the drift re-read and S1/N1 already use. This loop
+          // used to join claim_text and evidence_excerpt itself, which on the 2269 rows where the two
+          // columns are byte-identical handed the fact-check one sentence twice; the 10-16 ruling that
+          // made rowTextOf drop a column already contained in an earlier one never reached here.
+          for (const r of ((sg.data ?? []) as Array<Record<string, unknown>>)) sourceRowTextById.set(String(r.id), rowTextOf("signal", r));
+          for (const r of ((ow.data ?? []) as Array<Record<string, unknown>>)) sourceRowTextById.set(String(r.id), rowTextOf("own_word", r));
+          for (const r of ((fd.data ?? []) as Array<Record<string, unknown>>)) sourceRowTextById.set(String(r.id), rowTextOf("finding", r));
         }
       }
       /** (b) for one slot line: its specifics against the record/you rows IT cites. */

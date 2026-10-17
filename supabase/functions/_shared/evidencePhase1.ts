@@ -7,7 +7,8 @@ import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } fro
 import { liftVerbatimQuote, pickEventDate } from "../../../src/lib/verbatimQuote.ts";
 import { produceQuote, normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 import { applyUploadExcerptGuard, applyExcerptGuard } from "../../../src/lib/evidenceExcerptGuard.ts";
-import { basisSha, EXCERPT_GUARD_VERSION, retainPublicPages, sourceKeyFor, verifyAndRecord } from "./excerptVerification.ts";
+import { basisSha, EXCERPT_GUARD_VERSION, retainPublicPages, sourceKeyFor, verifyAndRecord, type RetainedPage } from "./excerptVerification.ts";
+import type { RetainedBasisMeta } from "../../../src/lib/firstRead/citationSource.ts";
 import { isSiteCrawlReceiptRow } from "../../../src/lib/siteCrawl/mint.ts";
 import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
 import { normalizeHost } from "./firstReadProvenance.ts";
@@ -687,6 +688,134 @@ export async function rebuildCompanyReconcile(supabase: SupabaseClient, companyI
   return { ...claimStats, ...dependencyStats, ...hypothesisStats, ...routeHypothesisStats };
 }
 
+// ── E4 EXCERPT GUARD AT MINT — step (a) of the excerpt-fidelity fix (operator ruling 2026-10-16) ─────
+//
+// THE LAW: claim_text may be our summary; evidence_excerpt is the page's words or absent.
+//
+// Same basis as the quote producer (sourceTextByUrl = the retained source the extractor saw — a fetched
+// page on the OpenAI path, else the web_search citation's cited_text). A stored evidence_excerpt that is
+// NOT a normalizeForHash-substring of that source is an analyst read, not the source's words → the
+// excerpt is dropped (attributed-summary path; gate 1 renders it). Deterministic string op — zero model
+// calls.
+//
+// WHAT CHANGED ON 2026-10-16. A draft with NO retained basis used to keep the model's summary AS its
+// evidence_excerpt, stamped excerpt_guard {basis:"none"} — 1,970 live outside rows carry an excerpt no
+// basis ever checked, and 715 of the 808 that do have a page snapshot are not on it. The branch now
+// does what the law says: claim_text stays (it is our summary and may be), evidence_excerpt is emptied,
+// and the dropped text is kept in raw_payload.excerpt_guard.unverified_excerpt — a NAME DISTINCT from
+// blanked_excerpt, so a reader can tell "no basis could check it" from "the page disproved it". The
+// stamp still says basis:"none"; `reason` names why (page_not_retained, the NoBasisReason the
+// back-verification uses for the same fact).
+//
+// ANALYSIS CARVE-OUT (2026-09-02) MIRRORED. An analysis row (voice_class='analysis') is OUR reading of
+// the record, labelled as such and gated through isProvablyVerbatim everywhere it could surface. Its
+// excerpt is never asserted as the page's words, so this branch stamps it and leaves the text alone —
+// exactly as applyExcerptGuard does when a basis exists.
+//
+// RETENTION keys on the SIGNAL'S url. retainPublicPages used to store the basis under its normalized
+// key (host/path), and 0 of the 69 urls it had stored joined any signals.source_url. Each basis is now
+// stored under EVERY url form the drafts carry it as, with the basis labelled crawl or cited_text from
+// `sourceBasisMeta`; a basis no draft cites falls back to the crawl's or citation's own url, then the key.
+//
+// VERIFICATION RECORDS (signed 2026-09-14): a PASS is stamped too — raw_payload.excerpt_guard on the row and a
+// durable excerpt_verifications row (basis retained_page, sha, guard_version). A draft with no retained basis
+// gets NO verification row (never_checked = absence; the back-verification supplies a basis later).
+//
+// Exported so the guard (scripts/guards/excerpt-verification-guard.sh, step w) can run THIS branch against
+// a throwaway company — the served public-baseline path needs a model call, which a guard never makes.
+export type MintExcerptGuardStats = {
+  passed: number;
+  dropped_unverifiable: number;
+  /** drafts that carried an excerpt and had no basis to check it against */
+  no_basis_at_mint: number;
+  /** of those, how many had the excerpt emptied (analysis rows are stamped but kept) */
+  blanked_no_basis: number;
+  records_written: number;
+  retained: { retained: number; already: number } | null;
+};
+
+export async function applyMintExcerptGuard(args: {
+  // deno-lint-ignore no-explicit-any
+  supabase: { from: (t: string) => any };
+  companyId: string;
+  runId: string | number | null;
+  signals: SignalDraft[];
+  sourceTextByUrl: Map<string, string>;
+  sourceBasisMeta?: Map<string, RetainedBasisMeta> | null;
+  now?: () => string;
+}): Promise<MintExcerptGuardStats> {
+  const map = args.sourceTextByUrl;
+  const mintedAt = (args.now ?? (() => new Date().toISOString()))();
+  const stats: MintExcerptGuardStats = { passed: 0, dropped_unverifiable: 0, no_basis_at_mint: 0, blanked_no_basis: 0, records_written: 0, retained: null };
+
+  // Retention, keyed by the SIGNAL'S url form: every distinct source_url the drafts carry for a key.
+  if (map.size > 0) {
+    const urlsByKey = new Map<string, Set<string>>();
+    for (const draft of args.signals) {
+      const u = String(draft.source_url || "").trim();
+      const k = normalizeUrlKey(u);
+      if (!k || !map.has(k)) continue;
+      const set = urlsByKey.get(k) ?? new Set<string>();
+      set.add(u);
+      urlsByKey.set(k, set);
+    }
+    const pages: RetainedPage[] = [];
+    for (const [key, text] of map) {
+      const meta = args.sourceBasisMeta?.get(key) ?? null;
+      const urls = urlsByKey.get(key) ?? new Set<string>();
+      if (urls.size === 0) urls.add((meta?.url || "").trim() || key); // no draft cites it: the source's own url, else the key
+      pages.push({ key, text, urls: [...urls], kind: meta?.kind ?? "unknown" });
+    }
+    try {
+      stats.retained = await retainPublicPages(args.supabase, args.companyId, pages, args.runId);
+      console.log("[excerpt-guard] retained pages", stats.retained);
+    } catch (err) {
+      console.error("[excerpt-guard] page retention failed (non-fatal):", String(err instanceof Error ? err.message : err));
+    }
+  }
+
+  for (const draft of args.signals) {
+    if (isListingDraft(draft)) continue; // LISTING CLASS: the title line is verified at mint, not by the prose E4 guard
+    const src = map.get(normalizeUrlKey(String(draft.source_url || "")));
+    const rp = draft.raw_payload && typeof draft.raw_payload === "object" ? (draft.raw_payload as Record<string, unknown>) : {};
+    if (!src) {
+      // NO BASIS: the excerpt cannot be the page's words, because no page was retained to say so.
+      if (!normalizeForHash(draft.evidence_excerpt)) continue;
+      stats.no_basis_at_mint++;
+      if (draft.voice_class === "analysis") {
+        draft.raw_payload = { ...rp, excerpt_guard: { basis: "none", reason: "page_not_retained", guard_version: EXCERPT_GUARD_VERSION, analysis_carve_out: true } };
+        continue;
+      }
+      draft.raw_payload = { ...rp, excerpt_guard: { basis: "none", reason: "page_not_retained", guard_version: EXCERPT_GUARD_VERSION, unverified_excerpt: draft.evidence_excerpt } };
+      draft.evidence_excerpt = ""; // claim_text stays: it is our summary, and the law lets it be
+      stats.blanked_no_basis++;
+      continue;
+    }
+    const excerptAtMint = draft.evidence_excerpt;
+    const guarded = applyExcerptGuard(draft, src);
+    const sha = await basisSha(src);
+    if (guarded.dropped) {
+      draft.evidence_excerpt = guarded.evidence_excerpt;
+      draft.claim_text = guarded.claim_text;
+      draft.raw_payload = { ...rp, excerpt_guard: { basis: "retained_page", traced: false, basis_sha: sha, guard_version: EXCERPT_GUARD_VERSION, blanked_excerpt: excerptAtMint } };
+      stats.dropped_unverifiable++;
+    } else if (normalizeForHash(excerptAtMint)) {
+      draft.raw_payload = { ...rp, excerpt_guard: { basis: "retained_page", traced: true, basis_sha: sha, guard_version: EXCERPT_GUARD_VERSION } };
+      stats.passed++;
+    }
+    if (normalizeForHash(excerptAtMint)) {
+      try {
+        const r = await verifyAndRecord(args.supabase, { companyId: args.companyId, signalId: null, sourceKey: sourceKeyFor({ source_url: draft.source_url, source_id: String(args.runId) }), excerpt: excerptAtMint, basis: { kind: "retained_page", text: src, at: mintedAt }, recordedBy: "ingest:public_baseline" });
+        if (r?.written) stats.records_written++;
+      } catch (err) {
+        console.error("[excerpt-guard] verification record failed (non-fatal):", String(err instanceof Error ? err.message : err));
+      }
+    }
+  }
+  console.log("[excerpt-guard] public", { ...stats, of_signals: args.signals.length });
+  return stats;
+}
+
 export async function ingestPublicBaselineSignals(args: {
   supabase: SupabaseClient;
   companyId: string;
@@ -697,6 +826,9 @@ export async function ingestPublicBaselineSignals(args: {
   /** V2-6 — normalizeUrlKey(url) → retained fetched source text, from the crawl evidence.
    *  Present only on the full-crawl path; absent paths simply produce no quotes. */
   sourceTextByUrl?: Map<string, string>;
+  /** Step (a) (2026-10-16): per key, which kind of basis it is (crawl page | cited_text snippet) and the url
+   *  the crawl or the search tool returned it under. Labels the retained row and gives it a joinable url. */
+  sourceBasisMeta?: Map<string, RetainedBasisMeta> | null;
 }) {
   const signals = mapPublicBaselineOutputToSignals({
     companyId: args.companyId,
@@ -754,58 +886,18 @@ export async function ingestPublicBaselineSignals(args: {
     console.log("[quote-producer] lifted", { quoted, dated, of_signals: signals.length });
   }
 
-  // E4 EXCERPT GUARD (gate 2). Same basis as the quote producer (sourceTextByUrl = the retained
-  // source the extractor saw — fetched page on the OpenAI path, else the citation cited_text). A
-  // stored evidence_excerpt that is NOT a normalizeForHash-substring of that source is an analyst
-  // read, not the source's words → drop the excerpt+claim_text (attributed-summary path; gate 1
-  // renders it). The interpretation stays untouched in raw_payload. A draft with no retained
-  // source basis is left as-is (nothing to verify against; gate-3 re-crawl supplies the basis).
-  // Deterministic string op — zero model calls.
-  // VERIFICATION RECORDS (signed 2026-09-14): a PASS is stamped too — raw_payload.excerpt_guard on the row and a
-  // durable excerpt_verifications row (basis retained_page, sha, guard_version). A draft with no retained basis
-  // gets NO verification row (never_checked = absence; the back-verification supplies a basis later) and only a
-  // raw_payload note that no basis existed at mint. The crawl's page text is retained so the verdict is repeatable.
-  if (args.sourceTextByUrl && args.sourceTextByUrl.size > 0) {
-    const map = args.sourceTextByUrl;
-    const mintedAt = new Date().toISOString();
-    let droppedExcerpts = 0, passed = 0, noBasis = 0, recorded = 0;
-    try {
-      const kept = await retainPublicPages(args.supabase as unknown as { from: (t: string) => any }, args.companyId, map, args.runId);
-      console.log("[excerpt-guard] retained pages", kept);
-    } catch (err) {
-      console.error("[excerpt-guard] page retention failed (non-fatal):", String(err instanceof Error ? err.message : err));
-    }
-    for (const draft of signals) {
-      if (isListingDraft(draft)) continue; // LISTING CLASS: the title line is verified at mint, not by the prose E4 guard
-      const src = map.get(normalizeUrlKey(String(draft.source_url || "")));
-      const rp = draft.raw_payload && typeof draft.raw_payload === "object" ? (draft.raw_payload as Record<string, unknown>) : {};
-      if (!src) { // no retained basis → honest limit, leave as-is; say so on the row
-        if (normalizeForHash(draft.evidence_excerpt)) { draft.raw_payload = { ...rp, excerpt_guard: { basis: "none", guard_version: EXCERPT_GUARD_VERSION } }; noBasis++; }
-        continue;
-      }
-      const excerptAtMint = draft.evidence_excerpt;
-      const guarded = applyExcerptGuard(draft, src);
-      const sha = await basisSha(src);
-      if (guarded.dropped) {
-        draft.evidence_excerpt = guarded.evidence_excerpt;
-        draft.claim_text = guarded.claim_text;
-        draft.raw_payload = { ...rp, excerpt_guard: { basis: "retained_page", traced: false, basis_sha: sha, guard_version: EXCERPT_GUARD_VERSION, blanked_excerpt: excerptAtMint } };
-        droppedExcerpts++;
-      } else if (normalizeForHash(excerptAtMint)) {
-        draft.raw_payload = { ...rp, excerpt_guard: { basis: "retained_page", traced: true, basis_sha: sha, guard_version: EXCERPT_GUARD_VERSION } };
-        passed++;
-      }
-      if (normalizeForHash(excerptAtMint)) {
-        try {
-          const r = await verifyAndRecord(args.supabase as unknown as { from: (t: string) => any }, { companyId: args.companyId, signalId: null, sourceKey: sourceKeyFor({ source_url: draft.source_url, source_id: String(args.runId) }), excerpt: excerptAtMint, basis: { kind: "retained_page", text: src, at: mintedAt }, recordedBy: "ingest:public_baseline" });
-          if (r?.written) recorded++;
-        } catch (err) {
-          console.error("[excerpt-guard] verification record failed (non-fatal):", String(err instanceof Error ? err.message : err));
-        }
-      }
-    }
-    console.log("[excerpt-guard] public", { passed, dropped_unverifiable: droppedExcerpts, no_basis_at_mint: noBasis, records_written: recorded, of_signals: signals.length });
-  }
+  // E4 EXCERPT GUARD AT MINT — step (a), 2026-10-16: see applyMintExcerptGuard above. It runs on EVERY
+  // ingest, basis map or none: a run that retained nothing has no page words for any draft, and the law
+  // says the excerpt is then absent. (The old block ran only when the map was non-empty, which left a
+  // no-crawl run's summaries standing as excerpts.)
+  await applyMintExcerptGuard({
+    supabase: args.supabase as unknown as { from: (t: string) => any },
+    companyId: args.companyId,
+    runId: args.runId,
+    signals,
+    sourceTextByUrl: args.sourceTextByUrl ?? new Map<string, string>(),
+    sourceBasisMeta: args.sourceBasisMeta ?? null,
+  });
 
   // B2.0 ingest stamping: every outside_voice_about_client draft gets a syndication
   // verdict at persistence. client_voice/market_context (and B2.1's competitor_voice)

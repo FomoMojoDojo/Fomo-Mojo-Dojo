@@ -6,6 +6,7 @@
 //   guard_version: 1 = the normalizeForHash-substring rule (excerptTracesToSource). Moves ONLY by ruling.
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { excerptTracesToSource } from "../../../src/lib/evidenceExcerptGuard.ts";
+import type { RetainedBasisKind } from "../../../src/lib/firstRead/citationSource.ts";
 
 export const EXCERPT_GUARD_VERSION = 1;
 export type BasisKind = "retained_page" | "quote_source_text" | "sidecar" | "page_snapshot" | "refetch";
@@ -75,18 +76,34 @@ export async function verifyAndRecord(supabase: Sb, args: {
   return { verdict, written };
 }
 
-/** Retain the crawl's fetched page text at mint into outside_page_snapshots for EVERY company (ruling: without
- *  it a verdict is unrepeatable). signal_id NULL (the rows are not yet minted); dedup by (company, url, sha). */
-export async function retainPublicPages(supabase: Sb, companyId: string, sourceTextByUrl: Map<string, string>, runId: string | number | null): Promise<{ retained: number; already: number }> {
+/** One basis to retain: its normalized key, its text, EVERY url form the minted signals carry it under, and
+ *  what kind of basis it is. `unknown` is the honest label when the caller supplied no meta for the key. */
+export type RetainedPage = { key: string; text: string; urls: readonly string[]; kind: RetainedBasisKind | "unknown" };
+
+/** Retain the basis text at mint into outside_page_snapshots for EVERY company (ruling: without it a verdict is
+ *  unrepeatable). signal_id NULL (the rows are not yet minted); dedup by (company, url, sha).
+ *
+ *  STEP (a) (operator ruling 2026-10-16): the row is stored under the url IN THE FORM THE SIGNALS CARRY, one row
+ *  per form, never under the normalized key alone. The 74 rows this wrote before today sat under "host/path"
+ *  and joined 0 of 69 signals — every reader (verify-excerpts, both regen lanes, the line check) keys on
+ *  signals.source_url. `structured` names the basis: basis_kind 'crawl' (a fetched page) or 'cited_text' (the
+ *  search tool's snippet), and url_key keeps the normalized key for a reader that wants it. */
+export async function retainPublicPages(supabase: Sb, companyId: string, pages: Iterable<RetainedPage>, runId: string | number | null): Promise<{ retained: number; already: number }> {
   let retained = 0, already = 0;
-  for (const [url, text] of sourceTextByUrl) {
-    if (!url || !normalizeForHash(text)) continue;
-    const sha = await basisSha(text);
-    const { data: ex } = await supabase.from("outside_page_snapshots").select("id").eq("company_id", companyId).eq("source_url", url).eq("text_sha256", sha).limit(1);
-    if (Array.isArray(ex) && ex.length > 0) { already++; continue; }
-    const { error } = await supabase.from("outside_page_snapshots").insert({ company_id: companyId, source_url: url, signal_id: null, clean_text: text, text_sha256: sha, run_id: null, fetch_status: "ok", http_status: 200, structured: { retained_at_mint: true, public_baseline_run_id: runId == null ? null : String(runId) } });
-    if (error) throw new Error(`outside_page_snapshots retain: ${error.message}`);
-    retained++;
+  for (const page of pages) {
+    if (!normalizeForHash(page.text)) continue;
+    const sha = await basisSha(page.text);
+    const urls = [...new Set((page.urls ?? []).map((u) => String(u ?? "").trim()).filter(Boolean))];
+    for (const url of urls) {
+      const { data: ex } = await supabase.from("outside_page_snapshots").select("id").eq("company_id", companyId).eq("source_url", url).eq("text_sha256", sha).limit(1);
+      if (Array.isArray(ex) && ex.length > 0) { already++; continue; }
+      const { error } = await supabase.from("outside_page_snapshots").insert({
+        company_id: companyId, source_url: url, signal_id: null, clean_text: page.text, text_sha256: sha, run_id: null, fetch_status: "ok", http_status: 200,
+        structured: { retained_at_mint: true, public_baseline_run_id: runId == null ? null : String(runId), basis_kind: page.kind, url_key: page.key },
+      });
+      if (error) throw new Error(`outside_page_snapshots retain: ${error.message}`);
+      retained++;
+    }
   }
   return { retained, already };
 }

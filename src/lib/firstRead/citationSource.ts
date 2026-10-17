@@ -38,6 +38,22 @@ const MIN_BASIS_LEN = 40;
  */
 export function extractCitationSourceText(responseData: unknown): Map<string, string> {
   const out = new Map<string, string>();
+  for (const [key, b] of extractCitationBasis(responseData)) out.set(key, b.cited_text);
+  return out;
+}
+
+/** One citation basis: the url AS THE TOOL RETURNED IT and the snippet it carried. */
+export type CitationBasis = { url: string; cited_text: string };
+
+/**
+ * Step (a) of the excerpt-fidelity fix (operator ruling 2026-10-16). The SAME walk as
+ * extractCitationSourceText, keeping the url beside the snippet. The url travels with the
+ * WINNING snippet (longest), so a reader that stores the page under "the form the signals
+ * carry" has the tool's own url to store it under — not the normalized key, which no
+ * signals.source_url ever equals (0 of 69 retained rows joined a signal on 2026-10-16).
+ */
+export function extractCitationBasis(responseData: unknown): Map<string, CitationBasis> {
+  const out = new Map<string, CitationBasis>();
   const blocks = Array.isArray((responseData as { content?: unknown })?.content)
     ? (responseData as { content: unknown[] }).content
     : [];
@@ -58,8 +74,50 @@ export function extractCitationSourceText(responseData: unknown): Map<string, st
       if (!key) continue;
       const prev = out.get(key);
       // Longest single snippet wins — no concatenation, no padding.
-      if (prev === undefined || cited.length > prev.length) out.set(key, cited);
+      if (prev === undefined || cited.length > prev.cited_text.length) out.set(key, { url, cited_text: cited });
     }
+  }
+  return out;
+}
+
+/** normalizeUrlKey(url) -> the url the tool returned, for the winning snippet of each key. */
+export function extractCitationUrls(responseData: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [key, b] of extractCitationBasis(responseData)) out.set(key, b.url);
+  return out;
+}
+
+// ── Step (a): WHAT KIND OF BASIS a retained page is, and under which url the signals carry it ────
+//
+// retainPublicPages used to store every basis as an unlabelled "page" under its normalized key. Two
+// facts were lost: whether the text is a FETCHED PAGE (the crawl's extracted text, up to 12k chars)
+// or a SEARCH SNIPPET (the tool's cited_text, one span), and which url the minted signals carry. The
+// meta map carries both, keyed exactly as the merged source-text map is keyed, so the guard can label
+// each retained row and store it under a joinable url.
+export type RetainedBasisKind = "crawl" | "cited_text";
+export type RetainedBasisMeta = { url: string; kind: RetainedBasisKind };
+
+/**
+ * Crawl wins on collision — the SAME rule mergeCitationSourceText applies, so the label agrees with
+ * the text that was actually kept. `crawlUrls` must be the urls whose extracted text ENTERED the map
+ * (the caller's loop decides that, by the producer's MIN_LEN); a crawl url whose text was too short
+ * to retain is not a crawl basis, and the citation that supplied the key is labelled as such.
+ */
+export function basisMetaFor(args: {
+  crawlUrls: Iterable<string>;
+  citationUrlByKey: ReadonlyMap<string, string>;
+  merged: ReadonlyMap<string, string>;
+}): Map<string, RetainedBasisMeta> {
+  const out = new Map<string, RetainedBasisMeta>();
+  for (const u of args.crawlUrls) {
+    const url = String(u ?? "").trim();
+    const key = normalizeUrlKey(url);
+    if (!key || !args.merged.has(key) || out.has(key)) continue;
+    out.set(key, { url, kind: "crawl" });
+  }
+  for (const [key, url] of args.citationUrlByKey) {
+    if (!key || !args.merged.has(key) || out.has(key)) continue;
+    out.set(key, { url: String(url ?? "").trim() || key, kind: "cited_text" });
   }
   return out;
 }
