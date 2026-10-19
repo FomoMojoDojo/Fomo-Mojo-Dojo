@@ -113,14 +113,35 @@ export function notionPageProperties(p: ReviewPagePlan): Record<string, unknown>
 
 const dashless = (id: string) => String(id ?? "").replace(/-/g, "").toLowerCase();
 
+/** The Client Portals database and its data source (scripts/notion-client-sync). The b3 scripts may NEVER
+ *  address them — not by argument, not by env: a review push landing in the client-portal table is the
+ *  one misdirection no allow-list check downstream can undo. Refused by VALUE, before any other check. */
+export const CLIENT_PORTALS_IDS: ReadonlyArray<string> = [
+  "75df0a3f617182c6beb101a61c145212",   // database
+  "31af0a3f617183a09da887337f0ffc6d",   // data source
+];
+export function refuseClientPortals(kind: "database" | "data source", id: string | null | undefined): void {
+  const d = dashless(id ?? "");
+  if (d && CLIENT_PORTALS_IDS.includes(d)) throw new Error(`REFUSED: ${kind} ${d.slice(0, 8)}… is the Client Portals ${kind} — the b3 review scripts never address it, whatever the env says`);
+}
+
 /** THE allow-list: the push may address ONE database, the one the operator named in the env. Any other id —
- *  including an unset allow-list — is refused before a token is read. */
+ *  including an unset allow-list — is refused before a token is read. The Client Portals ids are refused first. */
 export function assertAllowedDatabase(requested: string | null | undefined, allowed: string | null | undefined): string {
+  refuseClientPortals("database", requested);
+  refuseClientPortals("database", allowed);
   const a = dashless(allowed ?? "");
   const r = dashless(requested ?? "");
   if (!a) throw new Error("REFUSED: no review database is allow-listed (B3_REVIEW_NOTION_DATABASE_ID is unset)");
   if (!r) throw new Error("REFUSED: no database id requested");
   if (a !== r) throw new Error(`REFUSED: database ${r.slice(0, 8)}… is not the allow-listed review database ${a.slice(0, 8)}…`);
+  return a;
+}
+/** The data source the scripts query and create pages under — ONE, from the env; the Client Portals data source is refused by value. */
+export function assertAllowedDataSource(allowed: string | null | undefined): string {
+  refuseClientPortals("data source", allowed);
+  const a = dashless(allowed ?? "");
+  if (!a) throw new Error("REFUSED: no review data source is allow-listed (B3_REVIEW_NOTION_DATA_SOURCE_ID is unset)");
   return a;
 }
 

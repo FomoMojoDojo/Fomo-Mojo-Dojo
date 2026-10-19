@@ -9,14 +9,14 @@
 //
 // Why a separate allow-list from notion-client-sync: that client's write guard is bound to the Client
 // Portals data source. This push may create pages ONLY under the review database's data source, and may
-// send exactly three requests: GET /v1/databases/{allowed} (to learn its data source and properties),
+// send exactly three requests: GET /v1/data_sources/{ds} (schema check: parent database and properties),
 // POST /v1/data_sources/{ds}/query (to refuse a duplicate URL), POST /v1/pages with that data source as parent.
 // The operator's two properties, Verdict and Comment, are never written.
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertAllowedDatabase, notionPageProperties, parsePlanTsv, planRowsFor, REVIEW_DB_PROPERTIES, VERDICT_OPTIONS, type ReviewPagePlan } from "../src/lib/b3Review/review";
+import { assertAllowedDatabase, assertAllowedDataSource, notionPageProperties, parsePlanTsv, planRowsFor, REVIEW_DB_PROPERTIES, VERDICT_OPTIONS, type ReviewPagePlan } from "../src/lib/b3Review/review";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = resolve(REPO_ROOT, "backups/client-sync.env");
@@ -58,6 +58,17 @@ try {
   console.log(`(allow-list) ${(e as Error).message} — dry run continues without a database`);
 }
 
+// The DATA SOURCE is addressed for the query and the page creation (Notion API 2025-09-03+); it comes from the
+// env and is refused BY VALUE when it is the Client Portals data source — decided here, before any row is read,
+// so an env misconfiguration refuses first. In dry run an unset data source only blocks --live.
+let dataSourceId: string | null = null;
+try {
+  dataSourceId = assertAllowedDataSource(process.env.B3_REVIEW_NOTION_DATA_SOURCE_ID ?? envValue("B3_REVIEW_NOTION_DATA_SOURCE_ID"));
+} catch (e) {
+  if (live || /Client Portals/.test((e as Error).message)) fail((e as Error).message, 2);
+  console.log(`(allow-list) ${(e as Error).message} — dry run continues without a data source`);
+}
+
 // ── rows: the review rows of this run if they exist, else the plan rows with a pending id ──────────
 const coName = psql("select name from companies where id=:'c';", { c: company! });
 if (!coName) fail(`no company ${company}`);
@@ -75,7 +86,7 @@ const pages: ReviewPagePlan[] = plan.kept.map((p) => ({
 const pending = pages.filter((p) => !p.review_row_id).length;
 
 console.log(`\nB3 REVIEW PUSH${live ? " (LIVE)" : " (DRY-RUN — no Notion call, no token read)"} · ${coName} · run ${runId}`);
-console.log(`database: ${databaseId ? databaseId.slice(0, 8) + "…" : "(none allow-listed)"} · pages: ${pages.length} · review rows found: ${reviewRows.length} · pending review ids: ${pending}`);
+console.log(`database: ${databaseId ? databaseId.slice(0, 8) + "…" : "(none allow-listed)"} · data source: ${dataSourceId ? dataSourceId.slice(0, 8) + "…" : "(none allow-listed)"} · pages: ${pages.length} · review rows found: ${reviewRows.length} · pending review ids: ${pending}`);
 console.log(`schema: ${Object.values(REVIEW_DB_PROPERTIES).join(" · ")} · Verdict options: ${VERDICT_OPTIONS.join("/")}\n`);
 for (const p of pages) {
   console.log(`  ${p.url}`);
@@ -86,33 +97,43 @@ if (!live) { console.log(`\nwrites: 0 (dry-run) · would create ${pages.length} 
 // ── LIVE ─────────────────────────────────────────────────────────────────────────────────────────
 if (pending > 0) fail(`live push refused: ${pending} page(s) have no review row yet — run --from-snapshots --write and retry`);
 if (!databaseId) fail("live push refused: no allow-listed database", 2);
+if (!dataSourceId) fail("live push refused: no allow-listed data source", 2);
 const token = envValue("NOTION_TOKEN");
 if (!token) fail(`${ENV_PATH} has no NOTION_TOKEN`);
-let dataSourceId: string | null = null;
 async function notion(method: "GET" | "POST", path: string, body?: unknown): Promise<Record<string, unknown>> {
-  // THE allow-list of (method, path): three shapes, nothing else leaves this process.
-  const ok = (method === "GET" && path === `/v1/databases/${databaseId}`)
-    || (method === "POST" && dataSourceId !== null && path === `/v1/data_sources/${dataSourceId}/query`)
-    || (method === "POST" && path === "/v1/pages" && dataSourceId !== null && (body as { parent?: { data_source_id?: string } })?.parent?.data_source_id === dataSourceId);
+  // THE allow-list of (method, path): three shapes, all on the ONE data source, nothing else leaves this process.
+  const ok = (method === "GET" && path === `/v1/data_sources/${dataSourceId}`)
+    || (method === "POST" && path === `/v1/data_sources/${dataSourceId}/query`)
+    || (method === "POST" && path === "/v1/pages" && (body as { parent?: { data_source_id?: string } })?.parent?.data_source_id === dataSourceId);
   if (!ok) throw new Error(`REFUSED by allow-list: ${method} ${path}`);
   const res = await fetch(`${NOTION_BASE}${path}`, { method, headers: { Authorization: `Bearer ${token}`, "Notion-Version": NOTION_API_VERSION, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
   if (!res.ok) throw new Error(`notion ${method} ${path} -> ${res.status}: ${text.slice(0, 300)}`);
   return JSON.parse(text) as Record<string, unknown>;
 }
-const db = await notion("GET", `/v1/databases/${databaseId}`) as { data_sources?: Array<{ id: string }>; properties?: Record<string, unknown> };
-dataSourceId = db.data_sources?.[0]?.id ?? null;
-if (!dataSourceId) fail("the review database has no data source");
-const have = new Set(Object.keys(db.properties ?? {}));
-const missing = Object.values(REVIEW_DB_PROPERTIES).filter((p) => !have.has(p));
-if (missing.length) fail(`the review database is missing propert${missing.length === 1 ? "y" : "ies"}: ${missing.join(", ")} — create them first`);
+// SCHEMA CHECK: the data source belongs to the allow-listed database and carries every property the builder writes.
+const ds = await notion("GET", `/v1/data_sources/${dataSourceId}`) as { parent?: { database_id?: string }; properties?: Record<string, { type?: string; select?: { options?: Array<{ name: string }> } }> };
+const parentDb = String(ds.parent?.database_id ?? "").replace(/-/g, "").toLowerCase();
+if (parentDb !== databaseId) fail(`live push refused: data source belongs to database ${parentDb.slice(0, 8)}…, not the allow-listed ${databaseId.slice(0, 8)}…`, 2);
+const have = ds.properties ?? {};
+const expectType: Record<string, string> = { [REVIEW_DB_PROPERTIES.url]: "title", [REVIEW_DB_PROPERTIES.company]: "rich_text", [REVIEW_DB_PROPERTIES.snapshot_id]: "rich_text", [REVIEW_DB_PROPERTIES.chars]: "number", [REVIEW_DB_PROPERTIES.at_cap]: "checkbox", [REVIEW_DB_PROPERTIES.blanked_rows]: "number", [REVIEW_DB_PROPERTIES.verdict]: "select", [REVIEW_DB_PROPERTIES.comment]: "rich_text", [REVIEW_DB_PROPERTIES.review_row_id]: "rich_text" };
+const wrong = Object.entries(expectType).filter(([name, type]) => have[name]?.type !== type).map(([name, type]) => `${name} (want ${type}, have ${have[name]?.type ?? "absent"})`);
+if (wrong.length) fail(`live push refused: the review data source schema differs: ${wrong.join("; ")}`);
+const verdictOpts = (have[REVIEW_DB_PROPERTIES.verdict]?.select?.options ?? []).map((o) => o.name).sort();
+if (verdictOpts.join("/") !== [...VERDICT_OPTIONS].sort().join("/")) fail(`live push refused: Verdict options are ${verdictOpts.join("/") || "(none)"}, want ${VERDICT_OPTIONS.join("/")}`);
 const existing = await notion("POST", `/v1/data_sources/${dataSourceId}/query`, { page_size: 100 }) as { results?: Array<{ properties?: Record<string, { title?: Array<{ plain_text?: string }> }> }> };
 const existingUrls = new Set((existing.results ?? []).map((r) => r.properties?.[REVIEW_DB_PROPERTIES.url]?.title?.[0]?.plain_text ?? ""));
 let created = 0;
+const failedWriteBack: Array<{ review_row_id: string; page_id: string }> = [];
 for (const p of pages) {
   if (existingUrls.has(p.url)) { console.log(`  skip (page exists) ${p.url}`); continue; }
   const page = await notion("POST", "/v1/pages", { parent: { data_source_id: dataSourceId }, properties: notionPageProperties(p) });
   created++;
-  console.log(`  created ${String(page.id)} ${p.url}`);
+  // WRITE-BACK (R12): the review row remembers its page. Only an unset notion_page_id is written — a row that already
+  // names a page is never re-pointed; the count is reported, never assumed.
+  const n = psql(`with upd as (update outside_recrawl_review set notion_page_id=:'p' where id=:'id'::uuid and company_id=:'c' and run_id=:'r'::uuid and notion_page_id is null returning 1) select count(*) from upd;`, { p: String(page.id), id: String(p.review_row_id), c: company!, r: runId! });
+  console.log(`  created ${String(page.id)} ${p.url} · notion_page_id written back: ${n === "1" ? "yes" : "NO (" + n + " rows)"}`);
+  if (n !== "1") failedWriteBack.push({ review_row_id: String(p.review_row_id), page_id: String(page.id) });
 }
-console.log(`\ncreated ${created} page(s)`);
+console.log(`\ncreated ${created} page(s) · write-backs failed: ${failedWriteBack.length}`);
+if (failedWriteBack.length) { console.error(JSON.stringify(failedWriteBack)); process.exit(1); }

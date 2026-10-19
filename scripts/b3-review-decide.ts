@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertAllowedDatabase, planDecisions, REVIEW_DB_PROPERTIES, type DecisionInput, type ReviewRowState } from "../src/lib/b3Review/review";
+import { assertAllowedDatabase, assertAllowedDataSource, planDecisions, REVIEW_DB_PROPERTIES, type DecisionInput, type ReviewRowState } from "../src/lib/b3Review/review";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = resolve(REPO_ROOT, "backups/client-sync.env");
@@ -53,13 +53,16 @@ if (fixture) {
   const allowed = process.env.B3_REVIEW_NOTION_DATABASE_ID ?? envValue("B3_REVIEW_NOTION_DATABASE_ID");
   let databaseId: string;
   try { databaseId = assertAllowedDatabase(dbIdArg ?? allowed, allowed); } catch (e) { fail((e as Error).message, 2); }
+  let ds: string;
+  try { ds = assertAllowedDataSource(process.env.B3_REVIEW_NOTION_DATA_SOURCE_ID ?? envValue("B3_REVIEW_NOTION_DATA_SOURCE_ID")); } catch (e) { fail((e as Error).message, 2); }
   const token = envValue("NOTION_TOKEN");
   if (!token) fail(`${ENV_PATH} has no NOTION_TOKEN`);
   const headers = { Authorization: `Bearer ${token}`, "Notion-Version": NOTION_API_VERSION, "content-type": "application/json" };
-  const dbRes = await fetch(`${NOTION_BASE}/v1/databases/${databaseId}`, { headers });   // READ
-  if (!dbRes.ok) fail(`notion GET database -> ${dbRes.status}`);
-  const ds = ((await dbRes.json()) as { data_sources?: Array<{ id: string }> }).data_sources?.[0]?.id;
-  if (!ds) fail("the review database has no data source");
+  // READ: the data source must belong to the allow-listed database
+  const dsRes = await fetch(`${NOTION_BASE}/v1/data_sources/${ds}`, { headers });
+  if (!dsRes.ok) fail(`notion GET data source -> ${dsRes.status}`);
+  const parentDb = String(((await dsRes.json()) as { parent?: { database_id?: string } }).parent?.database_id ?? "").replace(/-/g, "").toLowerCase();
+  if (parentDb !== databaseId) fail(`decide refused: data source belongs to database ${parentDb.slice(0, 8)}…, not the allow-listed ${databaseId.slice(0, 8)}…`, 2);
   const q = await fetch(`${NOTION_BASE}/v1/data_sources/${ds}/query`, { method: "POST", headers, body: JSON.stringify({ page_size: 100 }) });   // READ (a query)
   if (!q.ok) fail(`notion query -> ${q.status}`);
   type Pg = { id: string; properties: Record<string, { select?: { name?: string } | null; rich_text?: Array<{ plain_text?: string }> }> };

@@ -29,7 +29,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJson } from "../_shared/modelRouter.ts";
 import { recordModelCall } from "../_shared/recordModelCall.ts";
 import { type RegenLedger, type RegenTransport } from "../_shared/outsideRegenModel.ts";
-import { runOutsideRegen } from "../_shared/outsideRegenHandler.ts";
+import { runOutsideRegen, type RegenJudge } from "../_shared/outsideRegenHandler.ts";
+import { judgeAggregatorAuthorship, resolveLocalOllamaUrl } from "../_shared/aggregatorAuthorship.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -76,6 +77,14 @@ function makeTransport(): RegenTransport {
     return { content: r.content, usage: r.usage };
   };
 }
+/** R17: the local authorship judge (the same one public-baseline wires), built ONLY on the write path. Null when
+ *  no local Ollama URL resolves — the handler then REFUSES every gated URL's excerpts (REGEN_JUDGE_FAILURE_POLICY)
+ *  rather than minting them as the record speaking. */
+function makeJudge(): RegenJudge | null {
+  const ollamaUrl = resolveLocalOllamaUrl();
+  if (!ollamaUrl) return null;
+  return (input) => judgeAggregatorAuthorship(input, { ollamaUrl, model: Deno.env.get("OLLAMA_MODEL") || undefined });
+}
 /** One model_calls row per attempt — the same writer every captured site uses; run_id null (no long_runner row). */
 function makeLedger(supabase: { from: (t: string) => unknown }, companyId: string): RegenLedger {
   return (e) => recordModelCall(supabase as never, {
@@ -89,7 +98,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const r = await runOutsideRegen(body, {
-      supabase, makeTransport, makeLedger: (cid) => makeLedger(supabase, cid),
+      supabase, makeTransport, makeLedger: (cid) => makeLedger(supabase, cid), makeJudge,
       models: REGEN_MODELS, genSystem, judgeSystem: JUDGE_SYSTEM, quoteMaxWords: QUOTE_MAX_WORDS, perUrlCap: PER_URL_CAP, wallMs: WALL_MS,
     });
     return json(r.body, r.status);

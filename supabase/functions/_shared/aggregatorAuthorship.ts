@@ -29,6 +29,7 @@
 
 import { callClassifier, CLASSIFIER_MODEL, isLocalOllamaUrl } from "./uploadVoiceClassifier.ts";
 import { isOwnDomainUrl } from "./firstReadProvenance.ts";
+import { voiceClassForMintedExcerpt } from "./voiceClassAtMint.ts";
 import { FROZEN_COMPANY_IDS } from "./frozenCompanies.ts";
 
 export type AuthorshipVerdict = "subject_company" | "other_entity" | "third_party" | "uncertain" | "judge_failed";
@@ -391,25 +392,38 @@ export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_
       out.push(e);
       continue;
     }
-    const j = await ctx.judge({ subjectName: ctx.subjectName, subjectHost: ctx.subjectHost, url, text });
+    // R17 (2026-10-18): the decision — judge, outcomeFor, label-stands — is the ONE shared authority
+    // (voiceClassAtMint.ts), called with this path's gate (aggregator PROFILES only) and its standing failure
+    // policy (keep_label: a judge failure leaves the label and is stamped). This loop keeps only the bookkeeping
+    // the gate stats and the consecutive-failure stop need.
+    const d = await voiceClassForMintedExcerpt({
+      url, item: null, labeledClass: String(e.voice_class ?? ""), pageText: null, judgedText: text,
+      company: { name: ctx.subjectName, host: ctx.subjectHost }, registry: null,
+      judge: (input) => ctx.judge(input), gate: "profile", onJudgeFailure: "keep_label",
+    });
     stats.judged++;
-    const stamp = (applied: AuthorshipStamp["applied"]): AuthorshipStamp => ({ ...j, applied, url_rule: m.host, judged_at: new Date().toISOString() });
-    if (j.verdict === "judge_failed") {
+    const stamp = d.authorship_judge;
+    if (!d.ok || !stamp) {
+      // unreachable under keep_label (the policy never refuses) — fail toward unchanged, loudly
+      log(`authority returned no judgment (${m.host} ${url}); label untouched`);
+      out.push(e);
+      continue;
+    }
+    if (stamp.verdict === "judge_failed") {
       stats.judge_failed++;
       consecutiveFailures++;
-      log(`judge failed, label untouched (${m.host} ${url}): ${j.reason}`);
-      out.push({ ...e, authorship_judge: stamp("unchanged") });
+      log(`judge failed, label untouched (${m.host} ${url}): ${stamp.reason}`);
+      out.push({ ...e, authorship_judge: stamp });
       continue;
     }
     consecutiveFailures = 0;
-    // AUTHORSHIP DECIDES. null ⇒ the model's label stands exactly as set.
-    const outcome = outcomeFor(j, ctx.subjectName);
-    if (outcome && outcome !== e.voice_class) {
+    // AUTHORSHIP DECIDES. A label-stands decision carries the stamp with applied "unchanged".
+    if (d.authority === "authorship_judge" && d.voice_class !== e.voice_class) {
       stats.changed++;
-      log(`${String(e.voice_class ?? "null")} → ${outcome} (${j.verdict}${j.entity ? `: ${j.entity}` : ""}) ${url} — ${j.reason}`);
-      out.push({ ...e, voice_class: outcome, authorship_judge: stamp(outcome) });
+      log(`${String(e.voice_class ?? "null")} → ${d.voice_class} (${stamp.verdict}${stamp.entity ? `: ${stamp.entity}` : ""}) ${url} — ${stamp.reason}`);
+      out.push({ ...e, voice_class: d.voice_class, authorship_judge: stamp });
     } else {
-      out.push({ ...e, authorship_judge: stamp(outcome ?? "unchanged") });
+      out.push({ ...e, authorship_judge: stamp });
     }
   }
   return { entries: out, stats };

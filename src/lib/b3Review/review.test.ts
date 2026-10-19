@@ -1,7 +1,7 @@
 // b3 review path — the pure rules (R11, 2026-10-18).
 import { describe, expect, it } from "vitest";
 import {
-  assertAllowedDatabase, decideCompareAndSet, notionPageProperties, parsePlanTsv, personProfileRule, planDecisions, planRowsFor,
+  assertAllowedDatabase, assertAllowedDataSource, CLIENT_PORTALS_IDS, decideCompareAndSet, notionPageProperties, parsePlanTsv, personProfileRule, planDecisions, planRowsFor,
   PLAN_EXCLUDE_CLASSES, REVIEW_DB_PROPERTIES, VERDICT_OPTIONS,
 } from "./review";
 
@@ -71,6 +71,16 @@ describe("database allow-list", () => {
     expect(() => assertAllowedDatabase("deadbeef".repeat(4), A)).toThrow(/not the allow-listed/);
     expect(() => assertAllowedDatabase(A, "")).toThrow(/unset/);
     expect(() => assertAllowedDatabase("", A)).toThrow(/no database id requested/);
+  });
+  it("refuses the Client Portals database and data source BY VALUE, whichever side names them, before any other check", () => {
+    const portalsDb = "75df0a3f617182c6beb101a61c145212", portalsDs = "31af0a3f-6171-83a0-9da8-87337f0ffc6d";
+    expect(CLIENT_PORTALS_IDS).toEqual([portalsDb, portalsDs.replace(/-/g, "")]);
+    expect(() => assertAllowedDatabase(portalsDb, portalsDb)).toThrow(/Client Portals database/);   // env AND request agree — still refused
+    expect(() => assertAllowedDatabase(A, portalsDb)).toThrow(/Client Portals database/);
+    expect(() => assertAllowedDatabase(portalsDb, A)).toThrow(/Client Portals database/);
+    expect(() => assertAllowedDataSource(portalsDs)).toThrow(/Client Portals data source/);
+    expect(() => assertAllowedDataSource("")).toThrow(/B3_REVIEW_NOTION_DATA_SOURCE_ID is unset/);
+    expect(assertAllowedDataSource("4f43371b-2ebb-4bf4-a532-2a30eb4bbf6f")).toBe("4f43371b2ebb4bf4a5322a30eb4bbf6f");
   });
 });
 

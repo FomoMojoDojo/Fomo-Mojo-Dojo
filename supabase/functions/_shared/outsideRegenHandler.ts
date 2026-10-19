@@ -22,6 +22,17 @@ import { insertIntegrityRun } from "./integrityWrite.ts";
 import { BODY_MODE_GUARD, classifyBodyMode } from "./bodyMode.ts";
 import { emptyTally, regenGenerate, regenJudge, tallyingLedger, type RegenLedger, type RegenTransport } from "./outsideRegenModel.ts";
 import { OPENAI_PRICE_PER_MTOK } from "./modelPricing.ts";
+import { normalizeHost } from "./firstReadProvenance.ts";
+import { classifyRegistryRow } from "./registryClassifier.ts";
+import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type JudgeFailurePolicy, type VoiceClassInput } from "./voiceClassAtMint.ts";
+import type { AuthorshipJudgment } from "./aggregatorAuthorship.ts";
+
+/** R17 (b): on the regen path an unjudged gated row is NOT minted. Named here, passed explicitly — the shared
+ *  function has no default. */
+export const REGEN_JUDGE_FAILURE_POLICY: JudgeFailurePolicy = "refuse_mint";
+/** The regen path's label when no authority fires: a third-party page speaking about the client. */
+export const REGEN_DEFAULT_LABEL = "outside_voice_about_client";
+export type RegenJudge = (input: { subjectName: string; subjectHost: string; url: string; text: string }) => Promise<AuthorshipJudgment | null>;
 
 export const REGEN_MODE_FLAGS = ["plan", "write"] as const;
 export type RegenMode = typeof REGEN_MODE_FLAGS[number];
@@ -49,6 +60,9 @@ export type RegenDeps = {
   /** Built ONLY on the write path — a plan never constructs one. */
   makeTransport: () => RegenTransport;
   makeLedger: (companyId: string) => RegenLedger;
+  /** The local authorship judge, built ONLY on the write path like the transport; null when none is wired —
+   *  under REGEN_JUDGE_FAILURE_POLICY every gated URL is then refused, never minted outside. */
+  makeJudge: () => RegenJudge | null;
   models: readonly string[];
   genSystem: (anchors: string[]) => string;
   judgeSystem: string;
@@ -61,6 +75,14 @@ export type RegenDeps = {
 
 export type RegenResult = { status: number; body: Record<string, unknown> };
 
+export type PlanVoice = {
+  /** the class a minted excerpt from this URL would carry, decided by the shared authority at URL level;
+   *  "registry" means the excerpt's section decides (filing / self-reported ⇒ client_voice, else outside) */
+  class: string;
+  authority: string;
+  /** set when the write path would REFUSE every excerpt from this URL as it stands (gated, no judge on plan) */
+  refusal: string | null;
+};
 export type PlanRow = {
   url: string;
   snapshot_id: string | null;
@@ -70,7 +92,18 @@ export type PlanRow = {
   est_input_tokens: number;
   est_usd: number;
   review: { state: ReviewState; reason: string };
+  voice: PlanVoice;
 };
+
+/** R17: the URL-level voice decision a plan reports — the same function the write path runs per excerpt, with no
+ *  judge (a plan calls no model) and no excerpt (a registry page's class is per section). */
+export function planVoiceFor(url: string, pageText: string, company: { name: string; host: string | null }, registry: ReturnType<typeof classifyRegistryRow>): PlanVoice {
+  const pre = decideVoiceClassBeforeJudge({ url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText, judgedText: null, company, registry, judge: null, gate: "profile_wire_boilerplate", onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY });
+  if ("needs_judge" in pre) return { class: "(judge decides)", authority: "authorship_judge", refusal: `gated (${pre.gate.via} ${pre.gate.host}): every excerpt is judged on write; with no judge wired each is refused, not minted` };
+  if (!pre.ok) return { class: "(refused)", authority: pre.authority, refusal: pre.reason };
+  if (pre.authority === "registry") return { class: "registry: section decides", authority: "registry", refusal: null };
+  return { class: pre.voice_class ?? "(unlabelled)", authority: pre.authority, refusal: null };
+}
 
 /** The review-gate state of one URL, with the reason gateRegenUrls would give. */
 export function reviewStateOf(url: string, gate: ReturnType<typeof gateRegenUrls>, runId: string): { state: ReviewState; reason: string } {
@@ -142,24 +175,34 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     return { status: 400, body: { ok: false, error: "run_id is required: name the outside_recrawl_review run whose approved rows to regenerate" } };
   }
 
-  const { data: co } = await supabase.from("companies").select("id, frozen, entity_anchors_json").eq("id", company_id).maybeSingle();
+  // R17: name and website join the select — the shared voice authority needs the company's host (own domain)
+  // and name (the judge's outcome test).
+  const { data: co } = await supabase.from("companies").select("id, name, website, frozen, entity_anchors_json").eq("id", company_id).maybeSingle();
   if (!co) return { status: 404, body: { error: "company not found" } };
   if ((co as { frozen?: boolean }).frozen) return { status: 403, body: { error: "outside-regen refused: company is frozen" } };
   const anchorsRaw = (co as { entity_anchors_json?: unknown }).entity_anchors_json;
   const anchors = Array.isArray(anchorsRaw) ? anchorsRaw.map((a) => String(a || "").trim()).filter(Boolean) : [];
+  const companyName = String((co as { name?: unknown }).name ?? "").trim();
+  const companyHost = (() => { try { return normalizeHost(new URL(String((co as { website?: unknown }).website ?? "")).hostname) || null; } catch { return null; } })();
+  const company = { name: companyName, host: companyHost };
 
-  // Basis: newest ok (real-body) snapshot per URL. NO fetch.
+  // Basis: newest ok (real-body) snapshot per URL. NO fetch. `structured` rides along for the registry classifier's ld hint.
   const { data: snapRows } = await supabase
     .from("outside_page_snapshots")
-    .select("id, source_url, signal_id, clean_text, text_sha256, crawled_at, fetch_status")
+    .select("id, source_url, signal_id, clean_text, text_sha256, crawled_at, fetch_status, structured")
     .eq("company_id", company_id).eq("fetch_status", "ok")
     .order("crawled_at", { ascending: false });
-  const newestByUrl = new Map<string, { id: string | null; clean_text: string; sha: string; signal_id: string | null; readDate: string | null }>();
-  for (const r of (snapRows ?? []) as Array<{ id?: string | null; source_url: string; signal_id: string | null; clean_text: string | null; text_sha256: string; crawled_at?: string | null }>) {
+  const newestByUrl = new Map<string, { id: string | null; clean_text: string; sha: string; signal_id: string | null; readDate: string | null; structured: unknown }>();
+  for (const r of (snapRows ?? []) as Array<{ id?: string | null; source_url: string; signal_id: string | null; clean_text: string | null; text_sha256: string; crawled_at?: string | null; structured?: unknown }>) {
     if (newestByUrl.has(r.source_url)) continue;
     if (!r.clean_text || r.text_sha256 === EMPTY_SHA) continue;
-    newestByUrl.set(r.source_url, { id: r.id ?? null, clean_text: r.clean_text, sha: r.text_sha256, signal_id: r.signal_id, readDate: snapshotReadDate(r.crawled_at) });
+    newestByUrl.set(r.source_url, { id: r.id ?? null, clean_text: r.clean_text, sha: r.text_sha256, signal_id: r.signal_id, readDate: snapshotReadDate(r.crawled_at), structured: r.structured ?? null });
   }
+  /** The registry classification of one excerpt (or of the page when no excerpt is given) on a registry URL; null elsewhere. */
+  const registryFor = (url: string, text: string | null) => {
+    const snap = newestByUrl.get(url)!;
+    return classifyRegistryRow({ url, text: text ?? "", snapshot: { clean_text: snap.clean_text, text_sha256: snap.sha, structured: snap.structured } });
+  };
   let urls = [...newestByUrl.keys()];
   if (urlFilter) urls = urls.filter((u) => urlFilter.includes(u));
   const { data: reviewRows } = await supabase
@@ -188,6 +231,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
         blanked_signal_ids: (blankedByUrl.get(url) ?? []).sort(),
         ...estimateUrl(chars),
         review: reviewStateOf(url, gate, runId),
+        voice: planVoiceFor(url, snap.clean_text, company, registryFor(url, null)),
       };
     });
     const summary = { approved: 0, rejected: 0, undecided: 0, no_review_row: 0 } as Record<ReviewState, number>;
@@ -216,10 +260,14 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     return { status: 400, body: { ok: false, error: "no approved URLs for this run_id", run_id: runId, review_refused: reviewRefused } };
   }
 
-  // The two seams, built once per run and ONLY here. A missing key refuses before any attempt.
+  // The seams, built once per run and ONLY here. A missing key refuses before any attempt. The judge may be
+  // null: then every gated URL's excerpts are refused under REGEN_JUDGE_FAILURE_POLICY, never minted outside.
   const transport = deps.makeTransport();
+  const judge = deps.makeJudge();
   const tally = emptyTally();
   const ledger = tallyingLedger(deps.makeLedger(company_id), tally);
+  let voice_refused_total = 0;
+  const voiceRefusals: Array<{ url: string; reason: string; excerpts: number }> = [];
 
   // Existing outside content identities (dedup — never mint a duplicate of an existing signal's excerpt).
   const { data: existSig } = await supabase
@@ -288,6 +336,19 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       }
       const ci = await contentIdentity(verdictA.excerpt);
       if (existingCI.has(ci) || seenThisRun.has(ci)) { rejected.push({ quote: c.slice(0, 80), reason: "duplicate_identity" }); continue; }
+      // R17: THE voice class, from the one shared authority — never a literal here. An unjudged gated row is refused.
+      const voiceInput: VoiceClassInput = {
+        url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText: clean_text, judgedText: verdictA.excerpt, company,
+        registry: registryFor(url, verdictA.excerpt), judge, gate: "profile_wire_boilerplate", onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY, now: nowIso,
+      };
+      const voice = await voiceClassForMintedExcerpt(voiceInput);
+      if (!voice.ok) {
+        voice_refused_total++;
+        rejected.push({ quote: c.slice(0, 80), reason: `voice_refused: ${voice.reason}` });
+        const vr = voiceRefusals.find((x) => x.url === url && x.reason === voice.reason);
+        if (vr) vr.excerpts++; else voiceRefusals.push({ url, reason: voice.reason, excerpts: 1 });
+        continue;
+      }
       seenThisRun.add(ci);
       admittedRows.push({
         company_id, source_id: null, source_type: "outside_recrawl_regen", source_title: titleByUrl.get(url) ?? null,
@@ -295,12 +356,16 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
         claim_text: verdictA.excerpt, evidence_excerpt: verdictA.excerpt,
         topic: "outside_voice_signal", directness: "direct", recency: "recent", framing_fit: "partial",
         structure_level: "extracted", validation_status: "directional", confidence_to_use: "medium",
-        voice_class: "outside_voice_about_client",
-        event_date: readDate,
+        voice_class: voice.voice_class,
+        evidence_class: voice.evidence_class,
+        event_date: readDate, // READ-DATE stamped at mint from the snapshot's crawled_at (null if none)
         raw_payload: {
           source: "outside_recrawl_regen", content_identity: ci, page_url: url, snapshot_text_sha256: sha,
           run_id: runId, provenance: "public_observed", read_at: nowIso(),
           verbatim: normalizeForHash(verdictA.excerpt).length,
+          voice_authority: { authority: voice.authority, detail: voice.detail, policy: REGEN_JUDGE_FAILURE_POLICY, gate: voice.gate },
+          ...(voice.authorship_judge ? { authorship_judge: voice.authorship_judge } : {}),
+          ...(voiceInput.registry ? { registry: voiceInput.registry } : {}),
         },
       });
     }
@@ -322,7 +387,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     company_id, component: REGEN_COMPONENT, status: stoppedForTime ? "failed" : "completed",
     examined: candidates_total, admitted: admitted_total,
     // R4: the run's model-call tally beside its counts — {generator, judge, usd, ledger_failed}.
-    excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally },
+    // R17: the voice refusals — excerpts not minted because a gated URL could not be judged; retried next run.
+    excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY },
     run_ref: `r3_outside_regen_${runId}`,
   });
 
@@ -331,6 +397,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     body: {
       ok: true, mode: "write", company_id, run_id: runId, urls_total: urls.length, pages_processed: processed, stopped_for_time: stoppedForTime, review_refused: reviewRefused,
       model_calls: tally,
+      voice: { policy: REGEN_JUDGE_FAILURE_POLICY, judge_wired: judge !== null, refused_total: voice_refused_total, refusals: voiceRefusals },
       totals: { candidates: candidates_total, admitted: admitted_total, guard_rejected: guard_rejected_total, reject_reasons: rejectReasons },
       pages,
     },

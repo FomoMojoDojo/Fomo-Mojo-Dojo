@@ -12,7 +12,8 @@
 // Section detection reads the STORED snapshot (outside_page_snapshots — clean_text + structured.ld_json);
 // when no snapshot is stored for a URL yet, the crawl's own retained page text for that URL is the
 // basis (the same text retainPublicPages stores). Neither ⇒ the classifier fails closed to the page default.
-import { classifyRegistryRow, matchRegistryUrl, registryStamp, type RegistryClassification, type RegistrySnapshot } from "./registryClassifier.ts";
+import { classifyRegistryRow, matchRegistryUrl, type RegistryClassification, type RegistrySnapshot } from "./registryClassifier.ts";
+import { decideVoiceClassBeforeJudge } from "./voiceClassAtMint.ts";
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 
 export type RegistryStampStats = { considered: number; registry: number; stamped_filing: number; stamped_outside: number; journalism: number; page_default: number; mixed: number };
@@ -45,10 +46,13 @@ export function stampRegistryInResult(
       if (c.basis.mixed) stats.mixed++;
       // C2: the read date of the basis snapshot rides beside the decision (the profile frame's date).
       const registry_snapshot_read_at = snap?.read_at ?? null;
-      const stamp = registryStamp(c);
-      if (!stamp) { stats.journalism++; return { ...item, registry: c, registry_snapshot_read_at }; }
-      if (stamp.evidence_class === "filing") stats.stamped_filing++; else stats.stamped_outside++;
-      return { ...item, registry: c, registry_snapshot_read_at, evidence_class: stamp.evidence_class, voice_class: stamp.voice_class };
+      // R17: the class comes from the ONE shared authority (voiceClassAtMint.ts), given this classification.
+      // Journalism ⇒ the label stands and the item is never judged (authority extractor_label); the item keeps
+      // its label exactly as it was, so the stored shape is unchanged.
+      const d = decideVoiceClassBeforeJudge({ url, item: null, labeledClass: String(item.voice_class ?? ""), pageText: null, judgedText: null, company: { name: "", host: null }, registry: c, judge: null, gate: "profile", onJudgeFailure: "keep_label" });
+      if ("needs_judge" in d || !d.ok || d.authority !== "registry") { stats.journalism++; return { ...item, registry: c, registry_snapshot_read_at }; }
+      if (d.evidence_class === "filing") stats.stamped_filing++; else stats.stamped_outside++;
+      return { ...item, registry: c, registry_snapshot_read_at, evidence_class: d.evidence_class, voice_class: d.voice_class };
     });
   };
   const next: Record<string, unknown> = { ...result };

@@ -69,8 +69,14 @@ Deno.test("source guard: the three deciders read the shared predicate BEFORE any
   const mirror = await read("../../../src/hooks/useSignalLandscape.ts");
   const mf = mirror.slice(mirror.indexOf("function classifyOutsideRow("), mirror.indexOf("function classifyOutsideRow(") + 700);
   assert(mf.indexOf("isAnalysisRow(row)") > 0 && mf.indexOf("isAnalysisRow(row)") < mf.indexOf("isCompanySource(row, companyHost)"), "mirror: analysis first");
+  // R17 (2026-10-18): the ingest overlay no longer carries its own copy of the rule — it calls the ONE authority
+  // (voiceClassAtMint.decideVoiceClassBeforeJudge), and THERE the analysis label is read before the own-domain test.
   const pb = await read("../public-baseline/index.ts");
-  assert(pb.includes("const voice_class = isAnalysisLabelled(e)\n        ? ANALYSIS_VOICE\n        : isCompanyHostUrl(url)"), "ingest overlay: label first");
+  assert(pb.includes("const d = decideVoiceClassBeforeJudge({ url, item: e, labeledClass"), "ingest overlay: calls the one authority");
+  assert(!pb.includes("isCompanyHostUrl(url)\n        ? \"client_voice\""), "ingest overlay: no local copy of the rule");
+  const vc = await read("./voiceClassAtMint.ts");
+  const dec = vc.slice(vc.indexOf("export function decideVoiceClassBeforeJudge("), vc.indexOf("export async function voiceClassForMintedExcerpt("));
+  assert(dec.indexOf("isAnalysisLabelled(") > 0 && dec.indexOf("isAnalysisLabelled(") < dec.indexOf("isOwnDomainUrl("), "authority: label first, before the own-domain test");
   const ow = await read("../extract-own-words/index.ts");
   assert(ow.includes("const byUrl = pickPageSignals(sigs);") && !ow.includes("if (!byUrl.has(s.source_url!)) byUrl.set("), "the extractor keys on the shared pick");
   const ep = await read("./evidencePhase1.ts");

@@ -2,7 +2,7 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   CALLS_PER_URL, EST_PROMPT_OVERHEAD_TOKENS, REGEN_BODY_KEYS, REGEN_MODE_FLAGS, SNAPSHOT_CAP_CHARS, estimateUrl, runOutsideRegen,
-  type RegenDeps,
+  type RegenDeps, type RegenJudge,
 } from "./outsideRegenHandler.ts";
 import { classifyBodyMode } from "./bodyMode.ts";
 import type { RegenLedgerEntry, RegenTransport } from "./outsideRegenModel.ts";
@@ -10,6 +10,9 @@ import type { RegenLedgerEntry, RegenTransport } from "./outsideRegenModel.ts";
 const CO = "00000000-0000-4000-8000-00000000c0de";
 const RUN = "11111111-1111-4111-8111-111111111111";
 const U1 = "https://reviews.example/acme", U2 = "https://directory.example/acme", U3 = "https://press.example/acme", U4 = "https://walled.example/acme";
+const UOWN = "https://www.acmecoffee.com/wholesale", UGATED = "https://www.crunchbase.com/organization/acme-coffee";
+const POWN = "Acme Coffee wholesale: we roast every bean in Burbank and supply 40 cafes across Los Angeles.";
+const PGATED = "Acme Coffee is a specialty roaster supplying 40 cafes across Los Angeles since 2011. Founded 2011. Employees 11-50.";
 const P1 = "Acme Coffee roasts every bean in Burbank and supplies 40 cafes across Los Angeles. Reviewers praise the espresso and the staff.";
 const P2 = "Acme Coffee is listed as a wholesale roaster serving the San Fernando Valley since 2011.";
 const P3 = "A press note: Acme Coffee opened a second roastery in Glendale.";
@@ -42,7 +45,7 @@ function fakeDb(seed: Record<string, Row[]>) {
 
 function seed(): Record<string, Row[]> {
   return {
-    companies: [{ id: CO, frozen: false, entity_anchors_json: ["Acme Coffee"] }, { id: "frozen-co", frozen: true, entity_anchors_json: [] }],
+    companies: [{ id: CO, name: "Acme Coffee", website: "https://www.acmecoffee.com", frozen: false, entity_anchors_json: ["Acme Coffee"] }, { id: "frozen-co", name: "Frozen", website: null, frozen: true, entity_anchors_json: [] }],
     outside_page_snapshots: [
       { id: "snap-1", company_id: CO, source_url: U1, signal_id: "sig-kept", clean_text: P1, text_sha256: "sha1", crawled_at: "2026-09-14T00:00:00Z", fetch_status: "ok" },
       { id: "snap-1-old", company_id: CO, source_url: U1, signal_id: null, clean_text: "older text", text_sha256: "sha1old", crawled_at: "2026-08-01T00:00:00Z", fetch_status: "ok" },
@@ -64,12 +67,13 @@ function seed(): Record<string, Row[]> {
   };
 }
 
-function deps(db: ReturnType<typeof fakeDb>, transport?: RegenTransport) {
+function deps(db: ReturnType<typeof fakeDb>, transport?: RegenTransport, judge: RegenJudge | null = null) {
   const ledgerRows: RegenLedgerEntry[] = [];
   let constructions = 0;
   const d: RegenDeps = {
     supabase: db,
     makeTransport: () => { constructions += 1; if (!transport) throw new Error("no transport in this test"); return transport; },
+    makeJudge: () => judge,
     makeLedger: () => (e) => { ledgerRows.push(e); return Promise.resolve(true); },
     models: ["gpt-4.1-mini", "gpt-4.1-nano"],
     genSystem: () => "GEN", judgeSystem: "JUDGE", quoteMaxWords: 60, perUrlCap: 12, wallMs: 140_000,
@@ -199,4 +203,79 @@ Deno.test("WRITE: only approved URLs run; one transport; two ledger rows per pag
   const ex = integ.excluded_by_rule as Record<string, unknown>;
   assertEquals(ex.mode, "write"); assertEquals(ex.pages, 1);
   assertEquals((ex.model_calls as Record<string, number>).generator, 1); assertEquals((ex.model_calls as Record<string, number>).judge, 1);
+});
+
+// ── R17: the voice class comes from the one authority; an unjudged gated row is refused ──────────────────────
+const RUN2 = "22222222-2222-4222-8222-222222222222";
+function seedR17(): Record<string, Row[]> {
+  const s = seed();
+  s.outside_page_snapshots.push(
+    { id: "snap-own", company_id: CO, source_url: UOWN, signal_id: null, clean_text: POWN, text_sha256: "sha-own", crawled_at: "2026-09-14T00:00:00Z", fetch_status: "ok" },
+    { id: "snap-gated", company_id: CO, source_url: UGATED, signal_id: null, clean_text: PGATED, text_sha256: "sha-gated", crawled_at: "2026-09-14T00:00:00Z", fetch_status: "ok" },
+  );
+  s.outside_recrawl_review.push(
+    { company_id: CO, run_id: RUN2, source_url: UOWN, operator_decision: "approve" },
+    { company_id: CO, run_id: RUN2, source_url: UGATED, operator_decision: "approve" },
+    { company_id: CO, run_id: RUN2, source_url: U1, operator_decision: "approve" },
+  );
+  return s;
+}
+const CAND_OWN = "Acme Coffee wholesale: we roast every bean in Burbank and supply 40 cafes across Los Angeles.";
+const CAND_GATED = "Acme Coffee is a specialty roaster supplying 40 cafes across Los Angeles since 2011.";
+function r17Transport(): RegenTransport {
+  return ({ system, user }) => {
+    const cand = user.includes(POWN) ? CAND_OWN : user.includes(PGATED) ? CAND_GATED : CAND;
+    return Promise.resolve(system === "GEN"
+      ? { content: JSON.stringify({ statements: [cand] }), usage: { prompt_tokens: 100, completion_tokens: 20 } }
+      : { content: JSON.stringify({ verdicts: [{ quote: cand, keep: true }] }), usage: { prompt_tokens: 120, completion_tokens: 30 } });
+  };
+}
+
+Deno.test("R17 PLAN reports per URL the class the authority would give: own domain client_voice, gated ⇒ judge decides with a refusal on plan, third party outside", async () => {
+  const db = fakeDb(seedR17()); const { d } = deps(db);
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, plan: true, urls: [UOWN, UGATED, U1] }, d);
+  assertEquals(r.status, 200);
+  const byUrl = new Map((r.body.rows as Array<Record<string, unknown>>).map((x) => [x.url, x.voice as Record<string, unknown>]));
+  assertEquals(byUrl.get(UOWN), { class: "client_voice", authority: "own_domain", refusal: null });
+  assertEquals((byUrl.get(UGATED) as { authority: string }).authority, "authorship_judge");
+  assert(/refused, not minted/.test(String((byUrl.get(UGATED) as { refusal: string }).refusal)));
+  assertEquals(byUrl.get(U1), { class: "outside_voice_about_client", authority: "extractor_label", refusal: null });
+  assertEquals(db.inserts, {});
+});
+
+Deno.test("R17 WRITE: own domain mints client_voice; a gated URL with NO judge is REFUSED (recorded, nothing minted); a third party mints outside; raw_payload carries the authority", async () => {
+  const db = fakeDb(seedR17()); const { d } = deps(db, r17Transport(), null);
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [UOWN, UGATED, U1] }, d);
+  assertEquals(r.status, 200, JSON.stringify(r.body));
+  const minted = (db.inserts.signals ?? []) as Array<Record<string, unknown>>;
+  const byUrl = new Map(minted.map((m) => [m.source_url, m]));
+  assertEquals(minted.length, 2, JSON.stringify(r.body.pages));
+  assertEquals(byUrl.get(UOWN)?.voice_class, "client_voice");
+  assertEquals((byUrl.get(UOWN)?.raw_payload as { voice_authority: { authority: string } }).voice_authority.authority, "own_domain");
+  assertEquals(byUrl.get(U1)?.voice_class, "outside_voice_about_client");
+  assertEquals(byUrl.has(UGATED), false, "the unjudged gated excerpt is not minted");
+  const voice = r.body.voice as { policy: string; judge_wired: boolean; refused_total: number; refusals: Array<{ url: string; reason: string; excerpts: number }> };
+  assertEquals(voice.policy, "refuse_mint"); assertEquals(voice.judge_wired, false); assertEquals(voice.refused_total, 1);
+  assertEquals(voice.refusals[0].url, UGATED); assert(/no judge is wired/.test(voice.refusals[0].reason));
+  const page = (r.body.pages as Array<Record<string, unknown>>).find((p) => p.url === UGATED)!;
+  assert((page.rejected as Array<{ reason: string }>).some((x) => x.reason.startsWith("voice_refused:")));
+  const integ = (db.inserts.integrity_runs ?? [])[0].excluded_by_rule as Record<string, unknown>;
+  assertEquals(integ.voice_refused_total, 1); assertEquals(integ.judge_wired, false); assertEquals(integ.voice_policy, "refuse_mint");
+});
+
+Deno.test("R17 WRITE with a judge: subject_company on the gated URL mints client_voice with the stamp; judge_failed refuses", async () => {
+  const subject: RegenJudge = () => Promise.resolve({ verdict: "subject_company", entity: null, reason: "company-supplied description", model: "fake" });
+  const db = fakeDb(seedR17()); const { d } = deps(db, r17Transport(), subject);
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [UGATED] }, d);
+  const minted = (db.inserts.signals ?? []) as Array<Record<string, unknown>>;
+  assertEquals(minted.length, 1, JSON.stringify(r.body.pages));
+  assertEquals(minted[0].voice_class, "client_voice");
+  const rp = minted[0].raw_payload as { voice_authority: { authority: string }; authorship_judge: { verdict: string; applied: string } };
+  assertEquals(rp.voice_authority.authority, "authorship_judge"); assertEquals(rp.authorship_judge.applied, "client_voice");
+  const failed: RegenJudge = () => Promise.resolve({ verdict: "judge_failed", entity: null, reason: "timeout", model: "fake" });
+  const db2 = fakeDb(seedR17()); const { d: d2 } = deps(db2, r17Transport(), failed);
+  const r2 = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [UGATED] }, d2);
+  assertEquals((db2.inserts.signals ?? []).length, 0);
+  assertEquals((r2.body.voice as { refused_total: number }).refused_total, 1);
+  assert(/judge failed: timeout/.test((r2.body.voice as { refusals: Array<{ reason: string }> }).refusals[0].reason));
 });

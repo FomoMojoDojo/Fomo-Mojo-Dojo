@@ -1,5 +1,6 @@
 // supabase/functions/public-baseline/index.ts
 import { ANALYSIS_VOICE, isAnalysisLabelled } from "../_shared/voiceLabel.ts";
+import { decideVoiceClassBeforeJudge } from "../_shared/voiceClassAtMint.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestPublicBaselineSignals } from "../_shared/evidencePhase1.ts";
 import { mintSiteCrawlSignals, parseSitemapUrls, type SiteReadLedger } from "../../../src/lib/siteCrawl/mint.ts";
@@ -1807,7 +1808,7 @@ async function callClaudeWebSearch(opts: {
   // regardless of the model's label. competitor_voice is in the enum but unreachable
   // until B2's competitor discovery exists. Unknown/missing label → null (legacy fallback
   // semantics downstream in _shared/claimProvenance.ts classifyVoice).
-  const VOICE_CLASSES = new Set(["client_voice", "outside_voice_about_client", "competitor_voice", "market_context"]);
+  // R17: the class vocabulary and the own-domain test live in _shared/voiceClassAtMint.ts (one authority).
   const companyHostForGuard = (() => {
     try {
       return normalizeHost(new URL(opts.website || `https://${opts.domain}`).hostname);
@@ -1815,9 +1816,6 @@ async function callClaudeWebSearch(opts: {
       return normalizeHost(String(opts.domain || ""));
     }
   })();
-  // ONE own-domain rule (shared with clientVoiceClaimIds) — the guard and the Act-1
-  // voice classifier can never disagree about what counts as the company's own host.
-  const isCompanyHostUrl = (url: string) => isOwnDomainUrl(url, companyHostForGuard);
   const reclassify = (arr: unknown) =>
     (Array.isArray(arr) ? arr : []).map((e: any) => {
       const url = String(e?.url || "").trim();
@@ -1826,12 +1824,12 @@ async function callClaudeWebSearch(opts: {
       const claudeLabel = String(e?.source_type || "").trim();
       const source_type = inferred !== "public_web" ? inferred : (claudeLabel || "public_web");
       const labeledClass = String(e?.voice_class || "").trim();
-      // S1 (signed 2026-09-18): an 'analysis' label wins over the own-host test (voiceLabel.ts — one predicate)
-      const voice_class = isAnalysisLabelled(e)
-        ? ANALYSIS_VOICE
-        : isCompanyHostUrl(url)
-        ? "client_voice"
-        : (VOICE_CLASSES.has(labeledClass) ? labeledClass : null);
+      // S1 (signed 2026-09-18): an 'analysis' label wins over the own-host test (voiceLabel.ts — one predicate).
+      // R17 (2026-10-18): the decision is the ONE shared authority's overlay stage (voiceClassAtMint.ts): analysis
+      // label, then own domain, then the label when it is a known class. No registry and no judge at this stage —
+      // the registry stamp and the authorship demote below call the same function with those inputs.
+      const d = decideVoiceClassBeforeJudge({ url, item: e, labeledClass, pageText: null, judgedText: null, company: { name: "", host: companyHostForGuard }, registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" });
+      const voice_class = "needs_judge" in d ? d.label : d.ok ? d.voice_class : null;
       return { ...e, source_type, voice_class };
     });
   if (Array.isArray((parsed as any).outside_voice_signals)) {
