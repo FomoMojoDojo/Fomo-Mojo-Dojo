@@ -186,11 +186,30 @@ function looksLikeValidationLabelArtifact(text: string) {
   );
 }
 
+// ── R31 (operator ruling 2026-10-18): THE ONE SENTENCE SPLITTER ─────────────────────────────────────────
+// Three sites split on `(?<=[.!?])\s+`, so "founded by radiologists Dr. A. Alexander" ended a sentence at "Dr."
+// and E2's lead-clause rule minted the fragment "Founded by radiologists Dr." (pilot batch 1, four rows). A period
+// after one of these abbreviations is NOT a sentence boundary. Shared by the claim layer (canonicalizeClaimStatement)
+// and the regen admission rail (admitOutsideEvidence) — a change here is a change to both, proven by parity.
+export const NON_TERMINAL_ABBREVIATIONS: ReadonlyArray<string> = ["Dr", "Mr", "Mrs", "Ms", "Inc", "Co", "Ltd", "St", "No", "Jr", "Sr", "vs"];
+// A single-letter INITIAL ("Dr. A. Alexander", "J. K. Rowling") is non-terminal too — the ruling's own example text needs it;
+// it is case-sensitive (a capital letter) so "…plan b. Next" still splits. Reported as an addition beyond the listed words.
+const ENDS_WITH_ABBREVIATION = new RegExp(`(^|[\\s(\u201c"'])((${NON_TERMINAL_ABBREVIATIONS.join("|")})|[A-Z])\\.$`);
+const ENDS_WITH_ABBREVIATION_CI = new RegExp(`(^|[\\s(\u201c"'])(${NON_TERMINAL_ABBREVIATIONS.join("|")})\\.$`, "i");
+const nonTerminal = (part: string) => ENDS_WITH_ABBREVIATION.test(part) || ENDS_WITH_ABBREVIATION_CI.test(part);
+/** Sentences of a statement: split on . ! ? + whitespace, except after a non-terminal abbreviation or a capital initial. Trimmed, non-empty. */
+export function splitSentences(text: string): string[] {
+  const parts = String(text || "").split(/(?<=[.!?])\s+/).map((p) => p.trim()).filter(Boolean);
+  const out: string[] = [];
+  for (const part of parts) {
+    if (out.length && nonTerminal(out[out.length - 1])) out[out.length - 1] = `${out[out.length - 1]} ${part}`;
+    else out.push(part);
+  }
+  return out;
+}
+
 function takeLeadClause(text: string) {
-  return normalizeStatement(text)
-    .split(/(?<=[.!?])\s+/)
-    .map((part) => part.trim())
-    .filter(Boolean)[0] || normalizeStatement(text);
+  return splitSentences(normalizeStatement(text))[0] || normalizeStatement(text);
 }
 
 // ── E2 SPECIFICITY GUARD (gate 2, 2026-08-25). The outside/customer band used to keep only the
@@ -223,7 +242,7 @@ export function extractConcreteTokens(text: string): Set<string> {
 // sentence, or a lead that drops nothing concrete, is returned unchanged (prior behavior).
 export function retainConcreteEvidence(text: string): string {
   const norm = normalizeStatement(text);
-  const sentences = norm.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  const sentences = splitSentences(norm);
   if (sentences.length <= 1) return norm;
   const lead = sentences[0];
   const full = extractConcreteTokens(norm);
@@ -251,7 +270,7 @@ export function retainConcreteEvidence(text: string): string {
 export function looksLikeContextIncompleteClaim(text: string): boolean {
   const t = String(text || "").trim();
   if (!t) return true;
-  const sentences = t.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  const sentences = splitSentences(t);
   const single = sentences.length <= 1;
   if (!single) return false;
   const dem = t.match(/\b(that|this|these|those)\s+([a-z]+)/i);

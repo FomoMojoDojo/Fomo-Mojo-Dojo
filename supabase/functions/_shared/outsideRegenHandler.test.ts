@@ -377,3 +377,34 @@ Deno.test("R28 WRITE: on the judge-gated crunchbase URL a first-person candidate
   assertEquals(judgeCalls, 0, "the authorship judge was never called for the first-person candidate");
   assertEquals([...REGEN_TEXT_GATES], ["first_person"]);
 });
+
+// ── R31: the mint stores the raw page slice (asserted); a bare attribution never reaches the judge ──────────
+export const P31 = "Benefits\nCoreViva’s approach is built around patient needs, offering a unique set of benefits:\nDirect Consultation: Patients receive a 1:1 consultation with a board-certified radiologist to review scan results.\nGeniant Chairman and Co-CEO David Lancashire said.\nEnd";
+export const COPY31 = "CoreViva’s approach is built around patient needs, offering a unique set of benefits: Direct Consultation: Patients receive a 1:1 consultation with a board-certified radiologist to review scan results.";
+export const BARE31 = "Geniant Chairman and Co-CEO David Lancashire said.";
+Deno.test("R31 WRITE: the minted evidence_excerpt is the PAGE slice (newline kept), raw_payload carries model_text + offset; the bare attribution is recorded e2_bare_attribution and the judge prompt never carries it", async () => {
+  const db = fakeDb(seedR17());
+  for (const r of db.tables.outside_page_snapshots) if (r.source_url === U1) r.clean_text = P31;
+  const judgePrompts: string[] = [];
+  const t: RegenTransport = ({ system, user }) => {
+    if (system === "JUDGE") judgePrompts.push(user);
+    return Promise.resolve(system === "GEN"
+      ? { content: JSON.stringify({ statements: [{ text: COPY31, reason: "benefits" }, { text: BARE31, reason: "the chairman" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } }
+      : { content: JSON.stringify({ verdicts: [{ quote: COPY31, keep: true, reason: "about the business" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } });
+  };
+  const { d } = deps(db, t, null);
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d);
+  assertEquals(r.status, 200, JSON.stringify(r.body));
+  const minted = (db.inserts.signals ?? []) as Array<{ evidence_excerpt: string; claim_text: string; raw_payload: Record<string, unknown> }>;
+  assertEquals(minted.length, 1);
+  assert(minted[0].evidence_excerpt.includes("\n"), "the page's newline is stored");
+  assertEquals(P31.slice(minted[0].raw_payload.excerpt_offset as number, (minted[0].raw_payload.excerpt_offset as number) + (minted[0].raw_payload.excerpt_length as number)), minted[0].evidence_excerpt);
+  assertEquals(minted[0].claim_text, minted[0].evidence_excerpt);
+  assertEquals(minted[0].raw_payload.model_text, COPY31);
+  const integ = (db.inserts.integrity_runs ?? [])[0].excluded_by_rule as { candidates: Array<Record<string, unknown>>; reject_reasons: Record<string, number> };
+  assertEquals(integ.reject_reasons, { e2_bare_attribution: 1 });
+  assertEquals(integ.candidates.find((c) => c.text === BARE31)?.code, "e2_bare_attribution");
+  assertEquals(judgePrompts.length, 1);
+  const candidatesSection = judgePrompts[0].split("CANDIDATES:")[1] ?? "";
+  assert(candidatesSection.includes(COPY31) && !candidatesSection.includes(BARE31), "the bare attribution never reached the judge's candidate list (the page text itself still carries it)");
+});

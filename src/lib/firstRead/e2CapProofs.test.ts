@@ -42,8 +42,8 @@ describe("(iii) the two joe.coffee sentences", () => {
   it("176 and 170 chars, verbatim in the body → admitted", () => {
     expect(JOE1.length).toBe(176); expect(JOE2.length).toBe(170);
     const body = `Welcome to Cafe Barra & Le French Rooster. ${JOE1} ${JOE2} Hours vary.`;
-    expect(admitOutsideEvidence(JOE1, body)).toEqual({ admit: true, excerpt: JOE1 });
-    expect(admitOutsideEvidence(JOE2, body)).toEqual({ admit: true, excerpt: JOE2 });
+    expect(admitOutsideEvidence(JOE1, body)).toMatchObject({ admit: true, excerpt: JOE1 });   // R31: the result also carries offset, length, model_text
+    expect(admitOutsideEvidence(JOE2, body)).toMatchObject({ admit: true, excerpt: JOE2 });   // R31: the result also carries offset, length, model_text
   });
 });
 describe("mapper (claim layer) reads the same constant", () => {

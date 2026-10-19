@@ -19,6 +19,8 @@
 #   l4. (R27) the copying rule and the DOT demonstration are present in the generator prompt source (PRESENCE, not
 #       behaviour); the candidates probe (fake transport: one exact span, one paraphrase) measures admitted 1,
 #       e4_not_verbatim 1, stored candidates 2 with both reasons, nearest span indexing the raw page.
+#   l5. (R31) the stored excerpt is the raw page slice at the e4 match (asserted at the mint); the shared splitter does
+#       not end a sentence after Dr./Mr./Inc./…; a bare attribution clause is refused e2_bare_attribution before the judge.
 #   l3. DATA — for every integrity_runs row of component r3_outside_regen ran AFTER the fix landed, the
 #       model_calls rows at call_site extract-outside-evidence:* for that company inside the run's window
 #       must number at least the pages processed. UNTIL b3 RUNS there are no such rows: this prints
@@ -103,4 +105,16 @@ C=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-candidates-p
 [ "$(echo "$C" | jq_ "(d.get('paraphrase_nearest_span') or {}).get('indexes_raw_page')")" = "True" ] || fail l4 "the paraphrase's nearest span does not index the raw page: $C"
 echo "l4. R27 probe (fake transport): $C"
 echo "l4. R27 source: copying rule + DOT demonstration present in the generator prompt (presence only); candidates stored on the integrity row; reasons on the minted row"
+
+# l5 — R31: the stored excerpt is the raw page slice; abbreviations do not end sentences; a bare attribution is refused.
+#      Probe: scripts/guards/regen-slice-probe.ts (deterministic, no model, no db).
+grep -q 'excerpt: slice.text, offset: slice.offset, length: slice.length, model_text: shaped' supabase/functions/_shared/outsideEvidenceRegen.ts || fail l5 "admitOutsideEvidence does not store the page slice"
+grep -q 'clean_text.slice(verdictA.offset, verdictA.offset + verdictA.length) !== verdictA.excerpt' supabase/functions/_shared/outsideRegenHandler.ts || fail l5 "the mint does not assert the slice"
+grep -q 'export const NON_TERMINAL_ABBREVIATIONS' src/lib/evidenceMappers.ts || fail l5 "the abbreviation list is missing"
+SL=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-slice-probe.ts 2>&1 | tail -1)
+[ "$(echo "$SL" | jq_ "d.get('newline_bytes_equal')")" = "True" ] || fail l5 "newline fixture: stored bytes != page slice: $SL"
+[ "$(echo "$SL" | jq_ "d.get('nbsp_bytes_equal')")" = "True" ] || fail l5 "no-break-space fixture: stored bytes != page slice: $SL"
+[ "$(echo "$SL" | jq_ "d.get('founders_sentences')")" = "1" ] || fail l5 "the founders fixture splits at Dr.: $SL"
+[ "$(echo "$SL" | jq_ "d.get('bare_code')")" = "e2_bare_attribution" ] || fail l5 "the bare attribution is not refused: $SL"
+echo "l5. R31 probe: $SL"
 echo "GUARD OK"

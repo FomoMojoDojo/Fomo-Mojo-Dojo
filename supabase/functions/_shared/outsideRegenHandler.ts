@@ -17,7 +17,7 @@
 //   * WRITE runs as before (R4 ledger, R3 review gate, E4+E2 admission, per-URL cap, wall clock).
 import { gateRegenUrls, requireRunId } from "./outsideRecrawlReview.ts";
 import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
-import { admitOutsideEvidence, snapshotReadDate } from "./outsideEvidenceRegen.ts";
+import { admitOutsideEvidence, isBareAttribution, snapshotReadDate } from "./outsideEvidenceRegen.ts";
 import { insertIntegrityRun } from "./integrityWrite.ts";
 import { BODY_MODE_GUARD, classifyBodyMode } from "./bodyMode.ts";
 import { emptyTally, regenGenerate, regenJudge, tallyingLedger, type RegenLedger, type RegenTransport } from "./outsideRegenModel.ts";
@@ -53,7 +53,8 @@ export const SNAPSHOT_CAP_CHARS = 12_000;
 // page span it came closest to with its offset. Nothing per candidate is truncated or capped in storage.
 export type CandidateCode =
   | "admitted" | "judge_reject" | "duplicate_identity" | "voice_refused"
-  | "e4_not_verbatim" | "e2_overbroad" | "e2_too_short" | "e2_overthinned" | "e2_thin_broke_verbatim" | "empty";
+  | "e4_not_verbatim" | "e2_bare_attribution" | "e2_overbroad" | "e2_too_short" | "e2_overthinned" | "e2_thin_broke_verbatim" | "empty"
+  | "slice_unresolved" | "slice_assert_failed";
 export type CandidateRecord = {
   url: string; text: string; code: CandidateCode;
   generator_reason: string | null; judge_reason: string | null;
@@ -352,6 +353,21 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
 
     // R27: the judge's verdict AND its reason are kept per quote
     let keepByQuote = new Map<string, { keep: boolean; reason: string | null }>();
+    const admittedRows: Array<Record<string, unknown>> = [];
+    const rejected: Array<{ quote: string; reason: string }> = [];
+    const pageCandidates: CandidateRecord[] = [];
+    const record = (c: { text: string; reason: string | null }, code: CandidateCode, extra: Partial<CandidateRecord> = {}) => {
+      const rec: CandidateRecord = { url, text: c.text, code, generator_reason: c.reason, judge_reason: keepByQuote.get(c.text)?.reason ?? null, nearest_span: null, ...extra };
+      pageCandidates.push(rec); candidateRecords.push(rec);
+    };
+    // R31 (c): a bare attribution clause is refused by rule BEFORE the judge — it never reaches the judge prompt
+    for (const cand of cands.filter((c) => isBareAttribution(c.text))) {
+      guard_rejected_total++;
+      rejectReasons["e2_bare_attribution"] = (rejectReasons["e2_bare_attribution"] ?? 0) + 1;
+      rejected.push({ quote: cand.text.slice(0, 80), reason: "e2_bare_attribution" });
+      record(cand, "e2_bare_attribution");
+    }
+    cands = cands.filter((c) => !isBareAttribution(c.text));
     if (cands.length) {
       try {
         const { json: j } = await regenJudge({ system: deps.judgeSystem(anchors), user: `PAGE TEXT:\n${clean_text}\n\nCANDIDATES:\n${cands.map((c) => `- ${c.text}`).join("\n")}`, models: deps.models, transport, ledger });
@@ -363,13 +379,6 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       }
     }
 
-    const admittedRows: Array<Record<string, unknown>> = [];
-    const rejected: Array<{ quote: string; reason: string }> = [];
-    const pageCandidates: CandidateRecord[] = [];
-    const record = (c: { text: string; reason: string | null }, code: CandidateCode, extra: Partial<CandidateRecord> = {}) => {
-      const rec: CandidateRecord = { url, text: c.text, code, generator_reason: c.reason, judge_reason: keepByQuote.get(c.text)?.reason ?? null, nearest_span: null, ...extra };
-      pageCandidates.push(rec); candidateRecords.push(rec);
-    };
     for (const cand of cands) {
       if (admittedRows.length >= deps.perUrlCap) break;
       const c = cand.text;
@@ -381,6 +390,12 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
         rejected.push({ quote: c.slice(0, 80), reason: verdictA.reason });
         // R27: an e4 refusal names the page span it came closest to, with its offset in the raw page
         record(cand, verdictA.reason, verdictA.reason === "e4_not_verbatim" ? { nearest_span: nearestSpan(c, clean_text) } : {});
+        continue;
+      }
+      // R31 (a): the stored excerpt is the page slice at (offset, length) — asserted here; a mismatch fails the ROW, never the run
+      if (clean_text.slice(verdictA.offset, verdictA.offset + verdictA.length) !== verdictA.excerpt) {
+        rejected.push({ quote: c.slice(0, 80), reason: "slice_assert_failed" });
+        record(cand, "slice_assert_failed", { detail: `offset ${verdictA.offset} length ${verdictA.length} does not reproduce the excerpt` });
         continue;
       }
       const ci = await contentIdentity(verdictA.excerpt);
@@ -414,6 +429,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
           source: "outside_recrawl_regen", content_identity: ci, page_url: url, snapshot_text_sha256: sha,
           run_id: runId, provenance: "public_observed", read_at: nowIso(),
           verbatim: normalizeForHash(verdictA.excerpt).length,
+          // R31 (a): the page slice is the stored text; the model's shaped copy is a locator, kept here only
+          excerpt_offset: verdictA.offset, excerpt_length: verdictA.length, model_text: verdictA.model_text,
           // R27: why the generator lifted it and why the judge kept it — the model's own words, beside the page's
           generator_reason: cand.reason, judge_reason: keepByQuote.get(c)?.reason ?? null,
           voice_authority: { authority: voice.authority, detail: voice.detail, policy: REGEN_JUDGE_FAILURE_POLICY, gate: voice.gate, ...(voice.rule ? { rule: voice.rule } : {}) },

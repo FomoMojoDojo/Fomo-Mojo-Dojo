@@ -587,3 +587,22 @@ describe("GATE 2 · E2 specificity guard — outside/customer thinning no longer
     expect(retainConcreteEvidence("Great little neighborhood coffee spot.")).toBe("Great little neighborhood coffee spot.");
   });
 });
+
+// ── R31 (2026-10-18): the one sentence splitter does not end a sentence after a non-terminal abbreviation ──
+import { splitSentences as splitSentencesR31, retainConcreteEvidence as retainR31, NON_TERMINAL_ABBREVIATIONS } from "./evidenceMappers";
+describe("R31: splitSentences and the abbreviation list", () => {
+  it("Dr. / Mr. / Inc. / … do not end a sentence; a real boundary still does", () => {
+    expect(NON_TERMINAL_ABBREVIATIONS).toEqual(["Dr", "Mr", "Mrs", "Ms", "Inc", "Co", "Ltd", "St", "No", "Jr", "Sr", "vs"]);
+    expect(splitSentencesR31("CoreViva, founded by radiologists Dr. A. Alexander and Dr. Brian Tsui, opened its clinic. It also opened a lab.")).toEqual([
+      "CoreViva, founded by radiologists Dr. A. Alexander and Dr. Brian Tsui, opened its clinic.", "It also opened a lab.",
+    ]);
+    expect(splitSentencesR31("Acme Inc. acquired Beta Co. in May. Shares rose.")).toHaveLength(2);
+    expect(splitSentencesR31("It was late. We left.")).toHaveLength(2);
+    expect(splitSentencesR31("")).toEqual([]);
+  });
+  it("retainConcreteEvidence no longer thins to the fragment 'Founded by radiologists Dr.'", () => {
+    const t = "Founded by radiologists Dr. A. Alexander and Dr. Brian Tsui, CoreViva MRI scans are designed for early detection of cancer. The clinic charges $2,699.";
+    expect(retainR31(t)).toBe(t);   // the second sentence carries $2,699, a concrete token the lead lacks
+    expect(retainR31("Founded by radiologists Dr. A. Alexander and Dr. Brian Tsui, CoreViva opened in May.")).toBe("Founded by radiologists Dr. A. Alexander and Dr. Brian Tsui, CoreViva opened in May.");
+  });
+});

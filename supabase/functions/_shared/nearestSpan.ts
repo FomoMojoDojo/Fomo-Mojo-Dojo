@@ -49,6 +49,21 @@ function longestCommonRun(a: string, b: string): [number, number, number] {
   return [endA - best, endB - best, best];
 }
 
+/** R31: the RAW page span an e4 match stands on. e4 matches on normalizeForHash (lowercase, whitespace collapsed);
+ *  this resolves that normalized match back to the page's own bytes — offset and length in the raw page text — so the
+ *  stored excerpt is the page slice, never the model's copy. null when the normalized candidate is not in the page. */
+export function exactSpan(candidate: string, pageText: string): { text: string; offset: number; length: number } | null {
+  const cand = normalizeForHash(String(candidate ?? ""));
+  if (!cand || !pageText) return null;
+  const { norm, map } = normalizeWithMap(String(pageText));
+  if (norm !== normalizeForHash(String(pageText))) return null;
+  const i = norm.indexOf(cand);
+  if (i < 0) return null;
+  const rawStart = map[i];
+  const rawEnd = map[i + cand.length - 1] + 1;
+  return { text: pageText.slice(rawStart, rawEnd), offset: rawStart, length: rawEnd - rawStart };
+}
+
 /** The page span a candidate came closest to, as the raw page carries it, or null when no run reaches the minimum. */
 export function nearestSpan(candidate: string, pageText: string, minChars = NEAREST_SPAN_MIN_CHARS): NearestSpan | null {
   const cand = normalizeForHash(String(candidate ?? ""));
