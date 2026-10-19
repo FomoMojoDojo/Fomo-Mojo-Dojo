@@ -54,7 +54,7 @@ import {
 import { selectPublicInputs, type InputRow, inheritedClass, type SourceClass, PREDECESSOR_CITED_REASON, PREDECESSOR_NAMED_REASON } from "../_shared/publicReadInputs.ts";
 import { type ModelCallRecord, openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 import { insertIntegrityRun, IntegrityWriteRefused } from "../_shared/integrityWrite.ts";
-import { BODY_MODE_GUARD, classifyBodyMode, KNOWN_BODY_KEYS } from "../_shared/bodyMode.ts";
+import { BODY_MODE_GUARD, classifyBodyMode, KNOWN_BODY_KEYS, MODE_FLAGS } from "../_shared/bodyMode.ts";
 import { reaskFeedbackBlock, type SourceRow } from "../_shared/reaskFeedback.ts";
 
 const corsHeaders = {
@@ -312,7 +312,8 @@ Deno.serve(async (req) => {
     // sets nothing to true. Under the ruling as written that body is refused, which would delete the
     // mode, so it is named positively instead. `write:false` no longer means anything; the one
     // caller that used it (stageContinuity.test.ts's D3 half-two) now sends dry_run:true.
-    const verdict = classifyBodyMode(body as Record<string, unknown>);
+    // R8 (2026-10-18): the lists are THIS function's, passed explicitly — the classifier holds no default.
+    const verdict = classifyBodyMode(body as Record<string, unknown>, MODE_FLAGS, KNOWN_BODY_KEYS);
     if (!verdict.ok) {
       // the refusal is AUDITED, through the one writer that reads its own error (A1), before any
       // mode can run — and it names the keys, so a caller can see what it sent and what we read.

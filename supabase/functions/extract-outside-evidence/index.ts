@@ -13,20 +13,24 @@
 // extract-own-words: "corpus not substance → external"; the router law all-public →
 // gpt-4.1-mini). No non-public text ever reaches the model.
 //
+// R8 (operator ruling 2026-10-18): THE MODE IS NAMED, OR THE CALL IS REFUSED. The body carries
+// `plan: true` (read-only: the per-URL plan with review-gate state, zero writes, zero model calls)
+// or `write: true` (the run as before); nothing else, and no key outside company_id / run_id /
+// urls / plan / write. The handler lives in _shared/outsideRegenHandler.ts so the rule is provable
+// without a network; this file supplies the two seams — the SHARED transport (callOpenAIJson, which
+// returns usage) and the SHARED ledger (recordModelCall) — and the model step (R4,
+// _shared/outsideRegenModel.ts) ledgers EVERY attempt, before parse, mini then nano.
+//
 // Provenance is stamped at the CLAIM layer by rebuild-claims (deriveClaimProvenance:
 // outside band + outside_voice → public_observed); we record the intent + run_id +
 // content_identity + snapshot hash in raw_payload for audit. Frozen company → 403.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { gateRegenUrls, requireRunId } from "../_shared/outsideRecrawlReview.ts";
-import { sha256Hex, contentIdentity, normalizeForHash } from "../_shared/contentIdentity.ts";
-import { admitOutsideEvidence, snapshotReadDate } from "../_shared/outsideEvidenceRegen.ts";
-import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
 import { callOpenAIJson } from "../_shared/modelRouter.ts";
 import { recordModelCall } from "../_shared/recordModelCall.ts";
-import { emptyTally, regenGenerate, regenJudge, tallyingLedger, type RegenLedger, type RegenTransport } from "../_shared/outsideRegenModel.ts";
+import { type RegenLedger, type RegenTransport } from "../_shared/outsideRegenModel.ts";
+import { runOutsideRegen } from "../_shared/outsideRegenHandler.ts";
 
-const nowIso = () => new Date().toISOString();
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "*",
@@ -36,12 +40,13 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-const EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const GEN_MODEL = Deno.env.get("OUTSIDE_REGEN_MODEL") ?? "gpt-4.1-mini";
 const GEN_FALLBACK = Deno.env.get("OUTSIDE_REGEN_FALLBACK_MODEL") ?? "gpt-4.1-nano";
+const REGEN_MODELS = [GEN_MODEL, GEN_FALLBACK] as const;
 const PER_URL_CAP = Number(Deno.env.get("OUTSIDE_REGEN_PER_URL_CAP") ?? "12");
 const QUOTE_MAX_WORDS = 60;
 const WALL_MS = 140_000;
+const MODEL_TIMEOUT_MS = 90_000;
 
 function genSystem(anchors: string[]): string {
   const names = anchors.length ? anchors.join(", ") : "the client";
@@ -61,20 +66,18 @@ const JUDGE_SYSTEM =
   `a menu/price line, hours, boilerplate, or a statement about a different business. ` +
   `Respond with ONLY JSON: {"verdicts":[{"quote":"...","keep":true,"reason":"..."}]}. No other text.`;
 
-// R4 (operator ruling 2026-10-18): the model step lives in _shared/outsideRegenModel.ts. The function
-// supplies the two seams — the SHARED transport (callOpenAIJson, which returns usage) and the SHARED
-// ledger (recordModelCall) — and the module ledgers EVERY attempt, before parse, mini then nano.
-const REGEN_MODELS = [GEN_MODEL, GEN_FALLBACK] as const;
-const MODEL_TIMEOUT_MS = 90_000;
-/** One attempt against one model; throws on a non-ok answer so the module moves to the next model. */
-function openaiTransport(apiKey: string): RegenTransport {
+/** One attempt against one model; throws on a non-ok answer so the module moves to the next model.
+ *  Built by the handler ONLY on the write path; a missing key refuses before any attempt. */
+function makeTransport(): RegenTransport {
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey) throw new Error("OPENAI_API_KEY not set");
   return async ({ model, system, user }) => {
     const r = await callOpenAIJson({ model, system, user, temperature: 0, timeoutMs: MODEL_TIMEOUT_MS, apiKey });
     return { content: r.content, usage: r.usage };
   };
 }
 /** One model_calls row per attempt — the same writer every captured site uses; run_id null (no long_runner row). */
-function modelLedger(supabase: { from: (t: string) => unknown }, companyId: string): RegenLedger {
+function makeLedger(supabase: { from: (t: string) => unknown }, companyId: string): RegenLedger {
   return (e) => recordModelCall(supabase as never, {
     companyId, runId: null, callSite: e.callSite, usage: e.usage, attempt: e.attempt, promptSha: e.promptSha,
   });
@@ -82,187 +85,14 @@ function modelLedger(supabase: { from: (t: string) => unknown }, companyId: stri
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  const startedAt = Date.now();
   try {
     const body = await req.json().catch(() => ({}));
-    const company_id = String(body.company_id ?? "");
-    const urlFilter: string[] | null = Array.isArray(body.urls) ? body.urls.map(String) : null;
-    if (!company_id) return json({ error: "company_id is required" }, 400);
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    // R3 REVIEW GATE (operator ruling 2026-09-04): run_id is REQUIRED — it names the outside_recrawl_review
-    // run whose approved rows are the only URLs this door may regenerate. A missing run_id is refused (400)
-    // and ledgered; nothing is read from the basis.
-    const runId: string | null = requireRunId(body as Record<string, unknown>);
-    if (!runId) {
-      await insertIntegrityRun(supabase, {
-        company_id, component: "r3_outside_regen", status: "failed", examined: 0, admitted: 0,
-        excluded_by_rule: { refused: "run_id_required", review_gate: true }, run_ref: "r3_outside_regen_refused_no_run_id",
-      });
-      return json({ ok: false, error: "run_id is required: name the outside_recrawl_review run whose approved rows to regenerate" }, 400);
-    }
-
-    // Frozen refusal — a frozen company is never regenerated or written.
-    const { data: co } = await supabase.from("companies").select("id, frozen, entity_anchors_json").eq("id", company_id).maybeSingle();
-    if (!co) return json({ error: "company not found" }, 404);
-    if ((co as { frozen?: boolean }).frozen) return json({ error: "outside-regen refused: company is frozen" }, 403);
-    const anchorsRaw = (co as { entity_anchors_json?: unknown }).entity_anchors_json;
-    const anchors = Array.isArray(anchorsRaw) ? anchorsRaw.map((a) => String(a || "").trim()).filter(Boolean) : [];
-
-    // R4: the two seams, built once per run. A missing key refuses BEFORE any attempt, so no attempt
-    // that never reached the provider is ever ledgered.
-    const apiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!apiKey) throw new Error("OPENAI_API_KEY not set");
-    const transport = openaiTransport(apiKey);
-    const tally = emptyTally();
-    const ledger = tallyingLedger(modelLedger(supabase, company_id), tally);
-
-    // Basis: newest ok (real-body) snapshot per URL. NO fetch.
-    const { data: snapRows } = await supabase
-      .from("outside_page_snapshots")
-      .select("source_url, signal_id, clean_text, text_sha256, crawled_at, fetch_status")
-      .eq("company_id", company_id).eq("fetch_status", "ok")
-      .order("crawled_at", { ascending: false });
-    const newestByUrl = new Map<string, { clean_text: string; sha: string; signal_id: string | null; readDate: string | null }>();
-    for (const r of (snapRows ?? []) as Array<{ source_url: string; signal_id: string | null; clean_text: string | null; text_sha256: string; crawled_at?: string | null }>) {
-      if (newestByUrl.has(r.source_url)) continue;
-      if (!r.clean_text || r.text_sha256 === EMPTY_SHA) continue;
-      // READ-DATE (task_13983caf, 2026-08-27): the page's true read date = when it was crawled. Carry
-      // the snapshot's crawled_at so the minted signal stamps event_date and its source tag renders
-      // "· read <date>" (deriveSourceTag uses runDate ?? eventDate). Null if the basis carries no date
-      // — dates are real or hidden, never a convenience value.
-      newestByUrl.set(r.source_url, { clean_text: r.clean_text, sha: r.text_sha256, signal_id: r.signal_id, readDate: snapshotReadDate(r.crawled_at) });
-    }
-    let urls = [...newestByUrl.keys()];
-    if (urlFilter) urls = urls.filter((u) => urlFilter.includes(u));
-    // R3 REVIEW GATE: only operator-APPROVED rows for this run_id pass; every other URL is refused + ledgered.
-    const { data: reviewRows } = await supabase
-      .from("outside_recrawl_review").select("source_url, operator_decision")
-      .eq("company_id", company_id).eq("run_id", runId);
-    const gate = gateRegenUrls(urls, (reviewRows ?? []) as Array<{ source_url: string; operator_decision: string | null }>);
-    const reviewRefused = gate.refused;
-    urls = gate.allowed;
-    if (urls.length === 0) {
-      await insertIntegrityRun(supabase, {
-        company_id, component: "r3_outside_regen", status: "failed", examined: 0, admitted: 0,
-        excluded_by_rule: { refused: "no_approved_urls", review_refused: reviewRefused, run_id: runId, review_gate: true }, run_ref: `r3_outside_regen_${runId}`,
-      });
-      return json({ ok: false, error: "no approved URLs for this run_id", run_id: runId, review_refused: reviewRefused }, 400);
-    }
-
-    // Existing outside content identities (dedup — never mint a duplicate of an existing signal's excerpt).
-    const { data: existSig } = await supabase
-      .from("signals").select("evidence_excerpt, raw_payload")
-      .eq("company_id", company_id).eq("voice_class", "outside_voice_about_client");
-    const existingCI = new Set<string>();
-    for (const s of (existSig ?? []) as Array<{ evidence_excerpt: string | null; raw_payload?: { content_identity?: string } }>) {
-      if (s.raw_payload?.content_identity) existingCI.add(s.raw_payload.content_identity);
-      if (s.evidence_excerpt) existingCI.add(await contentIdentity(s.evidence_excerpt));
-    }
-
-    // Source title per URL (reuse the held signal's title where present).
-    const titleByUrl = new Map<string, string | null>();
-    for (const [u, meta] of newestByUrl) {
-      if (meta.signal_id) {
-        const { data: sig } = await supabase.from("signals").select("source_title").eq("id", meta.signal_id).maybeSingle();
-        titleByUrl.set(u, (sig as { source_title?: string | null } | null)?.source_title ?? null);
-      } else titleByUrl.set(u, null);
-    }
-
-    const pages: Array<Record<string, unknown>> = [];
-    const seenThisRun = new Set<string>();
-    let candidates_total = 0, admitted_total = 0, guard_rejected_total = 0;
-    const rejectReasons: Record<string, number> = {};
-    let processed = 0, stoppedForTime = false;
-
-    for (const url of urls) {
-      if (Date.now() - startedAt > WALL_MS) { stoppedForTime = true; break; }
-      const { clean_text, sha, readDate } = newestByUrl.get(url)!;
-
-      // Generate.
-      let cands: string[] = [];
-      try {
-        const { json: gen } = await regenGenerate({ system: genSystem(anchors), user: `PAGE TEXT:\n${clean_text}`, models: REGEN_MODELS, transport, ledger });
-        cands = (Array.isArray(gen.statements) ? gen.statements : []).map((s: unknown) => String(s ?? "").trim())
-          .filter((s) => s && s.split(/\s+/).length <= QUOTE_MAX_WORDS);
-      } catch (e) {
-        pages.push({ url, error: `gen: ${(e as Error).message}`, candidates: 0, admitted: 0 });
-        continue;
-      }
-      candidates_total += cands.length;
-
-      // Judge (one call for the page).
-      let keepByQuote = new Map<string, boolean>();
-      if (cands.length) {
-        try {
-          const { json: j } = await regenJudge({ system: JUDGE_SYSTEM, user: `PAGE TEXT:\n${clean_text}\n\nCANDIDATES:\n${cands.map((c) => `- ${c}`).join("\n")}`, models: REGEN_MODELS, transport, ledger });
-          const verdicts = (Array.isArray(j.verdicts) ? j.verdicts : []) as Array<Record<string, unknown>>;
-          keepByQuote = new Map(verdicts.map((v) => [String(v.quote ?? "").trim(), v.keep === true]));
-        } catch (e) {
-          pages.push({ url, error: `judge: ${(e as Error).message}`, candidates: cands.length, admitted: 0 });
-          continue;
-        }
-      }
-
-      // Admit through the deterministic birth guard (E4+E2), judge-kept only, dedup, per-URL cap.
-      const admittedRows: Array<Record<string, unknown>> = [];
-      const rejected: Array<{ quote: string; reason: string }> = [];
-      for (const c of cands) {
-        if (admittedRows.length >= PER_URL_CAP) break;
-        if (keepByQuote.size && keepByQuote.get(c) === false) { rejected.push({ quote: c.slice(0, 80), reason: "judge_reject" }); continue; }
-        const verdict = admitOutsideEvidence(c, clean_text);
-        if (!verdict.admit) {
-          guard_rejected_total++;
-          rejectReasons[verdict.reason] = (rejectReasons[verdict.reason] ?? 0) + 1;
-          rejected.push({ quote: c.slice(0, 80), reason: verdict.reason });
-          continue;
-        }
-        const ci = await contentIdentity(verdict.excerpt);
-        if (existingCI.has(ci) || seenThisRun.has(ci)) { rejected.push({ quote: c.slice(0, 80), reason: "duplicate_identity" }); continue; }
-        seenThisRun.add(ci);
-        admittedRows.push({
-          company_id, source_id: null, source_type: "outside_recrawl_regen", source_title: titleByUrl.get(url) ?? null,
-          source_url: url, signal_band: "outside", evidence_type: "market_signal",
-          claim_text: verdict.excerpt, evidence_excerpt: verdict.excerpt,
-          topic: "outside_voice_signal", directness: "direct", recency: "recent", framing_fit: "partial",
-          structure_level: "extracted", validation_status: "directional", confidence_to_use: "medium",
-          voice_class: "outside_voice_about_client",
-          event_date: readDate, // READ-DATE stamped at mint from the snapshot's crawled_at (null if none)
-          raw_payload: {
-            source: "outside_recrawl_regen", content_identity: ci, page_url: url, snapshot_text_sha256: sha,
-            run_id: runId, provenance: "public_observed", read_at: nowIso(),
-            verbatim: normalizeForHash(verdict.excerpt).length,
-          },
-        });
-      }
-
-      if (admittedRows.length) {
-        const { error: insErr } = await supabase.from("signals").insert(admittedRows);
-        if (insErr) throw new Error(`signal insert failed for ${url}: ${insErr.message}`);
-      }
-      admitted_total += admittedRows.length;
-      processed++;
-      pages.push({
-        url, candidates: cands.length, admitted: admittedRows.length,
-        admitted_excerpts: admittedRows.map((r) => r.evidence_excerpt),
-        rejected: rejected.slice(0, 20),
-      });
-    }
-
-    const { error: intErr } = await supabase.from("integrity_runs").insert({
-      company_id, component: "r3_outside_regen", status: stoppedForTime ? "failed" : "completed",
-      examined: candidates_total, admitted: admitted_total,
-      // R4: the run's model-call tally beside its counts — {generator, judge, usd, ledger_failed} — so a run and its spend join on run_ref.
-      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, model_calls: tally },
-      run_ref: `r3_outside_regen_${runId}`,
+    const r = await runOutsideRegen(body, {
+      supabase, makeTransport, makeLedger: (cid) => makeLedger(supabase, cid),
+      models: REGEN_MODELS, genSystem, judgeSystem: JUDGE_SYSTEM, quoteMaxWords: QUOTE_MAX_WORDS, perUrlCap: PER_URL_CAP, wallMs: WALL_MS,
     });
-    if (intErr) throw new Error(`integrity insert failed: ${intErr.message}`);
-
-    return json({
-      ok: true, company_id, run_id: runId, urls_total: urls.length, pages_processed: processed, stopped_for_time: stoppedForTime, review_refused: reviewRefused,
-      model_calls: tally,
-      totals: { candidates: candidates_total, admitted: admitted_total, guard_rejected: guard_rejected_total, reject_reasons: rejectReasons },
-      pages,
-    });
+    return json(r.body, r.status);
   } catch (e) {
     return json({ ok: false, error: (e as Error).message }, 500);
   }

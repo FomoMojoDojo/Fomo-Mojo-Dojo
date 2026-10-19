@@ -36,7 +36,7 @@ Deno.test("WD. a body naming NO mode is refused — there is no default mode", (
     { company_id: "co", write: false },                  // the old dry-run spelling: nothing is true
     { company_id: "co", stage: false, write: false },
   ]) {
-    const v = classifyBodyMode(body as Record<string, unknown>);
+    const v = classifyBodyMode(body as Record<string, unknown>, MODE_FLAGS, KNOWN_BODY_KEYS);
     assertEquals(v.ok, false, `${JSON.stringify(body)} must be refused`);
     if (v.ok) continue;
     assert(/no mode flag set to true/.test(v.detail), v.detail);
@@ -44,35 +44,35 @@ Deno.test("WD. a body naming NO mode is refused — there is no default mode", (
   }
   // and every mode, named, is accepted — the rule refuses ambiguity, not work
   for (const f of MODE_FLAGS) {
-    const v = classifyBodyMode({ company_id: "co", [f]: true });
+    const v = classifyBodyMode({ company_id: "co", [f]: true }, MODE_FLAGS, KNOWN_BODY_KEYS);
     assertEquals(v.ok, true, `${f}:true must be accepted`);
     if (v.ok) assertEquals(v.mode, f);
   }
 });
 
 Deno.test("WD. {mode:'stage'} — the body that promoted — is refused, and the KEY is named", () => {
-  const v = classifyBodyMode({ company_id: "co", kinds: ["strategy"], mode: "stage" });
+  const v = classifyBodyMode({ company_id: "co", kinds: ["strategy"], mode: "stage" }, MODE_FLAGS, KNOWN_BODY_KEYS);
   assertEquals(v.ok, false, "this exact body wrote a current read over de1efd3f");
   if (v.ok) return;
   assertEquals(v.unknown_keys, ["mode"], "the unknown key is named, not ignored");
   assert(/unknown body key\(s\): mode/.test(v.detail), v.detail);
   assert(/no mode flag set to true/.test(v.detail), "and so is the missing mode");
   // a near-miss spelling of a REAL flag is caught the same way
-  const v2 = classifyBodyMode({ company_id: "co", staged: true });
+  const v2 = classifyBodyMode({ company_id: "co", staged: true }, MODE_FLAGS, KNOWN_BODY_KEYS);
   assertEquals(v2.ok, false);
   if (!v2.ok) assertEquals(v2.unknown_keys, ["staged"]);
 });
 
 Deno.test("WD. TWO mode flags at once are refused, and both are named", () => {
   for (const [a, b] of [["stage", "write"], ["plan", "promote"], ["write", "dry_run"]]) {
-    const v = classifyBodyMode({ company_id: "co", [a]: true, [b]: true });
+    const v = classifyBodyMode({ company_id: "co", [a]: true, [b]: true }, MODE_FLAGS, KNOWN_BODY_KEYS);
     assertEquals(v.ok, false, `${a}+${b} must be refused, not resolved by precedence`);
     if (v.ok) continue;
     assert(/2 mode flags set to true/.test(v.detail), v.detail);
     assert(v.detail.includes(a) && v.detail.includes(b), `both named: ${v.detail}`);
   }
   // all five at once is still one refusal, naming all five
-  const all = classifyBodyMode(Object.fromEntries([["company_id", "co"], ...MODE_FLAGS.map((f) => [f, true])]));
+  const all = classifyBodyMode(Object.fromEntries([["company_id", "co"], ...MODE_FLAGS.map((f) => [f, true])]), MODE_FLAGS, KNOWN_BODY_KEYS);
   assertEquals(all.ok, false);
   if (!all.ok) assertEquals(all.modes_named.length, MODE_FLAGS.length);
 });

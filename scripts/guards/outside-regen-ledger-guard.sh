@@ -26,6 +26,7 @@
 #   P1  regenJudge passes a no-op ledger (the judge-role ledger call is gone)   => l2 rows_per_page 2 → 1
 #   P2  the module records openaiRecord(model, null) — usage dropped            => l2 usd_all_nonnull true → false
 #   P2b the function carries a raw fetch to api.openai.com again                => l1 red
+#   (R8, 2026-10-18: the handler moved to _shared/outsideRegenHandler.ts; l1 reads both files)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -38,17 +39,20 @@ FN=supabase/functions/extract-outside-evidence/index.ts
 MOD=supabase/functions/_shared/outsideRegenModel.ts
 REG=supabase/functions/_shared/modelCallSites.ts
 
-# l1 — source
+# l1 — source (R8: the handler lives in _shared/outsideRegenHandler.ts; the function keeps the two seams)
+H=supabase/functions/_shared/outsideRegenHandler.ts
 [ -f "$MOD" ] || fail l1 "module $MOD missing"
-grep -q 'from "../_shared/outsideRegenModel.ts"' "$FN" || fail l1 "function does not import the module"
-grep -q 'regenGenerate(' "$FN" || fail l1 "generator does not go through regenGenerate"
-grep -q 'regenJudge(' "$FN" || fail l1 "judge does not go through regenJudge"
+[ -f "$H" ] || fail l1 "handler $H missing"
+grep -q 'from "./outsideRegenModel.ts"' "$H" || fail l1 "handler does not import the module"
+grep -q 'regenGenerate(' "$H" || fail l1 "generator does not go through regenGenerate"
+grep -q 'regenJudge(' "$H" || fail l1 "judge does not go through regenJudge"
+grep -q 'from "../_shared/outsideRegenHandler.ts"' "$FN" || fail l1 "function does not import the handler"
 grep -q 'callOpenAIJson' "$FN" || fail l1 "transport is not the shared callOpenAIJson"
 grep -q 'recordModelCall(' "$FN" || fail l1 "ledger is not recordModelCall"
-grep -q 'api.openai.com' "$FN" && fail l1 "a raw fetch to api.openai.com is back in the function"
-grep -q 'model_calls: tally' "$FN" || fail l1 "integrity row does not carry the per-run tally"
+grep -q 'api.openai.com' "$FN" "$H" && fail l1 "a raw fetch to api.openai.com is back"
+grep -q 'model_calls: tally' "$H" || fail l1 "integrity row does not carry the per-run tally"
 grep -q 'site: "extract-outside-evidence".*captured: true' "$REG" || fail l1 "registry line is not captured: true"
-echo "l1. source: both roles through outsideRegenModel.ts, callOpenAIJson transport, recordModelCall ledger, no raw fetch, tally on the integrity row, registry captured"
+echo "l1. source: both roles through outsideRegenModel.ts (in the handler), callOpenAIJson transport, recordModelCall ledger (in the function), no raw fetch, tally on the integrity row, registry captured"
 
 # l2 — module (fake transport, no network)
 P=$(deno run --allow-all scripts/guards/outside-regen-ledger-probe.ts 2>/dev/null | tail -1)

@@ -87,14 +87,16 @@ Deno.test("tally: the wrapper counts every entry by role, sums usd, and counts f
 });
 
 Deno.test("SOURCE PIN: the function routes BOTH roles through this module, uses the shared transport, and the registry says captured", async () => {
+  // R8: the handler moved to _shared/outsideRegenHandler.ts; the function keeps the two seams.
   const fn = await Deno.readTextFile(new URL("../extract-outside-evidence/index.ts", import.meta.url));
-  assert(fn.includes('from "../_shared/outsideRegenModel.ts"'), "function imports the module");
-  assert(fn.includes("regenGenerate("), "generator goes through regenGenerate");
-  assert(fn.includes("regenJudge("), "judge goes through regenJudge");
+  const handler = await Deno.readTextFile(new URL("./outsideRegenHandler.ts", import.meta.url));
+  assert(handler.includes('from "./outsideRegenModel.ts"'), "handler imports the module");
+  assert(handler.includes("regenGenerate("), "generator goes through regenGenerate");
+  assert(handler.includes("regenJudge("), "judge goes through regenJudge");
   assert(fn.includes("callOpenAIJson"), "the transport is the shared callOpenAIJson");
   assert(fn.includes("recordModelCall("), "the ledger is recordModelCall");
-  assert(!fn.includes("api.openai.com"), "no raw fetch to OpenAI remains in the function");
-  assert(fn.includes("model_calls: tally"), "the integrity row carries the per-run tally");
+  assert(!fn.includes("api.openai.com") && !handler.includes("api.openai.com"), "no raw fetch to OpenAI remains");
+  assert(handler.includes("model_calls: tally"), "the integrity row carries the per-run tally");
   const reg = await Deno.readTextFile(new URL("./modelCallSites.ts", import.meta.url));
   const line = reg.split("\n").find((l) => l.includes('site: "extract-outside-evidence"')) ?? "";
   assert(line.includes("captured: true"), `registry line says captured: true — got: ${line.trim()}`);

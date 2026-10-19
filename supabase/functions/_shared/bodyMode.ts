@@ -19,9 +19,11 @@
 // current read — the exact act being prevented. As one function the rule is provable without a
 // write, and the handler has one implementation to call rather than a condition to re-derive.
 
-/** The modes. `dry_run` is here because it is a REAL mode — stamped mode:"dry_run" on the integrity
- *  row — and it used to be reachable ONLY as `write:false`, a body that sets nothing to true. The
- *  ruling refuses such a body, which would have deleted the mode, so it is named positively. */
+/** generate-public-read's modes. `dry_run` is here because it is a REAL mode — stamped mode:"dry_run"
+ *  on the integrity row — and it used to be reachable ONLY as `write:false`, a body that sets nothing
+ *  to true. The ruling refuses such a body, which would have deleted the mode, so it is named
+ *  positively. R8 (2026-10-18): these are ONE caller's lists, passed explicitly at its call site —
+ *  the function below takes its lists as REQUIRED arguments and holds no default. */
 export const MODE_FLAGS = ["plan", "stage", "promote", "write", "dry_run"] as const;
 export type ModeFlag = typeof MODE_FLAGS[number];
 
@@ -33,8 +35,8 @@ export const KNOWN_BODY_KEYS: readonly string[] = [
 
 export const BODY_MODE_GUARD = "body_mode_unnamed" as const;
 
-export type BodyModeVerdict =
-  | { ok: true; mode: ModeFlag }
+export type BodyModeVerdict<M extends string = string> =
+  | { ok: true; mode: M }
   | {
     ok: false;
     detail: string;
@@ -43,16 +45,22 @@ export type BodyModeVerdict =
     unknown_keys: string[];
   };
 
-/** THE one decision. Exactly one mode flag true, and no key we do not read. */
-export function classifyBodyMode(body: Readonly<Record<string, unknown>>): BodyModeVerdict {
-  const modes_named = MODE_FLAGS.filter((f) => body[f] === true);
-  const unknown_keys = Object.keys(body).filter((k) => !KNOWN_BODY_KEYS.includes(k));
+/** THE one decision. Exactly one of `modes` is true in `body`, and no key outside `knownKeys`.
+ *  R8: both lists are REQUIRED — a caller that cannot say which modes and keys it reads has no
+ *  business classifying a body, and a default list would be a second function's rule in disguise. */
+export function classifyBodyMode<M extends string>(
+  body: Readonly<Record<string, unknown>>,
+  modes: readonly M[],
+  knownKeys: readonly string[],
+): BodyModeVerdict<M> {
+  const modes_named = modes.filter((f) => body[f] === true);
+  const unknown_keys = Object.keys(body).filter((k) => !knownKeys.includes(k));
   if (modes_named.length === 1 && unknown_keys.length === 0) {
     return { ok: true, mode: modes_named[0] };
   }
   const detail = [
     modes_named.length === 0
-      ? `no mode flag set to true (one of: ${MODE_FLAGS.join(", ")})`
+      ? `no mode flag set to true (one of: ${modes.join(", ")})`
       : modes_named.length > 1
       ? `${modes_named.length} mode flags set to true: ${modes_named.join(", ")} (exactly one)`
       : null,
