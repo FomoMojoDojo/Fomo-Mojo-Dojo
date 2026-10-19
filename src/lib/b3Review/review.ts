@@ -18,7 +18,27 @@ export type PlanRow = {
   /** "" when the row is in scope; json / script_shell / thin_shell when R10 excludes it. */
   exclude: string;
   exclude_rule: string;
+  /** R20 (b3plan-r20.tsv): true when the URL is in the R20 set; null when the file has no r20 column (b3plan.tsv,
+   *  b3plan-r10.tsv). The column is written as t/f; "true"/"false" and 1/0 read the same. */
+  r20: boolean | null;
+  /** R20's reason when the row is out of the set ("R20:no_outside_voice_row"); "" otherwise or when absent. */
+  exclude_r20: string;
 };
+
+/** The one reading of a plan file's boolean columns: t / true / 1 are true; f / false / 0 / "" are false. */
+export function planBool(v: string): boolean {
+  const t = v.trim().toLowerCase();
+  return t === "t" || t === "true" || t === "1";
+}
+
+/** Why a plan row is out of scope, or "" when it is in: the R10 content class first, then R20's reason, then a
+ *  bare r20=f with no reason given. Every reader of the plan goes through this, not through `exclude` alone. */
+export function planExcludeOf(r: Pick<PlanRow, "exclude" | "exclude_r20" | "r20">): string {
+  if (r.exclude) return r.exclude;
+  if (r.exclude_r20) return r.exclude_r20;
+  if (r.r20 === false) return "R20:not_in_set";
+  return "";
+}
 
 export const PLAN_EXCLUDE_CLASSES = ["json", "script_shell", "thin_shell", "person_profile"] as const;
 
@@ -61,21 +81,22 @@ export function parsePlanTsv(text: string): PlanRow[] {
     const get = (name: string) => (col(name) >= 0 ? (f[col(name)] ?? "") : "");
     out.push({
       company: get("company"), url: get("url"), snapshot_id: get("snapshot_id"),
-      chars: Number(get("chars")) || 0, at_cap: get("at_cap") === "t" || get("at_cap") === "true",
+      chars: Number(get("chars")) || 0, at_cap: planBool(get("at_cap")),
       blanked_rows: Number(get("blanked_rows")) || 0,
       blanked_signal_ids: get("blanked_signal_ids").split(",").map((s) => s.trim()).filter(Boolean),
       exclude: get("exclude"), exclude_rule: get("exclude_rule"),
+      r20: col("r20") >= 0 ? planBool(get("r20")) : null, exclude_r20: get("exclude_r20"),
     });
   }
   return out;
 }
 
-/** The rows one company's run takes: its name, and no R10 exclusion. */
+/** The rows one company's run takes: its name, and no exclusion — R10's class or R20's set (planExcludeOf). */
 export function planRowsFor(rows: readonly PlanRow[], companyName: string): { kept: PlanRow[]; excluded: PlanRow[]; other_companies: number } {
   const mine = rows.filter((r) => r.company === companyName);
   return {
-    kept: mine.filter((r) => !r.exclude),
-    excluded: mine.filter((r) => !!r.exclude),
+    kept: mine.filter((r) => !planExcludeOf(r)),
+    excluded: mine.filter((r) => !!planExcludeOf(r)),
     other_companies: rows.length - mine.length,
   };
 }
@@ -215,7 +236,8 @@ export type SystemRuleInput = {
   basis_is_newest_ok: boolean;
   /** the newest ok snapshot's text (shape is decided here) */
   snapshot_text: string | null;
-  /** the plan file's exclude class for this URL when a plan is given ("" when in scope; null when no plan) */
+  /** the plan file's exclusion for this URL when a plan is given — planExcludeOf: an R10 class or an R20 reason
+   *  ("" when in scope; null when no plan) */
   plan_exclude: string | null;
 };
 export type SystemRuleResult = { decision: "approve" | "reject"; rule: string; detail: string };
@@ -225,7 +247,11 @@ export function systemRule(i: SystemRuleInput): SystemRuleResult {
   if (i.disposition !== "b3_from_snapshot") return { decision: "reject", rule: "scope:disposition", detail: `disposition ${i.disposition} is outside R18's scope (b3_from_snapshot only)` };
   const pp = personProfileRule(i.url);
   if (pp) return { decision: "reject", rule: "R15:person_profile", detail: pp };
-  if (i.plan_exclude) return { decision: "reject", rule: `R10:${i.plan_exclude}`, detail: "excluded by the plan file's content class" };
+  if (i.plan_exclude) {
+    return i.plan_exclude.startsWith("R20:")
+      ? { decision: "reject", rule: i.plan_exclude, detail: "outside the plan file's R20 set" }
+      : { decision: "reject", rule: `R10:${i.plan_exclude}`, detail: "excluded by the plan file's content class" };
+  }
   if (!i.basis_is_newest_ok) return { decision: "reject", rule: "basis:not_newest_ok", detail: "the row's baseline sha is not the newest ok snapshot of its URL" };
   if (i.snapshot_text == null || !i.snapshot_text.trim()) return { decision: "reject", rule: "basis:no_snapshot_text", detail: "no snapshot text to read" };
   const s = contentShape(i.snapshot_text);

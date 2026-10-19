@@ -124,7 +124,7 @@ if (frozen !== "f" && frozen.toLowerCase() !== "false") {
 // stored text. One new run_id per invocation; disposition "b3_from_snapshot"; decision columns NULL (the
 // upsert preserves a decision that already exists). Zero network, zero model. Writes ONLY with --write.
 if (fromSnapshots) {
-  const { parsePlanTsv, planRowsFor } = await import("../src/lib/b3Review/review");
+  const { parsePlanTsv, planRowsFor, planExcludeOf } = await import("../src/lib/b3Review/review");
   const planText = readFileSync(planArg!, "utf8");
   const coRow = JSON.parse(psql("select coalesce(row_to_json(t)::text,'null') from (select name, website, entity_anchors_json from companies where id=:'c') t;", { c: company! })) as { name: string | null; website: string | null; entity_anchors_json: unknown[] | null } | null;
   if (!coRow?.name) fail(`no company row for ${company}`);
@@ -162,12 +162,12 @@ if (fromSnapshots) {
   }
   const padf = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s.padEnd(n));
   console.log(`\nFROM-SNAPSHOTS${fromSnapshotsWrite ? "" : " (DRY-RUN — no writes; pass " + FROM_SNAPSHOTS_WRITE_FLAG + " to write)"} · company ${company} (${coRow.name})`);
-  console.log(`plan=${planArg} · in scope ${kept.length} · excluded by R10 ${excluded.length} · run_id=${fsRunId} · run_ref=${fsRunRef}\n`);
+  console.log(`plan=${planArg} · in scope ${kept.length} · excluded by the plan (R10 class / R20 set) ${excluded.length} · run_id=${fsRunId} · run_ref=${fsRunRef}\n`);
   console.log(`${padf("URL", 60)}  ${padf("snapshot", 10)}  chars  cap  anchor  deps  deltas  disposition`);
   console.log("-".repeat(118));
   for (const r of fsRows) console.log(`${padf(r.url, 60)}  ${padf(r.snapshot_id ?? "", 10)}  ${String(r.chars).padStart(5)}  ${r.chars >= TEXT_CAP ? "y" : "n"}    ${String(r.anchor_present).padEnd(6)}  ${String(r.signal_ids.length).padStart(4)}  ${String(r.delta_ids.length).padStart(6)}  b3_from_snapshot${r.dropped_ids.length ? `  (dropped ${r.dropped_ids.length} planned id(s) not live/blanked)` : ""}${r.snapshot_matches_plan ? "" : "  (newest snapshot differs from the plan's)"}`);
   for (const x of refused) console.log(`${padf(x.url, 60)}  REFUSED: ${x.reason}`);
-  for (const r of excluded) console.log(`${padf(r.url, 60)}  excluded by R10: ${r.exclude} — ${r.exclude_rule}`);
+  for (const r of excluded) console.log(`${padf(r.url, 60)}  excluded by ${r.exclude ? "R10" : "R20"}: ${planExcludeOf(r)}${r.exclude_rule ? " — " + r.exclude_rule : ""}`);
   let upserted = 0;
   // MEASURED by the guard: how many write statements this run ISSUED (0 in a dry run, whatever the database
   // said), and how many the database refused. A refused write is reported, never swallowed, and fails the run.
@@ -199,7 +199,7 @@ if (fromSnapshots) {
       `with p as (select ${b64Sql({
         company_id: company, component: "r2_outside_recrawl", surface_type: "outside_review", status: "completed",
         examined: kept.length, admitted: upserted,
-        excluded_by_rule: { mode: "from_snapshots", plan_file: planArg, run_id: fsRunId, urls: fsRows.map((r) => r.url), refused, excluded_by_r10: excluded.map((r) => ({ url: r.url, exclude: r.exclude })), dropped_ids: fsRows.flatMap((r) => r.dropped_ids), network: false, model_calls: 0 },
+        excluded_by_rule: { mode: "from_snapshots", plan_file: planArg, run_id: fsRunId, urls: fsRows.map((r) => r.url), refused, excluded_by_r10: excluded.filter((r) => r.exclude).map((r) => ({ url: r.url, exclude: r.exclude })), excluded_by_r20: excluded.filter((r) => !r.exclude).map((r) => ({ url: r.url, exclude: planExcludeOf(r) })), dropped_ids: fsRows.flatMap((r) => r.dropped_ids), network: false, model_calls: 0 },
         run_ref: fsRunRef,
       })} j),
        ins as (

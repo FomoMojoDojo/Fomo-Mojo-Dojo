@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  applyPrecedence, assertAllowedDatabase, assertAllowedDataSource, decisionOfVerdict, parsePlanTsv, planRowsFor, REVIEW_DB_PROPERTIES, SYSTEM_DECIDER, systemRule,
+  applyPrecedence, assertAllowedDatabase, assertAllowedDataSource, decisionOfVerdict, parsePlanTsv, planExcludeOf, planRowsFor, REVIEW_DB_PROPERTIES, SYSTEM_DECIDER, systemRule,
   type DecisionInput, type PrecedencePlan, type ProposedDecision,
 } from "../src/lib/b3Review/review";
 
@@ -124,7 +124,7 @@ const lines: Line[] = [];
 const planExcludeByUrl = new Map<string, string>();
 if (planPath) {
   const kept = planRowsFor(parsePlanTsv(readFileSync(planPath, "utf8")), coName);
-  for (const r of [...kept.kept, ...kept.excluded]) planExcludeByUrl.set(r.url, r.exclude);
+  for (const r of [...kept.kept, ...kept.excluded]) planExcludeByUrl.set(r.url, planExcludeOf(r));
 }
 const currentOf = (r: Row | null) => (r ? (r.operator_decision ? `${r.operator_decision} by ${r.decided_by ?? "?"}` : "undecided") : "(no row)");
 const touched = new Set<string>();

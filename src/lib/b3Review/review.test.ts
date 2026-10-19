@@ -1,7 +1,7 @@
 // b3 review path — the pure rules (R11, 2026-10-18).
 import { describe, expect, it } from "vitest";
 import {
-  assertAllowedDatabase, assertAllowedDataSource, CLIENT_PORTALS_IDS, decideCompareAndSet, notionPageProperties, parsePlanTsv, personProfileRule, planDecisions, planRowsFor,
+  assertAllowedDatabase, assertAllowedDataSource, CLIENT_PORTALS_IDS, decideCompareAndSet, notionPageProperties, parsePlanTsv, personProfileRule, planBool, planDecisions, planExcludeOf, planRowsFor,
   PLAN_EXCLUDE_CLASSES, REVIEW_DB_PROPERTIES, VERDICT_OPTIONS,
 } from "./review";
 
@@ -37,6 +37,26 @@ describe("plan file", () => {
     const noExclude = parsePlanTsv(TSV.split("\n").map((l) => l.split("\t").slice(0, 12).join("\t")).join("\n"));
     expect(noExclude.every((r) => r.exclude === "")).toBe(true);
   });
+  it("R20 columns: r20 reads t / true / 1 as in the set and f / false / 0 as out; a missing r20 column is null and leaves every row in scope", () => {
+    const hdr = HDR + "\tovs_rows\tr20\texclude_r20";
+    const row = (co: string, url: string, r20: string, why: string) => [co, url, "snap", "100", "f", "h", "f", "0", "0", "3", "1", "sig-1", "", "html text", "1", r20, why].join("\t");
+    const rows = parsePlanTsv([hdr,
+      row("Co", "https://a.example/", "t", ""), row("Co", "https://b.example/", "1", ""), row("Co", "https://c.example/", "true", ""),
+      row("Co", "https://d.example/", "f", "R20:no_outside_voice_row"), row("Co", "https://e.example/", "0", ""), row("Co", "https://f.example/", "false", "R20:no_outside_voice_row"),
+    ].join("\n"));
+    expect(rows.map((r) => r.r20)).toEqual([true, true, true, false, false, false]);
+    expect(planBool("T")).toBe(true); expect(planBool(" 1 ")).toBe(true); expect(planBool("")).toBe(false); expect(planBool("f")).toBe(false);
+    const { kept, excluded } = planRowsFor(rows, "Co");
+    expect(kept.map((r) => r.url)).toEqual(["https://a.example/", "https://b.example/", "https://c.example/"]);
+    expect(excluded.map((r) => planExcludeOf(r))).toEqual(["R20:no_outside_voice_row", "R20:not_in_set", "R20:no_outside_voice_row"]);
+    // the R10 class still comes first when both name the row
+    expect(planExcludeOf({ exclude: "json", exclude_r20: "R20:no_outside_voice_row", r20: false })).toBe("json");
+    // b3plan-r10.tsv has no r20 column: r20 is null and the R10 class alone decides
+    const r10 = parsePlanTsv(TSV);
+    expect(r10.every((r) => r.r20 === null && r.exclude_r20 === "")).toBe(true);
+    expect(planRowsFor(r10, "Brand AI").excluded.map((r) => planExcludeOf(r))).toEqual(["json"]);
+  });
+
   it("a company's run takes its own non-excluded rows only", () => {
     const { kept, excluded, other_companies } = planRowsFor(parsePlanTsv(TSV), "Brand AI");
     expect(kept.map((r) => r.url)).toEqual(["https://a.test/"]);
@@ -129,6 +149,7 @@ describe("R18 system rule", () => {
     expect(systemRule({ ...base, disposition: "unchanged" })).toMatchObject({ decision: "reject", rule: "scope:disposition" });
     expect(systemRule({ ...base, url: "https://www.linkedin.com/in/someone/" })).toMatchObject({ decision: "reject", rule: "R15:person_profile" });
     expect(systemRule({ ...base, plan_exclude: "json" })).toMatchObject({ decision: "reject", rule: "R10:json" });
+    expect(systemRule({ ...base, plan_exclude: "R20:no_outside_voice_row" })).toMatchObject({ decision: "reject", rule: "R20:no_outside_voice_row" });
     expect(systemRule({ ...base, basis_is_newest_ok: false })).toMatchObject({ decision: "reject", rule: "basis:not_newest_ok" });
     expect(systemRule({ ...base, snapshot_text: "" })).toMatchObject({ decision: "reject", rule: "basis:no_snapshot_text" });
     expect(systemRule({ ...base, snapshot_text: "Instagram" })).toMatchObject({ decision: "reject", rule: "R10:thin_shell" });
