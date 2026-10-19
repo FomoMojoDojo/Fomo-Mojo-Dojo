@@ -19,6 +19,9 @@
 #       REGEN_MODE_FLAGS / REGEN_BODY_KEYS BEFORE it reads company_id or run_id; the transport is
 #       constructed AFTER the plan branch returns (never on plan); the generator passes MODE_FLAGS and
 #       KNOWN_BODY_KEYS explicitly at its call site.
+#   n5. (R22) the client is always named: no prompt builder carries the literal "the client"; the function imports
+#       _shared/outsideRegenPrompts.ts; the handler names the client through clientAnchorsFor (name, host, entity
+#       anchors) and records anchors_used; the clientAnchors tests pass.
 #   n4. BOOT — the SERVED function answers {} with 400 naming guard body_mode_unnamed (an empty body is
 #       refused before company_id is even read). generate-public-read's {} answer is PRINTED: it checks
 #       company_id first, so it names company_id — reported, not asserted (R8 left its order alone).
@@ -77,4 +80,22 @@ CODE=$(echo "$R" | tail -1); BODY=$(echo "$R" | sed '$d')
 echo "n4. extract-outside-evidence {} → 400 guard=body_mode_unnamed (keys_sent=$(echo "$BODY" | jq_ "d.get('keys_sent')"))"
 G=$(curl -s -m 60 -w ' [%{http_code}]' -X POST "http://127.0.0.1:54321/functions/v1/generate-public-read" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{}' | tail -c 200)
 echo "n4. generate-public-read {} → $G (company_id is checked before the mode there; reported, not asserted)"
+
+# n5 — R22: the client is always named; no prompt builder carries the literal "the client"
+PR=supabase/functions/_shared/outsideRegenPrompts.ts
+[ -f "$PR" ] || fail n5 "prompts module missing"
+for f in "$PR" "$FN"; do
+  grep -vE '^\s*//' "$f" | grep -q '"the client"' && fail n5 "the fallback literal \"the client\" is back in $f"
+  grep -vE '^\s*//' "$f" | grep -qE '`[^`]*\bthe client\b' && fail n5 "a prompt template in $f names 'the client' instead of the anchors"
+done
+grep -q 'from "../_shared/outsideRegenPrompts.ts"' "$FN" || fail n5 "the function does not import the shared prompts"
+grep -q 'clientAnchorsFor(co' "$H" || fail n5 "the handler does not name the client through clientAnchorsFor"
+grep -q 'anchors_used: anchors' "$H" || fail n5 "the integrity row / plan does not record the anchor set"
+T=$(NO_COLOR=1 deno test --allow-all --no-check supabase/functions/_shared/clientAnchors.test.ts 2>&1 | grep -E '^ok \||^FAILED \|' | tail -1 || true)
+echo "$T" | grep -q '^ok |' || fail n5 "clientAnchors tests: ${T:-no summary} $(NO_COLOR=1 deno test --allow-all --no-check supabase/functions/_shared/clientAnchors.test.ts 2>&1 | grep -E '\.\.\. FAILED|AssertionError' | head -3)"
+A=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-anchor-probe.ts 2>&1 | tail -1)
+[ "$(echo "$A" | jq_ "d.get('present_in_generator_prompt')")" = "2" ] || fail n5 "anchors present in the built generator prompt != 2: $A"
+[ "$(echo "$A" | jq_ "d.get('the_client_in_prompt')")" = "False" ] || fail n5 "the built generator prompt names 'the client': $A"
+echo "n5. probe (fake write, real prompts): $A"
+echo "n5. R22: no 'the client' literal in any prompt builder; the function imports the shared prompts; the handler names the client through clientAnchorsFor and records anchors_used; $T"
 echo "GUARD OK"

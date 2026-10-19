@@ -22,10 +22,10 @@ import { insertIntegrityRun } from "./integrityWrite.ts";
 import { BODY_MODE_GUARD, classifyBodyMode } from "./bodyMode.ts";
 import { emptyTally, regenGenerate, regenJudge, tallyingLedger, type RegenLedger, type RegenTransport } from "./outsideRegenModel.ts";
 import { OPENAI_PRICE_PER_MTOK } from "./modelPricing.ts";
-import { normalizeHost } from "./firstReadProvenance.ts";
 import { classifyRegistryRow } from "./registryClassifier.ts";
 import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type JudgeFailurePolicy, type VoiceClassInput } from "./voiceClassAtMint.ts";
 import type { AuthorshipJudgment } from "./aggregatorAuthorship.ts";
+import { clientAnchorsFor } from "./clientAnchors.ts";
 
 /** R17 (b): on the regen path an unjudged gated row is NOT minted. Named here, passed explicitly — the shared
  *  function has no default. */
@@ -64,8 +64,8 @@ export type RegenDeps = {
    *  under REGEN_JUDGE_FAILURE_POLICY every gated URL is then refused, never minted outside. */
   makeJudge: () => RegenJudge | null;
   models: readonly string[];
-  genSystem: (anchors: string[]) => string;
-  judgeSystem: string;
+  genSystem: (anchors: readonly string[]) => string;
+  judgeSystem: (anchors: readonly string[]) => string;
   quoteMaxWords: number;
   perUrlCap: number;
   wallMs: number;
@@ -180,11 +180,19 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   const { data: co } = await supabase.from("companies").select("id, name, website, frozen, entity_anchors_json").eq("id", company_id).maybeSingle();
   if (!co) return { status: 404, body: { error: "company not found" } };
   if ((co as { frozen?: boolean }).frozen) return { status: 403, body: { error: "outside-regen refused: company is frozen" } };
-  const anchorsRaw = (co as { entity_anchors_json?: unknown }).entity_anchors_json;
-  const anchors = Array.isArray(anchorsRaw) ? anchorsRaw.map((a) => String(a || "").trim()).filter(Boolean) : [];
-  const companyName = String((co as { name?: unknown }).name ?? "").trim();
-  const companyHost = (() => { try { return normalizeHost(new URL(String((co as { website?: unknown }).website ?? "")).hostname) || null; } catch { return null; } })();
-  const company = { name: companyName, host: companyHost };
+  // R22: the client is ALWAYS named — company name, website host (one derivation), then entity anchors; name and
+  // host both absent is a named refusal, never a fallback string. The set used rides on the plan and the ledger.
+  const ca = clientAnchorsFor(co as { name?: unknown; website?: unknown; entity_anchors_json?: unknown });
+  if (!ca.ok) {
+    await insertIntegrityRun(supabase, {
+      company_id, component: REGEN_COMPONENT, status: "failed", examined: 0, admitted: 0,
+      error: `guard=${ca.guard} ${ca.reason}`,
+      excluded_by_rule: { refused: ca.guard, guard: ca.guard, reason: ca.reason, review_gate: true, mode }, run_ref: `r3_outside_regen_refused_${ca.guard}`,
+    });
+    return { status: 400, body: { ok: false, error: ca.reason, guard: ca.guard } };
+  }
+  const anchors = ca.anchors;
+  const company = { name: ca.name ?? "", host: ca.host };
 
   // Basis: newest ok (real-body) snapshot per URL. NO fetch. `structured` rides along for the registry classifier's ld hint.
   const { data: snapRows } = await supabase
@@ -242,6 +250,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       status: 200,
       body: {
         ok: true, mode: "plan", company_id, run_id: runId, model_calls: 0, writes: 0,
+        anchors_used: anchors, anchors_from_entity: ca.from_entity_anchors,
         urls_total: rows.length, would_run: summary.approved, review: summary,
         estimate: { calls: CALLS_PER_URL * rows.length, calls_if_approved_only: CALLS_PER_URL * summary.approved, est_input_tokens, est_usd },
         rows,
@@ -313,7 +322,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     let keepByQuote = new Map<string, boolean>();
     if (cands.length) {
       try {
-        const { json: j } = await regenJudge({ system: deps.judgeSystem, user: `PAGE TEXT:\n${clean_text}\n\nCANDIDATES:\n${cands.map((c) => `- ${c}`).join("\n")}`, models: deps.models, transport, ledger });
+        const { json: j } = await regenJudge({ system: deps.judgeSystem(anchors), user: `PAGE TEXT:\n${clean_text}\n\nCANDIDATES:\n${cands.map((c) => `- ${c}`).join("\n")}`, models: deps.models, transport, ledger });
         const verdicts = (Array.isArray(j.verdicts) ? j.verdicts : []) as Array<Record<string, unknown>>;
         keepByQuote = new Map(verdicts.map((v) => [String(v.quote ?? "").trim(), v.keep === true]));
       } catch (e) {
@@ -388,7 +397,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     examined: candidates_total, admitted: admitted_total,
     // R4: the run's model-call tally beside its counts — {generator, judge, usd, ledger_failed}.
     // R17: the voice refusals — excerpts not minted because a gated URL could not be judged; retried next run.
-    excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY },
+    excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors },
     run_ref: `r3_outside_regen_${runId}`,
   });
 
@@ -397,6 +406,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     body: {
       ok: true, mode: "write", company_id, run_id: runId, urls_total: urls.length, pages_processed: processed, stopped_for_time: stoppedForTime, review_refused: reviewRefused,
       model_calls: tally,
+      anchors_used: anchors,
       voice: { policy: REGEN_JUDGE_FAILURE_POLICY, judge_wired: judge !== null, refused_total: voice_refused_total, refusals: voiceRefusals },
       totals: { candidates: candidates_total, admitted: admitted_total, guard_rejected: guard_rejected_total, reject_reasons: rejectReasons },
       pages,

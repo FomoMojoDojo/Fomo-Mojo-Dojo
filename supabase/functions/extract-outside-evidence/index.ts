@@ -30,6 +30,7 @@ import { callOpenAIJson } from "../_shared/modelRouter.ts";
 import { recordModelCall } from "../_shared/recordModelCall.ts";
 import { type RegenLedger, type RegenTransport } from "../_shared/outsideRegenModel.ts";
 import { runOutsideRegen, type RegenJudge } from "../_shared/outsideRegenHandler.ts";
+import { genSystem, judgeSystem, QUOTE_MAX_WORDS } from "../_shared/outsideRegenPrompts.ts";
 import { judgeAggregatorAuthorship, resolveLocalOllamaUrl } from "../_shared/aggregatorAuthorship.ts";
 
 const corsHeaders = {
@@ -45,27 +46,10 @@ const GEN_MODEL = Deno.env.get("OUTSIDE_REGEN_MODEL") ?? "gpt-4.1-mini";
 const GEN_FALLBACK = Deno.env.get("OUTSIDE_REGEN_FALLBACK_MODEL") ?? "gpt-4.1-nano";
 const REGEN_MODELS = [GEN_MODEL, GEN_FALLBACK] as const;
 const PER_URL_CAP = Number(Deno.env.get("OUTSIDE_REGEN_PER_URL_CAP") ?? "12");
-const QUOTE_MAX_WORDS = 60;
 const WALL_MS = 140_000;
 const MODEL_TIMEOUT_MS = 90_000;
-
-function genSystem(anchors: string[]): string {
-  const names = anchors.length ? anchors.join(", ") : "the client";
-  return (
-    `You are reading a THIRD-PARTY web page (a review site, directory, marketplace, or partner). ` +
-    `Extract ONLY statements this outside source makes ABOUT the client — the business known as: ${names}. ` +
-    `Return each as an EXACT substring of the supplied page text (copy-paste, invent nothing), at most ${QUOTE_MAX_WORDS} words. ` +
-    `KEEP: what the source says about the client's food/coffee/service/quality/reputation, ratings phrased in prose, ` +
-    `what the client sells or offers, partner/wholesale relationships the source states. ` +
-    `EXCLUDE: navigation, menus with prices, hours, cookie/consent, ads, other businesses, and anything not about the client. ` +
-    `Respond with ONLY JSON: {"statements":["...","..."]}. No other text.`
-  );
-}
-const JUDGE_SYSTEM =
-  `You judge candidate quotes lifted from a THIRD-PARTY page about a client business. For each candidate decide keep=true ONLY if ` +
-  `it is the outside source speaking ABOUT the client (its quality, offering, reputation, or a stated relationship) — NOT navigation, ` +
-  `a menu/price line, hours, boilerplate, or a statement about a different business. ` +
-  `Respond with ONLY JSON: {"verdicts":[{"quote":"...","keep":true,"reason":"..."}]}. No other text.`;
+// R22: both prompts are built from the client's anchor set (name, host, entity anchors) in
+// _shared/outsideRegenPrompts.ts; neither carries a fallback name.
 
 /** One attempt against one model; throws on a non-ok answer so the module moves to the next model.
  *  Built by the handler ONLY on the write path; a missing key refuses before any attempt. */
@@ -99,7 +83,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const r = await runOutsideRegen(body, {
       supabase, makeTransport, makeLedger: (cid) => makeLedger(supabase, cid), makeJudge,
-      models: REGEN_MODELS, genSystem, judgeSystem: JUDGE_SYSTEM, quoteMaxWords: QUOTE_MAX_WORDS, perUrlCap: PER_URL_CAP, wallMs: WALL_MS,
+      models: REGEN_MODELS, genSystem, judgeSystem, quoteMaxWords: QUOTE_MAX_WORDS, perUrlCap: PER_URL_CAP, wallMs: WALL_MS,
     });
     return json(r.body, r.status);
   } catch (e) {

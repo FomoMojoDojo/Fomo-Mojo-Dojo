@@ -7,9 +7,9 @@ import {
 import { classifyBodyMode } from "./bodyMode.ts";
 import type { RegenLedgerEntry, RegenTransport } from "./outsideRegenModel.ts";
 
-const CO = "00000000-0000-4000-8000-00000000c0de";
+export const CO = "00000000-0000-4000-8000-00000000c0de";
 const RUN = "11111111-1111-4111-8111-111111111111";
-const U1 = "https://reviews.example/acme", U2 = "https://directory.example/acme", U3 = "https://press.example/acme", U4 = "https://walled.example/acme";
+export const U1 = "https://reviews.example/acme", U2 = "https://directory.example/acme", U3 = "https://press.example/acme", U4 = "https://walled.example/acme";
 const UOWN = "https://www.acmecoffee.com/wholesale", UGATED = "https://www.crunchbase.com/organization/acme-coffee";
 const POWN = "Acme Coffee wholesale: we roast every bean in Burbank and supply 40 cafes across Los Angeles.";
 const PGATED = "Acme Coffee is a specialty roaster supplying 40 cafes across Los Angeles since 2011. Founded 2011. Employees 11-50.";
@@ -22,7 +22,7 @@ const EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b
 type Row = Record<string, unknown>;
 /** A chainable fake of the supabase query builder: eq / is / in filter; order is a no-op (seed rows newest first);
  *  maybeSingle returns the first match; insert appends and records; awaiting the builder yields { data, error }. */
-function fakeDb(seed: Record<string, Row[]>) {
+export function fakeDb(seed: Record<string, Row[]>) {
   const tables: Record<string, Row[]> = JSON.parse(JSON.stringify(seed));
   const inserts: Record<string, Row[]> = {};
   const from = (t: string) => {
@@ -45,7 +45,7 @@ function fakeDb(seed: Record<string, Row[]>) {
 
 function seed(): Record<string, Row[]> {
   return {
-    companies: [{ id: CO, name: "Acme Coffee", website: "https://www.acmecoffee.com", frozen: false, entity_anchors_json: ["Acme Coffee"] }, { id: "frozen-co", name: "Frozen", website: null, frozen: true, entity_anchors_json: [] }],
+    companies: [{ id: CO, name: "Acme Coffee", website: "https://www.acmecoffee.com", frozen: false, entity_anchors_json: ["Acme Coffee"] }, { id: "frozen-co", name: "Frozen", website: null, frozen: true, entity_anchors_json: [] }, { id: "nameless-co", name: "", website: null, frozen: false, entity_anchors_json: ["Only An Anchor"] }],
     outside_page_snapshots: [
       { id: "snap-1", company_id: CO, source_url: U1, signal_id: "sig-kept", clean_text: P1, text_sha256: "sha1", crawled_at: "2026-09-14T00:00:00Z", fetch_status: "ok" },
       { id: "snap-1-old", company_id: CO, source_url: U1, signal_id: null, clean_text: "older text", text_sha256: "sha1old", crawled_at: "2026-08-01T00:00:00Z", fetch_status: "ok" },
@@ -67,7 +67,7 @@ function seed(): Record<string, Row[]> {
   };
 }
 
-function deps(db: ReturnType<typeof fakeDb>, transport?: RegenTransport, judge: RegenJudge | null = null) {
+export function deps(db: ReturnType<typeof fakeDb>, transport?: RegenTransport, judge: RegenJudge | null = null) {
   const ledgerRows: RegenLedgerEntry[] = [];
   let constructions = 0;
   const d: RegenDeps = {
@@ -76,7 +76,7 @@ function deps(db: ReturnType<typeof fakeDb>, transport?: RegenTransport, judge: 
     makeJudge: () => judge,
     makeLedger: () => (e) => { ledgerRows.push(e); return Promise.resolve(true); },
     models: ["gpt-4.1-mini", "gpt-4.1-nano"],
-    genSystem: () => "GEN", judgeSystem: "JUDGE", quoteMaxWords: 60, perUrlCap: 12, wallMs: 140_000,
+    genSystem: () => "GEN", judgeSystem: () => "JUDGE", quoteMaxWords: 60, perUrlCap: 12, wallMs: 140_000,
     nowIso: () => "2026-10-18T12:00:00.000Z",
   };
   return { d, ledgerRows, constructions: () => constructions };
@@ -206,8 +206,8 @@ Deno.test("WRITE: only approved URLs run; one transport; two ledger rows per pag
 });
 
 // ── R17: the voice class comes from the one authority; an unjudged gated row is refused ──────────────────────
-const RUN2 = "22222222-2222-4222-8222-222222222222";
-function seedR17(): Record<string, Row[]> {
+export const RUN2 = "22222222-2222-4222-8222-222222222222";
+export function seedR17(): Record<string, Row[]> {
   const s = seed();
   s.outside_page_snapshots.push(
     { id: "snap-own", company_id: CO, source_url: UOWN, signal_id: null, clean_text: POWN, text_sha256: "sha-own", crawled_at: "2026-09-14T00:00:00Z", fetch_status: "ok" },
@@ -222,7 +222,7 @@ function seedR17(): Record<string, Row[]> {
 }
 const CAND_OWN = "Acme Coffee wholesale: we roast every bean in Burbank and supply 40 cafes across Los Angeles.";
 const CAND_GATED = "Acme Coffee is a specialty roaster supplying 40 cafes across Los Angeles since 2011.";
-function r17Transport(): RegenTransport {
+export function r17Transport(): RegenTransport {
   return ({ system, user }) => {
     const cand = user.includes(POWN) ? CAND_OWN : user.includes(PGATED) ? CAND_GATED : CAND;
     return Promise.resolve(system === "GEN"
@@ -278,4 +278,33 @@ Deno.test("R17 WRITE with a judge: subject_company on the gated URL mints client
   assertEquals((db2.inserts.signals ?? []).length, 0);
   assertEquals((r2.body.voice as { refused_total: number }).refused_total, 1);
   assert(/judge failed: timeout/.test((r2.body.voice as { refusals: Array<{ reason: string }> }).refusals[0].reason));
+});
+
+// ── R22: the client is always named; anchors add; both absent refuses ──────────────────────────────────────
+Deno.test("R22 PLAN reports the anchor set used (name, host, then entity anchors); WRITE records it on the integrity row and passes it to both prompts", async () => {
+  const db = fakeDb(seedR17());
+  db.tables.companies[0].entity_anchors_json = ["Acme Coffee", "acmecoffee.com", "Acme Roasters"]; // name and host repeated: deduped
+  const seen: string[][] = [];
+  const { d } = deps(db, r17Transport(), null);
+  d.genSystem = (a) => { seen.push([...a]); return "GEN"; };
+  d.judgeSystem = (a) => { seen.push([...a]); return "JUDGE"; };
+  const plan = await runOutsideRegen({ company_id: CO, run_id: RUN2, plan: true, urls: [U1] }, d);
+  assertEquals(plan.body.anchors_used, ["Acme Coffee", "acmecoffee.com", "Acme Roasters"]);
+  assertEquals(plan.body.anchors_from_entity, 1);
+  const w = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d);
+  assertEquals(w.status, 200);
+  assertEquals(w.body.anchors_used, ["Acme Coffee", "acmecoffee.com", "Acme Roasters"]);
+  assert(seen.length >= 2 && seen.every((a) => a[0] === "Acme Coffee" && a[1] === "acmecoffee.com"), "both prompts received the anchor set");
+  const integ = (db.inserts.integrity_runs ?? [])[0].excluded_by_rule as Record<string, unknown>;
+  assertEquals(integ.anchors_used, ["Acme Coffee", "acmecoffee.com", "Acme Roasters"]);
+});
+
+Deno.test("R22: a company with neither name nor website host is REFUSED (client_unnamed), ledgered, no transport, even with entity anchors", async () => {
+  const db = fakeDb(seedR17()); const { d, constructions } = deps(db, r17Transport(), null);
+  const r = await runOutsideRegen({ company_id: "nameless-co", run_id: RUN2, write: true }, d);
+  assertEquals(r.status, 400); assertEquals(r.body.guard, "client_unnamed");
+  assertEquals(constructions(), 0);
+  const integ = (db.inserts.integrity_runs ?? [])[0];
+  assertEquals((integ.excluded_by_rule as Record<string, unknown>).refused, "client_unnamed");
+  assertEquals(db.inserts.signals, undefined);
 });
