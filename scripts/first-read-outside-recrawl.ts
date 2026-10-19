@@ -42,6 +42,7 @@
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { chromium, type Browser, type BrowserContext } from "playwright";
 import { fetchOutsidePage } from "../supabase/functions/_shared/outsidePageStore";
 import { extractTextBasic } from "../supabase/functions/_shared/fetchAndExtract";
@@ -62,6 +63,16 @@ const EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b
 
 const dryRun = process.argv.includes("--dry-run");
 const review = process.argv.includes("--review");
+// ── R11 (operator ruling 2026-10-18): --from-snapshots — review rows FROM THE PLAN FILE, no fetch, no model ──
+//   npx vite-node scripts/first-read-outside-recrawl.ts -- --company=<uuid> --from-snapshots --plan=<b3plan-r10.tsv>
+//   … --from-snapshots --plan=<tsv> --write      THE WRITE FLAG. Without it the mode prints the rows it would
+//                                                write and writes nothing (no-write-by-default; --dry-run is accepted
+//                                                and means the same as omitting --write).
+const fromSnapshots = process.argv.includes("--from-snapshots");
+const planArg = process.argv.find((a) => a.startsWith("--plan="))?.slice("--plan=".length) ?? null;
+/** The ONLY flag that lets --from-snapshots write. */
+const FROM_SNAPSHOTS_WRITE_FLAG = "--write";
+const fromSnapshotsWrite = process.argv.includes(FROM_SNAPSHOTS_WRITE_FLAG);
 const runIdArg = process.argv.find((a) => a.startsWith("--run-id="))?.split("=")[1] ?? null;
 const baselineRunArg = process.argv.find((a) => a.startsWith("--baseline-run="))?.split("=")[1] ?? null;
 const urlOnlyArg = process.argv.find((a) => a.startsWith("--url="))?.slice("--url=".length) ?? null;
@@ -79,6 +90,9 @@ if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(comp
 if (company === CB1_FROZEN_ID) fail("REFUSED: CB1 is the frozen reference fixture — it is never re-crawled or written.");
 if (review && (!runIdArg || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runIdArg))) fail("--review requires --run-id=<uuid>");
 if (review && runIdArg === SENTINEL_RUN_ID) fail("REFUSED: the sentinel run_id is reserved for the vacuous-proof plant.");
+if (fromSnapshots && review) fail("--from-snapshots and --review are different modes; name one");
+if (fromSnapshots && !planArg) fail("--from-snapshots requires --plan=<plan tsv>");
+if (fromSnapshotsWrite && !fromSnapshots) fail(`${FROM_SNAPSHOTS_WRITE_FLAG} is the --from-snapshots write flag; it means nothing in the fetch modes`);
 if (baselineRunArg && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(baselineRunArg)) fail("--baseline-run must be a uuid");
 
 /** Run SQL through the audited docker-exec psql channel. SQL is delivered on STDIN (not argv),
@@ -100,6 +114,103 @@ const frozen = psql("select coalesce(frozen,false) from companies where id=:'c';
 if (frozen !== "f" && frozen.toLowerCase() !== "false") {
   if (frozen === "") fail(`no such company ${company}`);
   fail(`REFUSED: company ${company} is frozen — never re-crawled or written.`);
+}
+
+// ── FROM-SNAPSHOTS MODE (R11, 2026-10-18) — before the URL universe: nothing is fetched ──────────────────
+// Input: the plan file (b3plan-r10.tsv) filtered to THIS company's non-excluded rows. For each URL the
+// NEWEST OK SNAPSHOT already stored is the basis (baseline sha = new sha = that snapshot's hash), the
+// dependents are the b2-blanked signal ids the plan names — re-checked live: a listed id that is not a live,
+// excerpt-less, b2-stamped outside row is dropped and reported — and anchor presence is computed from the
+// stored text. One new run_id per invocation; disposition "b3_from_snapshot"; decision columns NULL (the
+// upsert preserves a decision that already exists). Zero network, zero model. Writes ONLY with --write.
+if (fromSnapshots) {
+  const { parsePlanTsv, planRowsFor } = await import("../src/lib/b3Review/review");
+  const planText = readFileSync(planArg!, "utf8");
+  const coRow = JSON.parse(psql("select coalesce(row_to_json(t)::text,'null') from (select name, website, entity_anchors_json from companies where id=:'c') t;", { c: company! })) as { name: string | null; website: string | null; entity_anchors_json: unknown[] | null } | null;
+  if (!coRow?.name) fail(`no company row for ${company}`);
+  const { kept, excluded, other_companies } = planRowsFor(parsePlanTsv(planText), coRow.name);
+  if (kept.length === 0) fail(`from-snapshots: the plan has no in-scope rows for "${coRow.name}" (${excluded.length} excluded, ${other_companies} rows of other companies)`);
+  const anchors = buildAnchors({ name: coRow.name, website: coRow.website, entityAnchors: coRow.entity_anchors_json ?? [] });
+  const fsRunId = randomUUID();
+  const fsRunRef = `r2_outside_recrawl_from_snapshots_${new Date().toISOString()}`;
+  type FsRow = { url: string; snapshot_id: string | null; sha: string | null; http_status: number | null; chars: number; anchor_present: boolean | null; signal_ids: string[]; dropped_ids: string[]; delta_ids: string[]; plan_snapshot_id: string; snapshot_matches_plan: boolean };
+  const fsRows: FsRow[] = [];
+  const refused: Array<{ url: string; reason: string }> = [];
+  for (const r of kept) {
+    const snap = JSON.parse(psql(
+      `select coalesce(row_to_json(t)::text,'null') from (select id, text_sha256, http_status, clean_text from outside_page_snapshots
+         where company_id=:'c' and source_url=:'u' and fetch_status='ok' and clean_text is not null and length(clean_text)>0
+         order by crawled_at desc limit 1) t;`, { c: company!, u: r.url })) as { id: string; text_sha256: string; http_status: number | null; clean_text: string } | null;
+    if (!snap) { refused.push({ url: r.url, reason: "no ok snapshot stored for this url" }); continue; }
+    const live: Array<{ id: string; quote: string | null }> = JSON.parse(psql(
+      `select coalesce(json_agg(json_build_object('id', id, 'quote', quote)),'[]') from signals
+        where company_id=:'c' and source_url=:'u' and signal_band='outside' and superseded_at is null and held_at is null
+          and coalesce(trim(evidence_excerpt),'')='' and coalesce(raw_payload->'excerpt_guard'->>'backfill_run_ref','')<>''
+          and id = any(array(select jsonb_array_elements_text(${b64Sql(r.blanked_signal_ids)}))::uuid[]);`, { c: company!, u: r.url }).replace(/^$/, "[]"));
+    const liveIds = live.map((x) => x.id);
+    const dropped = r.blanked_signal_ids.filter((id) => !liveIds.includes(id));
+    if (liveIds.length === 0) { refused.push({ url: r.url, reason: `none of the ${r.blanked_signal_ids.length} planned ids is a live b2-blanked outside row` }); continue; }
+    const deltaIds: string[] = JSON.parse(psql(
+      `select coalesce(json_agg(distinct x.id),'[]') from claim_deltas x join claim_signal_refs rf on rf.claim_id=x.public_claim_id
+        where x.company_id=:'c' and rf.signal_id = any(array(select jsonb_array_elements_text(${b64Sql(liveIds)}))::uuid[]);`, { c: company! }).replace(/^$/, "[]"));
+    const quotes = live.map((x) => x.quote).filter((q): q is string => !!q && q.trim().length > 0);
+    fsRows.push({
+      url: r.url, snapshot_id: snap.id, sha: snap.text_sha256, http_status: snap.http_status, chars: snap.clean_text.length,
+      anchor_present: anchorPresent(snap.clean_text, anchors, quotes), signal_ids: liveIds, dropped_ids: dropped, delta_ids: deltaIds,
+      plan_snapshot_id: r.snapshot_id, snapshot_matches_plan: snap.id === r.snapshot_id,
+    });
+  }
+  const padf = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s.padEnd(n));
+  console.log(`\nFROM-SNAPSHOTS${fromSnapshotsWrite ? "" : " (DRY-RUN — no writes; pass " + FROM_SNAPSHOTS_WRITE_FLAG + " to write)"} · company ${company} (${coRow.name})`);
+  console.log(`plan=${planArg} · in scope ${kept.length} · excluded by R10 ${excluded.length} · run_id=${fsRunId} · run_ref=${fsRunRef}\n`);
+  console.log(`${padf("URL", 60)}  ${padf("snapshot", 10)}  chars  cap  anchor  deps  deltas  disposition`);
+  console.log("-".repeat(118));
+  for (const r of fsRows) console.log(`${padf(r.url, 60)}  ${padf(r.snapshot_id ?? "", 10)}  ${String(r.chars).padStart(5)}  ${r.chars >= TEXT_CAP ? "y" : "n"}    ${String(r.anchor_present).padEnd(6)}  ${String(r.signal_ids.length).padStart(4)}  ${String(r.delta_ids.length).padStart(6)}  b3_from_snapshot${r.dropped_ids.length ? `  (dropped ${r.dropped_ids.length} planned id(s) not live/blanked)` : ""}${r.snapshot_matches_plan ? "" : "  (newest snapshot differs from the plan's)"}`);
+  for (const x of refused) console.log(`${padf(x.url, 60)}  REFUSED: ${x.reason}`);
+  for (const r of excluded) console.log(`${padf(r.url, 60)}  excluded by R10: ${r.exclude} — ${r.exclude_rule}`);
+  let upserted = 0;
+  // MEASURED by the guard: how many write statements this run ISSUED (0 in a dry run, whatever the database
+  // said), and how many the database refused. A refused write is reported, never swallowed, and fails the run.
+  let issued = 0;
+  const refusedByDb: Array<{ url: string; error: string }> = [];
+  let fsLedger = "(dry-run: not written)";
+  if (fromSnapshotsWrite && fsRows.length) {
+    for (const r of fsRows) {
+      issued++;
+      try {
+      psql(`with p as (select ${b64Sql({
+        company_id: company, run_id: fsRunId, source_url: r.url, baseline_sha256: r.sha, baseline_status: "ok", new_sha256: r.sha,
+        fetch_status: "ok", http_status: r.http_status ?? 200, fetch_path: "snapshot", disposition: "b3_from_snapshot",
+        dependent_signal_ids: r.signal_ids, dependent_delta_ids: r.delta_ids, anchor_present: r.anchor_present,
+      })} j)
+        insert into outside_recrawl_review (company_id, run_id, source_url, baseline_sha256, baseline_status, new_sha256, fetch_status, http_status, fetch_path, disposition, dependent_signal_ids, dependent_delta_ids, anchor_present)
+        select (j->>'company_id')::uuid, (j->>'run_id')::uuid, j->>'source_url', j->>'baseline_sha256', j->>'baseline_status', j->>'new_sha256',
+               (j->>'fetch_status')::outside_fetch_status, (j->>'http_status')::int, j->>'fetch_path', j->>'disposition',
+               array(select jsonb_array_elements_text(j->'dependent_signal_ids'))::uuid[], array(select jsonb_array_elements_text(j->'dependent_delta_ids'))::uuid[],
+               (j->>'anchor_present')::boolean
+          from p
+        ${reviewUpsertSql()};`);
+      upserted++;
+      } catch (e) {
+        refusedByDb.push({ url: r.url, error: String((e as Error).message || e).split("\n").find((l) => l.startsWith("ERROR:")) ?? String((e as Error).message || e).slice(0, 200) });
+      }
+    }
+    if (refusedByDb.length === 0) fsLedger = psql(
+      `with p as (select ${b64Sql({
+        company_id: company, component: "r2_outside_recrawl", surface_type: "outside_review", status: "completed",
+        examined: kept.length, admitted: upserted,
+        excluded_by_rule: { mode: "from_snapshots", plan_file: planArg, run_id: fsRunId, urls: fsRows.map((r) => r.url), refused, excluded_by_r10: excluded.map((r) => ({ url: r.url, exclude: r.exclude })), dropped_ids: fsRows.flatMap((r) => r.dropped_ids), network: false, model_calls: 0 },
+        run_ref: fsRunRef,
+      })} j),
+       ins as (
+         insert into integrity_runs (company_id, component, surface_type, ran_at, status, examined, admitted, excluded_by_rule, run_ref)
+         select (j->>'company_id')::uuid, j->>'component', j->>'surface_type', now(), j->>'status', (j->>'examined')::int, (j->>'admitted')::int, j->'excluded_by_rule', j->>'run_ref' from p returning id)
+       select id from ins;`,
+    );
+  }
+  console.log(`\nwould write: ${fsRows.length} review row(s) · refused ${refused.length} · writes: ${fromSnapshotsWrite ? upserted : 0}${fromSnapshotsWrite ? "" : " (dry-run)"} · write statements issued: ${issued} · refused by the database: ${refusedByDb.length} · ledger integrity_runs.id = ${fsLedger}`);
+  for (const x of refusedByDb) console.log(`  DB REFUSED ${x.url}: ${x.error}`);
+  process.exit(refusedByDb.length || (refused.length && fsRows.length === 0) ? 1 : 0);
 }
 
 // ── URL universe: outside_voice signals with a fetchable URL, grouped by URL ───
