@@ -16,6 +16,9 @@
 #       carries a non-null usd, sha is 64 hex, the nano-fallback case ledgers attempt 1 (usd NULL) and
 #       attempt 2 (priced), two un-parseable answers still ledger two rows (ledger BEFORE parse). The
 #       module's own Deno test file must pass too.
+#   l4. (R27) the copying rule and the DOT demonstration are present in the generator prompt source (PRESENCE, not
+#       behaviour); the candidates probe (fake transport: one exact span, one paraphrase) measures admitted 1,
+#       e4_not_verbatim 1, stored candidates 2 with both reasons, nearest span indexing the raw page.
 #   l3. DATA — for every integrity_runs row of component r3_outside_regen ran AFTER the fix landed, the
 #       model_calls rows at call_site extract-outside-evidence:* for that company inside the run's window
 #       must number at least the pages processed. UNTIL b3 RUNS there are no such rows: this prints
@@ -80,4 +83,24 @@ else
   [ "$BAD" = "0" ] || fail l3 "$BAD run(s) since the fix processed more pages than they ledgered generator calls"
   echo "l3. data: $RUNS run(s) since the fix, every one ledgered at least one generator row per page; standing regen ledger rows: $STANDING"
 fi
+
+# l4 — R27: the copying rule is PRESENT in the generator prompt (presence, not behaviour — behaviour is proven on a
+#      pilot by the e4_not_verbatim count); every candidate is recorded on the integrity row with both reasons and,
+#      for an e4 refusal, its nearest page span. Probe: scripts/guards/regen-candidates-probe.ts (fake transport).
+PR=supabase/functions/_shared/outsideRegenPrompts.ts
+H=supabase/functions/_shared/outsideRegenHandler.ts
+grep -q 'ONE CONTIGUOUS SPAN copied character for character from PAGE TEXT' "$PR" || fail l4 "the copying rule is not in the generator prompt source"
+grep -q 'WRONG: "The company has maintained an active DOT status' "$PR" || fail l4 "the demonstration's one-word counterexample is not in the prompt source"
+grep -q '\${COPYING_RULE} ' "$PR" && grep -q '\${COPYING_DEMONSTRATION} ' "$PR" || fail l4 "genSystem does not include the rule and the demonstration"
+grep -q 'candidates: candidateRecords' "$H" || fail l4 "the handler does not store the candidates on the integrity row"
+grep -q 'generator_reason: cand.reason, judge_reason:' "$H" || fail l4 "the minted row's raw_payload does not carry the reasons"
+C=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-candidates-probe.ts 2>&1 | tail -1)
+[ "$(echo "$C" | jq_ "d.get('admitted')")" = "1" ] || fail l4 "admitted != 1: $C"
+[ "$(echo "$C" | jq_ "d.get('e4_not_verbatim')")" = "1" ] || fail l4 "e4_not_verbatim != 1: $C"
+[ "$(echo "$C" | jq_ "d.get('stored_candidates')")" = "2" ] || fail l4 "stored candidates != 2: $C"
+[ "$(echo "$C" | jq_ "d.get('with_both_reasons')")" = "2" ] || fail l4 "candidates with both reasons != 2: $C"
+[ "$(echo "$C" | jq_ "d.get('stored_in_full')")" = "True" ] || fail l4 "a stored candidate is truncated: $C"
+[ "$(echo "$C" | jq_ "(d.get('paraphrase_nearest_span') or {}).get('indexes_raw_page')")" = "True" ] || fail l4 "the paraphrase's nearest span does not index the raw page: $C"
+echo "l4. R27 probe (fake transport): $C"
+echo "l4. R27 source: copying rule + DOT demonstration present in the generator prompt (presence only); candidates stored on the integrity row; reasons on the minted row"
 echo "GUARD OK"

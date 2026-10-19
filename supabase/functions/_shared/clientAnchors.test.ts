@@ -53,3 +53,17 @@ Deno.test("SOURCE PIN: no prompt builder carries the literal \"the client\"; the
   const handler = await Deno.readTextFile(new URL("./outsideRegenHandler.ts", import.meta.url));
   assert(handler.includes("clientAnchorsFor(co") && handler.includes("anchors_used: anchors"), "handler names the client through the one function and records the set used");
 });
+
+// ── R27: the copying rule and its demonstration are PRESENT in the built generator prompt (presence, not behaviour) ──
+Deno.test("R27 SOURCE PIN: the generator prompt carries the copying rule, the DOT demonstration with its one-word counterexample, and the {text, reason} shape; the judge's criteria text is unchanged", async () => {
+  const { COPYING_RULE, COPYING_DEMONSTRATION, GENERATOR_JSON_SHAPE } = await import("./outsideRegenPrompts.ts");
+  const p = genSystem(["Acme", "acme.test"]);
+  assert(p.includes(COPYING_RULE) && /ONE CONTIGUOUS SPAN copied character for character/.test(p), "copying rule present");
+  assert(/no joining of separate lines or cells, no added subject/.test(p));
+  assert(p.includes(COPYING_DEMONSTRATION) && p.includes("This company has maintained an active DOT status for 1 year but had no inspections"), "demonstration present");
+  assert(/WRONG: "The company has maintained/.test(p), "the one-word counterexample");
+  assert(p.includes(GENERATOR_JSON_SHAPE) && /"reason"/.test(GENERATOR_JSON_SHAPE), "the {text, reason} shape");
+  const j = judgeSystem(["Acme", "acme.test"]);
+  assert(/keep=true ONLY if it is the outside source speaking ABOUT that business/.test(j) && /"reason":"\.\.\."/.test(j), "judge criteria and reason field unchanged");
+  assert(!j.includes(COPYING_RULE), "the judge does not carry the copying rule");
+});

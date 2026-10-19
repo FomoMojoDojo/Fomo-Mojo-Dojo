@@ -26,6 +26,7 @@ import { classifyRegistryRow } from "./registryClassifier.ts";
 import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type JudgeFailurePolicy, type VoiceClassInput } from "./voiceClassAtMint.ts";
 import type { AuthorshipJudgment } from "./aggregatorAuthorship.ts";
 import { clientAnchorsFor } from "./clientAnchors.ts";
+import { nearestSpan, type NearestSpan } from "./nearestSpan.ts";
 
 /** R17 (b): on the regen path an unjudged gated row is NOT minted. Named here, passed explicitly — the shared
  *  function has no default. */
@@ -43,6 +44,34 @@ export const REGEN_COMPONENT = "r3_outside_regen";
 export const EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 /** fetchAndExtract's text cap: a snapshot of exactly this length was cut, not complete. */
 export const SNAPSHOT_CAP_CHARS = 12_000;
+
+// ── R27: EVERY CANDIDATE IS RECORDED (operator ruling 2026-10-18) ──────────────────────────────────────────
+// The generator returns {text, reason}; the judge's reason is kept; each candidate — admitted or refused — is
+// stored on the run's integrity row in full with its outcome code, both reasons, and (for an e4 refusal) the
+// page span it came closest to with its offset. Nothing per candidate is truncated or capped in storage.
+export type CandidateCode =
+  | "admitted" | "judge_reject" | "duplicate_identity" | "voice_refused"
+  | "e4_not_verbatim" | "e2_overbroad" | "e2_too_short" | "e2_overthinned" | "e2_thin_broke_verbatim" | "empty";
+export type CandidateRecord = {
+  url: string; text: string; code: CandidateCode;
+  generator_reason: string | null; judge_reason: string | null;
+  /** the page span an e4 refusal came closest to (longest common run on e4's normalization); null otherwise */
+  nearest_span: NearestSpan | null;
+  /** the voice authority's refusal reason when code is voice_refused */
+  detail?: string;
+};
+/** The generator's statements as {text, reason}. A bare string (the pre-R27 shape) reads as text with no reason. */
+export function parseGeneratorStatements(statements: unknown, quoteMaxWords: number): Array<{ text: string; reason: string | null }> {
+  const list = Array.isArray(statements) ? statements : [];
+  const out: Array<{ text: string; reason: string | null }> = [];
+  for (const s of list) {
+    const text = typeof s === "string" ? s.trim() : String((s as { text?: unknown })?.text ?? "").trim();
+    if (!text || text.split(/\s+/).length > quoteMaxWords) continue;
+    const r = typeof s === "object" && s !== null ? (s as { reason?: unknown }).reason : null;
+    out.push({ text, reason: typeof r === "string" && r.trim() ? r.trim() : null });
+  }
+  return out;
+}
 /** Token estimate: ~4 chars per token for English page text, plus the system prompt and the judge's
  *  candidate list. Estimates, labelled as such — the ledger holds the real figures. */
 export const EST_CHARS_PER_TOKEN = 4;
@@ -299,6 +328,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   }
 
   const pages: Array<Record<string, unknown>> = [];
+  const candidateRecords: CandidateRecord[] = [];   // R27: every candidate of the run, in full, for the integrity row
   const seenThisRun = new Set<string>();
   let candidates_total = 0, admitted_total = 0, guard_rejected_total = 0;
   const rejectReasons: Record<string, number> = {};
@@ -308,23 +338,23 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     if (now() - startedAt > deps.wallMs) { stoppedForTime = true; break; }
     const { clean_text, sha, readDate } = newestByUrl.get(url)!;
 
-    let cands: string[] = [];
+    let cands: Array<{ text: string; reason: string | null }> = [];
     try {
       const { json: gen } = await regenGenerate({ system: deps.genSystem(anchors), user: `PAGE TEXT:\n${clean_text}`, models: deps.models, transport, ledger });
-      cands = (Array.isArray(gen.statements) ? gen.statements : []).map((s: unknown) => String(s ?? "").trim())
-        .filter((s) => s && s.split(/\s+/).length <= deps.quoteMaxWords);
+      cands = parseGeneratorStatements(gen.statements, deps.quoteMaxWords);
     } catch (e) {
       pages.push({ url, error: `gen: ${(e as Error).message}`, candidates: 0, admitted: 0 });
       continue;
     }
     candidates_total += cands.length;
 
-    let keepByQuote = new Map<string, boolean>();
+    // R27: the judge's verdict AND its reason are kept per quote
+    let keepByQuote = new Map<string, { keep: boolean; reason: string | null }>();
     if (cands.length) {
       try {
-        const { json: j } = await regenJudge({ system: deps.judgeSystem(anchors), user: `PAGE TEXT:\n${clean_text}\n\nCANDIDATES:\n${cands.map((c) => `- ${c}`).join("\n")}`, models: deps.models, transport, ledger });
+        const { json: j } = await regenJudge({ system: deps.judgeSystem(anchors), user: `PAGE TEXT:\n${clean_text}\n\nCANDIDATES:\n${cands.map((c) => `- ${c.text}`).join("\n")}`, models: deps.models, transport, ledger });
         const verdicts = (Array.isArray(j.verdicts) ? j.verdicts : []) as Array<Record<string, unknown>>;
-        keepByQuote = new Map(verdicts.map((v) => [String(v.quote ?? "").trim(), v.keep === true]));
+        keepByQuote = new Map(verdicts.map((v) => [String(v.quote ?? "").trim(), { keep: v.keep === true, reason: typeof v.reason === "string" && v.reason.trim() ? v.reason.trim() : null }]));
       } catch (e) {
         pages.push({ url, error: `judge: ${(e as Error).message}`, candidates: cands.length, admitted: 0 });
         continue;
@@ -333,18 +363,26 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
 
     const admittedRows: Array<Record<string, unknown>> = [];
     const rejected: Array<{ quote: string; reason: string }> = [];
-    for (const c of cands) {
+    const pageCandidates: CandidateRecord[] = [];
+    const record = (c: { text: string; reason: string | null }, code: CandidateCode, extra: Partial<CandidateRecord> = {}) => {
+      const rec: CandidateRecord = { url, text: c.text, code, generator_reason: c.reason, judge_reason: keepByQuote.get(c.text)?.reason ?? null, nearest_span: null, ...extra };
+      pageCandidates.push(rec); candidateRecords.push(rec);
+    };
+    for (const cand of cands) {
       if (admittedRows.length >= deps.perUrlCap) break;
-      if (keepByQuote.size && keepByQuote.get(c) === false) { rejected.push({ quote: c.slice(0, 80), reason: "judge_reject" }); continue; }
+      const c = cand.text;
+      if (keepByQuote.size && keepByQuote.get(c)?.keep === false) { rejected.push({ quote: c.slice(0, 80), reason: "judge_reject" }); record(cand, "judge_reject"); continue; }
       const verdictA = admitOutsideEvidence(c, clean_text);
       if (!verdictA.admit) {
         guard_rejected_total++;
         rejectReasons[verdictA.reason] = (rejectReasons[verdictA.reason] ?? 0) + 1;
         rejected.push({ quote: c.slice(0, 80), reason: verdictA.reason });
+        // R27: an e4 refusal names the page span it came closest to, with its offset in the raw page
+        record(cand, verdictA.reason, verdictA.reason === "e4_not_verbatim" ? { nearest_span: nearestSpan(c, clean_text) } : {});
         continue;
       }
       const ci = await contentIdentity(verdictA.excerpt);
-      if (existingCI.has(ci) || seenThisRun.has(ci)) { rejected.push({ quote: c.slice(0, 80), reason: "duplicate_identity" }); continue; }
+      if (existingCI.has(ci) || seenThisRun.has(ci)) { rejected.push({ quote: c.slice(0, 80), reason: "duplicate_identity" }); record(cand, "duplicate_identity"); continue; }
       // R17: THE voice class, from the one shared authority — never a literal here. An unjudged gated row is refused.
       const voiceInput: VoiceClassInput = {
         url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText: clean_text, judgedText: verdictA.excerpt, company,
@@ -354,11 +392,13 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       if (!voice.ok) {
         voice_refused_total++;
         rejected.push({ quote: c.slice(0, 80), reason: `voice_refused: ${voice.reason}` });
+        record(cand, "voice_refused", { detail: voice.reason });
         const vr = voiceRefusals.find((x) => x.url === url && x.reason === voice.reason);
         if (vr) vr.excerpts++; else voiceRefusals.push({ url, reason: voice.reason, excerpts: 1 });
         continue;
       }
       seenThisRun.add(ci);
+      record(cand, "admitted");
       admittedRows.push({
         company_id, source_id: null, source_type: "outside_recrawl_regen", source_title: titleByUrl.get(url) ?? null,
         source_url: url, signal_band: "outside", evidence_type: "market_signal",
@@ -372,6 +412,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
           source: "outside_recrawl_regen", content_identity: ci, page_url: url, snapshot_text_sha256: sha,
           run_id: runId, provenance: "public_observed", read_at: nowIso(),
           verbatim: normalizeForHash(verdictA.excerpt).length,
+          // R27: why the generator lifted it and why the judge kept it — the model's own words, beside the page's
+          generator_reason: cand.reason, judge_reason: keepByQuote.get(c)?.reason ?? null,
           voice_authority: { authority: voice.authority, detail: voice.detail, policy: REGEN_JUDGE_FAILURE_POLICY, gate: voice.gate },
           ...(voice.authorship_judge ? { authorship_judge: voice.authorship_judge } : {}),
           ...(voiceInput.registry ? { registry: voiceInput.registry } : {}),
@@ -389,6 +431,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       url, candidates: cands.length, admitted: admittedRows.length,
       admitted_excerpts: admittedRows.map((r) => r.evidence_excerpt),
       rejected: rejected.slice(0, 20),
+      candidate_records: pageCandidates,   // R27: every candidate in full, with reasons and nearest spans (candidates stays the count)
     });
   }
 
@@ -397,7 +440,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     examined: candidates_total, admitted: admitted_total,
     // R4: the run's model-call tally beside its counts — {generator, judge, usd, ledger_failed}.
     // R17: the voice refusals — excerpts not minted because a gated URL could not be judged; retried next run.
-    excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors },
+    excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords },
     run_ref: `r3_outside_regen_${runId}`,
   });
 

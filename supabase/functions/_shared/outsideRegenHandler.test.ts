@@ -308,3 +308,52 @@ Deno.test("R22: a company with neither name nor website host is REFUSED (client_
   assertEquals((integ.excluded_by_rule as Record<string, unknown>).refused, "client_unnamed");
   assertEquals(db.inserts.signals, undefined);
 });
+
+// ── R27: the copying rule's recording — every candidate stored with reasons; an e4 refusal names its nearest span ──
+export const P27 = "Insights\n🟡 This company has maintained an active DOT status for 1 year but had no inspections .\n2025\n9 changes\nAcme Coffee roasts every bean in Burbank.";
+export const EXACT27 = "This company has maintained an active DOT status for 1 year but had no inspections";
+export const PARA27 = "The company has maintained an active DOT status for 1 year but had no inspections";
+export function r27Transport(): RegenTransport {
+  return ({ system }) => Promise.resolve(system === "GEN"
+    ? { content: JSON.stringify({ statements: [{ text: EXACT27, reason: "the source rates the company's DOT record" }, { text: PARA27, reason: "same sentence, restated" }] }), usage: { prompt_tokens: 100, completion_tokens: 40 } }
+    : { content: JSON.stringify({ verdicts: [{ quote: EXACT27, keep: true, reason: "about the business" }, { quote: PARA27, keep: true, reason: "about the business too" }] }), usage: { prompt_tokens: 120, completion_tokens: 30 } });
+}
+export function seedR27(): Record<string, Row[]> {
+  const s = seedR17();
+  for (const r of s.outside_page_snapshots) if (r.source_url === U1) { r.clean_text = P27; r.text_sha256 = "sha-27"; }
+  return s;
+}
+
+Deno.test("R27 WRITE: one exact span and one paraphrase → admitted 1, e4_not_verbatim 1; both candidates stored in full on the integrity row with generator and judge reasons; the paraphrase names its nearest page span with offset; the minted row's raw_payload carries both reasons", async () => {
+  const db = fakeDb(seedR27()); const { d } = deps(db, r27Transport(), null);
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d);
+  assertEquals(r.status, 200, JSON.stringify(r.body));
+  const page = (r.body.pages as Array<Record<string, unknown>>)[0];
+  assertEquals(page.candidates, 2, "the count keeps its key"); assertEquals((page.candidate_records as unknown[]).length, 2); assertEquals(page.admitted, 1);
+  const integ = (db.inserts.integrity_runs ?? [])[0].excluded_by_rule as { candidates: Array<Record<string, unknown>>; reject_reasons: Record<string, number> };
+  assertEquals(integ.reject_reasons, { e4_not_verbatim: 1 });
+  assertEquals(integ.candidates.length, 2, "both candidates stored");
+  const [a, b] = integ.candidates;
+  assertEquals(a, { url: U1, text: EXACT27, code: "admitted", generator_reason: "the source rates the company's DOT record", judge_reason: "about the business", nearest_span: null });
+  assertEquals(b.code, "e4_not_verbatim"); assertEquals(b.text, PARA27, "stored in full, no 80-char prefix");
+  assertEquals(b.generator_reason, "same sentence, restated"); assertEquals(b.judge_reason, "about the business too");
+  const ns = b.nearest_span as { text: string; offset: number; length: number };
+  assertEquals(ns.text, "company has maintained an active DOT status for 1 year but had no inspections");
+  assertEquals(P27.slice(ns.offset, ns.offset + ns.length), ns.text, "the offset indexes the raw page");
+  const minted = (db.inserts.signals ?? []) as Array<{ evidence_excerpt: string; raw_payload: Record<string, unknown> }>;
+  assertEquals(minted.length, 1); assertEquals(minted[0].evidence_excerpt, EXACT27);
+  assertEquals(minted[0].raw_payload.generator_reason, "the source rates the company's DOT record");
+  assertEquals(minted[0].raw_payload.judge_reason, "about the business");
+});
+
+Deno.test("R27: a judge reject and a bare-string statement (pre-R27 shape) are both recorded; the string carries no generator reason", async () => {
+  const db = fakeDb(seedR27());
+  const t: RegenTransport = ({ system }) => Promise.resolve(system === "GEN"
+    ? { content: JSON.stringify({ statements: [EXACT27, { text: "9 changes", reason: "a count" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    : { content: JSON.stringify({ verdicts: [{ quote: EXACT27, keep: true, reason: "kept" }, { quote: "9 changes", keep: false, reason: "a bare number, not about the business" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } });
+  const { d } = deps(db, t, null);
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d);
+  assertEquals(r.status, 200);
+  const integ = (db.inserts.integrity_runs ?? [])[0].excluded_by_rule as { candidates: Array<Record<string, unknown>> };
+  assertEquals(integ.candidates.map((c) => [c.code, c.generator_reason, c.judge_reason]), [["admitted", null, "kept"], ["judge_reject", "a count", "a bare number, not about the business"]]);
+});
