@@ -32,7 +32,7 @@ const store = makePsqlBlankingStore(session);
 const FROZEN_CB1 = "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc";
 
 function planFile(plan: BlankingPlan): Record<string, unknown> {
-  return { generated_at: new Date().toISOString(), counts: { rows: plan.rows.length, blanked: plan.rows.filter((r) => r.action === "blanked").length, stamped_only: plan.rows.filter((r) => r.action === "stamped_only").length, urls: new Set(plan.rows.map((r) => r.source_url)).size, companies: plan.per_company.length, scanned: plan.scanned, verified_by_snapshot: plan.verified_by_snapshot, verified_by_quote_source_text: plan.verified_by_quote_source_text, no_snapshot: plan.no_snapshot, skipped_frozen: plan.skipped_frozen }, per_company: plan.per_company, rows: plan.rows };
+  return { generated_at: new Date().toISOString(), counts: { rows: plan.rows.length, blanked: plan.rows.filter((r) => r.action === "blanked").length, stamped_only: plan.rows.filter((r) => r.action === "stamped_only").length, urls: new Set(plan.rows.map((r) => r.source_url)).size, companies: plan.per_company.length, scanned: plan.scanned, verified_by_snapshot: plan.verified_by_snapshot, verified_by_quote_source_text: plan.verified_by_quote_source_text, no_snapshot: plan.no_snapshot, already_stamped: plan.already_stamped, skipped_frozen: plan.skipped_frozen }, per_company: plan.per_company, rows: plan.rows };
 }
 
 async function refusal(fn: () => Promise<unknown>): Promise<{ refused: boolean; code: string | null; message: string | null }> {
@@ -70,7 +70,9 @@ try {
     await session.exec("begin;");
     const auditCount = async () => (await session.query<{ n: number }>(`select count(*)::int n from signal_excerpt_blankings`))[0].n;
     const auditBefore = await auditCount();
-    const plan = await planExcerptBlanking(store);
+    // --company= scopes a probe's plan: once the fleet plan has been applied it is EMPTY, so the guard
+    // seeds a throwaway company and probes against that (scripts/guards/excerpt-blanking-guard.sh).
+    const plan = await planExcerptBlanking(store, { companyId: opt("company") ?? undefined });
     let result: Record<string, unknown>;
     if (probe === "no-plan") {
       result = { ...(await refusal(() => applyExcerptBlanking(store, { plan: [], confirm: BLANKING_APPLY_FLAG }))) };

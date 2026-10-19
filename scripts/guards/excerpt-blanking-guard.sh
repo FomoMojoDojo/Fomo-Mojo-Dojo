@@ -19,7 +19,8 @@
 #   e5. the analysis row in the sample is stamped (analysis_carve_out) and KEEPS its excerpt; in the fleet plan every
 #       analysis row is stamped_only and no non-analysis row is
 #   e6. plan invariants against SQL: every planned id is a live outside row whose excerpt is on NO ok snapshot of its
-#       url and not on its quote_source_text; every such row (with ≥1 ok snapshot) is planned; no frozen company
+#       url, not on its quote_source_text, and not already carrying a backfill stamp; every such row (with ≥1 ok
+#       snapshot) is planned; no frozen company
 #   e7. after the probes the audit table holds exactly what it held before (rollback proven) and signals' md5 is unchanged
 #
 # Plants (each injected live, in-place write, confirmed to move a measured value, RED, restored md5-identical):
@@ -29,15 +30,34 @@
 #   skip insertAudit in apply                                                              => e3 red
 #   skip one row's restore in revert                                                       => e4 red
 #   plan every row as 'blanked' (drop the analysis carve-out)                              => e5 + e6 red
+#
+# THE PROBES RUN ON A THROWAWAY COMPANY (2026-10-16, after the fleet apply). Act b2 was applied — the live plan is
+# EMPTY — so a guard that sampled the live plan would have nothing to sample the day after it did its job. The
+# guard seeds one throwaway company (one ok snapshot; four paraphrased outside rows, one analysis row, one verified
+# row) and scopes every probe to it (--company=); the probes still roll back, and the throwaway is deleted on exit.
+# e6 compares the FLEET plan to the SQL set, throwaway included.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
 DB=supabase_db_dzlgyxcvuwiulgifbmew
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -Atc "$1"; }
-fail() { echo "FAIL step $1: $2"; exit 1; }
+CO="00000000-0000-4000-8000-00000000b2a0"
+cleanup() { psql "delete from signals where company_id='$CO'; delete from outside_page_snapshots where company_id='$CO'; delete from companies where id='$CO';" >/dev/null 2>&1 || true; rm -rf "${TMP:-/nonexistent}"; }
+fail() { echo "FAIL step $1: $2"; cleanup; exit 1; }
 run() { deno run --allow-all scripts/excerpt-blanking.ts "$@" 2>/dev/null | tail -1; }
 jq_() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
-TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+TMP=$(mktemp -d); trap cleanup EXIT
+cleanup; TMP=$(mktemp -d)
+PAGE="About us. The roastery opened in 2011 on Magnolia Boulevard and roasts every bean in Burbank, three days a week."
+URL="https://b2guard.test/page"
+psql "insert into companies (id, name, created_by) values ('$CO', 'ZZ throwaway excerpt blanking guard', (select id from auth.users order by created_at limit 1))" >/dev/null
+psql "insert into outside_page_snapshots (company_id, source_url, signal_id, clean_text, text_sha256, fetch_status, http_status) values ('$CO','$URL',null,'$PAGE','sha-b2guard','ok',200)" >/dev/null
+SIG() { psql "insert into signals (company_id, source_id, source_type, source_title, source_url, signal_band, evidence_type, claim_text, evidence_excerpt, topic, directness, framing_fit, structure_level, validation_status, confidence_to_use, raw_payload, voice_class) values ('$CO', 'run-b2', 'public_baseline_run', 'guard', '$URL', 'outside', 'market_signal', '$1', '$1', 'strategy', 'direct', 'partial', 'extracted', 'directional', 'medium', '{}', '$2') returning id" | head -1; }
+for t in "the roastery roasts in Burbank thrice weekly" "a paraphrase the page never says, one" "a paraphrase the page never says, two" "a paraphrase the page never says, three"; do SIG "$t" outside_voice_about_client >/dev/null; done
+SIG "Our read: the wholesale emphasis outruns the retail footprint." analysis >/dev/null
+SIG "roasts every bean in Burbank" outside_voice_about_client >/dev/null   # verified by the snapshot: never planned
+[ "$(run --plan --company=$CO | jq_ "str(d['rows'])+'|'+str(d['blanked'])+'|'+str(d['stamped_only'])")" = "5|4|1" ] || fail seed "throwaway plan is not 5 rows (4 blanked, 1 stamped_only): $(run --plan --company=$CO)"
+echo "seed. throwaway company planned: 5 rows (4 blanked, 1 stamped_only); the verified row is not planned"
 
 # e0 — the table
 [ "$(psql "select relrowsecurity from pg_class where oid='public.signal_excerpt_blankings'::regclass")" = t ] || fail e0 "RLS is off"
@@ -54,18 +74,18 @@ SIG_MD5_0=$(psql "select md5(string_agg(id::text||'|'||evidence_excerpt||'|'||cl
 # e1 — refusals before any write
 for probe in no-plan:no_plan no-flag:not_confirmed struck-row:plan_drift; do
   p=${probe%%:*}; want=${probe#*:}
-  J=$(run --probe="$p"); echo "$J" | grep -q '"rolled_back":true' || fail e1 "probe $p did not run: $J"
+  J=$(run --probe="$p" --company=$CO); echo "$J" | grep -q '"rolled_back":true' || fail e1 "probe $p did not run: $J"
   [ "$(echo "$J" | jq_ "str(d['refused'])+'|'+str(d['code'])+'|'+str(d['audit_rows_after_rollback']==d['audit_rows_before'])")" = "True|$want|True" ] || fail e1 "$p: $(echo "$J" | jq_ "d['refused'],d['code'],d['message']")"
 done
 echo "e1. apply refused: no plan (no_plan), wrong flag (not_confirmed), struck row (plan_drift); audit count unchanged"
 
 # e2 — frozen row
-J=$(run --probe=frozen-row)
+J=$(run --probe=frozen-row --company=$CO)
 [ "$(echo "$J" | jq_ "str(d['refused'])+'|'+str(d['code'])+'|'+str(d['audit_rows_after_rollback']==d['audit_rows_before'])")" = "True|frozen_company|True" ] || fail e2 "frozen row: $(echo "$J" | jq_ "d['refused'],d['code'],d['message']")"
 echo "e2. apply refused a frozen company's row before any write (module refusal frozen_company)"
 
 # e3 / e4 / e5 — the 5-row sample, applied and reverted inside one rolled-back transaction
-J=$(run --probe=apply-revert-sample:5); echo "$J" > "$TMP/sample.json"
+J=$(run --probe=apply-revert-sample:5 --company=$CO); echo "$J" > "$TMP/sample.json"
 echo "$J" | grep -q '"rolled_back":true' || fail e3 "sample probe did not run: $J"
 [ "$(echo "$J" | jq_ "d['applied']['audit_rows']==d['applied']['blanked']+d['applied']['stamped_only'] and d['audit_rows_written']==d['applied']['audit_rows'] and d['applied']['skipped']==0")" = True ] || fail e3 "audit rows ≠ touched rows: $(echo "$J" | jq_ "d['applied'],d['audit_rows_written']")"
 [ "$(echo "$J" | jq_ "all((a['excerpt_empty'] and a['claim_text_kept']) for a in d['after_apply'] if next(s['action'] for s in d['sample'] if s['id']==a['id'])=='blanked')")" = True ] || fail e3 "a blanked sample row kept its excerpt or lost claim_text: $(echo "$J" | jq_ "d['after_apply']")"
@@ -86,7 +106,7 @@ for r in d['rows']: print(r['signal_id'])
 EOF
 [ $? -eq 0 ] || fail e5 "fleet plan: an analysis row is not stamped_only, or a non-analysis row is"
 echo "e5. analysis rows: stamped (analysis_carve_out), excerpt kept in the sample; fleet plan actions match voice_class"
-psql "with live as (select s.id, s.company_id, s.source_url, lower(regexp_replace(trim(s.evidence_excerpt),'\s+',' ','g')) ex, s.quote_source_text from signals s join companies c on c.id=s.company_id where s.signal_band='outside' and s.superseded_at is null and s.held_at is null and nullif(trim(s.evidence_excerpt),'') is not null and nullif(trim(s.source_url),'') is not null and not c.frozen and c.id<>'58b2b15b-bada-4bcd-9c12-b7e66a37d0bc'),
+psql "with live as (select s.id, s.company_id, s.source_url, lower(regexp_replace(trim(s.evidence_excerpt),'\s+',' ','g')) ex, s.quote_source_text from signals s join companies c on c.id=s.company_id where s.signal_band='outside' and s.superseded_at is null and s.held_at is null and nullif(trim(s.evidence_excerpt),'') is not null and nullif(trim(s.source_url),'') is not null and not c.frozen and c.id<>'58b2b15b-bada-4bcd-9c12-b7e66a37d0bc' and coalesce(s.raw_payload->'excerpt_guard'->>'backfill_run_ref','')=''),
  snap as (select company_id, source_url, string_agg(lower(regexp_replace(clean_text,'\s+',' ','g')),' ||| ') t from outside_page_snapshots where fetch_status='ok' and clean_text is not null group by 1,2)
  select l.id from live l join snap on snap.company_id=l.company_id and snap.source_url=l.source_url where snap.t not like '%'||l.ex||'%' and (l.quote_source_text is null or lower(regexp_replace(l.quote_source_text,'\s+',' ','g')) not like '%'||l.ex||'%') order by 1" | sort > "$TMP/sql_ids.txt"
 sort "$TMP/plan_ids.txt" > "$TMP/plan_ids_sorted.txt"

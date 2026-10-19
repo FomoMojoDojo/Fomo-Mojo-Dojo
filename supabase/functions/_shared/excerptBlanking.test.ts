@@ -118,6 +118,17 @@ Deno.test("apply — audit row BEFORE each signal write; blanked rows lose the e
   assertEquals((await revertExcerptBlanking(st, { runRef: "run-b2" })).reverted, 0);
 });
 
+Deno.test("plan — IDEMPOTENT after apply: a stamped_only analysis row (excerpt kept) is not re-planned; revert makes it plannable again", async () => {
+  const st = seeded();
+  const first = (await planExcerptBlanking(st)).rows;
+  await applyExcerptBlanking(st, { plan: first, confirm: BLANKING_APPLY_FLAG, runRef: "run-1" });
+  const second = await planExcerptBlanking(st);
+  assertEquals(second.rows, [], "nothing left to plan after the apply — the analysis row carries the run's stamp");
+  assertEquals(second.already_stamped, 1, "the kept analysis row is counted as already stamped (blanked rows have no excerpt and are not candidates)");
+  await revertExcerptBlanking(st, { runRef: "run-1" });
+  assertEquals((await planExcerptBlanking(st)).rows.map((r) => r.signal_id).sort(), first.map((r) => r.signal_id).sort(), "after revert the same rows are plannable again");
+});
+
 Deno.test("planDiff — same plan ⇒ empty; a struck row, an added row and a flipped action each show", () => {
   const a = [{ signal_id: "1", action: "blanked" }, { signal_id: "2", action: "stamped_only" }] as never;
   const b = [{ signal_id: "2", action: "blanked" }, { signal_id: "3", action: "blanked" }] as never;

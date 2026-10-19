@@ -113,6 +113,8 @@ export type BlankingPlan = {
   verified_by_snapshot: number;
   verified_by_quote_source_text: number;
   no_snapshot: number;
+  /** rows already carrying a backfill stamp from an earlier run — this act's past, never re-planned */
+  already_stamped: number;
   per_company: Array<{ company_id: string; company_name: string; blanked: number; stamped_only: number; urls: number }>;
 };
 
@@ -167,12 +169,18 @@ export async function planExcerptBlanking(
     snapsByPair.set(k, a);
   }
   const rows: BlankingPlanRow[] = [];
-  let verifiedSnap = 0, verifiedQst = 0, noSnap = 0;
+  let verifiedSnap = 0, verifiedQst = 0, noSnap = 0, alreadyStamped = 0;
   for (const s of signals) {
     const co = byId.get(s.company_id);
     if (!co || isFrozenCompany(co)) continue; // belt-and-braces
     const excerpt = String(s.evidence_excerpt ?? "");
     if (!normalizeForHash(excerpt)) continue;
+    // ALREADY HANDLED BY A RUN (found by the guard's first post-apply run, 2026-10-16): a stamped_only
+    // analysis row keeps its excerpt, so without this it was re-planned after the fleet apply and a
+    // second apply would have stamped it twice. A row carrying a backfill stamp is this act's past, not
+    // its plan; revert removes the stamp and the row becomes plannable again.
+    const guard = (s.raw_payload as Record<string, unknown> | null)?.excerpt_guard as Record<string, unknown> | undefined;
+    if (guard && typeof guard.backfill_run_ref === "string" && guard.backfill_run_ref) { alreadyStamped++; continue; }
     const list = snapsByPair.get(`${s.company_id}|${s.source_url}`) ?? [];
     if (list.length === 0) { noSnap++; continue; }                       // b4's rows: crawl first
     if (list.some((sn) => verbatimOn(excerpt, sn.clean_text))) { verifiedSnap++; continue; }
@@ -195,7 +203,7 @@ export async function planExcerptBlanking(
   }
   return {
     rows, scanned: signals.length, skipped_frozen: skippedFrozen,
-    verified_by_snapshot: verifiedSnap, verified_by_quote_source_text: verifiedQst, no_snapshot: noSnap,
+    verified_by_snapshot: verifiedSnap, verified_by_quote_source_text: verifiedQst, no_snapshot: noSnap, already_stamped: alreadyStamped,
     per_company: [...per.values()].map((p) => ({ company_id: p.company_id, company_name: p.company_name, blanked: p.blanked, stamped_only: p.stamped_only, urls: p.urls.size }))
       .sort((a, b) => (b.blanked + b.stamped_only) - (a.blanked + a.stamped_only)),
   };
