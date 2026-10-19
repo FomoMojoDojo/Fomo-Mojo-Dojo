@@ -108,3 +108,60 @@ describe("decide: compare-and-set", () => {
     expect(plan.map((p) => p.action)).toEqual(["write", "refuse", "refuse"]);
   });
 });
+
+// ── R18: the system decides by rule; an operator decision is an override ──────────────────────────
+import { applyPrecedence, contentShape, isSystemDecider, RULES_VERSION, SYSTEM_DECIDER, systemRule } from "./review";
+
+describe("R18 system rule", () => {
+  const html = "About us. The roastery opened in 2011 on Magnolia Boulevard. Reviewers call it the neighbourhood favourite. It roasts every bean in Burbank.";
+  const base = { disposition: "b3_from_snapshot", url: "https://reviews.example/acme", basis_is_newest_ok: true, snapshot_text: html, plan_exclude: "" as string | null };
+  it("stamps the rules version into the decider name", () => {
+    expect(SYSTEM_DECIDER).toBe(`system:${RULES_VERSION}`);
+    expect(isSystemDecider("system:b3-rules-1")).toBe(true);
+    expect(isSystemDecider("system:b3-rules-7")).toBe(true);
+    expect(isSystemDecider("operator")).toBe(false);
+    expect(isSystemDecider(null)).toBe(false);
+  });
+  it("approves an html-text row on the newest ok snapshot, with the rule named", () => {
+    expect(systemRule(base)).toMatchObject({ decision: "approve", rule: "html_text:newest_ok" });
+  });
+  it("rejects, naming the first rule that fires: scope, R15 person profile, R10 plan class, basis, shape", () => {
+    expect(systemRule({ ...base, disposition: "unchanged" })).toMatchObject({ decision: "reject", rule: "scope:disposition" });
+    expect(systemRule({ ...base, url: "https://www.linkedin.com/in/someone/" })).toMatchObject({ decision: "reject", rule: "R15:person_profile" });
+    expect(systemRule({ ...base, plan_exclude: "json" })).toMatchObject({ decision: "reject", rule: "R10:json" });
+    expect(systemRule({ ...base, basis_is_newest_ok: false })).toMatchObject({ decision: "reject", rule: "basis:not_newest_ok" });
+    expect(systemRule({ ...base, snapshot_text: "" })).toMatchObject({ decision: "reject", rule: "basis:no_snapshot_text" });
+    expect(systemRule({ ...base, snapshot_text: "Instagram" })).toMatchObject({ decision: "reject", rule: "R10:thin_shell" });
+    expect(systemRule({ ...base, snapshot_text: '{"bg_color":"#001936","type":"desktop","color":"#ffffff"}' })).toMatchObject({ decision: "reject", rule: "R10:json" });
+    expect(systemRule({ ...base, plan_exclude: null })).toMatchObject({ decision: "approve" });
+  });
+  it("contentShape mirrors the plan file's classes", () => {
+    expect(contentShape(html).shape).toBe("html_text");
+    expect(contentShape("Spotify – Web Player").shape).toBe("thin_shell");
+    expect(contentShape("[1,2,3]").shape).toBe("json");
+    expect(contentShape("window.a = 1; window.b = 2; window.c = 3; document.x = 1; document.y = 2; var a; var b; const z = () => 1").shape).toBe("script_shell");
+  });
+});
+
+describe("R18 precedence", () => {
+  const undecided = { operator_decision: null, decided_by: null };
+  const bySystem = { operator_decision: "approve", decided_by: "system:b3-rules-1" };
+  const byOperator = { operator_decision: "reject", decided_by: "operator" };
+  it("an undecided row takes either decider's decision, stamped with who decided", () => {
+    expect(applyPrecedence(undecided, { decision: "approve", by: "system" })).toMatchObject({ action: "write", decided_by: "system:b3-rules-1" });
+    expect(applyPrecedence(undecided, { decision: "reject", by: "operator" })).toMatchObject({ action: "write", decided_by: "operator" });
+  });
+  it("the system never overwrites an operator decision, nor its own earlier decision", () => {
+    expect(applyPrecedence(byOperator, { decision: "approve", by: "system" })).toMatchObject({ action: "noop", reason: expect.stringMatching(/never overwrites/) });
+    expect(applyPrecedence(bySystem, { decision: "approve", by: "system" })).toMatchObject({ action: "noop" });
+    expect(applyPrecedence(bySystem, { decision: "reject", by: "system" })).toMatchObject({ action: "noop", reason: expect.stringMatching(/needs an operator/) });
+  });
+  it("an operator override of a system decision is allowed and carries the audit (from, to, by)", () => {
+    expect(applyPrecedence(bySystem, { decision: "reject", by: "operator" })).toEqual({ action: "override", decision: "reject", decided_by: "operator", from: { decision: "approve", by: "system:b3-rules-1" }, reason: "operator overrides the system's approve" });
+    expect(applyPrecedence(bySystem, { decision: "approve", by: "operator" })).toMatchObject({ action: "noop" });
+  });
+  it("an operator changing an operator decision is still refused", () => {
+    expect(applyPrecedence(byOperator, { decision: "approve", by: "operator" })).toMatchObject({ action: "refuse" });
+    expect(applyPrecedence(byOperator, { decision: "reject", by: "operator" })).toMatchObject({ action: "noop" });
+  });
+});

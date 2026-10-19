@@ -177,3 +177,89 @@ export function decideCompareAndSet(row: ReviewRowState | null, input: DecisionI
 export function planDecisions(inputs: readonly DecisionInput[], rowsById: ReadonlyMap<string, ReviewRowState>): DecisionPlan[] {
   return inputs.map((i) => decideCompareAndSet(rowsById.get(i.review_row_id) ?? null, i));
 }
+
+// ── R18 (operator ruling 2026-10-18): THE SYSTEM DECIDES b3 REVIEW ROWS BY RULE ───────────────────────
+//
+// For the outside read the operator never has to review items. A b3_from_snapshot row is APPROVED when its
+// basis is the newest ok snapshot of its URL, the snapshot's shape is html text, and nothing excludes it
+// (R10 content classes, R15 person profile); otherwise REJECTED with the rule named. decided_by carries the
+// rules version. An OPERATOR decision is an override: it always wins, a system decision never overwrites it,
+// and an operator override of a system decision is allowed and audited (from, to, by).
+export const RULES_VERSION = "b3-rules-1";
+export const SYSTEM_DECIDER = `system:${RULES_VERSION}`;
+export const OPERATOR_DECIDER = "operator";
+export function isSystemDecider(by: string | null | undefined): boolean {
+  return /^system:b3-rules-/.test(String(by ?? ""));
+}
+
+export type ContentShape = "html_text" | "json" | "script_shell" | "thin_shell";
+/** The plan file's content-shape heuristic, on the snapshot text itself — so the decider needs no plan file. */
+export function contentShape(text: string): { shape: ContentShape; detail: string } {
+  const t = String(text ?? "");
+  const chars = t.length;
+  if (/^\s*[\[{]/.test(t)) return { shape: "json", detail: "clean_text starts with { or [" };
+  const punct = (t.match(/[{}\[\]":,]/g) ?? []).length;
+  const ratio = chars ? punct / chars : 0;
+  if (ratio > 0.08) return { shape: "json", detail: `JSON punctuation ${(ratio * 100).toFixed(1)}% of chars (> 8%)` };
+  const codeMarks = (t.match(/(function\s*\(|window\.|document\.|var |const |=>|\{\s*"[a-zA-Z_]+"\s*:)/g) ?? []).length;
+  const sentences = (t.match(/[.!?]\s+[A-Z]/g) ?? []).length;
+  if (codeMarks >= 8 && sentences < 5) return { shape: "script_shell", detail: `code marks ${codeMarks} (>= 8) and sentences ${sentences} (< 5)` };
+  if (sentences === 0 && chars < 400) return { shape: "thin_shell", detail: `no sentence and ${chars} chars (< 400)` };
+  return { shape: "html_text", detail: `${sentences} sentences, ${codeMarks} code marks, ${chars} chars` };
+}
+
+export type SystemRuleInput = {
+  disposition: string;
+  url: string;
+  /** the row's baseline sha equals the newest ok snapshot's sha for its URL */
+  basis_is_newest_ok: boolean;
+  /** the newest ok snapshot's text (shape is decided here) */
+  snapshot_text: string | null;
+  /** the plan file's exclude class for this URL when a plan is given ("" when in scope; null when no plan) */
+  plan_exclude: string | null;
+};
+export type SystemRuleResult = { decision: "approve" | "reject"; rule: string; detail: string };
+
+/** THE rule. Pure; the order is the order of the refusals an operator would want named first. */
+export function systemRule(i: SystemRuleInput): SystemRuleResult {
+  if (i.disposition !== "b3_from_snapshot") return { decision: "reject", rule: "scope:disposition", detail: `disposition ${i.disposition} is outside R18's scope (b3_from_snapshot only)` };
+  const pp = personProfileRule(i.url);
+  if (pp) return { decision: "reject", rule: "R15:person_profile", detail: pp };
+  if (i.plan_exclude) return { decision: "reject", rule: `R10:${i.plan_exclude}`, detail: "excluded by the plan file's content class" };
+  if (!i.basis_is_newest_ok) return { decision: "reject", rule: "basis:not_newest_ok", detail: "the row's baseline sha is not the newest ok snapshot of its URL" };
+  if (i.snapshot_text == null || !i.snapshot_text.trim()) return { decision: "reject", rule: "basis:no_snapshot_text", detail: "no snapshot text to read" };
+  const s = contentShape(i.snapshot_text);
+  if (s.shape !== "html_text") return { decision: "reject", rule: `R10:${s.shape}`, detail: s.detail };
+  return { decision: "approve", rule: "html_text:newest_ok", detail: s.detail };
+}
+
+export type Decider = "operator" | "system";
+export type ProposedDecision = { decision: "approve" | "reject"; by: Decider; /** the Notion page or "--operator" when by = operator */ source?: string | null };
+export type PrecedencePlan =
+  | { action: "write"; decision: "approve" | "reject"; decided_by: string; reason: string }
+  | { action: "override"; decision: "approve" | "reject"; decided_by: string; from: { decision: string; by: string }; reason: string }
+  | { action: "noop"; reason: string }
+  | { action: "refuse"; reason: string };
+
+/** PRECEDENCE. An operator decision always wins; the system never overwrites one; the operator may override the
+ *  system (audited); the system never changes its own earlier decision (a changed rule outcome needs an operator);
+ *  an operator changing an operator decision is refused (R11's compare-and-set stands). */
+export function applyPrecedence(existing: { operator_decision: string | null; decided_by: string | null }, proposed: ProposedDecision): PrecedencePlan {
+  const by = proposed.by === "system" ? SYSTEM_DECIDER : OPERATOR_DECIDER;
+  const cur = existing.operator_decision;
+  if (cur == null) return { action: "write", decision: proposed.decision, decided_by: by, reason: `row undecided; ${proposed.by} decides ${proposed.decision}` };
+  const curBy = String(existing.decided_by ?? "");
+  const curIsSystem = isSystemDecider(curBy);
+  if (proposed.by === "system") {
+    if (!curIsSystem) return { action: "noop", reason: `operator decision ${cur} stands; the system never overwrites it` };
+    if (cur === proposed.decision) return { action: "noop", reason: `already ${cur} by ${curBy}` };
+    return { action: "noop", reason: `system decision ${cur} (${curBy}) stands; the rules now say ${proposed.decision} — a changed outcome needs an operator` };
+  }
+  // operator
+  if (curIsSystem) {
+    if (cur === proposed.decision) return { action: "noop", reason: `already ${cur} by ${curBy}; the operator agrees` };
+    return { action: "override", decision: proposed.decision, decided_by: by, from: { decision: cur, by: curBy }, reason: `operator overrides the system's ${cur}` };
+  }
+  if (cur === proposed.decision) return { action: "noop", reason: `already ${cur} by operator` };
+  return { action: "refuse", reason: `row already decided ${cur} by operator; a changed decision is refused, not applied` };
+}
