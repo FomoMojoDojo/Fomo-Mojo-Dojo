@@ -2,8 +2,7 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   CALLS_PER_URL, EST_PROMPT_OVERHEAD_TOKENS, REGEN_BODY_KEYS, REGEN_MODE_FLAGS, SNAPSHOT_CAP_CHARS, estimateUrl, runOutsideRegen,
-  type RegenDeps, type RegenJudge,
-} from "./outsideRegenHandler.ts";
+  type RegenDeps, type RegenJudge, REGEN_TEXT_GATES } from "./outsideRegenHandler.ts";
 import { classifyBodyMode } from "./bodyMode.ts";
 import type { RegenLedgerEntry, RegenTransport } from "./outsideRegenModel.ts";
 
@@ -356,4 +355,25 @@ Deno.test("R27: a judge reject and a bare-string statement (pre-R27 shape) are b
   assertEquals(r.status, 200);
   const integ = (db.inserts.integrity_runs ?? [])[0].excluded_by_rule as { candidates: Array<Record<string, unknown>> };
   assertEquals(integ.candidates.map((c) => [c.code, c.generator_reason, c.judge_reason]), [["admitted", null, "kept"], ["judge_reject", "a count", "a bare number, not about the business"]]);
+});
+
+// ── R28: the regen handler names the first_person gate; a first-person candidate on a gated profile URL mints client_voice with no judge call ──
+export const TAGLINE28 = "We help people and businesses thrive with the power of AI.";
+Deno.test("R28 WRITE: on the judge-gated crunchbase URL a first-person candidate mints client_voice by rule (authority first_person_self_description, rule stamped in raw_payload) and the judge is NOT called; the handler names REGEN_TEXT_GATES", async () => {
+  const db = fakeDb(seedR17());
+  for (const r of db.tables.outside_page_snapshots) if (r.source_url === UGATED) r.clean_text = `Acme Coffee profile. ${TAGLINE28} Founded 2011.`;
+  let judgeCalls = 0;
+  const judge: RegenJudge = () => { judgeCalls++; return Promise.resolve({ verdict: "third_party", entity: null, reason: "platform", model: "m" }); };
+  const t: RegenTransport = ({ system }) => Promise.resolve(system === "GEN"
+    ? { content: JSON.stringify({ statements: [{ text: TAGLINE28, reason: "describes the offering" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    : { content: JSON.stringify({ verdicts: [{ quote: TAGLINE28, keep: true, reason: "about the business" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } });
+  const { d } = deps(db, t, judge);
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [UGATED] }, d);
+  assertEquals(r.status, 200, JSON.stringify(r.body));
+  const minted = (db.inserts.signals ?? []) as Array<{ voice_class: string; raw_payload: { voice_authority: Record<string, unknown> } }>;
+  assertEquals(minted.length, 1); assertEquals(minted[0].voice_class, "client_voice");
+  assertEquals(minted[0].raw_payload.voice_authority.authority, "first_person_self_description");
+  assertEquals(minted[0].raw_payload.voice_authority.rule, "first_person");
+  assertEquals(judgeCalls, 0, "the authorship judge was never called for the first-person candidate");
+  assertEquals([...REGEN_TEXT_GATES], ["first_person"]);
 });

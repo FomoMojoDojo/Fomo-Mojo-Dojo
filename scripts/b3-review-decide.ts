@@ -4,7 +4,8 @@
 //       R18: every b3_from_snapshot row of the run is decided BY RULE (src/lib/b3Review/review.ts systemRule):
 //       approve when the basis is the newest ok snapshot, html text, not excluded; reject otherwise with the rule
 //       named. Rows that carry a Notion page are read first — a Verdict there is an OPERATOR override and wins.
-//   npx vite-node scripts/b3-review-decide.ts -- --company=<uuid> --run-id=<uuid> --operator=<review_row_id>:approve|reject
+//   npx vite-node scripts/b3-review-decide.ts -- --company=<uuid> --run-id=<uuid> --operator=<review_row_id>:approve|reject [--operator=… …] [--source="<why>"]
+//       (R29, 2026-10-18: --operator may repeat — one ledger row for the set; --source names the operator's reason in the ledger)
 //       an operator decision from the terminal (an override of a system decision is audited).
 //   npx vite-node scripts/b3-review-decide.ts -- --company=<uuid> --run-id=<uuid> [--fixture=<pages.json>]
 //       the Notion verdicts (or a fixture) as operator decisions, nothing else.
@@ -33,7 +34,9 @@ export const OVERRIDE_COMPONENT = "r3_outside_review_override";
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? null;
 const company = arg("company"); const runId = arg("run-id"); const fixture = arg("fixture"); const dbIdArg = arg("database-id"); const planPath = arg("plan");
 const systemMode = process.argv.includes("--system");
-const operatorArg = arg("operator");
+const operatorArgs = process.argv.filter((a) => a.startsWith("--operator=")).map((a) => a.slice("--operator=".length));
+const operatorArg = operatorArgs.length ? operatorArgs.join(",") : null;
+const sourceArg = arg("source");
 const live = process.argv.includes("--live");
 function fail(msg: string, code = 1): never { console.error(`\n✗ ${msg}\n`); process.exit(code); }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -72,10 +75,12 @@ if (fixture) {
   operatorInputs = raw.map((p) => ({ page_id: String(p.page_id ?? ""), review_row_id: String(p.review_row_id ?? ""), verdict: p.verdict == null ? null : String(p.verdict), comment: p.comment == null ? null : String(p.comment) }));
   notionSource = `fixture ${fixture}`;
 } else if (operatorArg) {
-  const m = /^([0-9a-f-]{36}):(approve|reject)$/i.exec(operatorArg);
-  if (!m) fail("--operator=<review_row_id>:approve|reject");
-  operatorInputs = [{ page_id: "--operator", review_row_id: m[1], verdict: m[2].toLowerCase() === "approve" ? "Approve" : "Reject", comment: null }];
-  notionSource = "--operator";
+  for (const o of operatorArgs) {
+    const m = /^([0-9a-f-]{36}):(approve|reject)$/i.exec(o);
+    if (!m) fail(`--operator=<review_row_id>:approve|reject (got ${JSON.stringify(o)})`);
+    operatorInputs.push({ page_id: "--operator", review_row_id: m[1], verdict: m[2].toLowerCase() === "approve" ? "Approve" : "Reject", comment: sourceArg });
+  }
+  notionSource = sourceArg ? `--operator: ${sourceArg}` : "--operator";
 } else {
   // Notion: the allow-listed data source's pages, read as OPERATOR overrides. In --system mode only the rows that
   // carry a page are looked up (by page id); in the plain mode the whole data source is queried.

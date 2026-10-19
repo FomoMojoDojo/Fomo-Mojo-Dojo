@@ -23,7 +23,7 @@ import { BODY_MODE_GUARD, classifyBodyMode } from "./bodyMode.ts";
 import { emptyTally, regenGenerate, regenJudge, tallyingLedger, type RegenLedger, type RegenTransport } from "./outsideRegenModel.ts";
 import { OPENAI_PRICE_PER_MTOK } from "./modelPricing.ts";
 import { classifyRegistryRow } from "./registryClassifier.ts";
-import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type JudgeFailurePolicy, type VoiceClassInput } from "./voiceClassAtMint.ts";
+import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type JudgeFailurePolicy, type VoiceClassInput, type TextGate } from "./voiceClassAtMint.ts";
 import type { AuthorshipJudgment } from "./aggregatorAuthorship.ts";
 import { clientAnchorsFor } from "./clientAnchors.ts";
 import { nearestSpan, type NearestSpan } from "./nearestSpan.ts";
@@ -32,6 +32,8 @@ import { nearestSpan, type NearestSpan } from "./nearestSpan.ts";
  *  function has no default. */
 export const REGEN_JUDGE_FAILURE_POLICY: JudgeFailurePolicy = "refuse_mint";
 /** The regen path's label when no authority fires: a third-party page speaking about the client. */
+/** R28: the text gates the regen path names — a first-person candidate is client_voice by rule, before the judge. */
+export const REGEN_TEXT_GATES: ReadonlyArray<TextGate> = ["first_person"];
 export const REGEN_DEFAULT_LABEL = "outside_voice_about_client";
 export type RegenJudge = (input: { subjectName: string; subjectHost: string; url: string; text: string }) => Promise<AuthorshipJudgment | null>;
 
@@ -386,7 +388,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       // R17: THE voice class, from the one shared authority — never a literal here. An unjudged gated row is refused.
       const voiceInput: VoiceClassInput = {
         url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText: clean_text, judgedText: verdictA.excerpt, company,
-        registry: registryFor(url, verdictA.excerpt), judge, gate: "profile_wire_boilerplate", onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY, now: nowIso,
+        registry: registryFor(url, verdictA.excerpt), judge, gate: "profile_wire_boilerplate", textGates: REGEN_TEXT_GATES, onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY, now: nowIso,
       };
       const voice = await voiceClassForMintedExcerpt(voiceInput);
       if (!voice.ok) {
@@ -414,7 +416,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
           verbatim: normalizeForHash(verdictA.excerpt).length,
           // R27: why the generator lifted it and why the judge kept it — the model's own words, beside the page's
           generator_reason: cand.reason, judge_reason: keepByQuote.get(c)?.reason ?? null,
-          voice_authority: { authority: voice.authority, detail: voice.detail, policy: REGEN_JUDGE_FAILURE_POLICY, gate: voice.gate },
+          voice_authority: { authority: voice.authority, detail: voice.detail, policy: REGEN_JUDGE_FAILURE_POLICY, gate: voice.gate, ...(voice.rule ? { rule: voice.rule } : {}) },
           ...(voice.authorship_judge ? { authorship_judge: voice.authorship_judge } : {}),
           ...(voiceInput.registry ? { registry: voiceInput.registry } : {}),
         },

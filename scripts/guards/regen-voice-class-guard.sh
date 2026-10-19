@@ -16,6 +16,8 @@
 #       wire + judge subject_company → client_voice; wire + judge_failed on refuse_mint → refused, on keep_label → the
 #       label with a stamp; plain third party → outside) and the handler tests (plan reports the class; write refuses
 #       an unjudged gated URL) pass.
+#   v4. (R28) the first-person gate: the regen handler's gate list names first_person, the baseline's call sites name no
+#       text gate; the probe mints the pilot-3 tagline on a gated URL as client_voice by rule with ZERO judge calls.
 #   v3. EXPECTATION — scripts/guards/regen-voice-expectation.ts recomputes (class, authority) for every in-scope URL of
 #       the plan file and compares PER URL to scripts/guards/fixtures/regen-voice-expected.tsv (gated rows expected as
 #       "gated"). Any difference is named.
@@ -23,6 +25,8 @@
 # Plants (each in place, confirmed to move a measured value, RED, restored md5-identical — 2026-10-18):
 #   P1  the literal reintroduced at the mint site (voice_class: "outside_voice_about_client")  => v1 red; and the
 #       handler's own-domain write test moves client_voice → outside (v2 red)
+#   P3  (R28) "first_person" dropped from REGEN_TEXT_GATES in place            => v4: the tagline fixture moves
+#       client_voice → outside_voice_about_client and judge_calls 0 → 1; the handler's R28 test red (v2)
 #   P2  the regen policy flipped to keep_label                                                  => v2: judge_failed
 #       fixture moves refused → minted (handler test red); v1 red
 set -euo pipefail
@@ -54,4 +58,18 @@ done
 [ -f "$PLAN" ] || fail v3 "plan file not found: $PLAN (set REGEN_VOICE_PLAN)"
 OUT=$(deno run --allow-all scripts/guards/regen-voice-expectation.ts --plan="$PLAN" 2>&1) || fail v3 "$OUT"
 echo "v3. $(echo "$OUT" | head -1)"
+
+# v4 — R28: the first-person gate is named by the regen handler only; the tagline fixture mints client_voice by rule
+#      with ZERO judge calls (probe: scripts/guards/regen-first-person-probe.ts, fake transport + judge spy).
+grep -q 'REGEN_TEXT_GATES: ReadonlyArray<TextGate> = \["first_person"\]' "$H" || fail v4 "the regen gate list does not name first_person"
+grep -q 'textGates: REGEN_TEXT_GATES' "$H" || fail v4 "the mint site does not pass the regen gate list"
+for f in supabase/functions/public-baseline/index.ts supabase/functions/_shared/aggregatorAuthorship.ts supabase/functions/_shared/registryIngest.ts; do
+  grep -q 'textGates' "$f" && fail v4 "the baseline's call site $f names a text gate — the baseline's gate list is unchanged by ruling"
+done
+FP=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-first-person-probe.ts 2>&1 | tail -1)
+[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('voice_class'))")" = "client_voice" ] || fail v4 "the tagline fixture did not mint client_voice: $FP"
+[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('judge_calls'))")" = "0" ] || fail v4 "the judge was called for a first-person candidate: $FP"
+[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('rule'))")" = "first_person" ] || fail v4 "the rule is not stamped: $FP"
+echo "v4. R28 probe (fake transport, judge spy): $FP"
+echo "v4. R28 source: the regen handler names [first_person]; the baseline's three call sites name no text gate"
 echo "GUARD OK"

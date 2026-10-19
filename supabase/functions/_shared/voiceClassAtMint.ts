@@ -17,6 +17,13 @@
 //      the verdict; a null outcome leaves the label                                          → client_voice / competitor_voice / label
 //   5. otherwise the extractor's label, or null when it is not a known class                 → label
 //
+// R28 (operator ruling 2026-10-18): THE FIRST-PERSON GATE, regen path only. Pilot 3 minted "We help people and
+// businesses thrive…" — the company's own tagline as a directory reprints it — as outside voice, because no authority
+// reads the TEXT. A caller may name text gates (`textGates`); with "first_person" named, a candidate whose
+// grammatical subject is first person plural (we / our / us) and that carries no attributed outside speaker is
+// client_voice by rule — deterministic, between the registry stage and the judge, no model call. The baseline's
+// callers name no text gate (adoption filed), so their decisions are byte-identical to before.
+//
 // AMENDMENT (b): what happens when a gated URL CANNOT be judged — no judge wired, the judge unavailable, or
 // judge_failed — is a REQUIRED argument, never a default:
 //   "keep_label"   the label stands and the failure is stamped (public-baseline's standing behaviour);
@@ -38,7 +45,10 @@ export type JudgeFailurePolicy = "keep_label" | "refuse_mint";
  *  `profile_wire_boilerplate`: profiles, press wires and release pages with the subject's boilerplate close
  *  (the restamp's gate, and the regen path's). */
 export type JudgeGate = "profile" | "profile_wire_boilerplate";
-export type VoiceAuthority = "analysis_label" | "own_domain" | "registry" | "authorship_judge" | "extractor_label";
+export type VoiceAuthority = "analysis_label" | "own_domain" | "registry" | "authorship_judge" | "extractor_label" | "first_person_self_description";
+/** Text gates a caller may name (R28). The regen handler names ["first_person"]; the baseline names none. */
+export type TextGate = "first_person";
+export const FIRST_PERSON_RULE = "first_person" as const;
 
 export type VoiceClassInput = {
   url: string;
@@ -56,6 +66,8 @@ export type VoiceClassInput = {
   /** Resolves null when the judge is unavailable for this call (limits, no transport). */
   judge: ((input: { subjectName: string; subjectHost: string; url: string; text: string }) => Promise<AuthorshipJudgment | null>) | null;
   gate: JudgeGate;
+  /** R28: deterministic gates on the candidate TEXT, applied after the registry stage and before the judge. Absent ⇒ none. */
+  textGates?: ReadonlyArray<TextGate>;
   onJudgeFailure: JudgeFailurePolicy;
   now?: () => string;
 };
@@ -70,6 +82,8 @@ export type VoiceClassDecision =
     authority: VoiceAuthority;
     detail: string;
     gate: GateHit | null;
+    /** the deterministic rule that decided (R28: "first_person"); absent for the other authorities */
+    rule?: string;
     /** present when the judge answered (or failed) for this item */
     authorship_judge?: AuthorshipStamp;
   }
@@ -81,6 +95,26 @@ export type VoiceClassDecision =
     gate: GateHit;
     authorship_judge?: AuthorshipStamp;
   };
+
+// ── R28: first-person self-description ─────────────────────────────────────────────────────────────────
+// A sentence whose grammatical subject is first person plural: it opens with We / We're / We've / Our / Ours, or
+// follows a sentence boundary with one. "Contact us" is imperative (us as object) and does not fire; "us" fires
+// only as a subject form, which English does not have — so the subject test is We / Our.
+const FIRST_PERSON_SUBJECT = /(^|[.!?;:]\s+|["“‘']\s*)(we|we're|we’re|we've|we’ve|we'll|we’ll|our|ours)\b/i;
+// An attributed outside speaker exempts the line: a quotation with an attribution verb, or "according to <someone>".
+const ATTRIBUTION = /\b(said|says|say|told|tells|wrote|writes|according to|explained|explains|added|adds|noted|notes|stated|states|commented|comments|recalled|recalls)\b/i;
+const QUOTED = /["“”‘’']/;
+export type FirstPersonVerdict = { hit: boolean; detail: string };
+/** Deterministic: does this candidate speak as "we", with no attributed outside speaker? */
+export function firstPersonSelfDescription(text: string | null | undefined): FirstPersonVerdict {
+  const t = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (!t) return { hit: false, detail: "no text" };
+  const m = FIRST_PERSON_SUBJECT.exec(t);
+  if (!m) return { hit: false, detail: "no first-person-plural subject" };
+  if (QUOTED.test(t) && ATTRIBUTION.test(t)) return { hit: false, detail: `first person inside an attributed quotation (${ATTRIBUTION.exec(t)![0]}) — an outside speaker` };
+  if (ATTRIBUTION.test(t) && !/^(we|our)\b/i.test(t)) return { hit: false, detail: `an attributed speaker (${ATTRIBUTION.exec(t)![0]}) precedes the first person` };
+  return { hit: true, detail: `first-person-plural subject "${m[2]}" with no attributed outside speaker — the company describing itself` };
+}
 
 function labelOf(labeledClass: string | null): string | null {
   const l = String(labeledClass ?? "").trim();
@@ -115,6 +149,13 @@ export function decideVoiceClassBeforeJudge(input: VoiceClassInput):
       return { ok: true, voice_class: stamp.voice_class, evidence_class: stamp.evidence_class, authority: "registry", detail: `registry ${input.registry.host_rule}: section ${input.registry.section} class ${input.registry.class}`, gate: null };
     }
     return { ok: true, voice_class: label, evidence_class: "prose", authority: "extractor_label", detail: `registry journalism (${input.registry.host_rule}): the label stands; never judged`, gate: null };
+  }
+  // R28: the text gates the caller named, before any judge
+  if (input.textGates?.includes(FIRST_PERSON_RULE)) {
+    const fp = firstPersonSelfDescription(input.judgedText);
+    if (fp.hit) {
+      return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "first_person_self_description", detail: fp.detail, gate: null, rule: FIRST_PERSON_RULE };
+    }
   }
   const gate = gateFor(input);
   if (gate) return { needs_judge: true, gate, label };

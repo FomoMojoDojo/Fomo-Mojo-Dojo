@@ -1,6 +1,6 @@
 // R14 / R17 (2026-10-18) — the one voice-class authority. Fixtures, no network, no model.
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type VoiceClassInput } from "./voiceClassAtMint.ts";
+import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type VoiceClassInput, firstPersonSelfDescription } from "./voiceClassAtMint.ts";
 import { classifyRegistryRow, GUIDESTAR_SELF_REPORTED_MARKER } from "./registryClassifier.ts";
 import type { AuthorshipJudgment } from "./aggregatorAuthorship.ts";
 
@@ -107,4 +107,39 @@ Deno.test("SOURCE PIN: the regen handler carries no voice_class literal and impo
   assert(r.includes("decideVoiceClassBeforeJudge(") && !r.includes("registryStamp("), "the registry stamp goes through the authority");
   const a = await Deno.readTextFile(new URL("./aggregatorAuthorship.ts", import.meta.url));
   assert(a.includes("voiceClassForMintedExcerpt(") && a.includes('onJudgeFailure: "keep_label"'), "the demote calls the authority with the ingest policy");
+});
+
+// ── R28: the first-person gate — regen path only, deterministic, before the judge ─────────────────────────
+Deno.test("R28: \"We help people…\" with the first_person gate named ⇒ client_voice by rule, authority first_person_self_description, no judge call; without the gate named (the baseline) ⇒ the label", async () => {
+  let judgeCalls = 0;
+  const judge = () => { judgeCalls++; return Promise.resolve({ verdict: "third_party" as const, entity: null, reason: "x", model: "m" }); };
+  const base = { url: "https://seamless.ai/b/whispering-ai-16131131", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "whispering.ai", host: "whispering.ai" }, registry: null, judge, gate: "profile_wire_boilerplate" as const, onJudgeFailure: "refuse_mint" as const };
+  const gated = await voiceClassForMintedExcerpt({ ...base, judgedText: "We help people and businesses thrive with the power of AI.", textGates: ["first_person"] });
+  assert(gated.ok); assertEquals(gated.voice_class, "client_voice"); assertEquals(gated.authority, "first_person_self_description"); assertEquals(gated.rule, "first_person"); assertEquals(gated.gate, null);
+  assertEquals(judgeCalls, 0, "no judge call");
+  const baseline = await voiceClassForMintedExcerpt({ ...base, judgedText: "We help people and businesses thrive with the power of AI." });
+  assert(baseline.ok); assertEquals(baseline.voice_class, "outside_voice_about_client"); assertEquals(baseline.authority, "extractor_label"); assertEquals(baseline.rule, undefined);
+  assertEquals(judgeCalls, 0, "seamless.ai is not a gated host, so the baseline shape does not reach the judge either");
+});
+
+Deno.test("R28: a third-person line is unchanged; a quoted first-person line with an attributed outside speaker is NOT gated; 'Contact us' is not a subject", async () => {
+  const base = { url: "https://reviews.example/acme", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "Acme", host: "acme.test" }, registry: null, judge: null, gate: "profile_wire_boilerplate" as const, textGates: ["first_person"] as const, onJudgeFailure: "refuse_mint" as const };
+  for (const t of ["Whispering AI is headquartered at 6929 North Hayden Road, Scottsdale.", "'We love it,' said a customer.", "“We’ll be back,” one reviewer wrote.", "According to the owner, we should expect a second roastery.", "Contact us for pricing and hours."]) {
+    const d = await voiceClassForMintedExcerpt({ ...base, judgedText: t });
+    assert(d.ok); assertEquals(d.voice_class, "outside_voice_about_client", t); assertEquals(d.authority, "extractor_label", t);
+  }
+  for (const t of ["We help people and businesses thrive with the power of AI.", "Our coffees are available for wholesale partners.", "Founded in 2011. We roast every bean in Burbank."]) {
+    assertEquals(firstPersonSelfDescription(t).hit, true, t);
+  }
+  assertEquals(firstPersonSelfDescription("'We love it,' said a customer.").hit, false);
+});
+
+Deno.test("R28: on a judge-gated profile URL a first-person candidate is decided by the rule BEFORE the judge — zero judge calls (measured); a third-person candidate on the same URL still reaches the judge", async () => {
+  let judgeCalls = 0;
+  const judge = () => { judgeCalls++; return Promise.resolve({ verdict: "third_party" as const, entity: null, reason: "platform field", model: "m" }); };
+  const base = { url: "https://www.crunchbase.com/organization/acme-coffee", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "Acme Coffee", host: "acmecoffee.com" }, registry: null, judge, gate: "profile_wire_boilerplate" as const, textGates: ["first_person"] as const, onJudgeFailure: "refuse_mint" as const };
+  const fp = await voiceClassForMintedExcerpt({ ...base, judgedText: "We roast every bean in Burbank and supply 40 cafes." });
+  assert(fp.ok); assertEquals(fp.voice_class, "client_voice"); assertEquals(fp.authority, "first_person_self_description"); assertEquals(judgeCalls, 0, "the rule decided; the judge was never called");
+  const tp = await voiceClassForMintedExcerpt({ ...base, judgedText: "Acme Coffee is a specialty roaster supplying 40 cafes." });
+  assert(tp.ok); assertEquals(tp.authority, "extractor_label"); assertEquals(judgeCalls, 1, "a third-person candidate on the gated URL reaches the judge");
 });
