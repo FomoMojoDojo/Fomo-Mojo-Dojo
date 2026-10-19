@@ -22,6 +22,9 @@ import { gateRegenUrls, requireRunId } from "../_shared/outsideRecrawlReview.ts"
 import { sha256Hex, contentIdentity, normalizeForHash } from "../_shared/contentIdentity.ts";
 import { admitOutsideEvidence, snapshotReadDate } from "../_shared/outsideEvidenceRegen.ts";
 import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
+import { callOpenAIJson } from "../_shared/modelRouter.ts";
+import { recordModelCall } from "../_shared/recordModelCall.ts";
+import { emptyTally, regenGenerate, regenJudge, tallyingLedger, type RegenLedger, type RegenTransport } from "../_shared/outsideRegenModel.ts";
 
 const nowIso = () => new Date().toISOString();
 const corsHeaders = {
@@ -58,29 +61,23 @@ const JUDGE_SYSTEM =
   `a menu/price line, hours, boilerplate, or a statement about a different business. ` +
   `Respond with ONLY JSON: {"verdicts":[{"quote":"...","keep":true,"reason":"..."}]}. No other text.`;
 
-async function callModel(system: string, user: string): Promise<Record<string, unknown>> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) throw new Error("OPENAI_API_KEY not set");
-  let lastErr: unknown = null;
-  for (const model of [GEN_MODEL, GEN_FALLBACK]) {
-    try {
-      const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model, temperature: 0, response_format: { type: "json_object" },
-          messages: [{ role: "system", content: system }, { role: "user", content: user }],
-        }),
-      });
-      if (!resp.ok) { lastErr = new Error(`${model} ${resp.status}: ${(await resp.text()).slice(0, 200)}`); continue; }
-      const data = await resp.json();
-      const content = String(data?.choices?.[0]?.message?.content ?? "");
-      const m = content.match(/\{[\s\S]*\}/);
-      if (!m) { lastErr = new Error(`${model} returned no JSON`); continue; }
-      return JSON.parse(m[0]) as Record<string, unknown>;
-    } catch (e) { lastErr = e; }
-  }
-  throw lastErr ?? new Error("all models failed");
+// R4 (operator ruling 2026-10-18): the model step lives in _shared/outsideRegenModel.ts. The function
+// supplies the two seams — the SHARED transport (callOpenAIJson, which returns usage) and the SHARED
+// ledger (recordModelCall) — and the module ledgers EVERY attempt, before parse, mini then nano.
+const REGEN_MODELS = [GEN_MODEL, GEN_FALLBACK] as const;
+const MODEL_TIMEOUT_MS = 90_000;
+/** One attempt against one model; throws on a non-ok answer so the module moves to the next model. */
+function openaiTransport(apiKey: string): RegenTransport {
+  return async ({ model, system, user }) => {
+    const r = await callOpenAIJson({ model, system, user, temperature: 0, timeoutMs: MODEL_TIMEOUT_MS, apiKey });
+    return { content: r.content, usage: r.usage };
+  };
+}
+/** One model_calls row per attempt — the same writer every captured site uses; run_id null (no long_runner row). */
+function modelLedger(supabase: { from: (t: string) => unknown }, companyId: string): RegenLedger {
+  return (e) => recordModelCall(supabase as never, {
+    companyId, runId: null, callSite: e.callSite, usage: e.usage, attempt: e.attempt, promptSha: e.promptSha,
+  });
 }
 
 Deno.serve(async (req) => {
@@ -110,6 +107,14 @@ Deno.serve(async (req) => {
     if ((co as { frozen?: boolean }).frozen) return json({ error: "outside-regen refused: company is frozen" }, 403);
     const anchorsRaw = (co as { entity_anchors_json?: unknown }).entity_anchors_json;
     const anchors = Array.isArray(anchorsRaw) ? anchorsRaw.map((a) => String(a || "").trim()).filter(Boolean) : [];
+
+    // R4: the two seams, built once per run. A missing key refuses BEFORE any attempt, so no attempt
+    // that never reached the provider is ever ledgered.
+    const apiKey = Deno.env.get("OPENAI_API_KEY");
+    if (!apiKey) throw new Error("OPENAI_API_KEY not set");
+    const transport = openaiTransport(apiKey);
+    const tally = emptyTally();
+    const ledger = tallyingLedger(modelLedger(supabase, company_id), tally);
 
     // Basis: newest ok (real-body) snapshot per URL. NO fetch.
     const { data: snapRows } = await supabase
@@ -176,7 +181,7 @@ Deno.serve(async (req) => {
       // Generate.
       let cands: string[] = [];
       try {
-        const gen = await callModel(genSystem(anchors), `PAGE TEXT:\n${clean_text}`);
+        const { json: gen } = await regenGenerate({ system: genSystem(anchors), user: `PAGE TEXT:\n${clean_text}`, models: REGEN_MODELS, transport, ledger });
         cands = (Array.isArray(gen.statements) ? gen.statements : []).map((s: unknown) => String(s ?? "").trim())
           .filter((s) => s && s.split(/\s+/).length <= QUOTE_MAX_WORDS);
       } catch (e) {
@@ -189,7 +194,7 @@ Deno.serve(async (req) => {
       let keepByQuote = new Map<string, boolean>();
       if (cands.length) {
         try {
-          const j = await callModel(JUDGE_SYSTEM, `PAGE TEXT:\n${clean_text}\n\nCANDIDATES:\n${cands.map((c) => `- ${c}`).join("\n")}`);
+          const { json: j } = await regenJudge({ system: JUDGE_SYSTEM, user: `PAGE TEXT:\n${clean_text}\n\nCANDIDATES:\n${cands.map((c) => `- ${c}`).join("\n")}`, models: REGEN_MODELS, transport, ledger });
           const verdicts = (Array.isArray(j.verdicts) ? j.verdicts : []) as Array<Record<string, unknown>>;
           keepByQuote = new Map(verdicts.map((v) => [String(v.quote ?? "").trim(), v.keep === true]));
         } catch (e) {
@@ -246,13 +251,15 @@ Deno.serve(async (req) => {
     const { error: intErr } = await supabase.from("integrity_runs").insert({
       company_id, component: "r3_outside_regen", status: stoppedForTime ? "failed" : "completed",
       examined: candidates_total, admitted: admitted_total,
-      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true },
+      // R4: the run's model-call tally beside its counts — {generator, judge, usd, ledger_failed} — so a run and its spend join on run_ref.
+      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, model_calls: tally },
       run_ref: `r3_outside_regen_${runId}`,
     });
     if (intErr) throw new Error(`integrity insert failed: ${intErr.message}`);
 
     return json({
       ok: true, company_id, run_id: runId, urls_total: urls.length, pages_processed: processed, stopped_for_time: stoppedForTime, review_refused: reviewRefused,
+      model_calls: tally,
       totals: { candidates: candidates_total, admitted: admitted_total, guard_rejected: guard_rejected_total, reject_reasons: rejectReasons },
       pages,
     });

@@ -43,7 +43,8 @@ export const MODEL_CALL_SITES: readonly ModelCallSite[] = [
   { site: "council-review", provider: "openai", role: "council synthesis", captured: false, note: "shared openaiClient never reads data.usage" },
   { site: "competitor-discovery", provider: "anthropic", role: "competitor web search", captured: false, note: "content blocks read, usage dropped" },
   { site: "extract-client-voice", provider: "openai", role: "client-voice regeneration", captured: false, note: "data.usage never read" },
-  { site: "extract-outside-evidence", provider: "openai", role: "outside-evidence regeneration", captured: false, note: "data.usage never read" },
+  // R4 (2026-10-18): both roles (generator, judge) ledgered per attempt through _shared/outsideRegenModel.ts.
+  { site: "extract-outside-evidence", provider: "openai", role: "outside-evidence regeneration (generator + judge)", captured: true },
 ] as const;
 
 export type CostCoverage = { captured: number; total: number; uncaptured: string[]; complete: boolean };
