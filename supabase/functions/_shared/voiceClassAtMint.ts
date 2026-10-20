@@ -46,7 +46,8 @@ export type JudgeFailurePolicy = "keep_label" | "refuse_mint";
  *  `profile_wire_boilerplate`: profiles, press wires and release pages with the subject's boilerplate close
  *  (the restamp's gate, and the regen path's). */
 export type JudgeGate = "profile" | "profile_wire_boilerplate";
-export type VoiceAuthority = "analysis_label" | "own_domain" | "registry" | "authorship_judge" | "extractor_label" | "first_person_self_description" | "attributed_speaker_subject";
+export type VoiceAuthority = "analysis_label" | "own_domain" | "registry" | "authorship_judge" | "extractor_label" | "first_person_self_description" | "attributed_speaker_subject" | "first_person_judged";
+export const FIRST_PERSON_JUDGED_RULE = "first_person_judged" as const;
 /** Text gates a caller may name (R28, R32). The regen handler names ["first_person", "attributed_speech"]; the baseline names none. */
 export type TextGate = "first_person" | "attributed_speech";
 export const FIRST_PERSON_RULE = "first_person" as const;
@@ -164,11 +165,14 @@ export function decideVoiceClassBeforeJudge(input: VoiceClassInput):
     }
     return { ok: true, voice_class: label, evidence_class: "prose", authority: "extractor_label", detail: `registry journalism (${input.registry.host_rule}): the label stands; never judged`, gate: null };
   }
-  // R28: the text gates the caller named, before any judge
+  // R28 detection, R45 decision (operator ruling 2026-10-20): a first-person candidate is DETECTED deterministically but
+  // the class is JUDGED — SIAA's agent forum ("We have an affiliate who transferred from SIAA…") is a third party
+  // saying "we", which the rule alone cannot see. The speaker judge decides who "we" is, with the R42 context.
   if (input.textGates?.includes(FIRST_PERSON_RULE)) {
     const fp = firstPersonSelfDescription(input.judgedText);
     if (fp.hit) {
-      return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "first_person_self_description", detail: fp.detail, gate: null, rule: FIRST_PERSON_RULE };
+      const text = String(input.judgedText ?? "").trim();
+      return { needs_speaker: true, attribution: { form: "first_person", speaker_string: "", span: text, offset: -1 }, label };
     }
   }
   // R32: an attributed candidate goes to the speaker judge BEFORE the URL gate
@@ -191,10 +195,14 @@ export async function voiceClassForMintedExcerpt(input: VoiceClassInput): Promis
     // R32 — who is quoted or reported, and do they belong to the subject
     const { attribution, label } = pre;
     const text = String(input.judgedText ?? "").trim();
+    // R45: a first-person candidate is judged under its own rule name and subject authority
+    const firstPerson = attribution.form === "first_person";
+    const rule = firstPerson ? FIRST_PERSON_JUDGED_RULE : ATTRIBUTED_SPEECH_RULE;
+    const subjectAuthority: VoiceAuthority = firstPerson ? "first_person_judged" : "attributed_speaker_subject";
     const refuseS = (reason: string, speaker?: SpeakerStamp): VoiceClassDecision =>
       ({ ok: false, refused: true, authority: "speaker_judge", reason, gate: null, ...(speaker ? { speaker } : {}) });
     const keepS = (detail: string, speaker?: SpeakerStamp): VoiceClassDecision =>
-      ({ ok: true, voice_class: label, evidence_class: "prose", authority: "extractor_label", detail, gate: null, rule: ATTRIBUTED_SPEECH_RULE, ...(speaker ? { speaker } : {}) });
+      ({ ok: true, voice_class: label, evidence_class: "prose", authority: "extractor_label", detail, gate: null, rule, ...(speaker ? { speaker } : {}) });
     if (!input.speakerJudge) {
       return input.onJudgeFailure === "keep_label" ? keepS(`attributed speech (${attribution.form}); no speaker judge wired; the label stands`) : refuseS(`attributed speech (${attribution.form}) and no speaker judge is wired — not minted; retry when the local judge is available`);
     }
@@ -206,13 +214,13 @@ export async function voiceClassForMintedExcerpt(input: VoiceClassInput): Promis
       return input.onJudgeFailure === "keep_label" ? keepS(`${why} — the label stands`, stamp) : refuseS(`${why} — not minted`, stamp);
     }
     if (j.speaker_class === "subject_company_officer" || j.speaker_class === "subject_company_text") {
-      return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "attributed_speaker_subject", detail: `${j.speaker_class}${j.speaker_name ? `: ${j.speaker_name}` : ""}${j.speaker_role ? ` (${j.speaker_role})` : ""} — ${j.reason}`, gate: null, rule: ATTRIBUTED_SPEECH_RULE, speaker: stamp };
+      return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: subjectAuthority, detail: `${j.speaker_class}${j.speaker_name ? `: ${j.speaker_name}` : ""}${j.speaker_role ? ` (${j.speaker_role})` : ""} — ${j.reason}`, gate: null, rule, speaker: stamp };
     }
     // third_party: the label stands with the speaker recorded; the URL gate still applies after it
     const next = decideUrlGate(input, label);
     if (!("needs_judge" in next)) {
       if (!next.ok) return { ...next, speaker: stamp };
-      return { ...next, rule: ATTRIBUTED_SPEECH_RULE, speaker: stamp, detail: `third-party speaker${j.speaker_name ? ` ${j.speaker_name}` : ""} — ${next.detail}` };
+      return { ...next, rule, speaker: stamp, detail: `third-party speaker${j.speaker_name ? ` ${j.speaker_name}` : ""} — ${next.detail}` };
     }
     const d = await judgeStage(input, next.gate, next.label, nowIso);
     return { ...d, speaker: stamp };

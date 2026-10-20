@@ -488,7 +488,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
         // R32: attributed speech detected on the candidate with its page context; the speaker judge decides who speaks
         attribution: detectAttribution(verdictA.excerpt, clean_text, verdictA.offset), speakerJudge,
         // R42: the paragraph plus every page sentence naming the speaker (or their surname), capped — see speakerContext
-        context: (() => { const a = detectAttribution(verdictA.excerpt, clean_text, verdictA.offset); return a ? speakerContext(clean_text, verdictA.offset, verdictA.length, a.speaker_string) : paragraphAround(clean_text, verdictA.offset, verdictA.length); })(),
+        // R45: a first-person candidate is judged too, so the context names the company (sentences naming it) when no speaker string exists
+        context: (() => { const a = detectAttribution(verdictA.excerpt, clean_text, verdictA.offset); return speakerContext(clean_text, verdictA.offset, verdictA.length, a?.speaker_string || company.name); })(),
       };
       const voice = await voiceClassForMintedExcerpt(voiceInput);
       if (!voice.ok) {

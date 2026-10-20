@@ -57,7 +57,7 @@ Deno.test("wire URL + judge subject_company ⇒ client_voice with the stamp; oth
 
 Deno.test("AMENDMENT (b): judge_failed — refuse_mint REFUSES (reason, stamp); keep_label keeps the label (stamp unchanged)", async () => {
   const r = await voiceClassForMintedExcerpt(base({ url: WIRE, judge: failedJudge, onJudgeFailure: "refuse_mint" }));
-  assert(!r.ok); assert(/judge failed: timeout/.test(r.reason)); assertEquals(r.gate.via, "wire"); assertEquals(r.authorship_judge?.applied, "unchanged");
+  assert(!r.ok); assert(/judge failed: timeout/.test(r.reason)); assertEquals(r.gate!.via, "wire"); assertEquals(r.authorship_judge?.applied, "unchanged");
   const k = await voiceClassForMintedExcerpt(base({ url: WIRE, judge: failedJudge, onJudgeFailure: "keep_label" }));
   assert(k.ok); assertEquals(k.voice_class, "outside_voice_about_client"); assertEquals(k.authority, "extractor_label"); assertEquals(k.authorship_judge?.verdict, "judge_failed");
 });
@@ -110,16 +110,20 @@ Deno.test("SOURCE PIN: the regen handler carries no voice_class literal and impo
 });
 
 // ── R28: the first-person gate — regen path only, deterministic, before the judge ─────────────────────────
-Deno.test("R28: \"We help people…\" with the first_person gate named ⇒ client_voice by rule, authority first_person_self_description, no judge call; without the gate named (the baseline) ⇒ the label", async () => {
-  let judgeCalls = 0;
+Deno.test("R28/R45: \"We help people…\" with the first_person gate named is DETECTED, then JUDGED — subject_company_text ⇒ client_voice, authority first_person_judged, rule first_person_judged, one speaker call; without the gate named (the baseline) ⇒ the label, no call; no speaker judge wired ⇒ refused", async () => {
+  let judgeCalls = 0, speakerCalls = 0;
   const judge = () => { judgeCalls++; return Promise.resolve({ verdict: "third_party" as const, entity: null, reason: "x", model: "m" }); };
-  const base = { url: "https://seamless.ai/b/whispering-ai-16131131", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "whispering.ai", host: "whispering.ai" }, registry: null, judge, gate: "profile_wire_boilerplate" as const, onJudgeFailure: "refuse_mint" as const };
+  const speakerJudge = () => { speakerCalls++; return Promise.resolve({ speaker_class: "subject_company_text" as const, speaker_name: "whispering.ai", speaker_role: null, reason: "the paragraph is the company's own description", model: "m" }); };
+  const base = { url: "https://seamless.ai/b/whispering-ai-16131131", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "whispering.ai", host: "whispering.ai" }, registry: null, judge, speakerJudge, gate: "profile_wire_boilerplate" as const, onJudgeFailure: "refuse_mint" as const };
   const gated = await voiceClassForMintedExcerpt({ ...base, judgedText: "We help people and businesses thrive with the power of AI.", textGates: ["first_person"] });
-  assert(gated.ok); assertEquals(gated.voice_class, "client_voice"); assertEquals(gated.authority, "first_person_self_description"); assertEquals(gated.rule, "first_person"); assertEquals(gated.gate, null);
-  assertEquals(judgeCalls, 0, "no judge call");
+  assert(gated.ok); assertEquals(gated.voice_class, "client_voice"); assertEquals(gated.authority, "first_person_judged"); assertEquals(gated.rule, "first_person_judged"); assertEquals(gated.gate, null);
+  assertEquals(gated.speaker?.attribution.form, "first_person"); assertEquals(gated.speaker?.speaker_class, "subject_company_text");
+  assertEquals(speakerCalls, 1, "one speaker call"); assertEquals(judgeCalls, 0, "no authorship-judge call");
   const baseline = await voiceClassForMintedExcerpt({ ...base, judgedText: "We help people and businesses thrive with the power of AI." });
   assert(baseline.ok); assertEquals(baseline.voice_class, "outside_voice_about_client"); assertEquals(baseline.authority, "extractor_label"); assertEquals(baseline.rule, undefined);
-  assertEquals(judgeCalls, 0, "seamless.ai is not a gated host, so the baseline shape does not reach the judge either");
+  assertEquals(speakerCalls, 1, "the baseline shape makes no speaker call");
+  const unwired = await voiceClassForMintedExcerpt({ ...base, speakerJudge: null, judgedText: "We help people and businesses thrive with the power of AI.", textGates: ["first_person"] });
+  assert(!unwired.ok); assert(/no speaker judge is wired/.test(unwired.reason));
 });
 
 Deno.test("R28: a third-person line is unchanged; a quoted first-person line with an attributed outside speaker is NOT gated; 'Contact us' is not a subject", async () => {
@@ -134,14 +138,29 @@ Deno.test("R28: a third-person line is unchanged; a quoted first-person line wit
   assertEquals(firstPersonSelfDescription("'We love it,' said a customer.").hit, false);
 });
 
-Deno.test("R28: on a judge-gated profile URL a first-person candidate is decided by the rule BEFORE the judge — zero judge calls (measured); a third-person candidate on the same URL still reaches the judge", async () => {
-  let judgeCalls = 0;
+Deno.test("R28/R45: on a judge-gated profile URL a first-person candidate goes to the SPEAKER judge (officer ⇒ client_voice) and never to the authorship judge; a third-person candidate on the same URL still reaches the authorship judge", async () => {
+  let judgeCalls = 0, speakerCalls = 0;
   const judge = () => { judgeCalls++; return Promise.resolve({ verdict: "third_party" as const, entity: null, reason: "platform field", model: "m" }); };
-  const base = { url: "https://www.crunchbase.com/organization/acme-coffee", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "Acme Coffee", host: "acmecoffee.com" }, registry: null, judge, gate: "profile_wire_boilerplate" as const, textGates: ["first_person"] as const, onJudgeFailure: "refuse_mint" as const };
+  const speakerJudge = () => { speakerCalls++; return Promise.resolve({ speaker_class: "subject_company_officer" as const, speaker_name: "Acme Coffee", speaker_role: null, reason: "the company describing itself", model: "m" }); };
+  const base = { url: "https://www.crunchbase.com/organization/acme-coffee", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "Acme Coffee", host: "acmecoffee.com" }, registry: null, judge, speakerJudge, gate: "profile_wire_boilerplate" as const, textGates: ["first_person"] as const, onJudgeFailure: "refuse_mint" as const };
   const fp = await voiceClassForMintedExcerpt({ ...base, judgedText: "We roast every bean in Burbank and supply 40 cafes." });
-  assert(fp.ok); assertEquals(fp.voice_class, "client_voice"); assertEquals(fp.authority, "first_person_self_description"); assertEquals(judgeCalls, 0, "the rule decided; the judge was never called");
+  assert(fp.ok); assertEquals(fp.voice_class, "client_voice"); assertEquals(fp.authority, "first_person_judged"); assertEquals(speakerCalls, 1); assertEquals(judgeCalls, 0, "the speaker judge decided; the authorship judge was never called");
   const tp = await voiceClassForMintedExcerpt({ ...base, judgedText: "Acme Coffee is a specialty roaster supplying 40 cafes." });
-  assert(tp.ok); assertEquals(tp.authority, "extractor_label"); assertEquals(judgeCalls, 1, "a third-person candidate on the gated URL reaches the judge");
+  assert(tp.ok); assertEquals(tp.authority, "extractor_label"); assertEquals(judgeCalls, 1, "a third-person candidate on the gated URL reaches the authorship judge"); assertEquals(speakerCalls, 1);
+});
+
+// ── R45: a third party saying "we" keeps the label; an unidentified "we" refuses ──────────────────────────────
+Deno.test("R45: the SIAA agent-forum sentence ⇒ third_party ⇒ the label kept with the speaker recorded (rule first_person_judged); an unidentified first-person line ⇒ unknown ⇒ refused; a non-first-person line makes no speaker call", async () => {
+  const calls: string[] = [];
+  const speakerJudge = (i: { candidate: string }) => { calls.push(i.candidate); const forum = /PIIB/.test(i.candidate); return Promise.resolve(forum ? { speaker_class: "third_party" as const, speaker_name: "a forum poster", speaker_role: "insurance agent", reason: "a member agent posting on a forum, not SIAA", model: "m" } : { speaker_class: "unknown" as const, speaker_name: null, speaker_role: null, reason: "the page never says who we is", model: "m" }); };
+  const base = { url: "https://www.reddit.com/r/InsurancePros/x", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "SIAA", host: "siaa.com" }, registry: null, judge: null, speakerJudge, gate: "profile_wire_boilerplate" as const, textGates: ["first_person", "attributed_speech"] as const, onJudgeFailure: "refuse_mint" as const };
+  const forum = await voiceClassForMintedExcerpt({ ...base, judgedText: "We have an affiliate who successfully transferred from SIAA to PIIB, it took a lot of work." });
+  assert(forum.ok); assertEquals(forum.voice_class, "outside_voice_about_client"); assertEquals(forum.authority, "extractor_label"); assertEquals(forum.rule, "first_person_judged"); assertEquals(forum.speaker?.speaker_class, "third_party"); assertEquals(forum.speaker?.speaker_name, "a forum poster");
+  const unknown = await voiceClassForMintedExcerpt({ ...base, judgedText: "We see this all the time, the benefits sound amazing in the start." });
+  assert(!unknown.ok); assertEquals(unknown.authority, "speaker_judge"); assert(/speaker unknown/.test(unknown.reason)); assertEquals(unknown.speaker?.speaker_class, "unknown");
+  const plain = await voiceClassForMintedExcerpt({ ...base, judgedText: "SIAA was established in 1995 by Jim Masiello." });
+  assert(plain.ok); assertEquals(plain.rule, undefined);
+  assertEquals(calls.length, 2, "speaker calls = first-person candidates");
 });
 
 // ── R32: the attributed_speech gate — the speaker judge decides who speaks; unknown refuses on the regen path ────

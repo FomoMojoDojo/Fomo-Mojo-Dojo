@@ -12,7 +12,8 @@ export type AttributionForm =
   | "reported_name_verb"          // …, X said. / …, Alexander told the Journal.
   | "reported_pronoun_verb"       // They explain… / He said…
   | "reported_titled_speaker"     // <Title> <Name> said that…
-  | "quotation_interior";         // the candidate sits inside an open quotation on the page; the attribution follows the close
+  | "quotation_interior"          // the candidate sits inside an open quotation on the page; the attribution follows the close
+  | "first_person";               // R45: the candidate itself speaks as "we" — who "we" is goes to the speaker judge
 export type AttributionHit = {
   form: AttributionForm;
   /** the speaker as the page names it — name and any adjacent title; "" when the clause names no one ("according to the company" → "the company") */

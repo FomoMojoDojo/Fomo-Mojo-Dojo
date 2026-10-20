@@ -16,8 +16,9 @@
 #       wire + judge subject_company → client_voice; wire + judge_failed on refuse_mint → refused, on keep_label → the
 #       label with a stamp; plain third party → outside) and the handler tests (plan reports the class; write refuses
 #       an unjudged gated URL) pass.
-#   v4. (R28) the first-person gate: the regen handler's gate list names first_person, the baseline's call sites name no
-#       text gate; the probe mints the pilot-3 tagline on a gated URL as client_voice by rule with ZERO judge calls.
+#   v4. (R28/R45) the first-person gate: detected by rule, DECIDED by the speaker judge — the SIAA agent-forum fixture (a
+#       third party saying "we") keeps the label with the speaker recorded, one speaker call, zero authorship-judge calls;
+#       the baseline's call sites name no text gate.
 #   v5. (R32) the attributed_speech gate: CEO-quote fixture client_voice, third-party keeps the label, unknown refused,
 #       apostrophes not quotation marks, speaker calls = attribution-bearing candidates; the baseline names no text gate.
 #   v3. EXPECTATION — scripts/guards/regen-voice-expectation.ts recomputes (class, authority) for every in-scope URL of
@@ -69,10 +70,13 @@ for f in supabase/functions/public-baseline/index.ts supabase/functions/_shared/
   grep -q 'textGates' "$f" && fail v4 "the baseline's call site $f names a text gate — the baseline's gate list is unchanged by ruling"
 done
 FP=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-first-person-probe.ts 2>&1 | tail -1)
-[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('voice_class'))")" = "client_voice" ] || fail v4 "the tagline fixture did not mint client_voice: $FP"
-[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('judge_calls'))")" = "0" ] || fail v4 "the judge was called for a first-person candidate: $FP"
-[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('rule'))")" = "first_person" ] || fail v4 "the rule is not stamped: $FP"
-echo "v4. R28 probe (fake transport, judge spy): $FP"
+[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('voice_class'))")" = "outside_voice_about_client" ] || fail v4 "R45: a third party saying 'we' did not keep the label: $FP"
+[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('rule'))")" = "first_person_judged" ] || fail v4 "R45: the rule is not first_person_judged: $FP"
+[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('speaker_class'))")" = "third_party" ] || fail v4 "R45: the speaker is not recorded: $FP"
+[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('speaker_calls'))")" = "1" ] || fail v4 "R45: speaker calls != 1 for one first-person candidate: $FP"
+[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('judge_calls'))")" = "0" ] || fail v4 "the authorship judge was called for a first-person candidate: $FP"
+grep -q 'needs_speaker: true, attribution: { form: "first_person"' supabase/functions/_shared/voiceClassAtMint.ts || fail v4 "R45: the first-person stage does not hand the candidate to the speaker judge"
+echo "v4. R28/R45 probe (fake transport, judge spy, fake speaker judge): $FP"
 echo "v4. R28 source: the regen handler names [first_person]; the baseline's three call sites name no text gate"
 
 # v5 — R32: the attributed_speech gate — the CEO-quote fixture mints client_voice by the speaker judge; the third-party
