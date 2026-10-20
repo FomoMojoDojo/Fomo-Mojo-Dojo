@@ -40,6 +40,22 @@ export class IntegrityWriteRefused extends Error {
 // deno-lint-ignore no-explicit-any
 type SupabaseLike = { from: (t: string) => any };
 
+// R36 (b) (2026-10-20): a run's row is OPENED before its first write and FINISHED at the end, so a refused finish
+// leaves a row that says so instead of no row at all. Both read their error.
+/** Insert and return the new row's id; throws IntegrityWriteRefused when refused. */
+export async function openIntegrityRun(supabase: SupabaseLike, row: Record<string, unknown>): Promise<number> {
+  const { data, error } = await supabase.from("integrity_runs").insert(row).select("id").single();
+  if (error || !data || data.id == null) {
+    throw new IntegrityWriteRefused(String(row.component ?? "(none)"), String(row.status ?? "(none)"), String(error?.message ?? error ?? "insert returned no id"));
+  }
+  return Number(data.id);
+}
+/** Update one row by id; throws IntegrityWriteRefused (with "update" in the message) when refused. */
+export async function finishIntegrityRun(supabase: SupabaseLike, id: number, patch: Record<string, unknown>): Promise<void> {
+  const { error } = await supabase.from("integrity_runs").update(patch).eq("id", id);
+  if (error) throw new IntegrityWriteRefused(String(patch.component ?? "(update)"), String(patch.status ?? "(none)"), `update of row ${id} refused: ${String(error.message ?? error)}`);
+}
+
 /** THE one writer. Reads { error } and throws IntegrityWriteRefused when the row is refused. */
 export async function insertIntegrityRun(
   supabase: SupabaseLike,

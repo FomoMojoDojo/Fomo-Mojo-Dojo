@@ -29,6 +29,7 @@
 
 import { callClassifier, CLASSIFIER_MODEL, isLocalOllamaUrl } from "./uploadVoiceClassifier.ts";
 import type { ModelCallRecord } from "./recordModelCall.ts";
+import { sanitizeForStore, sanitizeNullable } from "./sanitizeForStore.ts";
 import { isOwnDomainUrl } from "./firstReadProvenance.ts";
 import { voiceClassForMintedExcerpt } from "./voiceClassAtMint.ts";
 import { FROZEN_COMPANY_IDS } from "./frozenCompanies.ts";
@@ -300,7 +301,7 @@ const VERDICTS: ReadonlySet<string> = new Set(["subject_company", "other_entity"
 // with the attribution span and the surrounding paragraph, on the local model. Every call writes a model_calls row
 // (provider ollama, prompt/eval counts from the response, usd null) BEFORE the answer is parsed. Fail toward failure.
 export type SpeakerClass = "subject_company_officer" | "subject_company_text" | "third_party" | "unknown" | "judge_failed";
-export type SpeakerJudgment = { speaker_class: SpeakerClass; speaker_name: string | null; speaker_role: string | null; reason: string; model: string };
+export type SpeakerJudgment = { speaker_class: SpeakerClass; speaker_name: string | null; speaker_role: string | null; reason: string; model: string; /** R36 (a): a field carried U+0000 / a control character and was cleaned at parse */ sanitized?: true };
 export type SpeakerInput = { subjectName: string; subjectHost: string; url: string; candidate: string; attributionForm: string; attributionSpan: string; speakerString: string; context: string };
 export type SpeakerJudge = (input: SpeakerInput) => Promise<SpeakerJudgment | null>;
 /** One raw answer from the local model with its token counts (null when the response carried none). */
@@ -375,9 +376,13 @@ export async function judgeSpeaker(
   try { const m = raw.match(/\{[\s\S]*\}/); parsed = JSON.parse(m ? m[0] : raw); } catch {
     return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge output was unparseable. raw: ${raw.slice(0, 200)}`, model };
   }
-  const cls = String(parsed.speaker_class ?? "").trim(); const reason = String(parsed.reason ?? "").trim();
-  const str = (v: unknown) => { const s = v == null ? "" : String(v).trim(); return s && s.toLowerCase() !== "null" ? s : null; };
-  if (SPEAKER_CLASSES.has(cls) && reason) return { speaker_class: cls as SpeakerClass, speaker_name: str(parsed.speaker_name), speaker_role: str(parsed.speaker_role), reason, model };
+  // R36 (a): the ONE sanitizer, at the parse boundary — speaker_name, speaker_role, reason
+  const cls = String(parsed.speaker_class ?? "").trim();
+  const sReason = sanitizeForStore(parsed.reason); const reason = sReason.text.trim();
+  const sName = sanitizeNullable(parsed.speaker_name), sRole = sanitizeNullable(parsed.speaker_role);
+  const str = (s: string | null) => { const t = (s ?? "").trim(); return t && t.toLowerCase() !== "null" ? t : null; };
+  const sanitized = sReason.changed || sName.changed || sRole.changed;
+  if (SPEAKER_CLASSES.has(cls) && reason) return { speaker_class: cls as SpeakerClass, speaker_name: str(sName.text), speaker_role: str(sRole.text), reason, model, ...(sanitized ? { sanitized: true as const } : {}) };
   return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge returned a malformed answer (class '${cls || "empty"}')`, model };
 }
 

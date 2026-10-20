@@ -24,9 +24,15 @@ type Row = Record<string, unknown>;
 export function fakeDb(seed: Record<string, Row[]>) {
   const tables: Record<string, Row[]> = JSON.parse(JSON.stringify(seed));
   const inserts: Record<string, Row[]> = {};
+  const updates: Record<string, Array<{ patch: Row; matched: Row[] }>> = {};
+  // R36 test switches: refuse the integrity insert / update like a database would; emulate Postgres's NUL refusal on jsonb
+  const failures: { integrity_insert?: string; integrity_update?: string } = {};
+  let nextId = 1000;
+  const nulCheck = (t: string, v: unknown) => (t === "integrity_runs" && JSON.stringify(v).includes("\\u0000") ? { message: "unsupported Unicode escape sequence" } : null);
   const from = (t: string) => {
     const filters: Array<(r: Row) => boolean> = [];
     const run = () => (tables[t] ?? []).filter((r) => filters.every((f) => f(r)));
+    let pendingInsert: Row[] | null = null; let pendingError: { message: string } | null = null;
     // deno-lint-ignore no-explicit-any
     const b: any = {
       select: () => b, order: () => b,
@@ -34,12 +40,27 @@ export function fakeDb(seed: Record<string, Row[]>) {
       is: (k: string, v: unknown) => { filters.push((r) => (v === null ? r[k] == null : r[k] === v)); return b; },
       in: (k: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[k])); return b; },
       maybeSingle: () => Promise.resolve({ data: run()[0] ?? null, error: null }),
-      insert: (rows: Row | Row[]) => { const arr = Array.isArray(rows) ? rows : [rows]; (tables[t] ??= []).push(...arr); (inserts[t] ??= []).push(...arr); return Promise.resolve({ error: null }); },
+      single: () => Promise.resolve(pendingError ? { data: null, error: pendingError } : { data: pendingInsert?.[0] ?? run()[0] ?? null, error: null }),
+      insert: (rows: Row | Row[]) => {
+        const arr = Array.isArray(rows) ? rows : [rows];
+        const err = (t === "integrity_runs" && failures.integrity_insert) ? { message: failures.integrity_insert } : nulCheck(t, arr);
+        if (err) { pendingError = err; return Object.assign(Promise.resolve({ error: err }), b); }
+        for (const r of arr) if (t === "integrity_runs" && r.id == null) r.id = nextId++;
+        (tables[t] ??= []).push(...arr); (inserts[t] ??= []).push(...arr); pendingInsert = arr;
+        return Object.assign(Promise.resolve({ error: null }), b);
+      },
+      update: (patch: Row) => {
+        const err = (t === "integrity_runs" && failures.integrity_update && patch.status !== "failed") ? { message: failures.integrity_update } : nulCheck(t, patch);
+        const apply = () => { const matched = run(); if (!err) for (const r of matched) Object.assign(r, patch); (updates[t] ??= []).push({ patch, matched }); return { error: err }; };
+        // deno-lint-ignore no-explicit-any
+        const u: any = { eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return u; }, then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve(apply()).then(res, rej) };
+        return u;
+      },
       then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve({ data: run(), error: null }).then(res, rej),
     };
     return b;
   };
-  return { from, tables, inserts };
+  return { from, tables, inserts, updates, failures };
 }
 
 function seed(): Record<string, Row[]> {
@@ -467,4 +488,72 @@ Deno.test("R32 WRITE: every attribution form is decided by the speaker judge —
   assertEquals((r.body.model_calls as { speaker: number }).speaker, 5);
   const integ = (db.inserts.integrity_runs ?? [])[0].excluded_by_rule as { candidates: Array<Record<string, unknown>>; voice_refused_total: number };
   assertEquals(integ.voice_refused_total, 1); assert(integ.candidates.some((c) => c.code === "voice_refused" && String(c.detail).includes("speaker unknown")));
+});
+
+
+// ── R36: sanitized at the parse boundary; the integrity row opened before the first mint and finished at the end ──
+Deno.test("R36 (a): a candidate with U+0000 in text and in reason is stored sanitized and flagged; the finish succeeds (the fake db refuses \\u0000 like Postgres)", async () => {
+  const db = fakeDb(seedR27());
+  const dirty = "This company has maintained an active DOT status for 1 year but had no inspections\u0000"; // the span + a NUL
+  const t: RegenTransport = ({ system }) => Promise.resolve(system === "GEN"
+    ? { content: JSON.stringify({ statements: [{ text: dirty, reason: "clean\u0000 reason\u0007 here" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    : { content: JSON.stringify({ verdicts: [{ quote: dirty, keep: true, reason: "kept\u0000" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } });
+  const { d } = deps(db, t, null);
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d);
+  assertEquals(r.status, 200, JSON.stringify(r.body));
+  assertEquals((r.body.integrity as { finish: string }).finish, "completed");
+  const row = (db.tables.integrity_runs ?? []).find((x) => x.component === "r3_outside_regen" && (x.excluded_by_rule as { run_id?: string })?.run_id === RUN2)!;
+  assertEquals(row.status, "completed");
+  const cands = (row.excluded_by_rule as { candidates: Array<Record<string, unknown>> }).candidates;
+  assertEquals(cands.length, 1); assertEquals(cands[0].sanitized, true);
+  assertEquals(cands[0].text, EXACT27, "the NUL is stripped from the text (and the span still admits)");
+  assertEquals(cands[0].generator_reason, "clean reason  here", "NUL stripped, BEL replaced by a space");
+  assertEquals(cands[0].judge_reason, "kept");
+  assert(!JSON.stringify(row).includes("\\u0000"), "no NUL reaches the integrity row");
+  assertEquals((db.inserts.signals ?? []).length, 1);
+});
+
+Deno.test("R36 (b): the integrity row is opened (running) before the first mint and finished (completed) with the full payload; a refused open refuses the run with 0 mints", async () => {
+  const db = fakeDb(seedR27()); const { d } = deps(db, r27Transport(), null);
+  const order: string[] = [];
+  const origFrom = db.from; db.from = (t: string) => { order.push(t); return origFrom(t); };
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d);
+  assertEquals(r.status, 200);
+  const firstIntegrity = order.indexOf("integrity_runs"), firstSignals = order.indexOf("signals");
+  assert(firstIntegrity >= 0 && firstSignals > firstIntegrity, `the integrity row is opened before the first signals write (order: ${order.join(",")})`);
+  const row = (db.tables.integrity_runs ?? []).find((x) => x.component === "r3_outside_regen")!;
+  assertEquals(row.status, "completed"); assertEquals((row.excluded_by_rule as { candidates: unknown[] }).candidates.length, 2);
+  assertEquals((db.updates.integrity_runs ?? []).length, 1, "one finish update");
+  // refused open ⇒ refused run, 0 mints
+  const db2 = fakeDb(seedR27()); db2.failures.integrity_insert = "permission denied"; const { d: d2 } = deps(db2, r27Transport(), null);
+  const r2 = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d2);
+  assertEquals(r2.status, 500); assert(String(r2.body.error).includes("run refused before any mint"));
+  assertEquals((db2.inserts.signals ?? []).length, 0); assertEquals(r2.body.mints, 0);
+});
+
+Deno.test("R36 (b): a refused FINISH leaves the row failed with the error text (payload omitted), the mints stand, and the response says so", async () => {
+  const db = fakeDb(seedR27()); db.failures.integrity_update = "value too long"; const { d } = deps(db, r27Transport(), null);
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d);
+  assertEquals(r.status, 200);
+  const integ = r.body.integrity as { finish: string; error?: string }; assertEquals(integ.finish, "failed"); assert(String(integ.error).includes("value too long"));
+  const row = (db.tables.integrity_runs ?? []).find((x) => x.component === "r3_outside_regen")!;
+  assertEquals(row.status, "failed"); assert(String(row.error).includes("finish refused: update of row")); assertEquals((row.excluded_by_rule as { candidates?: unknown }).candidates, undefined, "the full payload never landed");
+  assertEquals((db.inserts.signals ?? []).length, 1, "the mint stands");
+});
+
+Deno.test("R36 (c): with an emoji before the span, excerpt_offset (UTF-16 units) ≠ excerpt_offset_cp (code points), and both resolve to the same slice", async () => {
+  const db = fakeDb(seedR17());
+  const page = "Insights 🟡🟡 " + EXACT27 + " and more.";
+  for (const r of db.tables.outside_page_snapshots) if (r.source_url === U1) r.clean_text = page;
+  const t: RegenTransport = ({ system }) => Promise.resolve(system === "GEN"
+    ? { content: JSON.stringify({ statements: [{ text: EXACT27, reason: "r" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    : { content: JSON.stringify({ verdicts: [{ quote: EXACT27, keep: true, reason: "k" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } });
+  const { d } = deps(db, t, null);
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d);
+  assertEquals(r.status, 200);
+  const m = (db.inserts.signals ?? [])[0] as { evidence_excerpt: string; raw_payload: { excerpt_offset: number; excerpt_length: number; excerpt_offset_cp: number; excerpt_length_cp: number } };
+  const p = m.raw_payload;
+  assertEquals(p.excerpt_offset, p.excerpt_offset_cp + 2, "two astral characters before the span: units exceed points by 2");
+  assertEquals(page.substring(p.excerpt_offset, p.excerpt_offset + p.excerpt_length), m.evidence_excerpt, "UTF-16 units resolve (JS substring)");
+  assertEquals(Array.from(page).slice(p.excerpt_offset_cp, p.excerpt_offset_cp + p.excerpt_length_cp).join(""), m.evidence_excerpt, "code points resolve (Array.from, as SQL substr counts)");
 });

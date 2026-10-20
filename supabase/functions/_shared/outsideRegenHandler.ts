@@ -20,7 +20,8 @@ import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
 import { admitOutsideEvidence, detectAttribution, isBareAttribution, snapshotReadDate } from "./outsideEvidenceRegen.ts";
 import { regenCallSite } from "./outsideRegenModel.ts";
 import type { SpeakerJudge, SpeakerLedger } from "./aggregatorAuthorship.ts";
-import { insertIntegrityRun } from "./integrityWrite.ts";
+import { finishIntegrityRun, insertIntegrityRun, IntegrityWriteRefused, openIntegrityRun } from "./integrityWrite.ts";
+import { sanitizeForStore, sanitizeNullable } from "./sanitizeForStore.ts";
 import { BODY_MODE_GUARD, classifyBodyMode } from "./bodyMode.ts";
 import { emptyTally, regenGenerate, regenJudge, tallyingLedger, type RegenLedger, type RegenTransport } from "./outsideRegenModel.ts";
 import { OPENAI_PRICE_PER_MTOK } from "./modelPricing.ts";
@@ -64,6 +65,8 @@ export type CandidateRecord = {
   nearest_span: NearestSpan | null;
   /** the voice authority's refusal reason when code is voice_refused */
   detail?: string;
+  /** R36 (a): a field of this candidate carried U+0000 / a control character from the model's JSON and was cleaned at parse */
+  sanitized?: true;
 };
 /** The generator's statements as {text, reason}. A bare string (the pre-R27 shape) reads as text with no reason. */
 /** R32: the paragraph the candidate sits in — from the previous blank line to the next, capped. */
@@ -73,14 +76,18 @@ export function paragraphAround(page: string, offset: number, length: number): s
   const end = Math.min(page.length, endNl < 0 ? offset + length + 1200 : endNl, offset + length + 1200);
   return page.slice(start, end);
 }
-export function parseGeneratorStatements(statements: unknown, quoteMaxWords: number): Array<{ text: string; reason: string | null }> {
+export type GeneratorStatement = { text: string; reason: string | null; /** R36 (a) */ sanitized?: true };
+export function parseGeneratorStatements(statements: unknown, quoteMaxWords: number): GeneratorStatement[] {
   const list = Array.isArray(statements) ? statements : [];
-  const out: Array<{ text: string; reason: string | null }> = [];
+  const out: GeneratorStatement[] = [];
   for (const s of list) {
-    const text = typeof s === "string" ? s.trim() : String((s as { text?: unknown })?.text ?? "").trim();
+    // R36 (a): the ONE sanitizer, at the parse boundary — text and reason
+    const sText = sanitizeForStore(typeof s === "string" ? s : (s as { text?: unknown })?.text);
+    const text = sText.text.trim();
     if (!text || text.split(/\s+/).length > quoteMaxWords) continue;
-    const r = typeof s === "object" && s !== null ? (s as { reason?: unknown }).reason : null;
-    out.push({ text, reason: typeof r === "string" && r.trim() ? r.trim() : null });
+    const sReason = sanitizeNullable(typeof s === "object" && s !== null ? (s as { reason?: unknown }).reason : null);
+    const reason = sReason.text && sReason.text.trim() ? sReason.text.trim() : null;
+    out.push({ text, reason, ...(sText.changed || sReason.changed ? { sanitized: true as const } : {}) });
   }
   return out;
 }
@@ -317,6 +324,19 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   // null: then every gated URL's excerpts are refused under REGEN_JUDGE_FAILURE_POLICY, never minted outside.
   const transport = deps.makeTransport();
   const judge = deps.makeJudge();
+  // R36 (b): the run's integrity row is OPENED (status running) before the first page — a refused open refuses the run
+  // before any mint; the row is FINISHED with the full payload at the end, and a refused finish leaves it failed with the
+  // error, never no row.
+  let integrityId: number;
+  try {
+    integrityId = await openIntegrityRun(supabase, {
+      company_id, component: REGEN_COMPONENT, status: "running", examined: 0, admitted: 0,
+      excluded_by_rule: { mode, run_id: runId, urls: urls.length, review_refused: reviewRefused, review_gate: true, anchors_used: anchors, opened_at: nowIso() },
+      run_ref: `r3_outside_regen_${runId}`,
+    });
+  } catch (e) {
+    return { status: 500, body: { ok: false, error: `integrity row could not be opened — run refused before any mint: ${(e as Error).message}`, run_id: runId, mints: 0 } };
+  }
   const tally = emptyTally();
   const ledger = tallyingLedger(deps.makeLedger(company_id), tally);
   // R32: the speaker judge ledgers through the same tallying ledger, role "speaker", call site extract-outside-evidence:speaker
@@ -355,7 +375,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     if (now() - startedAt > deps.wallMs) { stoppedForTime = true; break; }
     const { clean_text, sha, readDate } = newestByUrl.get(url)!;
 
-    let cands: Array<{ text: string; reason: string | null }> = [];
+    let cands: GeneratorStatement[] = [];
     try {
       const { json: gen } = await regenGenerate({ system: deps.genSystem(anchors), user: `PAGE TEXT:\n${clean_text}`, models: deps.models, transport, ledger });
       cands = parseGeneratorStatements(gen.statements, deps.quoteMaxWords);
@@ -366,12 +386,16 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     candidates_total += cands.length;
 
     // R27: the judge's verdict AND its reason are kept per quote
-    let keepByQuote = new Map<string, { keep: boolean; reason: string | null }>();
+    let keepByQuote = new Map<string, { keep: boolean; reason: string | null; sanitized?: true }>();
     const admittedRows: Array<Record<string, unknown>> = [];
     const rejected: Array<{ quote: string; reason: string }> = [];
     const pageCandidates: CandidateRecord[] = [];
-    const record = (c: { text: string; reason: string | null }, code: CandidateCode, extra: Partial<CandidateRecord> = {}) => {
-      const rec: CandidateRecord = { url, text: c.text, code, generator_reason: c.reason, judge_reason: keepByQuote.get(c.text)?.reason ?? null, nearest_span: null, ...extra };
+    const record = (c: GeneratorStatement, code: CandidateCode, extra: Partial<CandidateRecord> = {}) => {
+      const jv = keepByQuote.get(c.text);
+      // R36 (a): the nearest span is page-derived but sanitized all the same; `sanitized` names any cleaned field
+      const ns = extra.nearest_span ? (() => { const s = sanitizeForStore(extra.nearest_span!.text); return { span: { ...extra.nearest_span!, text: s.text }, changed: s.changed }; })() : null;
+      const sanitized = c.sanitized || jv?.sanitized || ns?.changed;
+      const rec: CandidateRecord = { url, text: c.text, code, generator_reason: c.reason, judge_reason: jv?.reason ?? null, nearest_span: null, ...extra, ...(ns ? { nearest_span: ns.span } : {}), ...(sanitized ? { sanitized: true as const } : {}) };
       pageCandidates.push(rec); candidateRecords.push(rec);
     };
     // R31 (c): a bare attribution clause is refused by rule BEFORE the judge — it never reaches the judge prompt
@@ -386,7 +410,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       try {
         const { json: j } = await regenJudge({ system: deps.judgeSystem(anchors), user: `PAGE TEXT:\n${clean_text}\n\nCANDIDATES:\n${cands.map((c) => `- ${c.text}`).join("\n")}`, models: deps.models, transport, ledger });
         const verdicts = (Array.isArray(j.verdicts) ? j.verdicts : []) as Array<Record<string, unknown>>;
-        keepByQuote = new Map(verdicts.map((v) => [String(v.quote ?? "").trim(), { keep: v.keep === true, reason: typeof v.reason === "string" && v.reason.trim() ? v.reason.trim() : null }]));
+        // R36 (a): the ONE sanitizer, at the parse boundary — quote (the match key) and reason
+        keepByQuote = new Map(verdicts.map((v) => { const q = sanitizeForStore(v.quote), r = sanitizeNullable(v.reason); return [q.text.trim(), { keep: v.keep === true, reason: r.text && r.text.trim() ? r.text.trim() : null, ...(q.changed || r.changed ? { sanitized: true as const } : {}) }]; }));
       } catch (e) {
         pages.push({ url, error: `judge: ${(e as Error).message}`, candidates: cands.length, admitted: 0 });
         continue;
@@ -446,7 +471,10 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
           run_id: runId, provenance: "public_observed", read_at: nowIso(),
           verbatim: normalizeForHash(verdictA.excerpt).length,
           // R31 (a): the page slice is the stored text; the model's shaped copy is a locator, kept here only
-          excerpt_offset: verdictA.offset, excerpt_length: verdictA.length, model_text: verdictA.model_text,
+          // UNITS (R36 c): excerpt_offset / excerpt_length are UTF-16 CODE UNITS (JavaScript string indices — the unit the
+          // mint asserts in); excerpt_offset_cp is the same position in Unicode CODE POINTS, for SQL readers (substr counts
+          // code points). The two differ only when an astral character (an emoji) precedes the span.
+          excerpt_offset: verdictA.offset, excerpt_length: verdictA.length, excerpt_offset_cp: Array.from(clean_text.slice(0, verdictA.offset)).length, excerpt_length_cp: Array.from(verdictA.excerpt).length, model_text: verdictA.model_text,
           // R27: why the generator lifted it and why the judge kept it — the model's own words, beside the page's
           generator_reason: cand.reason, judge_reason: keepByQuote.get(c)?.reason ?? null,
           voice_authority: { authority: voice.authority, detail: voice.detail, policy: REGEN_JUDGE_FAILURE_POLICY, gate: voice.gate, ...(voice.rule ? { rule: voice.rule } : {}) },
@@ -472,19 +500,27 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     });
   }
 
-  await insertIntegrityRun(supabase, {
-    company_id, component: REGEN_COMPONENT, status: stoppedForTime ? "failed" : "completed",
-    examined: candidates_total, admitted: admitted_total,
-    // R4: the run's model-call tally beside its counts — {generator, judge, usd, ledger_failed}.
-    // R17: the voice refusals — excerpts not minted because a gated URL could not be judged; retried next run.
-    excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords },
-    run_ref: `r3_outside_regen_${runId}`,
-  });
+  // R36 (b): FINISH the run's row with the full payload; a refused finish leaves the row failed with the error text
+  // (payload omitted), the mints stand, and the response says so.
+  let integrity: { id: number; finish: "completed" | "failed"; error?: string } = { id: integrityId, finish: "completed" };
+  try {
+    await finishIntegrityRun(supabase, integrityId, {
+      status: stoppedForTime ? "failed" : "completed", examined: candidates_total, admitted: admitted_total,
+      // R4: the run's model-call tally beside its counts — {generator, judge, speaker, usd, ledger_failed}.
+      // R17: the voice refusals — excerpts not minted because a gated URL could not be judged; retried next run.
+      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords },
+    });
+  } catch (e) {
+    const msg = e instanceof IntegrityWriteRefused ? e.cause_message : (e as Error).message;
+    integrity = { id: integrityId, finish: "failed", error: msg };
+    try { await finishIntegrityRun(supabase, integrityId, { status: "failed", examined: candidates_total, admitted: admitted_total, error: `finish refused: ${msg}` }); } catch (e2) { integrity.error = `${msg}; and the failed-status update was refused too: ${(e2 as Error).message}`; }
+  }
 
   return {
     status: 200,
     body: {
       ok: true, mode: "write", company_id, run_id: runId, urls_total: urls.length, pages_processed: processed, stopped_for_time: stoppedForTime, review_refused: reviewRefused,
+      integrity,
       model_calls: tally,
       anchors_used: anchors,
       voice: { policy: REGEN_JUDGE_FAILURE_POLICY, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, refused_total: voice_refused_total, refusals: voiceRefusals },

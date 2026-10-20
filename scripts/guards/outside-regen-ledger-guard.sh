@@ -23,6 +23,8 @@
 #       not end a sentence after Dr./Mr./Inc./…; a bare attribution clause is refused e2_bare_attribution before the judge.
 #   l6. (R32) every speaker-judge call writes a model_calls row (ollama shape, usd null) before parse: on the fixtures,
 #       speaker rows = attribution-bearing candidates; judgeSpeaker ledgers before it parses.
+#   l7. (R36) sanitized at parse (NUL never reaches the integrity row); the row is opened running before the first mint
+#       and finished at the end — a refused finish leaves it failed with the error; excerpt_offset (UTF-16) + _cp (points).
 #   l3. DATA — for every integrity_runs row of component r3_outside_regen ran AFTER the fix landed, the
 #       model_calls rows at call_site extract-outside-evidence:* for that company inside the run's window
 #       must number at least the pages processed. UNTIL b3 RUNS there are no such rows: this prints
@@ -83,9 +85,15 @@ RUNS=$(psql "select count(*) from integrity_runs where component='r3_outside_reg
 if [ "$RUNS" = "0" ]; then
   echo "l3. no runs since the fix ($FIX_LANDED): nothing to compare — NOT a pass. standing regen ledger rows: $STANDING"
 else
-  BAD=$(psql "select count(*) from integrity_runs r where r.component='r3_outside_regen' and r.ran_at >= '$FIX_LANDED' and coalesce((r.excluded_by_rule->>'pages')::int,0) > (select count(*) from model_calls m where m.company_id=r.company_id and m.call_site='extract-outside-evidence:generator' and m.created_at between r.ran_at - interval '150 seconds' and r.ran_at + interval '5 seconds')")
+  # R36 (b): a row OPENED before its first call (payload carries opened_at) has its calls AFTER ran_at — a forward window;
+  # an older row was written after its calls — the backward window. R37: a ledger_lost row is a BACKFILL whose calls sit
+  # in the original run's window, so it is checked against the tally it was backfilled from, and named.
+  BAD=$(psql "select count(*) from integrity_runs r where r.component='r3_outside_regen' and r.ran_at >= '$FIX_LANDED' and coalesce(r.excluded_by_rule->>'ledger_lost','false') <> 'true' and coalesce((r.excluded_by_rule->>'pages')::int,0) > (select count(*) from model_calls m where m.company_id=r.company_id and m.call_site='extract-outside-evidence:generator' and m.created_at between (case when r.excluded_by_rule ? 'opened_at' then r.ran_at - interval '5 seconds' else r.ran_at - interval '150 seconds' end) and (case when r.excluded_by_rule ? 'opened_at' then r.ran_at + interval '400 seconds' else r.ran_at + interval '5 seconds' end))")
   [ "$BAD" = "0" ] || fail l3 "$BAD run(s) since the fix processed more pages than they ledgered generator calls"
-  echo "l3. data: $RUNS run(s) since the fix, every one ledgered at least one generator row per page; standing regen ledger rows: $STANDING"
+  LOST=$(psql "select count(*) from integrity_runs r where r.component='r3_outside_regen' and r.excluded_by_rule->>'ledger_lost'='true'")
+  LOSTBAD=$(psql "select count(*) from integrity_runs r where r.component='r3_outside_regen' and r.excluded_by_rule->>'ledger_lost'='true' and coalesce((r.excluded_by_rule->>'pages')::int,0) > coalesce((r.excluded_by_rule->'model_calls'->>'generator')::int,0)")
+  [ "$LOSTBAD" = "0" ] || fail l3 "$LOSTBAD ledger_lost backfill row(s) carry fewer generator calls than pages"
+  echo "l3. data: $RUNS run(s) since the fix, every one ledgered at least one generator row per page (ledger_lost backfills: $LOST, each consistent with its backfilled tally); standing regen ledger rows: $STANDING"
 fi
 
 # l4 — R27: the copying rule is PRESENT in the generator prompt (presence, not behaviour — behaviour is proven on a
@@ -130,4 +138,17 @@ grep -q 'if (opts.ledger) await opts.ledger(' supabase/functions/_shared/aggrega
 T=$(NO_COLOR=1 deno test --allow-all --no-check supabase/functions/_shared/speakerJudge.test.ts 2>&1 | grep -E '^ok \||^FAILED \|' | tail -1 || true)
 echo "$T" | grep -q '^ok |' || fail l6 "speakerJudge tests: ${T:-no summary}"
 echo "l6. R32 speaker ledger: $SP · $T"
+
+# l7 — R36: model output sanitized at the parse boundary; the integrity row opened before the first mint and finished at
+#      the end (a refused finish leaves it failed with the error); both offsets stored. Probe: scripts/guards/regen-integrity-probe.ts.
+grep -q 'from "./sanitizeForStore.ts"' supabase/functions/_shared/outsideRegenHandler.ts || fail l7 "the handler does not import the one sanitizer"
+grep -q 'openIntegrityRun(supabase, {' supabase/functions/_shared/outsideRegenHandler.ts || fail l7 "the handler does not open the integrity row"
+grep -q 'excerpt_offset_cp: Array.from(clean_text.slice(0, verdictA.offset)).length' supabase/functions/_shared/outsideRegenHandler.ts || fail l7 "excerpt_offset_cp is not stored"
+IP=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-integrity-probe.ts 2>&1 | tail -1)
+[ "$(echo "$IP" | jq_ "d.get('nul_finish_ok')")" = "True" ] || fail l7 "a NUL in a candidate still breaks the finish: $IP"
+[ "$(echo "$IP" | jq_ "d.get('nul_sanitized')")" = "True" ] || fail l7 "the sanitized flag is missing: $IP"
+[ "$(echo "$IP" | jq_ "d.get('refused_open_mints')")" = "0" ] || fail l7 "a refused open did not refuse before the first mint: $IP"
+[ "$(echo "$IP" | jq_ "str(d.get('finish_fail_status'))+'|'+str(d.get('finish_fail_mints_kept'))")" = "failed|1" ] || fail l7 "a refused finish did not leave a failed row with the mint kept: $IP"
+[ "$(echo "$IP" | jq_ "str(d.get('emoji_units_minus_cp'))+'|'+str(d.get('both_resolve'))")" = "2|True" ] || fail l7 "the two offsets do not both resolve past an emoji: $IP"
+echo "l7. R36 probe: $IP"
 echo "GUARD OK"
