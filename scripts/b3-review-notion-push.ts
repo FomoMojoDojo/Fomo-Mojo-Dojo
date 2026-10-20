@@ -71,6 +71,9 @@ try {
 
 // ── rows: the review rows of this run if they exist, else the plan rows with a pending id ──────────
 const coName = psql("select name from companies where id=:'c';", { c: company! });
+// R40: a held company (companies.fixture_hold) is refused, code fixture_held
+const coHold = psql("select coalesce(fixture_hold,'') from companies where id=:'c';", { c: company! });
+if (coHold) fail(`fixture_held: company ${company} is held (${coHold}) — a test fixture never runs the review path`, 2);
 if (!coName) fail(`no company ${company}`);
 const plan = planRowsFor(parsePlanTsv(readFileSync(planPath!, "utf8")), coName);
 type RR = { id: string; source_url: string; dependent_signal_ids: string[]; baseline_sha256: string | null; operator_decision: string | null };

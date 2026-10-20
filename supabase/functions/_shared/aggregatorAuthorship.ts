@@ -857,9 +857,10 @@ async function pageAll<T>(build: (from: number, to: number) => Promise<{ data: T
 export function makeSupabaseRestampStore(supabase: SupabaseLike): RestampStore {
   return {
     async loadCompanies() {
-      const { data, error } = await supabase.from("companies").select("id, name, website, frozen");
+      const { data, error } = await supabase.from("companies").select("id, name, website, frozen, fixture_hold");
       if (error) throw new Error(`companies read failed: ${error.message}`);
-      return ((data ?? []) as Array<{ id: string; name: string; website: string | null; frozen: boolean | null }>).map((c) => ({ ...c, frozen: !!c.frozen }));
+      // R40: a held company (fixture_hold non-null) is outside every sweep
+      return ((data ?? []) as Array<{ id: string; name: string; website: string | null; frozen: boolean | null; fixture_hold?: string | null }>).filter((c) => !c.fixture_hold).map(({ fixture_hold: _h, ...c }) => ({ ...c, frozen: !!c.frozen }));
     },
     // 2026-10-16, detector (b): the stored page text for the candidate urls.
     //

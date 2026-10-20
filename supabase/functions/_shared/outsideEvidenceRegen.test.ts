@@ -88,3 +88,20 @@ Deno.test("R32: apostrophes never count as quotation marks (the pilot-3 false po
   assertEquals(detectAttribution("Whispering AI is headquartered at 6929 North Hayden Road, Scottsdale.", ""), null);
   assertEquals(detectAttribution("", OCBJ), null);
 });
+
+
+// ── R42: speakerContext — the paragraph plus every sentence naming the speaker, deduped, capped ──────────
+import { speakerContext, SPEAKER_CONTEXT_CAP } from "./attribution.ts";
+Deno.test("R42: speakerContext = paragraph (whole) + sentences containing the speaker string or its surname, in page order, deduped, under the cap", () => {
+  const page = "Steve Brierley, Riverlane's founder and CEO, has spent a decade on error correction.\n\nA quote: “key to unlocking useful quantum computing”, said Brierley. Investors agreed.\n\nBrierley added that hiring continues. Brierley added that hiring continues.";
+  const off = page.indexOf("A quote"); const len = "A quote: “key to unlocking useful quantum computing”, said Brierley.".length;
+  const ctx = speakerContext(page, off, len, "Brierley");
+  assert(ctx.startsWith("A quote:"), "paragraph first");
+  assert(ctx.includes("Steve Brierley, Riverlane's founder and CEO"), "the earlier sentence is added");
+  assertEquals(ctx.split("Brierley added that hiring continues.").length - 1, 1, "deduped");
+  assertEquals(speakerContext(page, off, len, ""), page.slice(page.lastIndexOf("\n\n", off) + 2, page.indexOf("\n\n", off + len)), "no speaker string → the paragraph alone, without the separator");
+  const long = page + "\n\n" + Array.from({ length: 200 }, (_, i) => `Brierley said thing number ${i} about the future of quantum error correction and the company's plans.`).join(" ");
+  const capped = speakerContext(long, off, len, "Brierley");
+  assert(capped.length <= SPEAKER_CONTEXT_CAP + 200, `cut near the cap (${capped.length})`); assert(capped.startsWith("A quote:"));
+  const shortTok = speakerContext(page, off, len, "the company"); assert(!shortTok.includes("founder and CEO"), "a last token under 4 chars is not searched; 'the company' matches nothing else here");
+});

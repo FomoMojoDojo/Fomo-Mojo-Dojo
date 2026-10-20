@@ -25,6 +25,8 @@
 #       speaker rows = attribution-bearing candidates; judgeSpeaker ledgers before it parses.
 #   l7. (R36) sanitized at parse (NUL never reaches the integrity row); the row is opened running before the first mint
 #       and finished at the end — a refused finish leaves it failed with the error; excerpt_offset (UTF-16) + _cp (points).
+#   l8. (R41) the page budget: 8 per write call, continuation under the same run_id, a minted URL never re-run.
+#   l9. (R42) the speaker context reaches past the paragraph (every sentence naming the speaker, capped).
 #   l3. DATA — for every integrity_runs row of component r3_outside_regen ran AFTER the fix landed, the
 #       model_calls rows at call_site extract-outside-evidence:* for that company inside the run's window
 #       must number at least the pages processed. UNTIL b3 RUNS there are no such rows: this prints
@@ -85,10 +87,12 @@ RUNS=$(psql "select count(*) from integrity_runs where component='r3_outside_reg
 if [ "$RUNS" = "0" ]; then
   echo "l3. no runs since the fix ($FIX_LANDED): nothing to compare — NOT a pass. standing regen ledger rows: $STANDING"
 else
-  # R36 (b): a row OPENED before its first call (payload carries opened_at) has its calls AFTER ran_at — a forward window;
+  # R36 (b): a row OPENED before its first call (payload carries opened_at, or it was written after the running-status
+  #      migration of 2026-10-20 01:00 UTC — the first finished rows dropped opened_at from the payload) has its calls AFTER
+  #      ran_at — a forward window;
   # an older row was written after its calls — the backward window. R37: a ledger_lost row is a BACKFILL whose calls sit
   # in the original run's window, so it is checked against the tally it was backfilled from, and named.
-  BAD=$(psql "select count(*) from integrity_runs r where r.component='r3_outside_regen' and r.ran_at >= '$FIX_LANDED' and coalesce(r.excluded_by_rule->>'ledger_lost','false') <> 'true' and coalesce((r.excluded_by_rule->>'pages')::int,0) > (select count(*) from model_calls m where m.company_id=r.company_id and m.call_site='extract-outside-evidence:generator' and m.created_at between (case when r.excluded_by_rule ? 'opened_at' then r.ran_at - interval '5 seconds' else r.ran_at - interval '150 seconds' end) and (case when r.excluded_by_rule ? 'opened_at' then r.ran_at + interval '400 seconds' else r.ran_at + interval '5 seconds' end))")
+  BAD=$(psql "select count(*) from integrity_runs r where r.component='r3_outside_regen' and r.ran_at >= '$FIX_LANDED' and coalesce(r.excluded_by_rule->>'ledger_lost','false') <> 'true' and coalesce((r.excluded_by_rule->>'pages')::int,0) > (select count(*) from model_calls m where m.company_id=r.company_id and m.call_site='extract-outside-evidence:generator' and m.created_at between (case when r.excluded_by_rule ? 'opened_at' or r.ran_at >= '2026-10-20 01:00:00+00' then r.ran_at - interval '5 seconds' else r.ran_at - interval '150 seconds' end) and (case when r.excluded_by_rule ? 'opened_at' or r.ran_at >= '2026-10-20 01:00:00+00' then r.ran_at + interval '400 seconds' else r.ran_at + interval '5 seconds' end))")
   [ "$BAD" = "0" ] || fail l3 "$BAD run(s) since the fix processed more pages than they ledgered generator calls"
   LOST=$(psql "select count(*) from integrity_runs r where r.component='r3_outside_regen' and r.excluded_by_rule->>'ledger_lost'='true'")
   LOSTBAD=$(psql "select count(*) from integrity_runs r where r.component='r3_outside_regen' and r.excluded_by_rule->>'ledger_lost'='true' and coalesce((r.excluded_by_rule->>'pages')::int,0) > coalesce((r.excluded_by_rule->'model_calls'->>'generator')::int,0)")
@@ -151,4 +155,16 @@ IP=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-integrity-p
 [ "$(echo "$IP" | jq_ "str(d.get('finish_fail_status'))+'|'+str(d.get('finish_fail_mints_kept'))")" = "failed|1" ] || fail l7 "a refused finish did not leave a failed row with the mint kept: $IP"
 [ "$(echo "$IP" | jq_ "str(d.get('emoji_units_minus_cp'))+'|'+str(d.get('both_resolve'))")" = "2|True" ] || fail l7 "the two offsets do not both resolve past an emoji: $IP"
 echo "l7. R36 probe: $IP"
+
+# l8 — R41: the page budget. 10 approved URLs on fake fixtures: a write processes 8 (remaining 2), the continuation 2,
+#      a third call 0; generator calls equal unprocessed pages (8, 2, 0) — a minted URL is never re-run.
+BP=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-budget-probe.ts 2>&1 | tail -1)
+[ "$(echo "$BP" | jq_ "[c['generator_calls_this_call'] for c in d['calls']]")" = "[8, 2, 0]" ] || fail l8 "generator calls per call != [8, 2, 0]: $BP"
+[ "$(echo "$BP" | jq_ "[c['remaining'] for c in d['calls']]")" = "[2, 0, 0]" ] || fail l8 "remaining per call != [2, 0, 0]: $BP"
+grep -q 'export const REGEN_PAGE_BUDGET = 8;' supabase/functions/_shared/outsideRegenHandler.ts || fail l8 "the budget is not 8"
+echo "l8. R41 probe: $BP"
+# l9 — R42: the speaker judge's context carries every page sentence naming the speaker; the Brierley fixture resolves.
+SC=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-speaker-context-probe.ts 2>&1 | tail -1)
+[ "$(echo "$SC" | jq_ "str(d.get('context_has_affiliation'))+'|'+str(d.get('speaker_class'))+'|'+str(d.get('voice_class'))")" = "True|subject_company_officer|client_voice" ] || fail l9 "the Brierley fixture did not resolve: $SC"
+echo "l9. R42 probe: $SC"
 echo "GUARD OK"

@@ -347,9 +347,10 @@ async function pageAll<T>(build: (from: number, to: number) => Promise<{ data: T
 export function makeSupabaseBlankingStore(supabase: SupabaseLike): BlankingStore {
   return {
     async loadCompanies() {
-      const { data, error } = await supabase.from("companies").select("id, name, frozen");
+      const { data, error } = await supabase.from("companies").select("id, name, frozen, fixture_hold");
       if (error) throw new Error(`companies read failed: ${error.message}`);
-      return ((data ?? []) as Array<{ id: string; name: string; frozen: boolean | null }>).map((c) => ({ id: c.id, name: c.name, frozen: !!c.frozen }));
+      // R40: a held company (fixture_hold non-null) is outside every sweep
+      return ((data ?? []) as Array<{ id: string; name: string; frozen: boolean | null; fixture_hold?: string | null }>).filter((c) => !c.fixture_hold).map((c) => ({ id: c.id, name: c.name, frozen: !!c.frozen }));
     },
     async loadCandidateSignals(companyIds) {
       const rows: BlankingSignal[] = [];

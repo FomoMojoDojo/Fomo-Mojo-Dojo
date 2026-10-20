@@ -36,7 +36,7 @@ export function fakeDb(seed: Record<string, Row[]>) {
     // deno-lint-ignore no-explicit-any
     const b: any = {
       select: () => b, order: () => b,
-      eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; },
+      eq: (k: string, v: unknown) => { const m = /^(\w+)->>(\w+)$/.exec(k); filters.push(m ? (r) => ((r[m[1]] as Record<string, unknown> | null)?.[m[2]] ?? null) === v : (r) => r[k] === v); return b; },   // R41: raw_payload->>run_id
       is: (k: string, v: unknown) => { filters.push((r) => (v === null ? r[k] == null : r[k] === v)); return b; },
       in: (k: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[k])); return b; },
       maybeSingle: () => Promise.resolve({ data: run()[0] ?? null, error: null }),
@@ -515,8 +515,9 @@ Deno.test("R36 (a): a candidate with U+0000 in text and in reason is stored sani
 
 Deno.test("R36 (b): the integrity row is opened (running) before the first mint and finished (completed) with the full payload; a refused open refuses the run with 0 mints", async () => {
   const db = fakeDb(seedR27()); const { d } = deps(db, r27Transport(), null);
-  const order: string[] = [];
-  const origFrom = db.from; db.from = (t: string) => { order.push(t); return origFrom(t); };
+  const order: string[] = [];   // WRITE order only — R41 reads signals (minted-under-run) before the open, and a read is not a write
+  // deno-lint-ignore no-explicit-any
+  const origFrom = db.from; db.from = (t: string) => { const b: any = origFrom(t); const ins = b.insert; b.insert = (rows: unknown) => { order.push(t); return ins(rows); }; return b; };
   const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d);
   assertEquals(r.status, 200);
   const firstIntegrity = order.indexOf("integrity_runs"), firstSignals = order.indexOf("signals");
@@ -524,6 +525,8 @@ Deno.test("R36 (b): the integrity row is opened (running) before the first mint 
   const row = (db.tables.integrity_runs ?? []).find((x) => x.component === "r3_outside_regen")!;
   assertEquals(row.status, "completed"); assertEquals((row.excluded_by_rule as { candidates: unknown[] }).candidates.length, 2);
   assertEquals((db.updates.integrity_runs ?? []).length, 1, "one finish update");
+  const fin = row.excluded_by_rule as { opened_at?: string; finished_at?: string };
+  assert(fin.opened_at && fin.finished_at && fin.opened_at <= fin.finished_at, "the finished payload keeps opened_at and adds finished_at");
   // refused open ⇒ refused run, 0 mints
   const db2 = fakeDb(seedR27()); db2.failures.integrity_insert = "permission denied"; const { d: d2 } = deps(db2, r27Transport(), null);
   const r2 = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d2);
@@ -556,4 +559,74 @@ Deno.test("R36 (c): with an emoji before the span, excerpt_offset (UTF-16 units)
   assertEquals(p.excerpt_offset, p.excerpt_offset_cp + 2, "two astral characters before the span: units exceed points by 2");
   assertEquals(page.substring(p.excerpt_offset, p.excerpt_offset + p.excerpt_length), m.evidence_excerpt, "UTF-16 units resolve (JS substring)");
   assertEquals(Array.from(page).slice(p.excerpt_offset_cp, p.excerpt_offset_cp + p.excerpt_length_cp).join(""), m.evidence_excerpt, "code points resolve (Array.from, as SQL substr counts)");
+});
+
+
+// ── R40: a held company is refused on plan and write ────────────────────────────────────────────────────────
+Deno.test("R40: a company with fixture_hold set is refused 403 fixture_held on plan AND write — no transport, no mint, one refusal integrity row", async () => {
+  const db = fakeDb(seedR27()); db.tables.companies[0].fixture_hold = "R39:test_fixture";
+  const { d, constructions } = deps(db, r27Transport(), null);
+  for (const body of [{ company_id: CO, run_id: RUN2, plan: true, urls: [U1] }, { company_id: CO, run_id: RUN2, write: true, urls: [U1] }]) {
+    const r = await runOutsideRegen(body, d);
+    assertEquals(r.status, 403, JSON.stringify(r.body)); assertEquals(r.body.guard, "fixture_held"); assertEquals(r.body.hold, "R39:test_fixture");
+  }
+  assertEquals(constructions(), 0); assertEquals(db.inserts.signals, undefined);
+  assertEquals((db.inserts.integrity_runs ?? []).filter((x) => (x.excluded_by_rule as { refused?: string }).refused === "fixture_held").length, 2);
+});
+
+// ── R41: the page budget and the continuation ───────────────────────────────────────────────────────────────
+export const U10 = Array.from({ length: 10 }, (_, i) => `https://press${i + 1}.example/acme-${i + 1}`);
+export function seed10(): Record<string, Row[]> {
+  const s = seed();
+  s.outside_page_snapshots = U10.map((u, i) => ({ id: `snap-${i + 1}`, company_id: CO, source_url: u, signal_id: null, clean_text: `Acme Coffee story ${i + 1}. Acme Coffee roasts every bean in Burbank and supplies ${40 + i} cafes across Los Angeles. More text.`, text_sha256: `sha-${i + 1}`, crawled_at: "2026-09-14T00:00:00Z", fetch_status: "ok" }));
+  s.outside_recrawl_review = U10.map((u, i) => ({ company_id: CO, run_id: RUN2, source_url: u, operator_decision: "approve", created_at: `2026-10-20T00:00:${String(i).padStart(2, "0")}Z` }));
+  return s;
+}
+/** The generator lifts the page's second sentence verbatim; counts generator calls. */
+export function pageTransport(calls: { gen: number }): RegenTransport {
+  return ({ system, user }) => {
+    if (system === "GEN") { calls.gen++; const page = user.slice(user.indexOf("PAGE TEXT:\n") + 11); const sent = page.split(". ")[1] + "."; return Promise.resolve({ content: JSON.stringify({ statements: [{ text: sent, reason: "r" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } }); }
+    const q = /- (.+)/.exec(user)?.[1] ?? "";
+    return Promise.resolve({ content: JSON.stringify({ verdicts: [{ quote: q, keep: true, reason: "k" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } });
+  };
+}
+Deno.test("R41: 10 approved URLs → the first write processes 8 (completed, remaining 2); the continuation processes 2 (remaining 0); a third call does nothing; generator calls = unprocessed pages (8, 2, 0), never 10", async () => {
+  const db = fakeDb(seed10()); const calls = { gen: 0 }; const { d } = deps(db, pageTransport(calls), null);
+  const r1 = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true }, d);
+  assertEquals(r1.status, 200, JSON.stringify(r1.body)); assertEquals(r1.body.pages_processed, 8); assertEquals(r1.body.pages_budget, 8); assertEquals(r1.body.done_before, 0); assertEquals((r1.body.remaining as string[]).length, 2);
+  assertEquals((r1.body.integrity as { finish: string }).finish, "completed"); assertEquals(calls.gen, 8);
+  assertEquals((r1.body.remaining as string[]), U10.slice(8), "remaining in plan order");
+  const row1 = (db.tables.integrity_runs ?? []).filter((x) => x.component === "r3_outside_regen").pop()!;
+  assertEquals((row1.excluded_by_rule as { pages_done: number; remaining: string[] }).pages_done, 8); assertEquals((row1.excluded_by_rule as { remaining: string[] }).remaining.length, 2);
+  const r2 = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true }, d);
+  assertEquals(r2.body.pages_processed, 2); assertEquals(r2.body.done_before, 8); assertEquals((r2.body.remaining as string[]).length, 0); assertEquals(calls.gen, 10);
+  const r3 = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true }, d);
+  assertEquals(r3.body.pages_processed, 0); assertEquals(r3.body.done, 10); assertEquals(calls.gen, 10, "a minted URL is never re-run");
+  assertEquals((db.inserts.signals ?? []).length, 10);
+  const plan = await runOutsideRegen({ company_id: CO, run_id: RUN2, plan: true }, d);
+  assertEquals(plan.body.done, 10); assertEquals(plan.body.remaining, 0); assertEquals(plan.body.would_run, 0);
+  assert((plan.body.rows as Array<{ done: boolean }>).every((x) => x.done));
+});
+
+// ── R42: the speaker judge's context reaches past the paragraph ────────────────────────────────────────────
+export const PAGE42 = "Riverlane, the Cambridge quantum company, raised $75 million.\n\nSteve Brierley, Riverlane's founder and CEO, has spent a decade on error correction. The round was led by Planet First Partners.\n\nThe qubits are also highly susceptible to errors generated by noise, and the solution to this problem is the “key to unlocking useful quantum computing”, said Brierley. Investors agreed.\n\nRiverlane plans to hire.";
+export const CAND42 = "The qubits are also highly susceptible to errors generated by noise, and the solution to this problem is the “key to unlocking useful quantum computing”, said Brierley.";
+/** A fake speaker judge that answers officer ONLY when the context carries the affiliation sentence. */
+export function contextReadingJudge(seen: string[]): SpeakerJudge {
+  return (i) => { seen.push(i.context); const officer = /founder and CEO/.test(i.context); return Promise.resolve(officer ? { speaker_class: "subject_company_officer", speaker_name: "Steve Brierley", speaker_role: "founder and CEO", reason: "the context names him founder and CEO", model: "fake" } : { speaker_class: "unknown", speaker_name: null, speaker_role: null, reason: "the paragraph does not state the affiliation", model: "fake" }); };
+}
+Deno.test("R42: the Brierley fixture — affiliation stated outside the quote's paragraph — reaches the judge in the context and resolves subject_company_officer → client_voice", async () => {
+  const db = fakeDb(seedR17());
+  for (const r of db.tables.outside_page_snapshots) if (r.source_url === U1) r.clean_text = PAGE42;
+  const seen: string[] = [];
+  const t: RegenTransport = ({ system }) => Promise.resolve(system === "GEN"
+    ? { content: JSON.stringify({ statements: [{ text: CAND42, reason: "r" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    : { content: JSON.stringify({ verdicts: [{ quote: CAND42, keep: true, reason: "k" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } });
+  const { d } = deps(db, t, null); d.makeSpeakerJudge = () => contextReadingJudge(seen);
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d);
+  assertEquals(r.status, 200, JSON.stringify(r.body));
+  assertEquals(seen.length, 1); assert(seen[0].includes("Steve Brierley, Riverlane's founder and CEO"), "the affiliation sentence is in the context");
+  assert(seen[0].startsWith("The qubits are also"), "the paragraph comes first and whole");
+  const m = (db.inserts.signals ?? [])[0] as { voice_class: string; raw_payload: { speaker: { speaker_class: string } } };
+  assertEquals(m.voice_class, "client_voice"); assertEquals(m.raw_payload.speaker.speaker_class, "subject_company_officer");
 });

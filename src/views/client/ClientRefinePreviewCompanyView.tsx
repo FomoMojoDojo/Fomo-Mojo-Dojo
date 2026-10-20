@@ -1337,7 +1337,10 @@ export default function ClientRefinePreviewCompanyView() {
   // FAILED to load, "not found" would be a guess. Both of those render the page's normal frame with
   // an empty company, which is what it did before N1 when no company was selected.
   const companyListAnswered = !companiesLoading && !companiesFetchError && companies.length > 0;
-  if (routeCompanyId && !routeCompany && companyListAnswered) {
+  // R40: a HELD company (fixture_hold) is refused on every client surface with the same answer as an id that does
+  // not resolve — the strings below are reused, none minted.
+  const routeCompanyHeld = !!routeCompany?.fixture_hold;
+  if (routeCompanyId && (!routeCompany || routeCompanyHeld) && companyListAnswered) {
     return (
       <div className="crpv-page" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
         <div className="crpv-ws-body" style={{ flex: 1 }}>

@@ -69,6 +69,8 @@ export type CompanyInventoryRow = {
   name: string;
   website: string | null;
   frozen: boolean;
+  /** R40: the hold reason when the company is a test fixture; null for a client. */
+  fixtureHold: string | null;
   score: { value: number; methodology: string; computedAt: string } | null;
   /** Gate 2. Null when the current methodology has a single row — renders "—", never 0. */
   delta: ScoreDelta | null;
@@ -145,7 +147,7 @@ export function fillStatusLabel(s: FillStages): string {
 
 /** Assemble the inventory from already-fetched rows. Pure, so the tests plant rows directly. */
 export function buildInventory(input: {
-  companies: Array<{ id: string; name: string; website?: string | null; frozen?: boolean | null }>;
+  companies: Array<{ id: string; name: string; website?: string | null; frozen?: boolean | null; fixture_hold?: string | null }>;
   mojoScores: Array<{ company_id: string; total_score: number; methodology_version: string; computed_at: string }>;
   integrity: Array<{ company_id: string; component: string; status: string; ran_at: string; error?: string | null }>;
   ownWords: Array<{ company_id: string; created_at: string }>;
@@ -241,6 +243,7 @@ export function buildInventory(input: {
       name: c.name,
       website: c.website ?? null,
       frozen: c.frozen === true,
+      fixtureHold: c.fixture_hold ? String(c.fixture_hold) : null,
       score: sc ? { value: num(sc.total_score), methodology: str(sc.methodology_version), computedAt: str(sc.computed_at) } : null,
       // Gate 2 — computed from the SAME rows the score cell already uses. No second query.
       delta: scoreDelta(input.mojoScores.filter((m) => m.company_id === c.id)),
@@ -266,7 +269,7 @@ export async function fetchCompaniesInventoryResult(): Promise<InventoryFetchRes
   // deno-lint-ignore no-explicit-any
   const sb = supabase as any;
   const [companies, mojoScores, integrity, ownWords, deltas, reads, recurrence, baselines, ledger, modelCalls] = await Promise.all([
-    sb.from("companies").select("id, name, website, frozen").order("name"),
+    sb.from("companies").select("id, name, website, frozen, fixture_hold").order("name"),
     sb.from("mojo_scores").select("company_id, total_score, methodology_version, computed_at"),
     sb.from("integrity_runs").select("company_id, component, status, ran_at, error"),
     sb.from("claims").select("company_id, created_at").eq("claim_type", "own_words").eq("status", "active"),

@@ -68,7 +68,7 @@ export type InventoryVariant = "admin" | "readonly" | "frontDoor";
 
 /** The table reads four fields. Narrower than `Company` so the front door can pass inventory rows
  *  straight through instead of synthesising the ~20 columns it has no data for. */
-export type InventoryCompany = Pick<Company, "id" | "name" | "website" | "frozen">;
+export type InventoryCompany = Pick<Company, "id" | "name" | "website" | "frozen" | "fixture_hold">;
 
 export type InventoryTableProps = {
   variant?: InventoryVariant;
@@ -197,7 +197,7 @@ function FragmentRow(p: {
             className="font-sans text-[13px] font-semibold text-left"
             style={{ color: p.isActive ? c.teal : text }}
           >
-            {company.name}
+            {company.name}{(company.fixture_hold || inv?.fixtureHold) ? <span data-testid="fixture-hold" title={String(company.fixture_hold || inv?.fixtureHold)} style={{ marginLeft: 8, fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "#fde68a", color: "#78350f" }}>held: {String(company.fixture_hold || inv?.fixtureHold)}</span> : null}
           </button>
           <div className="font-mono text-[10px]" style={{ color: c.muted }}>{company.website ?? "—"}</div>
           {p.renderRowLink ? (

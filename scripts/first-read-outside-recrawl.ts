@@ -111,6 +111,9 @@ const b64Sql = (obj: unknown): string => `convert_from(decode('${b64(obj)}','bas
 
 // ── frozen refusal (defence in depth; the DB trigger is the real guard) ───────
 const frozen = psql("select coalesce(frozen,false) from companies where id=:'c';", { c: company });
+// R40: a held company (companies.fixture_hold) is a test fixture — refused by every regen path, code fixture_held
+const fixtureHold = psql("select coalesce(fixture_hold,'') from companies where id=:'c';", { c: company });
+if (fixtureHold) fail(`fixture_held: company ${company} is held (${fixtureHold}) — a test fixture never runs the review path`);
 if (frozen !== "f" && frozen.toLowerCase() !== "false") {
   if (frozen === "") fail(`no such company ${company}`);
   fail(`REFUSED: company ${company} is frozen — never re-crawled or written.`);

@@ -27,11 +27,13 @@ async function psql(sql: string): Promise<string> {
 const lines = (await Deno.readTextFile(planPath)).split("\n").filter((l) => l.includes("\t"));
 const hdr = lines[0].split("\t"); const col = (n: string) => hdr.indexOf(n);
 const rows = lines.slice(1).map((l) => l.split("\t")).filter((f) => !(f[col("exclude")] ?? "")).map((f) => ({ company: f[col("company")], url: f[col("url")] }));
-const cos = JSON.parse(await psql("select coalesce(json_agg(json_build_object('id', id, 'name', name, 'website', website)),'[]') from companies;")) as Array<{ id: string; name: string; website: string | null }>;
+// R40: a held company (fixture_hold) is outside the expectation set — its plan rows read "(held)"
+const cos = JSON.parse(await psql("select coalesce(json_agg(json_build_object('id', id, 'name', name, 'website', website, 'fixture_hold', fixture_hold)),'[]') from companies;")) as Array<{ id: string; name: string; website: string | null; fixture_hold?: string | null }>;
 const coByName = new Map(cos.map((c) => [c.name, c]));
 const out: string[] = [];
 for (const r of rows) {
   const co = coByName.get(r.company); if (!co) { out.push([r.company, r.url, "(no company)", "(none)"].join("\t")); continue; }
+  if (co.fixture_hold) { out.push([r.company, r.url, "(held)", "fixture_hold"].join("\t")); continue; }
   const host = (() => { try { return normalizeHost(new URL(co.website ?? "").hostname) || null; } catch { return null; } })();
   const snap = JSON.parse(await psql(`select coalesce(row_to_json(t)::text,'null') from (select clean_text, text_sha256, structured from outside_page_snapshots where company_id='${co.id}' and source_url='${r.url.replace(/'/g, "''")}' and fetch_status='ok' and clean_text is not null and length(clean_text)>0 order by crawled_at desc limit 1) t;`)) as { clean_text: string; text_sha256: string; structured: unknown } | null;
   if (!snap) { out.push([r.company, r.url, "(no snapshot)", "(none)"].join("\t")); continue; }

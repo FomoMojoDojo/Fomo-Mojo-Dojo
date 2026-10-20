@@ -66,6 +66,9 @@ const rows: Row[] = JSON.parse(psql(
      from outside_recrawl_review where company_id=:'c' and run_id=:'r'::uuid;`, { c: company!, r: runId! }) || "[]");
 const rowById = new Map(rows.map((r) => [r.id, r]));
 const coName = psql("select name from companies where id=:'c';", { c: company! });
+// R40: a held company (companies.fixture_hold) is refused, code fixture_held
+const coHold = psql("select coalesce(fixture_hold,'') from companies where id=:'c';", { c: company! });
+if (coHold) fail(`fixture_held: company ${company} is held (${coHold}) — a test fixture never runs the review path`, 2);
 
 // ── operator inputs: Notion verdicts (overrides), a fixture, or --operator ───────────────────────
 let operatorInputs: DecisionInput[] = [];

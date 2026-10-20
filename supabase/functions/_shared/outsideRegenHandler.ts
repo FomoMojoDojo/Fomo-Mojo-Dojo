@@ -30,6 +30,7 @@ import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type JudgeFail
 import type { AuthorshipJudgment } from "./aggregatorAuthorship.ts";
 import { clientAnchorsFor } from "./clientAnchors.ts";
 import { nearestSpan, type NearestSpan } from "./nearestSpan.ts";
+import { speakerContext } from "./attribution.ts";
 
 /** R17 (b): on the regen path an unjudged gated row is NOT minted. Named here, passed explicitly — the shared
  *  function has no default. */
@@ -38,6 +39,9 @@ export const REGEN_JUDGE_FAILURE_POLICY: JudgeFailurePolicy = "refuse_mint";
 /** R28: the text gates the regen path names — a first-person candidate is client_voice by rule, before the judge. */
 export const REGEN_TEXT_GATES: ReadonlyArray<TextGate> = ["first_person", "attributed_speech"];
 export const REGEN_DEFAULT_LABEL = "outside_voice_about_client";
+/** R41: pages a WRITE call processes; the approved URLs not yet minted under the run_id beyond it are `remaining`, picked up by a continuation call. */
+export const REGEN_PAGE_BUDGET = 8;
+export const FIXTURE_HELD_GUARD = "fixture_held" as const;
 export type RegenJudge = (input: { subjectName: string; subjectHost: string; url: string; text: string }) => Promise<AuthorshipJudgment | null>;
 
 export const REGEN_MODE_FLAGS = ["plan", "write"] as const;
@@ -71,7 +75,8 @@ export type CandidateRecord = {
 /** The generator's statements as {text, reason}. A bare string (the pre-R27 shape) reads as text with no reason. */
 /** R32: the paragraph the candidate sits in — from the previous blank line to the next, capped. */
 export function paragraphAround(page: string, offset: number, length: number): string {
-  const start = Math.max(0, page.lastIndexOf("\n\n", offset), offset - 1200);
+  const sep = page.lastIndexOf("\n\n", offset);
+  const start = Math.max(0, sep >= 0 ? sep + 2 : 0, offset - 1200);   // after the separator, never including it
   const endNl = page.indexOf("\n\n", offset + length);
   const end = Math.min(page.length, endNl < 0 ? offset + length + 1200 : endNl, offset + length + 1200);
   return page.slice(start, end);
@@ -228,8 +233,18 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
 
   // R17: name and website join the select — the shared voice authority needs the company's host (own domain)
   // and name (the judge's outcome test).
-  const { data: co } = await supabase.from("companies").select("id, name, website, frozen, entity_anchors_json").eq("id", company_id).maybeSingle();
+  const { data: co } = await supabase.from("companies").select("id, name, website, frozen, entity_anchors_json, fixture_hold").eq("id", company_id).maybeSingle();
   if (!co) return { status: 404, body: { error: "company not found" } };
+  // R40: a HELD company (companies.fixture_hold non-null — a test fixture) is refused on plan and write alike, ledgered.
+  const hold = (co as { fixture_hold?: unknown }).fixture_hold;
+  if (typeof hold === "string" && hold.trim()) {
+    await insertIntegrityRun(supabase, {
+      company_id, component: REGEN_COMPONENT, status: "failed", examined: 0, admitted: 0,
+      error: `guard=${FIXTURE_HELD_GUARD} ${hold}`,
+      excluded_by_rule: { refused: FIXTURE_HELD_GUARD, guard: FIXTURE_HELD_GUARD, hold, review_gate: true, mode }, run_ref: `r3_outside_regen_refused_${FIXTURE_HELD_GUARD}`,
+    });
+    return { status: 403, body: { ok: false, error: `company is held (${hold}) — a test fixture never regenerates`, guard: FIXTURE_HELD_GUARD, hold } };
+  }
   if ((co as { frozen?: boolean }).frozen) return { status: 403, body: { error: "outside-regen refused: company is frozen" } };
   // R22: the client is ALWAYS named — company name, website host (one derivation), then entity anchors; name and
   // host both absent is a named refusal, never a fallback string. The set used rides on the plan and the ledger.
@@ -264,10 +279,18 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   };
   let urls = [...newestByUrl.keys()];
   if (urlFilter) urls = urls.filter((u) => urlFilter.includes(u));
+  // R41: plan order is the review rows' order (from-snapshots inserts them in plan order); a URL already minted under
+  // this run_id (a signal whose raw_payload.run_id is the run) is DONE and never re-run.
   const { data: reviewRows } = await supabase
-    .from("outside_recrawl_review").select("source_url, operator_decision")
-    .eq("company_id", company_id).eq("run_id", runId);
+    .from("outside_recrawl_review").select("source_url, operator_decision, created_at")
+    .eq("company_id", company_id).eq("run_id", runId).order("created_at", { ascending: true });
+  const planIndex = new Map<string, number>(((reviewRows ?? []) as Array<{ source_url: string }>).map((r, i) => [r.source_url, i]));
+  urls.sort((a, b) => (planIndex.get(a) ?? 1e9) - (planIndex.get(b) ?? 1e9));
   const gate = gateRegenUrls(urls, (reviewRows ?? []) as Array<{ source_url: string; operator_decision: string | null }>);
+  const { data: mintedRows } = await supabase.from("signals").select("source_url").eq("company_id", company_id).eq("raw_payload->>run_id", runId);
+  const mintedUnderRun = new Set(((mintedRows ?? []) as Array<{ source_url: string | null }>).map((r) => r.source_url).filter((u): u is string => !!u));
+  const doneUrls = gate.allowed.filter((u) => mintedUnderRun.has(u));
+  const pendingUrls = gate.allowed.filter((u) => !mintedUnderRun.has(u));
 
   // ── PLAN: answer, write nothing, call nothing ────────────────────────────────────────────────
   if (mode === "plan") {
@@ -291,6 +314,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
         ...estimateUrl(chars),
         review: reviewStateOf(url, gate, runId),
         voice: planVoiceFor(url, snap.clean_text, company, registryFor(url, null)),
+        done: mintedUnderRun.has(url),   // R41: already minted under this run_id
       };
     });
     const summary = { approved: 0, rejected: 0, undecided: 0, no_review_row: 0 } as Record<ReviewState, number>;
@@ -302,7 +326,9 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       body: {
         ok: true, mode: "plan", company_id, run_id: runId, model_calls: 0, writes: 0,
         anchors_used: anchors, anchors_from_entity: ca.from_entity_anchors,
-        urls_total: rows.length, would_run: summary.approved, review: summary,
+        urls_total: rows.length, would_run: pendingUrls.length, review: summary,
+        // R41: the budget view — what a write call would process now, and what would remain for a continuation
+        pages_budget: REGEN_PAGE_BUDGET, done: doneUrls.length, remaining: pendingUrls.length, would_run_this_call: Math.min(REGEN_PAGE_BUDGET, pendingUrls.length), done_urls: doneUrls, remaining_urls: pendingUrls,
         estimate: { calls: CALLS_PER_URL * rows.length, calls_if_approved_only: CALLS_PER_URL * summary.approved, est_input_tokens, est_usd },
         rows,
       },
@@ -311,7 +337,12 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
 
   // ── WRITE ────────────────────────────────────────────────────────────────────────────────────
   const reviewRefused = gate.refused;
-  urls = gate.allowed;
+  // R41: this call processes the approved URLs not yet minted under the run, in plan order, up to the budget
+  const remaining = pendingUrls.slice(REGEN_PAGE_BUDGET);
+  urls = pendingUrls.slice(0, REGEN_PAGE_BUDGET);
+  if (urls.length === 0 && doneUrls.length > 0) {
+    return { status: 200, body: { ok: true, mode: "write", company_id, run_id: runId, urls_total: gate.allowed.length, pages_processed: 0, pages_budget: REGEN_PAGE_BUDGET, done: doneUrls.length, remaining: [], note: "every approved URL is already minted under this run_id — nothing to do", model_calls: emptyTally(), review_refused: reviewRefused } };
+  }
   if (urls.length === 0) {
     await insertIntegrityRun(supabase, {
       company_id, component: REGEN_COMPONENT, status: "failed", examined: 0, admitted: 0,
@@ -328,10 +359,11 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   // before any mint; the row is FINISHED with the full payload at the end, and a refused finish leaves it failed with the
   // error, never no row.
   let integrityId: number;
+  const openedAt = nowIso();   // carried through the finish payload: the open time is part of the record (and the ledger guard's forward window reads it)
   try {
     integrityId = await openIntegrityRun(supabase, {
       company_id, component: REGEN_COMPONENT, status: "running", examined: 0, admitted: 0,
-      excluded_by_rule: { mode, run_id: runId, urls: urls.length, review_refused: reviewRefused, review_gate: true, anchors_used: anchors, opened_at: nowIso() },
+      excluded_by_rule: { mode, run_id: runId, urls: urls.length, review_refused: reviewRefused, review_gate: true, anchors_used: anchors, opened_at: openedAt, pages_budget: REGEN_PAGE_BUDGET, done_before: doneUrls.length, remaining: remaining },
       run_ref: `r3_outside_regen_${runId}`,
     });
   } catch (e) {
@@ -444,7 +476,9 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
         url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText: clean_text, judgedText: verdictA.excerpt, company,
         registry: registryFor(url, verdictA.excerpt), judge, gate: "profile_wire_boilerplate", textGates: REGEN_TEXT_GATES, onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY, now: nowIso,
         // R32: attributed speech detected on the candidate with its page context; the speaker judge decides who speaks
-        attribution: detectAttribution(verdictA.excerpt, clean_text, verdictA.offset), speakerJudge, context: paragraphAround(clean_text, verdictA.offset, verdictA.length),
+        attribution: detectAttribution(verdictA.excerpt, clean_text, verdictA.offset), speakerJudge,
+        // R42: the paragraph plus every page sentence naming the speaker (or their surname), capped — see speakerContext
+        context: (() => { const a = detectAttribution(verdictA.excerpt, clean_text, verdictA.offset); return a ? speakerContext(clean_text, verdictA.offset, verdictA.length, a.speaker_string) : paragraphAround(clean_text, verdictA.offset, verdictA.length); })(),
       };
       const voice = await voiceClassForMintedExcerpt(voiceInput);
       if (!voice.ok) {
@@ -508,7 +542,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       status: stoppedForTime ? "failed" : "completed", examined: candidates_total, admitted: admitted_total,
       // R4: the run's model-call tally beside its counts — {generator, judge, speaker, usd, ledger_failed}.
       // R17: the voice refusals — excerpts not minted because a gated URL could not be judged; retried next run.
-      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords },
+      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords, opened_at: openedAt, finished_at: nowIso(), pages_budget: REGEN_PAGE_BUDGET, pages_done: processed, done_before: doneUrls.length, remaining },
     });
   } catch (e) {
     const msg = e instanceof IntegrityWriteRefused ? e.cause_message : (e as Error).message;
@@ -519,7 +553,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   return {
     status: 200,
     body: {
-      ok: true, mode: "write", company_id, run_id: runId, urls_total: urls.length, pages_processed: processed, stopped_for_time: stoppedForTime, review_refused: reviewRefused,
+      ok: true, mode: "write", company_id, run_id: runId, urls_total: gate.allowed.length, pages_processed: processed, stopped_for_time: stoppedForTime, review_refused: reviewRefused,
+      pages_budget: REGEN_PAGE_BUDGET, pages_done: processed, done_before: doneUrls.length, remaining,
       integrity,
       model_calls: tally,
       anchors_used: anchors,

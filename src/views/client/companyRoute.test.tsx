@@ -268,3 +268,20 @@ describe("N1 — the Company page opened by URL", () => {
     expect(b.container.querySelector('[data-testid="company-not-found"]')).toBeNull();
   });
 });
+
+
+// ── R40: a held company (fixture_hold) is never the default and can never be selected ────────────────────────
+describe("R40 — the default company is never a held fixture", () => {
+  const co = (id: string, name: string, hold: string | null, frozen = false): Company =>
+    ({ id, name, frozen, fixture_hold: hold, website: null, created_by: "t", created_at: "2026-01-01",
+       mojo_score: null, potential_score: null, projected_score: null,
+       evidence_status: null, evidence_note: null, last_scored_at: null,
+       area_scores_json: null, engagement_phase: "outside_signals" } as Company);
+  it("skips a held company even when it sorts first, and even when every unheld row is frozen", () => {
+    expect(pickDefaultCompanyId([co("heart", "Heart Coffee Roasters", "R39:test_fixture"), co("edge", "Edgewood", null)])).toBe("edge");
+    expect(pickDefaultCompanyId([co("heart", "Heart Coffee Roasters", "R39:test_fixture"), co("cb1", "Cafe Barra", null, true)])).toBe("cb1");
+  });
+  it("returns null when every company is held — a fixture is never the answer", () => {
+    expect(pickDefaultCompanyId([co("heart", "Heart Coffee Roasters", "R39:test_fixture"), co("blue", "BlueSkyAI", "R39:test_fixture")])).toBeNull();
+  });
+});

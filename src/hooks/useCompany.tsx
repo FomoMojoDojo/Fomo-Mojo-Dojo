@@ -16,6 +16,8 @@ export interface Company {
   /** DB authority for the freeze (companies.frozen + enforce_company_freeze trigger). The client
    *  id list in @/lib/frozenCompanies is a cosmetic pre-check only. */
   frozen?: boolean | null;
+  /** R40: a non-null hold marks a test fixture — never a default, never selectable, never a client surface. */
+  fixture_hold?: string | null;
   id: string;
   name: string;
   website: string | null;
@@ -107,8 +109,11 @@ const PUBLIC_CAFE_BARRA_FALLBACK: Company = {
 export function pickDefaultCompanyId(companies: Company[]): string | null {
   if (companies.length === 0) return null;
 
-  const selectable = companies.filter((company) => company.frozen !== true);
-  const pool = selectable.length > 0 ? selectable : companies;
+  // R40: a HELD company (fixture_hold) is never the default, even when every other row is frozen
+  const unheld = companies.filter((company) => !company.fixture_hold);
+  if (unheld.length === 0) return null;
+  const selectable = unheld.filter((company) => company.frozen !== true);
+  const pool = selectable.length > 0 ? selectable : unheld;
 
   const preferred = pool.find((company) =>
     company.name.trim().toLowerCase() === PREFERRED_COMPANY_NAME,
@@ -185,7 +190,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       return;
     }
     const baseSelect =
-      "id,name,website,created_by,created_at,frozen,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json,industry_key,no_public_site";
+      "id,name,website,created_by,created_at,frozen,fixture_hold,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json,industry_key,no_public_site";
     const extendedSelect = `${baseSelect},public_source_filters_json,program_phase,excluded_signals_json,selected_route_id,selected_route_summary_json,selected_route_updated_at,engagement_started_at`;
 
     // The builder is REBUILT per attempt: a supabase query builder is a single-use thenable, so a
@@ -282,6 +287,8 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   }, [fetchCompanies]);
 
   const setActiveCompanyId = (id: string) => {
+    // R40: a held company can never become the active one
+    if (companies.some((c) => c.id === id && c.fixture_hold)) return;
     setActiveId(id);
     safeLocalStorageSet('active_company_id', id);
   };

@@ -90,3 +90,38 @@ export function detectAttribution(candidate: string, pageText?: string | null, o
   return null;
 }
 
+
+// ── R42 (operator ruling 2026-10-20): THE SPEAKER JUDGE'S CONTEXT REACHES PAST THE PARAGRAPH ───────────────────
+// Riverlane's fortune.com page names Steve Brierley as founder and CEO two paragraphs above the quotations attributed
+// to "Brierley"; the judge, given only the quote's paragraph, answered unknown and three true lifts were refused.
+// The context is now the paragraph PLUS every page sentence containing the speaker string or its last token (4+ chars),
+// deduped, in order of appearance, cut at SPEAKER_CONTEXT_CAP with the paragraph kept whole.
+export const SPEAKER_CONTEXT_CAP = 3600;
+/** The paragraph the span sits in: from the previous blank line to the next, capped. */
+export function paragraphOf(page: string, offset: number, length: number): string {
+  const sep = page.lastIndexOf("\n\n", offset);
+  const start = Math.max(0, sep >= 0 ? sep + 2 : 0, offset - 1200);   // after the separator, never including it
+  const endNl = page.indexOf("\n\n", offset + length);
+  const end = Math.min(page.length, endNl < 0 ? offset + length + 1200 : endNl, offset + length + 1200);
+  return page.slice(start, end);
+}
+export function speakerContext(page: string, offset: number, length: number, speakerString: string, cap = SPEAKER_CONTEXT_CAP): string {
+  const paragraph = paragraphOf(page, offset, length);
+  const name = String(speakerString ?? "").replace(/\s+/g, " ").trim();
+  if (!name) return paragraph.slice(0, Math.max(cap, paragraph.length));
+  const tokens = name.split(/[\s,]+/).filter(Boolean);
+  const last = tokens[tokens.length - 1] ?? "";
+  const needles = [name.toLowerCase(), ...(last.length >= 4 ? [last.toLowerCase()] : [])];
+  const seen = new Set<string>();
+  let out = paragraph;   // kept whole even when it alone exceeds the cap
+  for (const m of page.matchAll(/[^.!?\n]+[.!?]+/g)) {
+    const sentence = m[0].trim();
+    const low = sentence.toLowerCase();
+    if (!needles.some((n) => low.includes(n))) continue;
+    if (paragraph.includes(sentence) || seen.has(sentence)) continue;
+    if (out.length + 1 + sentence.length > cap) break;
+    seen.add(sentence);
+    out += "\n" + sentence;
+  }
+  return out;
+}

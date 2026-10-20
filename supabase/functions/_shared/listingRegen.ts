@@ -15,7 +15,7 @@ export type ListingRegenMode = "dry" | "apply";
 export type WouldMint = { source_url: string; host: string; listing: Listing; content_identity: string; verbatim_in_body: boolean; read_date: string | null };
 export type UrlRefusal = { url: string; reason: ListingRefusal | "duplicate_identity" | "no_ok_snapshot" };
 export type ListingRegenResult =
-  | { ok: false; skipped: "frozen_company" | "company_not_found" }
+  | { ok: false; skipped: "frozen_company" | "company_not_found" | "fixture_held" }
   | { ok: false; error: string }
   | { ok: true; mode: ListingRegenMode; run_id: string; totals: { urls_considered: number; review_refused: number; detected: number; would_mint: number; minted: number; refused: number }; would_mint: WouldMint[]; refused: UrlRefusal[]; review_refused: ReviewRefusal[] };
 
@@ -43,10 +43,11 @@ export function listingSignalRow(args: { companyId: string; w: WouldMint; body: 
 
 export async function runListingRegen(args: { supabase: Store; companyId: string; runId: string; mode: ListingRegenMode; urls?: string[] | null; nowIso: string }): Promise<ListingRegenResult> {
   if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
-  const { data: co } = await args.supabase.from("companies").select("id, name, website, frozen, entity_anchors_json").eq("id", args.companyId).maybeSingle();
+  const { data: co } = await args.supabase.from("companies").select("id, name, website, frozen, entity_anchors_json, fixture_hold").eq("id", args.companyId).maybeSingle();
   if (!co) return { ok: false, skipped: "company_not_found" };
-  const c = co as { name: string | null; website: string | null; frozen?: boolean; entity_anchors_json?: unknown[] | null };
+  const c = co as { name: string | null; website: string | null; frozen?: boolean; entity_anchors_json?: unknown[] | null; fixture_hold?: string | null };
   if (c.frozen) return { ok: false, skipped: "frozen_company" };
+  if (c.fixture_hold) return { ok: false, skipped: "fixture_held" };   // R40
   const anchors = buildAnchors({ name: c.name, website: c.website, entityAnchors: c.entity_anchors_json ?? [] });
   let companyHost: string | null = null; try { if (c.website) companyHost = new URL(c.website.includes("://") ? c.website : `https://${c.website}`).hostname.replace(/^www\./, ""); } catch { /* none */ }
 
