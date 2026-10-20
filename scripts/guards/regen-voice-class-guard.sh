@@ -18,6 +18,8 @@
 #       an unjudged gated URL) pass.
 #   v4. (R28) the first-person gate: the regen handler's gate list names first_person, the baseline's call sites name no
 #       text gate; the probe mints the pilot-3 tagline on a gated URL as client_voice by rule with ZERO judge calls.
+#   v5. (R32) the attributed_speech gate: CEO-quote fixture client_voice, third-party keeps the label, unknown refused,
+#       apostrophes not quotation marks, speaker calls = attribution-bearing candidates; the baseline names no text gate.
 #   v3. EXPECTATION — scripts/guards/regen-voice-expectation.ts recomputes (class, authority) for every in-scope URL of
 #       the plan file and compares PER URL to scripts/guards/fixtures/regen-voice-expected.tsv (gated rows expected as
 #       "gated"). Any difference is named.
@@ -61,7 +63,7 @@ echo "v3. $(echo "$OUT" | head -1)"
 
 # v4 — R28: the first-person gate is named by the regen handler only; the tagline fixture mints client_voice by rule
 #      with ZERO judge calls (probe: scripts/guards/regen-first-person-probe.ts, fake transport + judge spy).
-grep -q 'REGEN_TEXT_GATES: ReadonlyArray<TextGate> = \["first_person"\]' "$H" || fail v4 "the regen gate list does not name first_person"
+grep -qE 'REGEN_TEXT_GATES: ReadonlyArray<TextGate> = \["first_person"(, "[a-z_]+")*\]' "$H" || fail v4 "the regen gate list does not name first_person first"
 grep -q 'textGates: REGEN_TEXT_GATES' "$H" || fail v4 "the mint site does not pass the regen gate list"
 for f in supabase/functions/public-baseline/index.ts supabase/functions/_shared/aggregatorAuthorship.ts supabase/functions/_shared/registryIngest.ts; do
   grep -q 'textGates' "$f" && fail v4 "the baseline's call site $f names a text gate — the baseline's gate list is unchanged by ruling"
@@ -72,4 +74,16 @@ FP=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-first-perso
 [ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('rule'))")" = "first_person" ] || fail v4 "the rule is not stamped: $FP"
 echo "v4. R28 probe (fake transport, judge spy): $FP"
 echo "v4. R28 source: the regen handler names [first_person]; the baseline's three call sites name no text gate"
+
+# v5 — R32: the attributed_speech gate — the CEO-quote fixture mints client_voice by the speaker judge; the third-party
+#      interior quotation keeps the label; unknown is REFUSED (never minted); apostrophes are not quotation marks.
+SP=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-speaker-probe.ts 2>&1 | tail -1)
+[ "$(echo "$SP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('ceo_quote_class'))")" = "client_voice" ] || fail v5 "the CEO-quote fixture did not mint client_voice: $SP"
+[ "$(echo "$SP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('third_party_class'))")" = "outside_voice_about_client" ] || fail v5 "the third-party fixture lost its label: $SP"
+[ "$(echo "$SP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('unknown_minted'))")" = "False" ] || fail v5 "an unknown speaker was minted: $SP"
+[ "$(echo "$SP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('apostrophe_attribution'))")" = "False" ] || fail v5 "apostrophes were read as quotation marks: $SP"
+[ "$(echo "$SP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('speaker_calls'))")" = "5" ] || fail v5 "speaker calls != 5 attribution-bearing candidates: $SP"
+grep -q 'REGEN_TEXT_GATES: ReadonlyArray<TextGate> = \["first_person", "attributed_speech"\]' "$H" || fail v5 "the regen gate list does not name attributed_speech"
+for f in supabase/functions/public-baseline/index.ts supabase/functions/_shared/aggregatorAuthorship.ts supabase/functions/_shared/registryIngest.ts; do grep -q 'textGates' "$f" && fail v5 "the baseline's call site $f names a text gate"; done
+echo "v5. R32 probe (fake transport, fake speaker judge): $SP"
 echo "GUARD OK"

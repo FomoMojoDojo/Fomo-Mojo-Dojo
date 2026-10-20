@@ -375,7 +375,7 @@ Deno.test("R28 WRITE: on the judge-gated crunchbase URL a first-person candidate
   assertEquals(minted[0].raw_payload.voice_authority.authority, "first_person_self_description");
   assertEquals(minted[0].raw_payload.voice_authority.rule, "first_person");
   assertEquals(judgeCalls, 0, "the authorship judge was never called for the first-person candidate");
-  assertEquals([...REGEN_TEXT_GATES], ["first_person"]);
+  assertEquals([...REGEN_TEXT_GATES], ["first_person", "attributed_speech"]);   // R32 added attributed_speech
 });
 
 // ── R31: the mint stores the raw page slice (asserted); a bare attribution never reaches the judge ──────────
@@ -407,4 +407,64 @@ Deno.test("R31 WRITE: the minted evidence_excerpt is the PAGE slice (newline kep
   assertEquals(judgePrompts.length, 1);
   const candidatesSection = judgePrompts[0].split("CANDIDATES:")[1] ?? "";
   assert(candidatesSection.includes(COPY31) && !candidatesSection.includes(BARE31), "the bare attribution never reached the judge's candidate list (the page text itself still carries it)");
+});
+
+// ── R32: fixtures per attribution form through the WRITE path with a fake speaker judge ──────────────────────
+export const P32 = "CoreViva has opened a full-body MRI clinic in Newport Beach.\n“Our goal is to catch cancer earlier,” Alexander told the Business Journal.\nThey’re capable of finding more than 500 elusive diseases, according to the company.\nWhat differentiates CoreViva from other existing full-body MRIs is brain health, Alexander said.\n“We couldn’t be more pleased with our partnership with CoreViva. Their preventive health whole-body MRI scans were an immediate answer to the needs of our first responders. It’s important,” said Brian Bowis, Chairman of the Newport Beach Fire Department Foundation.\nSomeone unnamed praised the scans, Jordan Lee said.\nTo ensure Scott’s neutrality, the founder integrated safeguards into the AI’s application.";
+export const FIX32 = {
+  ceo_quote: "“Our goal is to catch cancer earlier,” Alexander told the Business Journal.",
+  company_text: "They’re capable of finding more than 500 elusive diseases, according to the company.",
+  reported_ceo: "What differentiates CoreViva from other existing full-body MRIs is brain health, Alexander said.",
+  interior_third_party: "Their preventive health whole-body MRI scans were an immediate answer to the needs of our first responders.",
+  unknown_speaker: "Someone unnamed praised the scans, Jordan Lee said.",
+  plain: "CoreViva has opened a full-body MRI clinic in Newport Beach.",
+  apostrophes: "To ensure Scott’s neutrality, the founder integrated safeguards into the AI’s application.",
+};
+/** A fake speaker judge keyed on the speaker string the detector found. */
+export function fakeSpeakerJudge(calls: string[]): SpeakerJudge {
+  return (i) => {
+    calls.push(i.speakerString);
+    const s = i.speakerString;
+    const r = s === "Alexander" ? { speaker_class: "subject_company_officer" as const, speaker_name: "Dr. A. Alexander", speaker_role: "Co-Founder and CEO" }
+      : s === "the company" ? { speaker_class: "subject_company_text" as const, speaker_name: "the company", speaker_role: null }
+      : s.startsWith("Brian Bowis") ? { speaker_class: "third_party" as const, speaker_name: "Brian Bowis", speaker_role: "Chairman of the Newport Beach Fire Department Foundation" }
+      : { speaker_class: "unknown" as const, speaker_name: null, speaker_role: null };
+    return Promise.resolve({ ...r, reason: `fake: ${s || "(none)"}`, model: "fake" });
+  };
+}
+export function r32Transport(): RegenTransport {
+  const all = Object.values(FIX32);
+  return ({ system }) => Promise.resolve(system === "GEN"
+    ? { content: JSON.stringify({ statements: all.map((t) => ({ text: t, reason: "r" })) }), usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    : { content: JSON.stringify({ verdicts: all.map((t) => ({ quote: t, keep: true, reason: "k" })) }), usage: { prompt_tokens: 1, completion_tokens: 1 } });
+}
+import type { SpeakerJudge } from "./aggregatorAuthorship.ts";
+Deno.test("R32 WRITE: every attribution form is decided by the speaker judge — officer and company text mint client_voice, the third-party interior quotation keeps the label with the speaker, unknown is REFUSED; the apostrophe row and the plain row never reach the judge; speaker calls = attribution-bearing candidates; a speaker ledger row per call", async () => {
+  const db = fakeDb(seedR17());
+  for (const r of db.tables.outside_page_snapshots) if (r.source_url === U1) r.clean_text = P32;
+  const calls: string[] = [];
+  const { d, ledgerRows } = deps(db, r32Transport(), null);
+  d.makeSpeakerJudge = (ledger) => { const j = fakeSpeakerJudge(calls); return async (i) => { await ledger({ usage: { provider: "ollama", model: "fake", prompt_tokens: 7, completion_tokens: 3, usd: null }, promptSha: "a".repeat(64) }); return j(i); }; };
+  const r = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true, urls: [U1] }, d);
+  assertEquals(r.status, 200, JSON.stringify(r.body));
+  const minted = (db.inserts.signals ?? []) as Array<{ evidence_excerpt: string; voice_class: string; raw_payload: Record<string, unknown> }>;
+  const by = new Map(minted.map((m) => [m.evidence_excerpt, m]));
+  assertEquals(by.get(FIX32.ceo_quote)?.voice_class, "client_voice");
+  assertEquals((by.get(FIX32.ceo_quote)?.raw_payload.voice_authority as Record<string, unknown>).authority, "attributed_speaker_subject");
+  assertEquals((by.get(FIX32.ceo_quote)?.raw_payload.voice_authority as Record<string, unknown>).rule, "attributed_speech");
+  assertEquals((by.get(FIX32.ceo_quote)?.raw_payload.speaker as Record<string, unknown>).speaker_role, "Co-Founder and CEO");
+  assertEquals((by.get(FIX32.ceo_quote)?.raw_payload.attribution as Record<string, unknown>).form, "quoted_with_attribution");
+  assertEquals(by.get(FIX32.company_text)?.voice_class, "client_voice");
+  assertEquals(by.get(FIX32.reported_ceo)?.voice_class, "client_voice");
+  assertEquals(by.get(FIX32.interior_third_party)?.voice_class, "outside_voice_about_client");
+  assertEquals((by.get(FIX32.interior_third_party)?.raw_payload.speaker as Record<string, unknown>).speaker_class, "third_party");
+  assertEquals((by.get(FIX32.interior_third_party)?.raw_payload.attribution as Record<string, unknown>).form, "quotation_interior");
+  assertEquals(by.get(FIX32.unknown_speaker), undefined, "unknown is refused, not minted");
+  assertEquals(by.get(FIX32.plain)?.voice_class, "outside_voice_about_client"); assertEquals(by.get(FIX32.plain)?.raw_payload.speaker, undefined);
+  assertEquals(by.get(FIX32.apostrophes)?.voice_class, "outside_voice_about_client"); assertEquals(by.get(FIX32.apostrophes)?.raw_payload.attribution, undefined);
+  assertEquals(calls.length, 5, "speaker calls = attribution-bearing candidates (5 of 7)");
+  assertEquals(ledgerRows.filter((e) => e.role === "speaker").length, 5); assert(ledgerRows.filter((e) => e.role === "speaker").every((e) => e.callSite === "extract-outside-evidence:speaker" && e.usage.provider === "ollama" && e.usage.usd === null));
+  assertEquals((r.body.model_calls as { speaker: number }).speaker, 5);
+  const integ = (db.inserts.integrity_runs ?? [])[0].excluded_by_rule as { candidates: Array<Record<string, unknown>>; voice_refused_total: number };
+  assertEquals(integ.voice_refused_total, 1); assert(integ.candidates.some((c) => c.code === "voice_refused" && String(c.detail).includes("speaker unknown")));
 });

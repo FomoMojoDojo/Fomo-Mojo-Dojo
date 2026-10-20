@@ -143,3 +143,46 @@ Deno.test("R28: on a judge-gated profile URL a first-person candidate is decided
   const tp = await voiceClassForMintedExcerpt({ ...base, judgedText: "Acme Coffee is a specialty roaster supplying 40 cafes." });
   assert(tp.ok); assertEquals(tp.authority, "extractor_label"); assertEquals(judgeCalls, 1, "a third-person candidate on the gated URL reaches the judge");
 });
+
+// ── R32: the attributed_speech gate — the speaker judge decides who speaks; unknown refuses on the regen path ────
+import type { AttributionHit } from "./outsideEvidenceRegen.ts";
+import type { SpeakerJudge, SpeakerJudgment } from "./aggregatorAuthorship.ts";
+const ATTR: AttributionHit = { form: "quoted_with_attribution", speaker_string: "Alexander", span: "“Our goal is to catch cancer earlier,” Alexander told the Business Journal.", offset: 10 };
+const sj = (j: Partial<SpeakerJudgment>, calls: { n: number }): SpeakerJudge => () => { calls.n++; return Promise.resolve({ speaker_class: "third_party", speaker_name: null, speaker_role: null, reason: "r", model: "m", ...j }); };
+const base32 = (calls: { n: number }, j: Partial<SpeakerJudgment>) => ({ url: "https://www.ocbj.com/healthcare/coreviva-opens/", item: null, labeledClass: "outside_voice_about_client", pageText: "p", judgedText: ATTR.span, company: { name: "Coreviva", host: "coreviva.com" }, registry: null, judge: null, gate: "profile_wire_boilerplate" as const, textGates: ["first_person", "attributed_speech"] as const, attribution: ATTR, speakerJudge: sj(j, calls), onJudgeFailure: "refuse_mint" as const });
+
+Deno.test("R32: officer → client_voice (attributed_speaker_subject, rule attributed_speech, speaker stamped); company text → client_voice; third_party → the label with the speaker recorded", async () => {
+  const c = { n: 0 };
+  const o = await voiceClassForMintedExcerpt(base32(c, { speaker_class: "subject_company_officer", speaker_name: "Dr. A. Alexander", speaker_role: "Co-Founder and CEO" }));
+  assert(o.ok); assertEquals(o.voice_class, "client_voice"); assertEquals(o.authority, "attributed_speaker_subject"); assertEquals(o.rule, "attributed_speech"); assertEquals(o.speaker?.speaker_name, "Dr. A. Alexander"); assertEquals(o.speaker?.attribution.form, "quoted_with_attribution");
+  const t = await voiceClassForMintedExcerpt(base32(c, { speaker_class: "subject_company_text", speaker_name: "the company" }));
+  assert(t.ok); assertEquals(t.voice_class, "client_voice"); assertEquals(t.authority, "attributed_speaker_subject");
+  const x = await voiceClassForMintedExcerpt(base32(c, { speaker_class: "third_party", speaker_name: "Brian Bowis", speaker_role: "Chairman of the Foundation" }));
+  assert(x.ok); assertEquals(x.voice_class, "outside_voice_about_client"); assertEquals(x.authority, "extractor_label"); assertEquals(x.rule, "attributed_speech"); assertEquals(x.speaker?.speaker_name, "Brian Bowis");
+  assertEquals(c.n, 3, "one speaker-judge call per attributed candidate");
+});
+
+Deno.test("R32: unknown and judge_failed REFUSE the mint under refuse_mint (kept under keep_label); no speaker judge wired refuses; a candidate with no attribution never calls the speaker judge", async () => {
+  const c = { n: 0 };
+  for (const cls of ["unknown", "judge_failed"] as const) {
+    const r = await voiceClassForMintedExcerpt(base32(c, { speaker_class: cls }));
+    assert(!r.ok); assertEquals(r.authority, "speaker_judge"); assert(r.reason.includes(cls), r.reason); assertEquals(r.speaker?.speaker_class, cls);
+    const k = await voiceClassForMintedExcerpt({ ...base32(c, { speaker_class: cls }), onJudgeFailure: "keep_label" });
+    assert(k.ok); assertEquals(k.voice_class, "outside_voice_about_client");
+  }
+  const none = await voiceClassForMintedExcerpt({ ...base32(c, {}), speakerJudge: null });
+  assert(!none.ok); assert(/no speaker judge is wired/.test(none.reason));
+  const plain = await voiceClassForMintedExcerpt({ ...base32(c, {}), attribution: null, judgedText: "CoreViva has opened a clinic." });
+  assert(plain.ok); assertEquals(plain.authority, "extractor_label"); assertEquals(plain.rule, undefined);
+  assertEquals(c.n, 4, "the judge was called for the four attributed decisions only");
+});
+
+Deno.test("R32: a third-party speaker on a judge-gated profile URL still reaches the authorship judge afterwards; the baseline shape (no text gate) never calls the speaker judge", async () => {
+  const c = { n: 0 }; let auth = 0;
+  const judge = () => { auth++; return Promise.resolve({ verdict: "third_party" as const, entity: null, reason: "platform", model: "m" }); };
+  const d = await voiceClassForMintedExcerpt({ ...base32(c, { speaker_class: "third_party", speaker_name: "A reviewer" }), url: "https://www.crunchbase.com/organization/coreviva", judge });
+  assert(d.ok); assertEquals(d.authority, "extractor_label"); assertEquals(d.speaker?.speaker_name, "A reviewer"); assertEquals(d.authorship_judge?.verdict, "third_party"); assertEquals(auth, 1);
+  const baseline = await voiceClassForMintedExcerpt({ ...base32(c, { speaker_class: "subject_company_officer" }), textGates: undefined });
+  assert(baseline.ok); assertEquals(baseline.voice_class, "outside_voice_about_client"); assertEquals(baseline.speaker, undefined);
+  assertEquals(c.n, 1, "the baseline shape made no speaker call");
+});

@@ -31,7 +31,7 @@ import { recordModelCall } from "../_shared/recordModelCall.ts";
 import { type RegenLedger, type RegenTransport } from "../_shared/outsideRegenModel.ts";
 import { runOutsideRegen, type RegenJudge } from "../_shared/outsideRegenHandler.ts";
 import { genSystem, judgeSystem, QUOTE_MAX_WORDS } from "../_shared/outsideRegenPrompts.ts";
-import { judgeAggregatorAuthorship, resolveLocalOllamaUrl } from "../_shared/aggregatorAuthorship.ts";
+import { judgeAggregatorAuthorship, judgeSpeaker, ollamaSpeakerTransport, resolveLocalOllamaUrl, type SpeakerJudge, type SpeakerLedger } from "../_shared/aggregatorAuthorship.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -69,6 +69,15 @@ function makeJudge(): RegenJudge | null {
   if (!ollamaUrl) return null;
   return (input) => judgeAggregatorAuthorship(input, { ollamaUrl, model: Deno.env.get("OLLAMA_MODEL") || undefined });
 }
+/** R32: the local speaker judge, built ONLY on the write path with the run's ledger; every call writes a model_calls row
+ *  (provider ollama, token counts from the response, usd null) before its answer is parsed. Null when no local Ollama
+ *  URL resolves — attributed candidates are then refused, not minted. */
+function makeSpeakerJudge(ledger: SpeakerLedger): SpeakerJudge | null {
+  const ollamaUrl = resolveLocalOllamaUrl();
+  if (!ollamaUrl) return null;
+  const transport = ollamaSpeakerTransport(ollamaUrl);
+  return (input) => judgeSpeaker(input, { transport, ledger, model: Deno.env.get("OLLAMA_MODEL") || undefined });
+}
 /** One model_calls row per attempt — the same writer every captured site uses; run_id null (no long_runner row). */
 function makeLedger(supabase: { from: (t: string) => unknown }, companyId: string): RegenLedger {
   return (e) => recordModelCall(supabase as never, {
@@ -82,7 +91,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const r = await runOutsideRegen(body, {
-      supabase, makeTransport, makeLedger: (cid) => makeLedger(supabase, cid), makeJudge,
+      supabase, makeTransport, makeLedger: (cid) => makeLedger(supabase, cid), makeJudge, makeSpeakerJudge,
       models: REGEN_MODELS, genSystem, judgeSystem, quoteMaxWords: QUOTE_MAX_WORDS, perUrlCap: PER_URL_CAP, wallMs: WALL_MS,
     });
     return json(r.body, r.status);

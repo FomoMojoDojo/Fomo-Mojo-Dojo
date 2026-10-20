@@ -45,6 +45,9 @@ const MIN_WORDS = 4;
 // would separate reported content from the attribution ("…, Alexander said." is reported speech, not bare).
 const ATTRIBUTION_VERBS = "said|says|say|told|tells|wrote|writes|added|adds|noted|notes|stated|states|explained|explains|commented|comments|recalled|recalls|announced|announces|confirmed|confirms";
 const BARE_ATTRIBUTION = new RegExp(`^[^,;:"\u201c\u201d\u2018\u2019']*\\b(${ATTRIBUTION_VERBS})\\b\\s*\\.?$`, "i");
+// R32: attributed-speech detection lives in the leaf module ./attribution.ts (re-exported here for the admission rail's callers).
+export { detectAttribution, type AttributionForm, type AttributionHit } from "./attribution.ts";
+
 export function isBareAttribution(text: string | null | undefined): boolean {
   const t = String(text ?? "").replace(/\s+/g, " ").trim();
   if (!t) return false;

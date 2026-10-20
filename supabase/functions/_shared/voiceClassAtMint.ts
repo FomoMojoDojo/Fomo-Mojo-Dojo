@@ -34,8 +34,9 @@ import { ANALYSIS_VOICE, isAnalysisLabelled } from "./voiceLabel.ts";
 import { isOwnDomainUrl } from "./firstReadProvenance.ts";
 import {
   matchAggregatorProfileUrl, matchGatedUrl, outcomeFor,
-  type AuthorshipJudge, type AuthorshipJudgment, type AuthorshipStamp,
+  type AuthorshipJudge, type AuthorshipJudgment, type AuthorshipStamp, type SpeakerJudge, type SpeakerJudgment,
 } from "./aggregatorAuthorship.ts";
+import type { AttributionHit } from "./attribution.ts";
 import { registryStamp, type RegistryClassification } from "./registryClassifier.ts";
 
 export const VOICE_CLASSES: ReadonlyArray<string> = ["client_voice", "outside_voice_about_client", "competitor_voice", "market_context"];
@@ -45,10 +46,13 @@ export type JudgeFailurePolicy = "keep_label" | "refuse_mint";
  *  `profile_wire_boilerplate`: profiles, press wires and release pages with the subject's boilerplate close
  *  (the restamp's gate, and the regen path's). */
 export type JudgeGate = "profile" | "profile_wire_boilerplate";
-export type VoiceAuthority = "analysis_label" | "own_domain" | "registry" | "authorship_judge" | "extractor_label" | "first_person_self_description";
-/** Text gates a caller may name (R28). The regen handler names ["first_person"]; the baseline names none. */
-export type TextGate = "first_person";
+export type VoiceAuthority = "analysis_label" | "own_domain" | "registry" | "authorship_judge" | "extractor_label" | "first_person_self_description" | "attributed_speaker_subject";
+/** Text gates a caller may name (R28, R32). The regen handler names ["first_person", "attributed_speech"]; the baseline names none. */
+export type TextGate = "first_person" | "attributed_speech";
 export const FIRST_PERSON_RULE = "first_person" as const;
+export const ATTRIBUTED_SPEECH_RULE = "attributed_speech" as const;
+/** R32: what the speaker judge said, stamped on the row beside the decision. */
+export type SpeakerStamp = SpeakerJudgment & { attribution: AttributionHit; judged_at: string };
 
 export type VoiceClassInput = {
   url: string;
@@ -68,6 +72,12 @@ export type VoiceClassInput = {
   gate: JudgeGate;
   /** R28: deterministic gates on the candidate TEXT, applied after the registry stage and before the judge. Absent ⇒ none. */
   textGates?: ReadonlyArray<TextGate>;
+  /** R32: the attribution the caller detected on the candidate (detectAttribution), null when none. Read only when "attributed_speech" is named. */
+  attribution?: AttributionHit | null;
+  /** R32: the speaker judge; null ⇒ an attributed candidate cannot be decided (refused under refuse_mint, kept under keep_label). */
+  speakerJudge?: SpeakerJudge | null;
+  /** R32: the paragraph around the candidate, for the speaker judge. */
+  context?: string | null;
   onJudgeFailure: JudgeFailurePolicy;
   now?: () => string;
 };
@@ -82,18 +92,21 @@ export type VoiceClassDecision =
     authority: VoiceAuthority;
     detail: string;
     gate: GateHit | null;
-    /** the deterministic rule that decided (R28: "first_person"); absent for the other authorities */
+    /** the deterministic rule that decided (R28: "first_person"; R32: "attributed_speech"); absent for the other authorities */
     rule?: string;
     /** present when the judge answered (or failed) for this item */
     authorship_judge?: AuthorshipStamp;
+    /** R32: present when the speaker judge answered for this item */
+    speaker?: SpeakerStamp;
   }
   | {
     ok: false;
     refused: true;
-    authority: "authorship_judge";
+    authority: "authorship_judge" | "speaker_judge";
     reason: string;
-    gate: GateHit;
+    gate: GateHit | null;
     authorship_judge?: AuthorshipStamp;
+    speaker?: SpeakerStamp;
   };
 
 // ── R28: first-person self-description ─────────────────────────────────────────────────────────────────
@@ -135,7 +148,8 @@ function gateFor(input: VoiceClassInput): GateHit | null {
  *  decision with the judge call in the middle. */
 export function decideVoiceClassBeforeJudge(input: VoiceClassInput):
   | VoiceClassDecision
-  | { needs_judge: true; gate: GateHit; label: string | null } {
+  | { needs_judge: true; gate: GateHit; label: string | null }
+  | { needs_speaker: true; attribution: AttributionHit; label: string | null } {
   const label = labelOf(input.labeledClass);
   if (isAnalysisLabelled((input.item ?? null) as { voice_class?: string | null } | null)) {
     return { ok: true, voice_class: ANALYSIS_VOICE, evidence_class: "prose", authority: "analysis_label", detail: "the item is labelled analysis — our read, never the record", gate: null };
@@ -157,17 +171,58 @@ export function decideVoiceClassBeforeJudge(input: VoiceClassInput):
       return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "first_person_self_description", detail: fp.detail, gate: null, rule: FIRST_PERSON_RULE };
     }
   }
+  // R32: an attributed candidate goes to the speaker judge BEFORE the URL gate
+  if (input.textGates?.includes(ATTRIBUTED_SPEECH_RULE) && input.attribution) {
+    return { needs_speaker: true, attribution: input.attribution, label };
+  }
+  return decideUrlGate(input, label);
+}
+function decideUrlGate(input: VoiceClassInput, label: string | null): VoiceClassDecision | { needs_judge: true; gate: GateHit; label: string | null } {
   const gate = gateFor(input);
   if (gate) return { needs_judge: true, gate, label };
   return { ok: true, voice_class: label, evidence_class: "prose", authority: "extractor_label", detail: label ? "no authority fires; the extractor's label" : "no authority fires and the label is not a known class", gate: null };
 }
 
-/** THE decision. Async only because stage 4 may call the judge. */
+/** THE decision. Async only because the speaker stage (R32) and stage 4 may call a judge. */
 export async function voiceClassForMintedExcerpt(input: VoiceClassInput): Promise<VoiceClassDecision> {
   const pre = decideVoiceClassBeforeJudge(input);
-  if (!("needs_judge" in pre)) return pre;
-  const { gate, label } = pre;
   const nowIso = input.now ?? (() => new Date().toISOString());
+  if ("needs_speaker" in pre) {
+    // R32 — who is quoted or reported, and do they belong to the subject
+    const { attribution, label } = pre;
+    const text = String(input.judgedText ?? "").trim();
+    const refuseS = (reason: string, speaker?: SpeakerStamp): VoiceClassDecision =>
+      ({ ok: false, refused: true, authority: "speaker_judge", reason, gate: null, ...(speaker ? { speaker } : {}) });
+    const keepS = (detail: string, speaker?: SpeakerStamp): VoiceClassDecision =>
+      ({ ok: true, voice_class: label, evidence_class: "prose", authority: "extractor_label", detail, gate: null, rule: ATTRIBUTED_SPEECH_RULE, ...(speaker ? { speaker } : {}) });
+    if (!input.speakerJudge) {
+      return input.onJudgeFailure === "keep_label" ? keepS(`attributed speech (${attribution.form}); no speaker judge wired; the label stands`) : refuseS(`attributed speech (${attribution.form}) and no speaker judge is wired — not minted; retry when the local judge is available`);
+    }
+    const j = await input.speakerJudge({ subjectName: input.company.name, subjectHost: input.company.host ?? "", url: input.url, candidate: text, attributionForm: attribution.form, attributionSpan: attribution.span, speakerString: attribution.speaker_string, context: String(input.context ?? input.pageText ?? "").slice(0, 2400) });
+    if (j === null) return input.onJudgeFailure === "keep_label" ? keepS(`attributed speech (${attribution.form}); speaker judge unavailable; the label stands`) : refuseS(`attributed speech (${attribution.form}) and the speaker judge was unavailable — not minted; retry next run`);
+    const stamp: SpeakerStamp = { ...j, attribution, judged_at: nowIso() };
+    if (j.speaker_class === "judge_failed" || j.speaker_class === "unknown") {
+      const why = `speaker ${j.speaker_class}: ${j.reason}`;
+      return input.onJudgeFailure === "keep_label" ? keepS(`${why} — the label stands`, stamp) : refuseS(`${why} — not minted`, stamp);
+    }
+    if (j.speaker_class === "subject_company_officer" || j.speaker_class === "subject_company_text") {
+      return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "attributed_speaker_subject", detail: `${j.speaker_class}${j.speaker_name ? `: ${j.speaker_name}` : ""}${j.speaker_role ? ` (${j.speaker_role})` : ""} — ${j.reason}`, gate: null, rule: ATTRIBUTED_SPEECH_RULE, speaker: stamp };
+    }
+    // third_party: the label stands with the speaker recorded; the URL gate still applies after it
+    const next = decideUrlGate(input, label);
+    if (!("needs_judge" in next)) {
+      if (!next.ok) return { ...next, speaker: stamp };
+      return { ...next, rule: ATTRIBUTED_SPEECH_RULE, speaker: stamp, detail: `third-party speaker${j.speaker_name ? ` ${j.speaker_name}` : ""} — ${next.detail}` };
+    }
+    const d = await judgeStage(input, next.gate, next.label, nowIso);
+    return { ...d, speaker: stamp };
+  }
+  if (!("needs_judge" in pre)) return pre;
+  return judgeStage(input, pre.gate, pre.label, nowIso);
+}
+
+/** Stage 4: the URL-gated authorship judge (unchanged behaviour, factored so the speaker stage can fall through to it). */
+async function judgeStage(input: VoiceClassInput, gate: GateHit, label: string | null, nowIso: () => string): Promise<VoiceClassDecision> {
   const text = String(input.judgedText ?? "").trim();
   const keep = (detail: string, stamp?: AuthorshipStamp): VoiceClassDecision =>
     ({ ok: true, voice_class: label, evidence_class: "prose", authority: "extractor_label", detail, gate, ...(stamp ? { authorship_judge: stamp } : {}) });

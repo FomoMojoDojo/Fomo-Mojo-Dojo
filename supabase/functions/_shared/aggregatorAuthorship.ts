@@ -28,6 +28,7 @@
 // write, in plan and in apply.
 
 import { callClassifier, CLASSIFIER_MODEL, isLocalOllamaUrl } from "./uploadVoiceClassifier.ts";
+import type { ModelCallRecord } from "./recordModelCall.ts";
 import { isOwnDomainUrl } from "./firstReadProvenance.ts";
 import { voiceClassForMintedExcerpt } from "./voiceClassAtMint.ts";
 import { FROZEN_COMPANY_IDS } from "./frozenCompanies.ts";
@@ -292,6 +293,93 @@ function buildJudgeUser(input: AuthorshipInput): string {
 }
 
 const VERDICTS: ReadonlySet<string> = new Set(["subject_company", "other_entity", "third_party", "uncertain"]);
+
+// ── R32 (R35, 2026-10-18): THE SPEAKER JUDGE ─────────────────────────────────────────────────────────────────
+// A different question from authorship: not who WROTE the field, but WHO IS QUOTED OR REPORTED inside the sentence,
+// and whether that person belongs to the subject. Called only for attribution-bearing candidates (detectAttribution),
+// with the attribution span and the surrounding paragraph, on the local model. Every call writes a model_calls row
+// (provider ollama, prompt/eval counts from the response, usd null) BEFORE the answer is parsed. Fail toward failure.
+export type SpeakerClass = "subject_company_officer" | "subject_company_text" | "third_party" | "unknown" | "judge_failed";
+export type SpeakerJudgment = { speaker_class: SpeakerClass; speaker_name: string | null; speaker_role: string | null; reason: string; model: string };
+export type SpeakerInput = { subjectName: string; subjectHost: string; url: string; candidate: string; attributionForm: string; attributionSpan: string; speakerString: string; context: string };
+export type SpeakerJudge = (input: SpeakerInput) => Promise<SpeakerJudgment | null>;
+/** One raw answer from the local model with its token counts (null when the response carried none). */
+export type SpeakerTransport = (args: { model: string; system: string; user: string }) => Promise<{ content: string; prompt_tokens: number | null; completion_tokens: number | null }>;
+/** The ledger seam: one row per call, written BEFORE parse; resolves false when the write failed (never throws). */
+export type SpeakerLedger = (e: { usage: ModelCallRecord; promptSha: string }) => Promise<boolean>;
+const SPEAKER_CLASSES: ReadonlySet<string> = new Set(["subject_company_officer", "subject_company_text", "third_party", "unknown"]);
+
+export const SPEAKER_SYSTEM =
+  "You identify WHO IS SPEAKING in one sentence collected from a third-party web page about a SUBJECT company. The sentence " +
+  "quotes or reports someone (\"…,\" said X / X said that… / according to X / X told Y). You are given the subject company, the " +
+  "sentence, the attribution span the detector found, the speaker string as the page gives it, and the surrounding paragraph.\n" +
+  "Answer ONE question — who is the speaker, and do they belong to the subject:\n" +
+  "- subject_company_officer: a named PERSON the page identifies as the subject's founder, co-founder, CEO, chairman, officer, " +
+  "executive or spokesperson (by title beside the name, or by an earlier sentence in the paragraph).\n" +
+  "- subject_company_text: the subject company ITSELF or its own text — 'the company', 'its website', 'a company statement', a release.\n" +
+  "- third_party: a named person or organization that is NOT the subject — a customer, a partner's officer, a city official, a reviewer, an analyst.\n" +
+  "- unknown: the paragraph does not say who the speaker is, or does not say whether they belong to the subject.\n" +
+  "RULES. (1) Decide from the page's own words: a title beside the name, or an identification earlier in the paragraph. Never infer a " +
+  "role from the name alone. (2) A pronoun speaker (they, he, she) resolves to whoever the paragraph last identified as speaking. " +
+  "(3) The subject may appear under variants (lower-case, with LLC/Inc, an acronym). (4) If two speakers are present, answer for the " +
+  "one the attribution span names.\n" +
+  'Return JSON only: {"speaker_name":"<name as the page gives it, or null>","speaker_role":"<role as the page gives it, or null>",' +
+  '"speaker_class":"subject_company_officer|subject_company_text|third_party|unknown","reason":"one sentence citing the page words that identify the speaker"}.';
+
+export function buildSpeakerUser(input: SpeakerInput): string {
+  return (
+    `SUBJECT COMPANY: ${input.subjectName}${input.subjectHost ? ` (${input.subjectHost})` : ""}\n` +
+    `SOURCE URL: ${input.url}\n` +
+    `SENTENCE: ${input.candidate}\n` +
+    `ATTRIBUTION (${input.attributionForm}): ${input.attributionSpan.slice(0, 600)}\n` +
+    `SPEAKER STRING AS THE PAGE GIVES IT: ${input.speakerString || "(none)"}\n` +
+    `PARAGRAPH:\n${input.context.slice(0, 2400)}\n\n` +
+    `Who is the speaker, and do they belong to the subject? Return the JSON.`
+  );
+}
+
+/** The local transport: Ollama /api/chat, JSON mode, token counts from prompt_eval_count / eval_count. */
+export function ollamaSpeakerTransport(ollamaUrl: string): SpeakerTransport {
+  const base = ollamaUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "");
+  return async ({ model, system, user }) => {
+    const resp = await fetch(`${base}/api/chat`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, format: "json", stream: false, options: { temperature: 0, num_predict: 400 }, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+    });
+    if (!resp.ok) throw new Error(`ollama HTTP ${resp.status}`);
+    const data = await resp.json().catch(() => ({})) as { message?: { content?: unknown }; prompt_eval_count?: unknown; eval_count?: unknown };
+    const n = (v: unknown) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
+    return { content: String(data.message?.content ?? ""), prompt_tokens: n(data.prompt_eval_count), completion_tokens: n(data.eval_count) };
+  };
+}
+
+/** THE speaker judgment: ledger BEFORE parse; every failure mode resolves to judge_failed with the reason. */
+export async function judgeSpeaker(
+  input: SpeakerInput,
+  opts: { transport: SpeakerTransport; ledger?: SpeakerLedger | null; model?: string; sha?: (s: string) => Promise<string> },
+): Promise<SpeakerJudgment> {
+  const model = opts.model ?? CLASSIFIER_MODEL;
+  const system = SPEAKER_SYSTEM, user = buildSpeakerUser(input);
+  const sha = opts.sha ?? (async (s: string) => { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join(""); });
+  const promptSha = await sha(`${system}\n\n${user}`);
+  let raw = "";
+  try {
+    const r = await opts.transport({ model, system, user });
+    raw = r.content;
+    if (opts.ledger) await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens, completion_tokens: r.completion_tokens, usd: null }, promptSha });
+  } catch (err) {
+    if (opts.ledger) await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: null, completion_tokens: null, usd: null }, promptSha });
+    return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge call failed (${String((err as Error)?.message ?? err)})`, model };
+  }
+  let parsed: { speaker_name?: unknown; speaker_role?: unknown; speaker_class?: unknown; reason?: unknown };
+  try { const m = raw.match(/\{[\s\S]*\}/); parsed = JSON.parse(m ? m[0] : raw); } catch {
+    return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge output was unparseable. raw: ${raw.slice(0, 200)}`, model };
+  }
+  const cls = String(parsed.speaker_class ?? "").trim(); const reason = String(parsed.reason ?? "").trim();
+  const str = (v: unknown) => { const s = v == null ? "" : String(v).trim(); return s && s.toLowerCase() !== "null" ? s : null; };
+  if (SPEAKER_CLASSES.has(cls) && reason) return { speaker_class: cls as SpeakerClass, speaker_name: str(parsed.speaker_name), speaker_role: str(parsed.speaker_role), reason, model };
+  return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge returned a malformed answer (class '${cls || "empty"}')`, model };
+}
 
 // Pure single-statement judgment. FAIL TOWARD judge_failed is enforced HERE: the only way out is a
 // concrete verdict with the model's own reason; every failure mode resolves to judge_failed

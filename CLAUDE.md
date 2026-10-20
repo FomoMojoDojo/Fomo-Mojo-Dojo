@@ -139,6 +139,13 @@ These files are long — search within them rather than reading top-to-bottom:
   330/18/0 — the 14 difference is `s2-interview-storage-rls`, `s3-first-read-marks-rls`,
   `v-tensions-rls`, `v-integrity-admin` and `v2-slots-swap` skipping, not passing.
 
+- **Known flakes (R35, 2026-10-19)** — each passes alone on rerun; a single failure of one of these in a full run
+  is read as the flake, re-run that spec file alone, and the baseline stands:
+  - `tests/workspace/x4-inputs-interview-inference.spec.ts` — route-mock race: `route.fulfill` on a disposed route
+    when the page navigates before the mock answers.
+  - `tests/workspace/c-arrows.spec.ts` (ArrowRight from /strategy cycles Base only) — keypress timing: one
+    ArrowRight registers twice, so the visited-path list repeats a workspace route.
+
 ### Guard fixtures — the two non-admin accounts (2026-09-27)
 
 Guards that name a non-admin caller read their ids from gitignored env files, and abort with

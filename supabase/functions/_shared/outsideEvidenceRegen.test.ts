@@ -54,3 +54,37 @@ Deno.test("R31 (c): a bare attribution clause is refused (e2_bare_attribution); 
   const ok = admitOutsideEvidence("Demand is large, Alexander said.", page);
   assert(ok.admit, JSON.stringify(ok));
 });
+
+// ── R32: deterministic attribution detection, every form; apostrophes never count as quotation marks ──────────
+import { detectAttribution } from "./outsideEvidenceRegen.ts";
+const OCBJ = "CoreViva has opened a full-body MRI clinic in Newport Beach.\n“Our goal is to catch cancer earlier,” Alexander told the Business Journal.\nCoreViva’s MRIs aren’t limited to just detecting cancer. They’re capable of finding more than 500 elusive diseases, including joint disease and reproductive issues, according to the company.\nWhat differentiates CoreViva from other existing full-body MRIs is that it not only looks at all organs, but also brain health and musculoskeletal health, Alexander said.\nTogether, they developed the “fastest, most accurate and most comprehensive whole-body MRI that exists,” Alexander said.";
+const INDY = "The Foundation supports first responders.\n“We couldn’t be more pleased with our partnership with CoreViva. Their preventive health whole-body MRI scans were an immediate answer to better understanding the individual health needs of our first responders. It’s important to take care of our firefighters,” said Brian Bowis, Chairman of the Newport Beach Fire Department Foundation.\nThe Foundation has already sent more than 40 members.";
+const SUBSTACK = "Drs. Alexander and Tsui join the show. They explain their unique edge: faster scan times (~35 minutes), highest-quality images, and comprehensive reporting using custom AI.";
+const DMAG = "Geniant Chairman and Co-CEO David Lancashire said the studio will support rebranding strategies.";
+
+Deno.test("R32: the forms — quoted + told, according to, reported ', X said', reported pronoun, titled speaker, quotation interior with the attribution after the close", () => {
+  const a = detectAttribution("“Our goal is to catch cancer earlier,” Alexander told the Business Journal.", OCBJ)!;
+  assertEquals(a.form, "quoted_with_attribution"); assertEquals(a.speaker_string, "Alexander");
+  const b = detectAttribution("They’re capable of finding more than 500 elusive diseases, including joint disease and reproductive issues, according to the company.", OCBJ)!;
+  assertEquals(b.form, "according_to"); assertEquals(b.speaker_string, "the company");
+  const c = detectAttribution("What differentiates CoreViva from other existing full-body MRIs is that it not only looks at all organs, but also brain health and musculoskeletal health, Alexander said.", OCBJ)!;
+  assertEquals(c.form, "reported_name_verb"); assertEquals(c.speaker_string, "Alexander");
+  const d = detectAttribution("Together, they developed the “fastest, most accurate and most comprehensive whole-body MRI that exists,” Alexander said.", OCBJ)!;
+  assertEquals(d.form, "quoted_with_attribution"); assertEquals(d.speaker_string, "Alexander");
+  const e = detectAttribution("They explain their unique edge: faster scan times (~35 minutes), highest-quality images, and comprehensive reporting using custom AI.", SUBSTACK)!;
+  assertEquals(e.form, "reported_pronoun_verb"); assertEquals(e.speaker_string, "They");
+  const f = detectAttribution("Geniant Chairman and Co-CEO David Lancashire said the studio will support rebranding strategies.", DMAG)!;
+  assertEquals(f.form, "reported_titled_speaker"); assert(f.speaker_string.includes("David Lancashire"), f.speaker_string);
+  const g = detectAttribution("Their preventive health whole-body MRI scans were an immediate answer to better understanding the individual health needs of our first responders.", INDY)!;
+  assertEquals(g.form, "quotation_interior"); assertEquals(g.speaker_string, "Brian Bowis, Chairman of the Newport Beach Fire Department Foundation");
+  assert(g.span.startsWith("“We couldn’t be more pleased") && g.span.endsWith("Fire Department Foundation."), "the unit runs from the opening mark to the attribution clause's sentence end: " + g.span);
+  assertEquals(INDY.slice(g.offset, g.offset + g.span.length), g.span, "the unit's offset indexes the page");
+});
+
+Deno.test("R32: apostrophes never count as quotation marks (the pilot-3 false positive); plain reporting is not attribution", () => {
+  const page = "“One thing that concerned our company,” said Doering.\nTo ensure Scott’s neutrality, Whispering AI founder Jack Skates integrated safeguards into the AI’s application.\n“Jack created parameters,” said Doering.";
+  assertEquals(detectAttribution("To ensure Scott’s neutrality, Whispering AI founder Jack Skates integrated safeguards into the AI’s application.", page), null);
+  assertEquals(detectAttribution("CoreViva has opened a full-body MRI clinic in Newport Beach.", OCBJ), null);
+  assertEquals(detectAttribution("Whispering AI is headquartered at 6929 North Hayden Road, Scottsdale.", ""), null);
+  assertEquals(detectAttribution("", OCBJ), null);
+});

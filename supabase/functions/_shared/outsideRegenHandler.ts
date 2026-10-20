@@ -17,7 +17,9 @@
 //   * WRITE runs as before (R4 ledger, R3 review gate, E4+E2 admission, per-URL cap, wall clock).
 import { gateRegenUrls, requireRunId } from "./outsideRecrawlReview.ts";
 import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
-import { admitOutsideEvidence, isBareAttribution, snapshotReadDate } from "./outsideEvidenceRegen.ts";
+import { admitOutsideEvidence, detectAttribution, isBareAttribution, snapshotReadDate } from "./outsideEvidenceRegen.ts";
+import { regenCallSite } from "./outsideRegenModel.ts";
+import type { SpeakerJudge, SpeakerLedger } from "./aggregatorAuthorship.ts";
 import { insertIntegrityRun } from "./integrityWrite.ts";
 import { BODY_MODE_GUARD, classifyBodyMode } from "./bodyMode.ts";
 import { emptyTally, regenGenerate, regenJudge, tallyingLedger, type RegenLedger, type RegenTransport } from "./outsideRegenModel.ts";
@@ -33,7 +35,7 @@ import { nearestSpan, type NearestSpan } from "./nearestSpan.ts";
 export const REGEN_JUDGE_FAILURE_POLICY: JudgeFailurePolicy = "refuse_mint";
 /** The regen path's label when no authority fires: a third-party page speaking about the client. */
 /** R28: the text gates the regen path names — a first-person candidate is client_voice by rule, before the judge. */
-export const REGEN_TEXT_GATES: ReadonlyArray<TextGate> = ["first_person"];
+export const REGEN_TEXT_GATES: ReadonlyArray<TextGate> = ["first_person", "attributed_speech"];
 export const REGEN_DEFAULT_LABEL = "outside_voice_about_client";
 export type RegenJudge = (input: { subjectName: string; subjectHost: string; url: string; text: string }) => Promise<AuthorshipJudgment | null>;
 
@@ -64,6 +66,13 @@ export type CandidateRecord = {
   detail?: string;
 };
 /** The generator's statements as {text, reason}. A bare string (the pre-R27 shape) reads as text with no reason. */
+/** R32: the paragraph the candidate sits in — from the previous blank line to the next, capped. */
+export function paragraphAround(page: string, offset: number, length: number): string {
+  const start = Math.max(0, page.lastIndexOf("\n\n", offset), offset - 1200);
+  const endNl = page.indexOf("\n\n", offset + length);
+  const end = Math.min(page.length, endNl < 0 ? offset + length + 1200 : endNl, offset + length + 1200);
+  return page.slice(start, end);
+}
 export function parseGeneratorStatements(statements: unknown, quoteMaxWords: number): Array<{ text: string; reason: string | null }> {
   const list = Array.isArray(statements) ? statements : [];
   const out: Array<{ text: string; reason: string | null }> = [];
@@ -95,6 +104,8 @@ export type RegenDeps = {
   /** The local authorship judge, built ONLY on the write path like the transport; null when none is wired —
    *  under REGEN_JUDGE_FAILURE_POLICY every gated URL is then refused, never minted outside. */
   makeJudge: () => RegenJudge | null;
+  /** R32: the speaker judge, built with the run's ledger so every call writes a model_calls row before parse. Null ⇒ attributed candidates are refused. */
+  makeSpeakerJudge?: (ledger: SpeakerLedger) => SpeakerJudge | null;
   models: readonly string[];
   genSystem: (anchors: readonly string[]) => string;
   judgeSystem: (anchors: readonly string[]) => string;
@@ -131,6 +142,7 @@ export type PlanRow = {
  *  judge (a plan calls no model) and no excerpt (a registry page's class is per section). */
 export function planVoiceFor(url: string, pageText: string, company: { name: string; host: string | null }, registry: ReturnType<typeof classifyRegistryRow>): PlanVoice {
   const pre = decideVoiceClassBeforeJudge({ url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText, judgedText: null, company, registry, judge: null, gate: "profile_wire_boilerplate", onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY });
+  if ("needs_speaker" in pre) return { class: "(speaker judge decides)", authority: "speaker_judge", refusal: null };   // R32: never on plan (no candidate text), typed for completeness
   if ("needs_judge" in pre) return { class: "(judge decides)", authority: "authorship_judge", refusal: `gated (${pre.gate.via} ${pre.gate.host}): every excerpt is judged on write; with no judge wired each is refused, not minted` };
   if (!pre.ok) return { class: "(refused)", authority: pre.authority, refusal: pre.reason };
   if (pre.authority === "registry") return { class: "registry: section decides", authority: "registry", refusal: null };
@@ -307,6 +319,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   const judge = deps.makeJudge();
   const tally = emptyTally();
   const ledger = tallyingLedger(deps.makeLedger(company_id), tally);
+  // R32: the speaker judge ledgers through the same tallying ledger, role "speaker", call site extract-outside-evidence:speaker
+  const speakerJudge: SpeakerJudge | null = deps.makeSpeakerJudge ? deps.makeSpeakerJudge((e) => ledger({ role: "speaker", callSite: regenCallSite("speaker"), usage: e.usage, attempt: 1, promptSha: e.promptSha })) : null;
   let voice_refused_total = 0;
   const voiceRefusals: Array<{ url: string; reason: string; excerpts: number }> = [];
 
@@ -404,6 +418,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       const voiceInput: VoiceClassInput = {
         url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText: clean_text, judgedText: verdictA.excerpt, company,
         registry: registryFor(url, verdictA.excerpt), judge, gate: "profile_wire_boilerplate", textGates: REGEN_TEXT_GATES, onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY, now: nowIso,
+        // R32: attributed speech detected on the candidate with its page context; the speaker judge decides who speaks
+        attribution: detectAttribution(verdictA.excerpt, clean_text, verdictA.offset), speakerJudge, context: paragraphAround(clean_text, verdictA.offset, verdictA.length),
       };
       const voice = await voiceClassForMintedExcerpt(voiceInput);
       if (!voice.ok) {
@@ -435,6 +451,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
           generator_reason: cand.reason, judge_reason: keepByQuote.get(c)?.reason ?? null,
           voice_authority: { authority: voice.authority, detail: voice.detail, policy: REGEN_JUDGE_FAILURE_POLICY, gate: voice.gate, ...(voice.rule ? { rule: voice.rule } : {}) },
           ...(voice.authorship_judge ? { authorship_judge: voice.authorship_judge } : {}),
+          // R32: who was quoted or reported, as the judge found; the detected attribution beside it
+          ...(voice.speaker ? { speaker: { speaker_name: voice.speaker.speaker_name, speaker_role: voice.speaker.speaker_role, speaker_class: voice.speaker.speaker_class, reason: voice.speaker.reason, model: voice.speaker.model, judged_at: voice.speaker.judged_at }, attribution: voice.speaker.attribution } : voiceInput.attribution ? { attribution: voiceInput.attribution } : {}),
           ...(voiceInput.registry ? { registry: voiceInput.registry } : {}),
         },
       });
@@ -459,7 +477,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     examined: candidates_total, admitted: admitted_total,
     // R4: the run's model-call tally beside its counts — {generator, judge, usd, ledger_failed}.
     // R17: the voice refusals — excerpts not minted because a gated URL could not be judged; retried next run.
-    excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords },
+    excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords },
     run_ref: `r3_outside_regen_${runId}`,
   });
 
@@ -469,7 +487,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       ok: true, mode: "write", company_id, run_id: runId, urls_total: urls.length, pages_processed: processed, stopped_for_time: stoppedForTime, review_refused: reviewRefused,
       model_calls: tally,
       anchors_used: anchors,
-      voice: { policy: REGEN_JUDGE_FAILURE_POLICY, judge_wired: judge !== null, refused_total: voice_refused_total, refusals: voiceRefusals },
+      voice: { policy: REGEN_JUDGE_FAILURE_POLICY, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, refused_total: voice_refused_total, refusals: voiceRefusals },
       totals: { candidates: candidates_total, admitted: admitted_total, guard_rejected: guard_rejected_total, reject_reasons: rejectReasons },
       pages,
     },
