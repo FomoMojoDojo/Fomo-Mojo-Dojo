@@ -17,6 +17,11 @@
 #       from the shipped re-derivation is refused plan_mismatch; zero integrity rows, zero judge calls.
 #   p6  every judge call writes its model_calls row: ledger rows == transport calls == the tally; ledger_failed 0;
 #       the integrity row was opened and finished with the counts; revert restores the company md5 exactly.
+#   p8  an UNCHANGED row (judge third_party, label stands, no audit row) keeps the judge's verdict AND full reason on its
+#       stamp (raw_payload.r52.judgments[], the audit row's field shape: judge_verdict/entity/reason/model).
+#   p9  a revert cannot restore a row without recording it: a bare restore (no revert audit row of its own) is refused and
+#       the class stays applied; the real revert writes one integrity row (mode revert) and one r52_revert audit row per
+#       restored row (apply_audit:<id>) and per stamp-only row, and restores the company md5.
 #   p7  plan mode writes nothing: it runs in a READ ONLY transaction, no transaction id is assigned, and the four
 #       tables are unchanged after it; it reaches every reviewed row.
 #
@@ -28,6 +33,8 @@
 #   P5  applyCompany's assertInPlan call removed                  => p5 not_in_plan.refused true → false
 #   P6  ledgeredJudges' model_calls insert replaced by `true`     => p6 ledger_rows 2 → 0 (transport calls 2)
 #   P7  plan.ts writes one integrity row before its reads         => p7 plan exit 0 → 1 (read-only transaction refuses)
+#   P8  applyCompany's stamp drops judgments                       => p8 reason_kept true → false (judgments 1 → 0)
+#   P9  restoreClass's exists(revert audit row) clause removed     => p9 bare_restore_refused true → false (class → outside)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -86,6 +93,14 @@ echo "p5. a row not in the plan refused (not_in_plan, left unstamped); a drifted
 [ "$(echo "$J" | jq_ "d['integrity'][0]['status']=='completed' and d['integrity'][0]['opened_at'] and d['integrity'][0]['finished_at'] and d['integrity'][0]['changed']==d['audit_rows']==1")" = True ] || fail p6 "integrity row: $(echo "$J" | jq_ "d['integrity']")"
 [ "$(echo "$J" | jq_ "d['md5_after_apply_differs'] and d['md5_after_revert_equal'] and d['revert']['restored']==d['audit_rows'] and d['rolled_back']")" = True ] || fail p6 "revert: $(echo "$J" | jq_ "d['revert'],d['md5_after_revert_equal']")"
 echo "p6. ledger: $(echo "$J" | jq_ "d['transport_calls']") judge calls = $(echo "$J" | jq_ "d['ledger_rows']") model_calls rows = tally $(echo "$J" | jq_ "d['applied']['model_calls']"); integrity row opened+finished (changed 1 = audit rows 1); revert restored the company md5 exactly"
+
+# p8 — an unchanged row keeps the judge's reason on its stamp
+J8=$(probe p8); [ "$(echo "$J8" | jq_ "str(d['kind'])+'|'+str(d['class'])+'|'+str(d['audit_rows'])+'|'+str(d['judgments'])+'|'+str(d['reason_kept'])+'|'+str(d['rolled_back'])")" = "unchanged|outside_voice_about_client|0|1|True|True" ] || fail p8 "unchanged row's stamp: $J8"
+echo "p8. unchanged row: class stands, 0 audit rows, stamp keeps the judge's answer: $(echo "$J8" | jq_ "d['authorship']['judge_verdict']+' — '+d['authorship']['judge_reason']")"
+
+# p9 — the revert records itself
+J9=$(probe p9); [ "$(echo "$J9" | jq_ "str(d['bare_restore_refused'])+'|'+str(d['class_after_bare'])+'|'+str(sorted((w['row'],w['from'],w['to'],w['entity']) for w in d['revert_audit']))+'|'+str(d['restored'])+'|'+str(d['unstamped'])+'|'+str(sorted((d['integrity'] or {}).items()))+'|'+str(d['md5_after_revert_equal'])+'|'+str(d['rolled_back'])")" = "True|client_voice|[('A', 'client_voice', 'outside_voice_about_client', 'apply_audit:<A>'), ('B', 'outside_voice_about_client', 'outside_voice_about_client', 'stamp_only')]|1|2|[('admitted', 1), ('examined', 2), ('mode', 'revert'), ('status', 'completed')]|True|True" ] || fail p9 "revert record: $J9"
+echo "p9. a bare restore is refused (class stays client_voice); the revert wrote 1 integrity row (mode revert, examined 2, admitted 1) and 2 r52_revert audit rows (A apply_audit, B stamp_only) before its writes; md5 restored"
 
 # p7 — plan mode writes nothing
 set +e; P=$(NO_COLOR=1 deno run --allow-all --no-check $R52/plan.ts --plan --reviewed="$REVIEWED" --reviewed-md5="$REVIEWED_MD5" 2>/dev/null | tail -1); rc=$?; set -e

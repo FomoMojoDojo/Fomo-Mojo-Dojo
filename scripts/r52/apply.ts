@@ -6,7 +6,7 @@
 //       not a Client Portals id); plan-equals-reviewed for every one of its rows; every row handed to the executor is in
 //       the reviewed plan. Then the integrity row is OPENED running, each row is decided by the shipped authority under
 //       keep_label with the local LEDGERED judges, and the row is FINISHED with judged / changed / unknown / ledger_failed.
-//   deno run --allow-all scripts/r52/apply.ts --probe --name=<p1|p2|p3|p4|p5|p6|plan-seed|apply-revert>
+//   deno run --allow-all scripts/r52/apply.ts --probe --name=<p1|p2|p3|p4|p5|p6|p8|p9|plan-seed|apply-revert>
 //       GUARD PROBES on a throwaway company SEEDED INSIDE the probe's transaction, with FAKE local transports (no model
 //       is reachable): everything — seed, ledger rows, audit rows, integrity rows — is ROLLED BACK. One JSON line out.
 // The mode is named or refused (classifyBodyMode) — there is no default.
@@ -51,14 +51,15 @@ async function seed(): Promise<Seeded> {
   return { a, b, c, h };
 }
 /** Fake local transports: authorship says the company wrote it, speaker cannot tell, band says no. Counted. */
-function fakeTransports(counter: { n: number }): Transports {
+function fakeTransports(counter: { n: number }, authorshipVerdict: "subject_company" | "third_party" = "subject_company"): Transports {
   const tok = { prompt_tokens: 300, completion_tokens: 20 };
   return {
-    authorship: () => { counter.n++; return Promise.resolve({ content: JSON.stringify({ verdict: "subject_company", entity: null, reason: "guard: the listing's own description text" }), ...tok }); },
+    authorship: () => { counter.n++; return Promise.resolve({ content: JSON.stringify({ verdict: authorshipVerdict, entity: null, reason: authorshipVerdict === "third_party" ? P8_REASON : "guard: the listing's own description text" }), ...tok }); },
     speaker: () => { counter.n++; return Promise.resolve({ content: JSON.stringify({ speaker_name: null, speaker_role: null, speaker_class: "unknown", reason: "guard: the paragraph does not say who speaks" }), ...tok }); },
     band: () => { counter.n++; return Promise.resolve({ content: "NO", ...tok }); },
   };
 }
+const P8_REASON = "guard p8: the directory's own contact line, written by the platform";
 const reviewedRow = (company_id: string, company: string, signal_id: string, judges: string): ReviewedRow => ({ seq: "g", company, company_id, signal_id, era: "b3", rules: "guard", judges, preempted_by: "" });
 async function refusal(fn: () => Promise<unknown>): Promise<{ refused: boolean; code: string | null; message: string | null }> {
   try { await fn(); return { refused: false, code: null, message: null }; } catch (e) {
@@ -79,7 +80,7 @@ try {
     const r = await applyCompany(store, { group, runRef: String(body.run_ref ?? ""), reviewedMd5s: reviewed.md5s, transports: localTransports(), nested: false, log: (s) => console.error(s) });
     out({ mode: "apply", ...r, outcomes: undefined, outcome_counts: { changed: r.changed, unknown: r.unknown, unchanged: r.rows - r.changed - r.unknown - r.refused, refused: r.refused } });
   } else {
-    if (typeof body.name !== "string" || !body.name) throw new SweepRefusedError("no_probe_name", "--probe needs --name=<p1|p2|p3|p4|p5|p6|plan-seed|apply-revert>");
+    if (typeof body.name !== "string" || !body.name) throw new SweepRefusedError("no_probe_name", "--probe needs --name=<p1|p2|p3|p4|p5|p6|p8|p9|plan-seed|apply-revert>");
     const probe = body.name;
     await session.exec("begin;");
     const before = { model_calls: await count("select 1 from model_calls"), integrity_runs: await count("select 1 from integrity_runs"), restamps: await count("select 1 from signal_voice_restamps"), signals: await count("select 1 from signals") };
@@ -119,6 +120,31 @@ try {
       let direct: { refused: boolean; code: string | null } = { refused: false, code: null };
       try { assertInPlan([s.c], new Set([s.a, s.b])); } catch (e) { direct = { refused: true, code: (e as SweepRefusedError).code }; }
       result = { not_in_plan: notInPlan, extra_row_stamped: cStamped, plan_mismatch: mismatch, direct, judge_calls: counter.n, integrity_rows_written: await count(`select 1 from integrity_runs where company_id=${lit(Z)}::uuid`) };
+    } else if (probe === "p8") {
+      // an UNCHANGED row (the judge answers third_party, the label stands): its stamp keeps the judge's verdict and FULL
+      // reason in the audit row's field shape — the reason is not lost because no audit row was written
+      const g8 = { company_id: Z, company: "ZZ R52 Guard", rows: [reviewedRow(Z, "ZZ R52 Guard", s.a, "authorship")] };
+      const r = await applyCompany(store, { group: g8, runRef: RUN, reviewedMd5s: ["probe"], transports: fakeTransports(counter, "third_party"), nested: true });
+      const A = await sigRow(s.a);
+      const js = ((A.r52 as { judgments?: Array<Record<string, unknown>> } | null)?.judgments ?? []);
+      const aj = js.find((j) => j.judge === "authorship") ?? null;
+      result = { kind: r.outcomes[0]?.kind ?? null, class: A.voice_class, audit_rows: await count(`select 1 from signal_voice_restamps where company_id=${lit(Z)}::uuid and run_ref=${lit(RUN)}`), judgments: js.length, authorship: aj, reason_kept: !!aj && aj.judge_reason === P8_REASON && aj.judge_verdict === "third_party" && typeof aj.judge_model === "string" && "judge_entity" in aj };
+    } else if (probe === "p9") {
+      // the revert record: (i) a restore with NO revert audit row of its own is refused — the class stays applied;
+      // (ii) the real revert writes one integrity row and one audit row per restored row (apply_audit:<id>) and per
+      // stamp-only row, each before its write, and leaves the company md5 where it was before apply
+      const md5_0 = await store.companySignalsMd5(Z);
+      await applyCompany(store, { group, runRef: RUN, reviewedMd5s: ["probe"], transports: fakeTransports(counter), nested: true });
+      const applyAudit = (await store.loadAudit(RUN, Z))[0];
+      const bare = await store.restoreClass(s.a, applyAudit.old_voice_class, applyAudit.new_voice_class, RUN, applyAudit.id);
+      const afterBare = (await sigRow(s.a)).voice_class;
+      const rv = await revertCompany(store, { runRef: RUN, companyId: Z });
+      const ir = await session.query<{ status: string; examined: number; admitted: number; mode: string }>(`select status, examined, admitted, excluded_by_rule->>'mode' mode from integrity_runs where id=${rv.integrity_id}`);
+      result = {
+        bare_restore_refused: bare === false, class_after_bare: afterBare,
+        revert_audit: rv.revert_audit.map((w) => ({ row: w.signal_id === s.a ? "A" : w.signal_id === s.b ? "B" : "?", from: w.old_voice_class, to: w.new_voice_class, entity: w.judge_entity === `apply_audit:${applyAudit.id}` ? "apply_audit:<A>" : w.judge_entity })),
+        restored: rv.restored, unstamped: rv.unstamped, integrity: ir[0] ?? null, md5_after_revert_equal: rv.md5_after === md5_0,
+      };
     } else if (probe === "p2" || probe === "p6" || probe === "apply-revert") {
       // the full path on the seed: apply (fake transports, real ledgered judges), then revert, md5 before / after
       const md5_0 = await store.companySignalsMd5(Z);

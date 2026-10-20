@@ -44,7 +44,7 @@ import { clientAnchorsFor } from "../../supabase/functions/_shared/clientAnchors
 import { classifyBodyMode } from "../../supabase/functions/_shared/bodyMode.ts";
 import { FROZEN_COMPANY_IDS } from "../../supabase/functions/_shared/frozenCompanies.ts";
 import { CLIENT_PORTALS_IDS } from "../../src/lib/b3Review/review.ts";
-import { SweepRefusedError, type SweepCompany, type SweepSignal, type SweepStore } from "./psqlSweepStore.ts";
+import { R52_REVERT, SweepRefusedError, type SweepCompany, type SweepSignal, type SweepStore } from "./psqlSweepStore.ts";
 
 export { SweepRefusedError };
 export const R52_RULES = "R52";
@@ -333,6 +333,17 @@ export function assertInPlan(rowIds: readonly string[], reviewedIds: ReadonlySet
   const out = rowIds.filter((id) => !reviewedIds.has(id));
   if (out.length) throw new SweepRefusedError("not_in_plan", `${out.length} row(s) not in the reviewed plan: ${out.slice(0, 3).join(", ")}`);
 }
+/** Every judge that answered for a row, in the audit row's field shape (judge_verdict / judge_entity / judge_reason /
+ *  judge_model) — stored on EVERY stamp, so an unchanged or unknown row keeps the judge's full reason too (R52 batch-1
+ *  ruling: the stamp on an unchanged row had kept only the authority's detail, never the reason). Empty when no judge ran. */
+export type StampJudgment = { judge: JudgeName; judge_verdict: string; judge_entity: string | null; judge_reason: string; judge_model: string };
+export function stampJudgments(d: Extract<VoiceClassDecision, { ok: true }>): StampJudgment[] {
+  const j: StampJudgment[] = [];
+  if (d.syndication && d.syndication.method === "local_llm") j.push({ judge: "band", judge_verdict: d.syndication.verdict, judge_entity: null, judge_reason: d.detail, judge_model: String(d.syndication.model ?? "unknown") });
+  if (d.speaker) j.push({ judge: "speaker", judge_verdict: d.speaker.speaker_class, judge_entity: d.speaker.speaker_name, judge_reason: d.speaker.reason, judge_model: d.speaker.model });
+  if (d.authorship_judge) j.push({ judge: "authorship", judge_verdict: d.authorship_judge.verdict, judge_entity: d.authorship_judge.entity, judge_reason: d.authorship_judge.reason, judge_model: d.authorship_judge.model });
+  return j;
+}
 function auditFields(d: Extract<VoiceClassDecision, { ok: true }>): { verdict: string; entity: string | null; reason: string; model: string } {
   if (d.authority === "authorship_judge" && d.authorship_judge) return { verdict: d.authorship_judge.verdict, entity: d.authorship_judge.entity, reason: d.authorship_judge.reason, model: d.authorship_judge.model };
   if (d.speaker) return { verdict: d.speaker.speaker_class, entity: d.speaker.speaker_name, reason: d.speaker.reason, model: d.speaker.model };
@@ -393,7 +404,7 @@ export async function applyCompany(store: SweepStore, args: {
       }
       const dec = d.decision;
       const to = dec.voice_class;
-      const stamp = { ...stampBase, authority: dec.authority, rule: dec.rule ?? null, detail: dec.detail, from, to: to ?? from };
+      const stamp = { ...stampBase, authority: dec.authority, rule: dec.rule ?? null, detail: dec.detail, from, to: to ?? from, judgments: stampJudgments(dec) };
       if (to && to !== from && AUDITABLE.has(to)) {
         const a = auditFields(dec);
         await tx(store, args.nested, async () => {
@@ -425,20 +436,51 @@ export async function applyCompany(store: SweepStore, args: {
 }
 
 // ── revert ────────────────────────────────────────────────────────────────────────────────────────────────────
-export type RevertResult = { run_ref: string; company_id: string; audit_rows: number; restored: number; skipped: string[]; unstamped: number; md5_after: string };
+export type RevertAuditWritten = { id: string; signal_id: string; old_voice_class: string | null; new_voice_class: string; judge_entity: string };
+export type RevertResult = { run_ref: string; company_id: string; audit_rows: number; restored: number; skipped: string[]; unstamped: number; md5_after: string; integrity_id: number; revert_audit: RevertAuditWritten[] };
 /** Revert one company's rows of a run, from its audit rows: class back where it still holds the new value; audit marked;
  *  the r52 / r52_unknown keys removed from every row the run stamped. */
 export async function revertCompany(store: SweepStore, args: { runRef: string; companyId: string }): Promise<RevertResult> {
   const [co] = await store.loadCompanies([args.companyId]);
   assertCompanyWritable(co, args.companyId);
-  const audit = (await store.loadAudit(args.runRef, args.companyId)).filter((a) => !a.reverted_at);
+  // THE REVERT RECORD (ruling 2026-10-20): one integrity row per revert, OPENED before the first write; one audit row of
+  // the revert's own per restored row (old → new class, verdict/reason r52_revert, judge_entity apply_audit:<id> it
+  // undoes) and per stamp removed from a row apply never changed (judge_entity stamp_only) — each written BEFORE its
+  // restore / unstamp, which the store refuses without it. Runs inside the caller's transaction.
+  const { runRef, companyId } = args;
+  const md5Before = await store.companySignalsMd5(companyId);
+  const audit = (await store.loadAudit(runRef, companyId)).filter((a) => !a.reverted_at);
+  const stamped = await store.stampedRows(runRef, companyId);
+  const cls = new Map(stamped.map((r) => [r.id, r]));
+  for (const a of audit) if (!cls.has(a.signal_id)) { const [s] = await store.loadSignals([a.signal_id]); if (s) cls.set(s.id, { id: s.id, voice_class: s.voice_class, source_url: s.source_url }); }
+  const openedAt = new Date().toISOString();
+  const integrityId = await store.openIntegrity({ company_id: companyId, component: R52_COMPONENT, run_ref: runRef,
+    excluded_by_rule: { mode: "revert", rules: R52_RULES, run_ref: runRef, apply_audit_rows: audit.length, stamped_rows: stamped.length, signals_md5_before: md5Before, opened_at: openedAt } });
+  const written: RevertAuditWritten[] = [];
   const skipped: string[] = [];
+  const recorded = new Set<string>();
   let restored = 0;
+  const record = async (signalId: string, from: string | null, to: string, entity: string) => {
+    const id = await store.insertAudit({ company_id: companyId, signal_id: signalId, run_ref: runRef, old_voice_class: from, new_voice_class: to, judge_verdict: R52_REVERT, judge_entity: entity, judge_reason: R52_REVERT, judge_model: "deterministic", source_url: cls.get(signalId)?.source_url ?? null });
+    written.push({ id, signal_id: signalId, old_voice_class: from, new_voice_class: to, judge_entity: entity });
+    recorded.add(signalId);
+  };
   for (const a of audit) {
-    if (await store.restoreClass(a.signal_id, a.old_voice_class, a.new_voice_class)) restored++;
-    else skipped.push(a.signal_id);
+    if (cls.get(a.signal_id)?.voice_class !== a.new_voice_class) { skipped.push(a.signal_id); await store.markReverted(a.id); continue; }
+    if (a.old_voice_class === null) throw new SweepRefusedError("revert_unrecordable", `audit ${a.id}: no old class to restore`);
+    await record(a.signal_id, a.new_voice_class, a.old_voice_class, `apply_audit:${a.id}`);
+    if (!(await store.restoreClass(a.signal_id, a.old_voice_class, a.new_voice_class, runRef, a.id))) throw new SweepRefusedError("unaudited_restore", `restore of ${a.signal_id} refused: no revert audit row of this revert undoes apply audit ${a.id}`);
     await store.markReverted(a.id);
+    restored++;
   }
-  const unstamped = await store.unstamp(args.runRef, args.companyId);
-  return { run_ref: args.runRef, company_id: args.companyId, audit_rows: audit.length, restored, skipped, unstamped, md5_after: await store.companySignalsMd5(args.companyId) };
+  for (const r of stamped) if (!recorded.has(r.id)) {
+    if (r.voice_class === null) throw new SweepRefusedError("revert_unrecordable", `stamped row ${r.id} has no class to record`);
+    await record(r.id, r.voice_class, r.voice_class, "stamp_only");
+  }
+  const unstamped = await store.unstamp(runRef, companyId);
+  if (unstamped !== stamped.length) throw new SweepRefusedError("unaudited_unstamp", `unstamped ${unstamped} of ${stamped.length} stamped rows — a row without its revert audit row kept its stamp`);
+  const md5After = await store.companySignalsMd5(companyId);
+  await store.finishIntegrity(integrityId, { status: "completed", examined: stamped.length, admitted: restored,
+    excluded_by_rule: { mode: "revert", rules: R52_RULES, run_ref: runRef, apply_audit_rows: audit.length, stamped_rows: stamped.length, restored, unstamped, skipped, revert_audit_ids: written.map((w) => w.id), signals_md5_before: md5Before, signals_md5_after: md5After, opened_at: openedAt, finished_at: new Date().toISOString() } });
+  return { run_ref: runRef, company_id: companyId, audit_rows: audit.length, restored, skipped, unstamped, md5_after: md5After, integrity_id: integrityId, revert_audit: written };
 }

@@ -26,7 +26,12 @@ export type SweepAuditRow = { id: string; company_id: string; signal_id: string;
 export type SweepAuditInsert = {
   company_id: string; signal_id: string; run_ref: string; old_voice_class: string | null; new_voice_class: string;
   judge_verdict: string; judge_entity: string | null; judge_reason: string; judge_model: string; source_url: string | null;
+  /** backfill only: the time of the event the row records (default now()) */
+  applied_at?: string;
 };
+/** A revert's own audit rows carry this verdict and reason; judge_entity names what they undo ("apply_audit:<id>", or
+ *  "stamp_only" for a stamp removed from a row whose class apply never changed). They are never themselves reverted. */
+export const R52_REVERT = "r52_revert";
 export type ModelCallInsert = {
   company_id: string; call_site: string; provider: string; model: string;
   prompt_tokens: number | null; completion_tokens: number | null; usd: number | null; attempt: number; prompt_sha: string;
@@ -113,6 +118,7 @@ export function makePsqlSweepStore(s: PsqlSession) {
     async insertAudit(a: SweepAuditInsert): Promise<string> {
       const r = await s.mutate<{ id: string }>(`insert into signal_voice_restamps (company_id, signal_id, run_ref, ledger_run_id, old_voice_class, new_voice_class, judge_verdict, judge_entity, judge_reason, judge_model, source_url)
         values (${lit(a.company_id)}::uuid, ${lit(a.signal_id)}::uuid, ${lit(a.run_ref)}, null, ${lit(a.old_voice_class)}, ${lit(a.new_voice_class)}, ${lit(a.judge_verdict)}, ${lit(a.judge_entity)}, ${lit(a.judge_reason)}, ${lit(a.judge_model)}, ${lit(a.source_url)}) returning id`);
+      if (a.applied_at) await s.mutate(`update signal_voice_restamps set applied_at=${lit(a.applied_at)}::timestamptz where id=${lit(r[0]?.id ?? "")}::uuid returning id`);
       if (r.length !== 1) throw new Error("audit insert returned no id");
       return r[0].id;
     },
@@ -129,7 +135,7 @@ export function makePsqlSweepStore(s: PsqlSession) {
         return `${k}=${v === null ? "null" : lit(String(v))}`;
       });
       const audited = "voice_class" in patch
-        ? ` and exists (select 1 from signal_voice_restamps a where a.signal_id=${lit(id)}::uuid and a.run_ref=${lit(runRef)} and a.new_voice_class=${lit(patch.voice_class as string)} and a.reverted_at is null)`
+        ? ` and exists (select 1 from signal_voice_restamps a where a.signal_id=${lit(id)}::uuid and a.run_ref=${lit(runRef)} and a.new_voice_class=${lit(patch.voice_class as string)} and a.reverted_at is null and a.judge_verdict is distinct from ${lit(R52_REVERT)})`
         : "";
       const r = await s.mutate(`update signals set ${sets.join(", ")} where id=${lit(id)}::uuid${audited} returning id`);
       if (r.length !== 1) {
@@ -139,21 +145,31 @@ export function makePsqlSweepStore(s: PsqlSession) {
     },
     async loadAudit(runRef: string, companyId: string): Promise<SweepAuditRow[]> {
       return await s.query<SweepAuditRow>(`select id, company_id, signal_id, run_ref, old_voice_class, new_voice_class, reverted_at from signal_voice_restamps
-        where run_ref=${lit(runRef)} and company_id=${lit(companyId)}::uuid order by applied_at, id`);
+        where run_ref=${lit(runRef)} and company_id=${lit(companyId)}::uuid and judge_verdict is distinct from ${lit(R52_REVERT)} order by applied_at, id`);
+    },
+    /** The rows of the company the run stamped (what a revert must record and unstamp). */
+    async stampedRows(runRef: string, companyId: string): Promise<{ id: string; voice_class: string | null; source_url: string | null }[]> {
+      return await s.query<{ id: string; voice_class: string | null; source_url: string | null }>(`select id, voice_class, source_url from signals
+        where company_id=${lit(companyId)}::uuid and raw_payload->'r52'->>'run_ref'=${lit(runRef)} order by id`);
     },
     async markReverted(auditId: string): Promise<void> {
       const r = await s.mutate(`update signal_voice_restamps set reverted_at=now() where id=${lit(auditId)}::uuid returning id`);
       if (r.length !== 1) throw new Error(`audit mark touched ${r.length} rows`);
     },
-    /** Revert's one signal write: class back to the audit row's old value (where it still holds the new one). */
-    async restoreClass(signalId: string, oldClass: string | null, newClass: string): Promise<boolean> {
-      const r = await s.mutate(`update signals set voice_class=${lit(oldClass)} where id=${lit(signalId)}::uuid and voice_class=${lit(newClass)} returning id`);
+    /** Revert's one signal write: class back to the audit row's old value (where it still holds the new one) — and ONLY
+     *  when THIS revert (same transaction: applied_at = now()) has already written its own audit row undoing that apply
+     *  audit row. A restore with no record of its own touches nothing (false). */
+    async restoreClass(signalId: string, oldClass: string | null, newClass: string, runRef: string, applyAuditId: string): Promise<boolean> {
+      const r = await s.mutate(`update signals set voice_class=${lit(oldClass)} where id=${lit(signalId)}::uuid and voice_class=${lit(newClass)}
+        and exists (select 1 from signal_voice_restamps v where v.signal_id=${lit(signalId)}::uuid and v.run_ref=${lit(runRef)} and v.judge_verdict=${lit(R52_REVERT)}
+          and v.judge_entity=${lit(`apply_audit:${applyAuditId}`)} and v.old_voice_class=${lit(newClass)} and v.new_voice_class=${lit(oldClass)} and v.applied_at=now()) returning id`);
       return r.length === 1;
     },
     /** Revert's stamp removal: the keys apply added, on every row of the company the run stamped. */
     async unstamp(runRef: string, companyId: string): Promise<number> {
       const r = await s.mutate(`update signals set raw_payload = case when raw_payload->'r52'->>'payload_was_null'='true' then null else raw_payload - 'r52' - 'r52_unknown' end
-        where company_id=${lit(companyId)}::uuid and raw_payload->'r52'->>'run_ref'=${lit(runRef)} returning id`);
+        where company_id=${lit(companyId)}::uuid and raw_payload->'r52'->>'run_ref'=${lit(runRef)}
+          and exists (select 1 from signal_voice_restamps v where v.signal_id=signals.id and v.run_ref=${lit(runRef)} and v.judge_verdict=${lit(R52_REVERT)} and v.applied_at=now()) returning id`);
       return r.length;
     },
     /** md5 of the company's signal rows over every column the sweep could touch, plus the liveness columns. */
