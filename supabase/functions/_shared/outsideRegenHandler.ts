@@ -289,6 +289,15 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   const gate = gateRegenUrls(urls, (reviewRows ?? []) as Array<{ source_url: string; operator_decision: string | null }>);
   const { data: mintedRows } = await supabase.from("signals").select("source_url").eq("company_id", company_id).eq("raw_payload->>run_id", runId);
   const mintedUnderRun = new Set(((mintedRows ?? []) as Array<{ source_url: string | null }>).map((r) => r.source_url).filter((u): u is string => !!u));
+  // R43 (operator ruling 2026-10-20): a URL is DONE under a run when ANY r3_outside_regen integrity row for the run —
+  // completed or failed — lists it as processed (processed_urls, written by every finish), or a signal carries the
+  // run_id. A page processed with no candidate and no mint is not re-run on a continuation.
+  const { data: priorRuns } = await supabase.from("integrity_runs").select("excluded_by_rule").eq("company_id", company_id).eq("component", REGEN_COMPONENT);
+  for (const row of (priorRuns ?? []) as Array<{ excluded_by_rule?: { run_id?: string; processed_urls?: unknown; candidates?: Array<{ url?: string }> } | null }>) {
+    const p = row.excluded_by_rule; if (!p || p.run_id !== runId) continue;
+    for (const u of Array.isArray(p.processed_urls) ? p.processed_urls : []) if (typeof u === "string") mintedUnderRun.add(u);
+    for (const c of Array.isArray(p.candidates) ? p.candidates : []) if (typeof c?.url === "string") mintedUnderRun.add(c.url);
+  }
   const doneUrls = gate.allowed.filter((u) => mintedUnderRun.has(u));
   const pendingUrls = gate.allowed.filter((u) => !mintedUnderRun.has(u));
 
@@ -398,6 +407,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
 
   const pages: Array<Record<string, unknown>> = [];
   const candidateRecords: CandidateRecord[] = [];   // R27: every candidate of the run, in full, for the integrity row
+  const processedUrls: string[] = [];               // R43: every page this call processed, candidates or none
   const seenThisRun = new Set<string>();
   let candidates_total = 0, admitted_total = 0, guard_rejected_total = 0;
   const rejectReasons: Record<string, number> = {};
@@ -526,6 +536,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     }
     admitted_total += admittedRows.length;
     processed++;
+    processedUrls.push(url);   // R43: named on the finish so a zero-candidate page counts as done
     pages.push({
       url, candidates: cands.length, admitted: admittedRows.length,
       admitted_excerpts: admittedRows.map((r) => r.evidence_excerpt),
@@ -542,12 +553,12 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       status: stoppedForTime ? "failed" : "completed", examined: candidates_total, admitted: admitted_total,
       // R4: the run's model-call tally beside its counts — {generator, judge, speaker, usd, ledger_failed}.
       // R17: the voice refusals — excerpts not minted because a gated URL could not be judged; retried next run.
-      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords, opened_at: openedAt, finished_at: nowIso(), pages_budget: REGEN_PAGE_BUDGET, pages_done: processed, done_before: doneUrls.length, remaining },
+      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords, processed_urls: processedUrls, opened_at: openedAt, finished_at: nowIso(), pages_budget: REGEN_PAGE_BUDGET, pages_done: processed, done_before: doneUrls.length, remaining },
     });
   } catch (e) {
     const msg = e instanceof IntegrityWriteRefused ? e.cause_message : (e as Error).message;
     integrity = { id: integrityId, finish: "failed", error: msg };
-    try { await finishIntegrityRun(supabase, integrityId, { status: "failed", examined: candidates_total, admitted: admitted_total, error: `finish refused: ${msg}` }); } catch (e2) { integrity.error = `${msg}; and the failed-status update was refused too: ${(e2 as Error).message}`; }
+    try { await finishIntegrityRun(supabase, integrityId, { status: "failed", examined: candidates_total, admitted: admitted_total, error: `finish refused: ${msg}`, excluded_by_rule: { mode, run_id: runId, urls: urls.length, review_gate: true, anchors_used: anchors, opened_at: openedAt, pages_budget: REGEN_PAGE_BUDGET, done_before: doneUrls.length, remaining, processed_urls: processedUrls, finish_refused: true } }); } catch (e2) { integrity.error = `${msg}; and the failed-status update was refused too: ${(e2 as Error).message}`; }
   }
 
   return {

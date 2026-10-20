@@ -25,7 +25,8 @@
 #       speaker rows = attribution-bearing candidates; judgeSpeaker ledgers before it parses.
 #   l7. (R36) sanitized at parse (NUL never reaches the integrity row); the row is opened running before the first mint
 #       and finished at the end — a refused finish leaves it failed with the error; excerpt_offset (UTF-16) + _cp (points).
-#   l8. (R41) the page budget: 8 per write call, continuation under the same run_id, a minted URL never re-run.
+#   l8. (R41/R43) the page budget: 8 per write call, continuation under the same run_id; a URL is done when any integrity
+#       row for the run names it processed (processed_urls) or a signal carries the run_id — an empty page is never re-run.
 #   l9. (R42) the speaker context reaches past the paragraph (every sentence naming the speaker, capped).
 #   l3. DATA — for every integrity_runs row of component r3_outside_regen ran AFTER the fix landed, the
 #       model_calls rows at call_site extract-outside-evidence:* for that company inside the run's window
@@ -162,7 +163,10 @@ BP=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-budget-prob
 [ "$(echo "$BP" | jq_ "[c['generator_calls_this_call'] for c in d['calls']]")" = "[8, 2, 0]" ] || fail l8 "generator calls per call != [8, 2, 0]: $BP"
 [ "$(echo "$BP" | jq_ "[c['remaining'] for c in d['calls']]")" = "[2, 0, 0]" ] || fail l8 "remaining per call != [2, 0, 0]: $BP"
 grep -q 'export const REGEN_PAGE_BUDGET = 8;' supabase/functions/_shared/outsideRegenHandler.ts || fail l8 "the budget is not 8"
-echo "l8. R41 probe: $BP"
+# R43: a page processed with no candidate is done — the continuation after an 8-page call where page 3 yielded nothing makes 2 calls
+[ "$(echo "$BP" | jq_ "str(d['r43_empty_page']['plan_done_after_first'])+'|'+str(d['r43_empty_page']['continuation_generator_calls'])")" = "8|2" ] || fail l8 "R43: an empty page was re-run (plan done / continuation calls): $BP"
+grep -q 'processed_urls: processedUrls' supabase/functions/_shared/outsideRegenHandler.ts || fail l8 "the finish does not name processed_urls"
+echo "l8. R41/R43 probe: $BP"
 # l9 — R42: the speaker judge's context carries every page sentence naming the speaker; the Brierley fixture resolves.
 SC=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-speaker-context-probe.ts 2>&1 | tail -1)
 [ "$(echo "$SC" | jq_ "str(d.get('context_has_affiliation'))+'|'+str(d.get('speaker_class'))+'|'+str(d.get('voice_class'))")" = "True|subject_company_officer|client_voice" ] || fail l9 "the Brierley fixture did not resolve: $SC"

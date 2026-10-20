@@ -630,3 +630,34 @@ Deno.test("R42: the Brierley fixture — affiliation stated outside the quote's 
   const m = (db.inserts.signals ?? [])[0] as { voice_class: string; raw_payload: { speaker: { speaker_class: string } } };
   assertEquals(m.voice_class, "client_voice"); assertEquals(m.raw_payload.speaker.speaker_class, "subject_company_officer");
 });
+
+
+// ── R43: a page processed with NO candidate is still DONE under the run ──────────────────────────────────────
+/** Like pageTransport, but page 3 yields nothing. */
+export function pageTransportEmpty3(calls: { gen: number }): RegenTransport {
+  const base = pageTransport(calls);
+  return (a) => { if (a.system === "GEN" && a.user.includes("Acme Coffee story 3.")) { calls.gen++; return Promise.resolve({ content: JSON.stringify({ statements: [] }), usage: { prompt_tokens: 1, completion_tokens: 1 } }); } return base(a); };
+}
+Deno.test("R43: 10 approved URLs, the first write processes 8 of which one yields nothing → the row names 8 processed_urls; the continuation processes 2 (generator calls 2, never 3); the plan reports done 8 then 10", async () => {
+  const db = fakeDb(seed10()); const calls = { gen: 0 }; const { d } = deps(db, pageTransportEmpty3(calls), null);
+  const r1 = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true }, d);
+  assertEquals(r1.body.pages_processed, 8); assertEquals(calls.gen, 8); assertEquals((db.inserts.signals ?? []).length, 7, "page 3 minted nothing");
+  const row1 = (db.tables.integrity_runs ?? []).filter((x) => x.component === "r3_outside_regen").pop()!;
+  assertEquals(((row1.excluded_by_rule as { processed_urls: string[] }).processed_urls), U10.slice(0, 8));
+  const plan = await runOutsideRegen({ company_id: CO, run_id: RUN2, plan: true }, d);
+  assertEquals(plan.body.done, 8, "the empty page counts as done"); assertEquals(plan.body.remaining, 2);
+  const r2 = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true }, d);
+  assertEquals(r2.body.pages_processed, 2); assertEquals(r2.body.done_before, 8); assertEquals(calls.gen, 10, "generator calls 2 on the continuation, never 3");
+  const plan2 = await runOutsideRegen({ company_id: CO, run_id: RUN2, plan: true }, d);
+  assertEquals(plan2.body.done, 10); assertEquals(plan2.body.remaining, 0);
+});
+Deno.test("R43: a FAILED row (stopped for time or a refused finish) still names its processed_urls, so its pages are done for the continuation", async () => {
+  const db = fakeDb(seed10()); db.failures.integrity_update = "refused once"; const calls = { gen: 0 }; const { d } = deps(db, pageTransportEmpty3(calls), null);
+  const r1 = await runOutsideRegen({ company_id: CO, run_id: RUN2, write: true }, d);
+  assertEquals((r1.body.integrity as { finish: string }).finish, "failed");
+  const row = (db.tables.integrity_runs ?? []).filter((x) => x.component === "r3_outside_regen").pop()!;
+  assertEquals(row.status, "failed"); assertEquals(((row.excluded_by_rule as { processed_urls: string[] }).processed_urls).length, 8);
+  db.failures.integrity_update = undefined;
+  const plan = await runOutsideRegen({ company_id: CO, run_id: RUN2, plan: true }, d);
+  assertEquals(plan.body.done, 8); assertEquals(plan.body.remaining, 2);
+});
