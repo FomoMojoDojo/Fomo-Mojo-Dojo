@@ -48,6 +48,9 @@ export const MODEL_CALL_SITES: readonly ModelCallSite[] = [
   // R53 (2026-10-20): the authorship judge ledgers on every path — one row per call before parse (ollama, usd null).
   { site: "public-baseline-authorship", provider: "ollama", role: "baseline aggregator authorship judge (run_id = the long_runner_runs row)", captured: true },
   { site: "restamp-aggregator-self-voice", provider: "ollama", role: "self-voice restamp dry-run authorship judge (run_id null)", captured: true },
+  // R52 (2026-10-20): the voice sweep runner (scripts/r52) — call_site r52-voice-sweep:<band|speaker|authorship>, one row per
+  // call before parse, ollama only (local transports, usd null), run_id null; the run is named by integrity_runs.run_ref.
+  { site: "r52-voice-sweep", provider: "ollama", role: "R52 voice sweep judges (band / speaker / authorship; call_site r52-voice-sweep:<role>)", captured: true },
 ] as const;
 
 export type CostCoverage = { captured: number; total: number; uncaptured: string[]; complete: boolean };
