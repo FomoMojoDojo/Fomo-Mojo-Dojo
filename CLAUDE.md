@@ -135,7 +135,7 @@ These files are long — search within them rather than reading top-to-bottom:
   source backups/fr-login.env && source backups/fr-nonadmin.env && source backups/fr-member.env && npx playwright test --retries=0
   ```
 
-  **Baseline: 344 passed / 4 skipped / 0 failed.** With only `fr-login.env` sourced it reads
+  **Baseline: 364 passed / 4 skipped / 0 failed.** With only `fr-login.env` sourced it reads
   330/18/0 — the 14 difference is `s2-interview-storage-rls`, `s3-first-read-marks-rls`,
   `v-tensions-rls`, `v-integrity-admin` and `v2-slots-swap` skipping, not passing.
 
