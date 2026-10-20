@@ -80,6 +80,36 @@ export const AGGREGATOR_PROFILE_PATTERNS: ReadonlyArray<{ host: string; path: Re
   { host: "indeed.com", path: /^\/cmp\/[^/?#]+\/?$/i },
   // Product / seller profile ONLY — /products/<x>/reviews is a review page and stays ungated.
   { host: "g2.com", path: /^\/(products|sellers)\/[^/?#]+\/?$/i },
+  // ── R49 (operator ruling R51, 2026-10-20): PROVIDER-WRITTEN PROFILE HOSTS ─────────────────────────────────
+  // The b3 fleet's 724 rows were read host by host from the stored page structure (R46 diagnostic): these hosts carry
+  // a field the subject writes itself (an About / description / program / app-store / brand-store text) beside
+  // platform data and reviews. Each has a field brief below so the judge decides by FIELD, never by tone.
+  // Health-care and social-care directories: the provider writes its own profile text
+  { host: "psychologytoday.com", path: /^\/us\/(treatment-rehab|therapists|psychiatrists|groups)\//i },
+  { host: "findhelp.org", path: /^\/provider\//i },
+  { host: "recovery.com", path: /^\/(?!blog|research|about|resources|insurance|news)[^/?#]+\/?$/i },
+  // School directories: the school's own overview beside NCES data and reviews
+  { host: "privateschoolreview.com", path: /-profile\/?$/i },
+  { host: "niche.com", path: /^\/(k12|colleges)\/[^/?#]+\/?$/i },
+  // Nonprofit directories and review aggregators: an org- or business-supplied About beside ratings and reviews
+  { host: "givefreely.com", path: /^\/charity-directory\/nonprofit\//i },
+  { host: "birdeye.com", path: /^\/[^/?#]+-\d{6,}\/?$/ },
+  // Home-services marketplaces: the pro writes "About us"; homeowners write the reviews
+  { host: "angi.com", path: /^\/companylist\//i },
+  { host: "homeadvisor.com", path: /^\/rated\./i },
+  { host: "thumbtack.com", path: /\/service\/\d+/i },
+  { host: "buildzoom.com", path: /^\/contractor\//i },
+  { host: "alignable.com", path: /^\/[^/?#]+\/[^/?#]+\/?$/ },
+  { host: "chamberofcommerce.com", path: /^\/business-directory\//i },
+  { host: "findmoldremoval.com", path: /^\/[^/?#]+\/[^/?#]+\/[^/?#]+\/?$/ },
+  // App stores: the developer writes the description; users write the reviews
+  { host: "apps.apple.com", path: /^\/[a-z]{2}\/app\//i },
+  { host: "play.google.com", path: /^\/store\/apps\/details/i },
+  // Brand store: brand-supplied copy beside prices and customer reviews (the weakest entry, ruled in)
+  { host: "bestbuy.com", path: /^\/site\/(brands\/|[^/?#]+\/all-[^/?#]+-products\/)/i },
+  // Data aggregator and chamber directory: a company-supplied description paragraph beside platform data
+  { host: "seamless.ai", path: /^\/b\//i },
+  { host: "business.newportbeach.com", path: /^\/directory\/Details\//i },
 ];
 
 // ── PRESS RELEASES (operator ruling, 2026-10-16) ─────────────────────────────────
@@ -245,6 +275,26 @@ const PAGE_BRIEFS: ReadonlyArray<{ host: string; brief: string }> = [
   { host: "globenewswire.com", brief: "PRESS WIRE (GlobeNewswire). A release body — including its self-descriptive boilerplate ('X, a leading…', 'X announced…') — is COMPANY-AUTHORED: the company wrote it and paid to distribute it. Only the wire's own index / search-listing lines (headline lists, dates, result counts) are PLATFORM-authored." },
   { host: "prnewswire.com", brief: "PRESS WIRE (PR Newswire). A release body — including its self-descriptive boilerplate — is COMPANY-AUTHORED; only the wire's own index / search-listing lines are PLATFORM-authored." },
   { host: "businesswire.com", brief: "PRESS WIRE (Business Wire). A release body — including its self-descriptive boilerplate — is COMPANY-AUTHORED; only the wire's own index / search-listing lines are PLATFORM-authored." },
+  // ── R49 (2026-10-20): field briefs for the provider-written profile hosts ──────────────────────────────────
+  { host: "psychologytoday.com", brief: "Psychology Today treatment-center / therapist profile. The About, program and 'we serve' prose is PROVIDER-WRITTEN (the center writes its own profile); the 'Verified by Psychology Today' badge, license line, and the insurance / payment / age / expertise / specialty lists are PLATFORM fields filled from the provider's selections; nothing on the page is reviewer-authored." },
+  { host: "findhelp.org", brief: "findhelp.org social-care directory provider page. Program descriptions, eligibility text and 'next steps' prose are PROVIDER-SUBMITTED (the organization claims and edits its programs); postal, hours, contact and category chrome is PLATFORM." },
+  { host: "recovery.com", brief: "Recovery.com treatment-center profile. The 'About Us' block, amenities and levels-of-care lists are PROVIDER-SUPPLIED; the center overview paragraph is RECOVERY.COM-EDITORIAL written from provider materials (PLATFORM); star ratings and review bodies are REVIEWER-authored." },
+  { host: "privateschoolreview.com", brief: "Private School Review school profile. The 'School Overview' / 'About Us' text is SCHOOL-SUPPLIED; enrollment, student-teacher ratio, rankings and 'Source: NCES' lines are PLATFORM data." },
+  { host: "niche.com", brief: "Niche K-12 / college profile. The About blurb is SCHOOL-CLAIMED or NCES-derived (COMPANY-SUPPLIED when the school claimed the page); grades, ratios, grades-by-category and rankings are PLATFORM; review sentences ('I find the school…') are REVIEWER-authored." },
+  { host: "givefreely.com", brief: "GiveFreely charity-directory profile. The Overview is an AI SUMMARY (PLATFORM) drawn from two sources: the organization's Form 990 mission and program statements (ORGANIZATION-SUPPLIED, reworded — 'is committed to being…', 'Their mission is to…') and Facebook reviews (REVIEWER). Ratings, expense ratios and board percentages are PLATFORM data." },
+  { host: "birdeye.com", brief: "Birdeye reviews aggregator business page. 'About this business' / 'About Us' is BUSINESS-SUPPLIED; the star rating, review count and category are PLATFORM; review bodies are REVIEWER-authored." },
+  { host: "angi.com", brief: "Angi (Angie's List) company page. The 'About us' / services paragraph is PRO-WRITTEN (the company's own copy); ratings, badges and review bodies are HOMEOWNER- or PLATFORM-authored." },
+  { host: "homeadvisor.com", brief: "HomeAdvisor rated-pro page. 'About us' is PRO-WRITTEN (the company's own copy); verification lines, ratings and review bodies are PLATFORM- or HOMEOWNER-authored." },
+  { host: "thumbtack.com", brief: "Thumbtack pro service page. The Introduction / 'About' text is PRO-WRITTEN; Overview facts (hired count, background check, years in business) are PLATFORM; review bodies are CUSTOMER-authored." },
+  { host: "buildzoom.com", brief: "BuildZoom contractor profile. The 'About' narrative is CONTRACTOR-SUPPLIED or copied from the contractor's own site; license, permit history, 'Verified' badges and the BuildZoom score are PLATFORM data; reviews are CUSTOMER-authored." },
+  { host: "alignable.com", brief: "Alignable business profile. The 'About Us' and the whole profile prose are BUSINESS-WRITTEN; connection and recommendation counts are PLATFORM." },
+  { host: "chamberofcommerce.com", brief: "ChamberofCommerce.com business-directory listing. The 'About' text is BUSINESS-SUPPLIED or scraped boilerplate (COMPANY-SUPPLIED); category, hours and contact lines are PLATFORM; 'Ratings and Reviews' bodies are REVIEWER-authored." },
+  { host: "findmoldremoval.com", brief: "Find Mold Removal directory listing. The 'About' text is BUSINESS-SUPPLIED; 'Verified' badges, category and service-area lines are PLATFORM chrome." },
+  { host: "apps.apple.com", brief: "Apple App Store app page. The app description, subtitle and 'What's New' notes are DEVELOPER-WRITTEN (the subject, when the subject is the developer); ratings, rankings and the 'Ratings and Reviews' bodies are USER- or PLATFORM-authored." },
+  { host: "play.google.com", brief: "Google Play app page. 'About this app' and 'What's new' are DEVELOPER-WRITTEN; 'About the developer', ratings and 'Ratings and reviews' bodies are PLATFORM- or USER-authored." },
+  { host: "bestbuy.com", brief: "Best Buy brand-store / category page. Brand-page prose ('Sonos is…', product-line copy) is BRAND-SUPPLIED or written by Best Buy merchandising from brand materials (COMPANY-SUPPLIED); prices, SKUs, availability and sale lines are PLATFORM; customer reviews are CUSTOMER-authored." },
+  { host: "seamless.ai", brief: "Seamless.AI data-aggregator company profile. The company description paragraph is COMPANY-SUPPLIED boilerplate (taken from the company's own site, often first person — 'We help…'); headcount, revenue, address and contact data are PLATFORM." },
+  { host: "business.newportbeach.com", brief: "Newport Beach Chamber member directory listing. The 'About' text is MEMBER-SUPPLIED (the company's own copy); category, map and contact lines are PLATFORM." },
 ];
 const GENERIC_BRIEF = "Third-party company profile page. A company description / About / mission paragraph is COMPANY-SUPPLIED; ratings, review counts, complaints, financial or PPP data, headcount and revenue estimates, SIC/NAICS codes, and analyst blurbs are PLATFORM-authored.";
 

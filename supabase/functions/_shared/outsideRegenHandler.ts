@@ -31,6 +31,7 @@ import type { AuthorshipJudgment } from "./aggregatorAuthorship.ts";
 import { clientAnchorsFor } from "./clientAnchors.ts";
 import { nearestSpan, type NearestSpan } from "./nearestSpan.ts";
 import { speakerContext } from "./attribution.ts";
+import { buildClientCorpus, type SyndicationJudge, type SyndicationLedger } from "./syndication.ts";
 
 /** R17 (b): on the regen path an unjudged gated row is NOT minted. Named here, passed explicitly — the shared
  *  function has no default. */
@@ -118,6 +119,9 @@ export type RegenDeps = {
   makeJudge: () => RegenJudge | null;
   /** R32: the speaker judge, built with the run's ledger so every call writes a model_calls row before parse. Null ⇒ attributed candidates are refused. */
   makeSpeakerJudge?: (ledger: SpeakerLedger) => SpeakerJudge | null;
+  /** R38: the syndication band judge (llama3:70b on the operator's Ollama), built with the run's ledger (role "syndication").
+   *  Null ⇒ a candidate in the uncertain band is refused (syndication_unresolved), never minted. */
+  makeSyndicationJudge?: (ledger: SyndicationLedger) => SyndicationJudge | null;
   models: readonly string[];
   genSystem: (anchors: readonly string[]) => string;
   judgeSystem: (anchors: readonly string[]) => string;
@@ -155,6 +159,7 @@ export type PlanRow = {
 export function planVoiceFor(url: string, pageText: string, company: { name: string; host: string | null }, registry: ReturnType<typeof classifyRegistryRow>): PlanVoice {
   const pre = decideVoiceClassBeforeJudge({ url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText, judgedText: null, company, registry, judge: null, gate: "profile_wire_boilerplate", onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY });
   if ("needs_speaker" in pre) return { class: "(speaker judge decides)", authority: "speaker_judge", refusal: null };   // R32: never on plan (no candidate text), typed for completeness
+  if ("needs_syndication_judge" in pre) return { class: "(band judge decides)", authority: "syndication", refusal: null };   // R38: never on plan (no syndication input), typed for completeness
   if ("needs_judge" in pre) return { class: "(judge decides)", authority: "authorship_judge", refusal: `gated (${pre.gate.via} ${pre.gate.host}): every excerpt is judged on write; with no judge wired each is refused, not minted` };
   if (!pre.ok) return { class: "(refused)", authority: pre.authority, refusal: pre.reason };
   if (pre.authority === "registry") return { class: "registry: section decides", authority: "registry", refusal: null };
@@ -382,6 +387,11 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   const ledger = tallyingLedger(deps.makeLedger(company_id), tally);
   // R32: the speaker judge ledgers through the same tallying ledger, role "speaker", call site extract-outside-evidence:speaker
   const speakerJudge: SpeakerJudge | null = deps.makeSpeakerJudge ? deps.makeSpeakerJudge((e) => ledger({ role: "speaker", callSite: regenCallSite("speaker"), usage: e.usage, attempt: 1, promptSha: e.promptSha })) : null;
+  // R38: the band judge ledgers through the same tallying ledger, role "syndication", call site extract-outside-evidence:syndication
+  const syndicationJudge: SyndicationJudge | null = deps.makeSyndicationJudge ? deps.makeSyndicationJudge((e) => ledger({ role: "syndication", callSite: regenCallSite("syndication"), usage: e.usage, attempt: 1, promptSha: e.promptSha })) : null;
+  // R38: the client corpus ONCE per write call — every client_voice / own-domain / company-claim row of the company, the rows
+  // minted under THIS run excluded so no candidate scores against itself. The baseline's own builder, the same rule.
+  const corpus = await buildClientCorpus(supabase, company_id, company.host ?? "", [], (row) => String(row.raw_payload?.run_id ?? "") === runId);
   let voice_refused_total = 0;
   const voiceRefusals: Array<{ url: string; reason: string; excerpts: number }> = [];
 
@@ -490,6 +500,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
         // R42: the paragraph plus every page sentence naming the speaker (or their surname), capped — see speakerContext
         // R45: a first-person candidate is judged too, so the context names the company (sentences naming it) when no speaker string exists
         context: (() => { const a = detectAttribution(verdictA.excerpt, clean_text, verdictA.offset); return speakerContext(clean_text, verdictA.offset, verdictA.length, a?.speaker_string || company.name); })(),
+        // R38: the syndication stage — corpus, ledgered band judge, anchors for the short-item floor
+        syndication: { corpus, judge: syndicationJudge, anchors },
       };
       const voice = await voiceClassForMintedExcerpt(voiceInput);
       if (!voice.ok) {
@@ -527,6 +539,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
           // R32: who was quoted or reported, as the judge found; the detected attribution beside it
           ...(voice.speaker ? { speaker: { speaker_name: voice.speaker.speaker_name, speaker_role: voice.speaker.speaker_role, speaker_class: voice.speaker.speaker_class, reason: voice.speaker.reason, model: voice.speaker.model, judged_at: voice.speaker.judged_at }, attribution: voice.speaker.attribution } : voiceInput.attribution ? { attribution: voiceInput.attribution } : {}),
           ...(voiceInput.registry ? { registry: voiceInput.registry } : {}),
+          // R38: what the syndication stage measured and decided — on every minted row of the regen path
+          ...(voice.syndication ? { syndication: voice.syndication } : {}),
         },
       });
     }
@@ -554,7 +568,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       status: stoppedForTime ? "failed" : "completed", examined: candidates_total, admitted: admitted_total,
       // R4: the run's model-call tally beside its counts — {generator, judge, speaker, usd, ledger_failed}.
       // R17: the voice refusals — excerpts not minted because a gated URL could not be judged; retried next run.
-      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords, processed_urls: processedUrls, opened_at: openedAt, finished_at: nowIso(), pages_budget: REGEN_PAGE_BUDGET, pages_done: processed, done_before: doneUrls.length, remaining },
+      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, syndication_judge_wired: syndicationJudge !== null, corpus_texts: corpus.texts.length, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords, processed_urls: processedUrls, opened_at: openedAt, finished_at: nowIso(), pages_budget: REGEN_PAGE_BUDGET, pages_done: processed, done_before: doneUrls.length, remaining },
     });
   } catch (e) {
     const msg = e instanceof IntegrityWriteRefused ? e.cause_message : (e as Error).message;
@@ -570,7 +584,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       integrity,
       model_calls: tally,
       anchors_used: anchors,
-      voice: { policy: REGEN_JUDGE_FAILURE_POLICY, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, refused_total: voice_refused_total, refusals: voiceRefusals },
+      voice: { policy: REGEN_JUDGE_FAILURE_POLICY, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, syndication_judge_wired: syndicationJudge !== null, corpus_texts: corpus.texts.length, refused_total: voice_refused_total, refusals: voiceRefusals },
       totals: { candidates: candidates_total, admitted: admitted_total, guard_rejected: guard_rejected_total, reject_reasons: rejectReasons },
       pages,
     },

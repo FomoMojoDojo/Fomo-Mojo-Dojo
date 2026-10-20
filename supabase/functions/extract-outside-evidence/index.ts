@@ -32,6 +32,8 @@ import { type RegenLedger, type RegenTransport } from "../_shared/outsideRegenMo
 import { runOutsideRegen, type RegenJudge } from "../_shared/outsideRegenHandler.ts";
 import { genSystem, judgeSystem, QUOTE_MAX_WORDS } from "../_shared/outsideRegenPrompts.ts";
 import { judgeAggregatorAuthorship, judgeSpeaker, ollamaSpeakerTransport, resolveLocalOllamaUrl, type SpeakerJudge, type SpeakerLedger } from "../_shared/aggregatorAuthorship.ts";
+import { isLocalOllamaUrl } from "../_shared/uploadVoiceClassifier.ts";
+import { judgeSyndicationBand, ollamaSyndicationTransport, SYNDICATION_BAND_MODEL, type SyndicationJudge, type SyndicationLedger } from "../_shared/syndication.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -78,6 +80,17 @@ function makeSpeakerJudge(ledger: SpeakerLedger): SpeakerJudge | null {
   const transport = ollamaSpeakerTransport(ollamaUrl);
   return (input) => judgeSpeaker(input, { transport, ledger, model: Deno.env.get("OLLAMA_MODEL") || undefined });
 }
+/** R38: the local syndication band judge, built ONLY on the write path with the run's ledger; every call writes a model_calls
+ *  row (provider ollama, role syndication, token counts from the response, usd null) before its answer is read. The base and
+ *  model are the baseline's (OLLAMA_SYNDICATION_BASE_URL, else OLLAMA_BASE_URL; OLLAMA_SYNDICATION_MODEL, else llama3:70b).
+ *  Null when no LOCAL Ollama URL resolves — band candidates are then refused (syndication_unresolved), not minted. */
+function makeSyndicationJudge(ledger: SyndicationLedger): SyndicationJudge | null {
+  const base = Deno.env.get("OLLAMA_SYNDICATION_BASE_URL") || resolveLocalOllamaUrl();
+  if (!base || !isLocalOllamaUrl(base)) return null;
+  const transport = ollamaSyndicationTransport(base);
+  const model = Deno.env.get("OLLAMA_SYNDICATION_MODEL") || SYNDICATION_BAND_MODEL;
+  return (input) => judgeSyndicationBand(input, { transport, ledger, model });
+}
 /** One model_calls row per attempt — the same writer every captured site uses; run_id null (no long_runner row). */
 function makeLedger(supabase: { from: (t: string) => unknown }, companyId: string): RegenLedger {
   return (e) => recordModelCall(supabase as never, {
@@ -91,7 +104,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const r = await runOutsideRegen(body, {
-      supabase, makeTransport, makeLedger: (cid) => makeLedger(supabase, cid), makeJudge, makeSpeakerJudge,
+      supabase, makeTransport, makeLedger: (cid) => makeLedger(supabase, cid), makeJudge, makeSpeakerJudge, makeSyndicationJudge,
       models: REGEN_MODELS, genSystem, judgeSystem, quoteMaxWords: QUOTE_MAX_WORDS, perUrlCap: PER_URL_CAP, wallMs: WALL_MS,
     });
     return json(r.body, r.status);

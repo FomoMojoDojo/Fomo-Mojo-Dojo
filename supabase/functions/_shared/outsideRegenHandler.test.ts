@@ -35,7 +35,7 @@ export function fakeDb(seed: Record<string, Row[]>) {
     let pendingInsert: Row[] | null = null; let pendingError: { message: string } | null = null;
     // deno-lint-ignore no-explicit-any
     const b: any = {
-      select: () => b, order: () => b,
+      select: () => b, order: () => b, limit: () => b,   // R38: buildClientCorpus reads signals with .limit(1000)
       eq: (k: string, v: unknown) => { const m = /^(\w+)->>(\w+)$/.exec(k); filters.push(m ? (r) => ((r[m[1]] as Record<string, unknown> | null)?.[m[2]] ?? null) === v : (r) => r[k] === v); return b; },   // R41: raw_payload->>run_id
       is: (k: string, v: unknown) => { filters.push((r) => (v === null ? r[k] == null : r[k] === v)); return b; },
       in: (k: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[k])); return b; },

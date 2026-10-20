@@ -48,6 +48,8 @@ const LOW_THRESHOLD = 0.2;
 const BAND_SHINGLE_N = 4;
 const BAND_SHINGLE_THRESHOLD = 0.1;
 
+import type { ModelCallRecord } from "./recordModelCall.ts";
+
 type SyndicationVerdict = {
   score: number;
   syndicated: boolean | null; // null = uncertain band unresolved (local LLM unavailable)
@@ -116,11 +118,14 @@ function companyHostOf(url: string): string {
 // Store-side corpus: client-classified rows plus legacy rows that the company-source
 // heuristic identifies (company-domain URL, profile_or_company_page, company_claim
 // bucket in raw_payload) — the same provenance authority the judges use.
+export type CorpusRow = { claim_text?: string; evidence_excerpt?: string; source_url?: string; voice_class?: string | null; raw_payload?: { bucket?: string; source_type?: string; run_id?: string } | null };
 export async function buildClientCorpus(
   supabase: { from: (t: string) => any },
   companyId: string,
   companyHost: string,
   extraClientTexts: string[] = [],
+  /** R38 (2026-10-20): rows to leave out — the regen path excludes the rows minted under its own run_id, so no candidate scores against itself. */
+  exclude?: (row: CorpusRow) => boolean,
 ): Promise<ClientCorpus> {
   const texts: string[] = [...extraClientTexts];
   try {
@@ -130,10 +135,8 @@ export async function buildClientCorpus(
       .eq("company_id", companyId)
       .limit(1000);
     for (const row of (Array.isArray(data) ? data : [])) {
-      const r = row as {
-        claim_text?: string; evidence_excerpt?: string; source_url?: string;
-        voice_class?: string | null; raw_payload?: { bucket?: string; source_type?: string } | null;
-      };
+      const r = row as CorpusRow;
+      if (exclude && exclude(r)) continue;
       const host = companyHostOf(String(r.source_url || ""));
       const isClient =
         r.voice_class === "client_voice" ||
@@ -194,16 +197,7 @@ async function localLlmSyndicationCheck(itemText: string, clientSample: string):
     const res = await fetch(`${root}/api/generate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        prompt:
-          `You compare two texts. Answer with exactly one word: YES or NO.\n` +
-          `Is TEXT A substantially a republication of the company's own copy shown in TEXT B ` +
-          `(same narrative restated, not merely quoting a phrase or two)?\n\n` +
-          `TEXT A (candidate):\n${itemText.slice(0, 2000)}\n\n` +
-          `TEXT B (company's own copy):\n${clientSample.slice(0, 4000)}\n\nAnswer:`,
-      }),
+      body: JSON.stringify({ model, stream: false, prompt: buildSyndicationBandPrompt(itemText, clientSample) }),
     });
     if (!res.ok) { console.warn("[syndication] local LLM HTTP error", { status: res.status }); return null; }
     const data = await res.json();
@@ -215,6 +209,86 @@ async function localLlmSyndicationCheck(itemText: string, clientSample: string):
     console.warn("[syndication] local LLM fetch failed", { message: String(error instanceof Error ? error.message : error).slice(0, 200) });
     return null;
   }
+}
+
+/** The band judge's prompt — ONE builder, so the baseline's check and the regen path's ledgered judge send identical bytes. */
+export function buildSyndicationBandPrompt(itemText: string, clientSample: string): string {
+  return (
+    `You compare two texts. Answer with exactly one word: YES or NO.\n` +
+    `Is TEXT A substantially a republication of the company's own copy shown in TEXT B ` +
+    `(same narrative restated, not merely quoting a phrase or two)?\n\n` +
+    `TEXT A (candidate):\n${itemText.slice(0, 2000)}\n\n` +
+    `TEXT B (company's own copy):\n${clientSample.slice(0, 4000)}\n\nAnswer:`
+  );
+}
+
+// ── R38 (operator ruling R51, 2026-10-20): THE SYNDICATION STAGE ON THE REGEN MINT ────────────────────────────────
+// The baseline's gate stamps corroboration rights; on the regen path the same measures DECIDE the class: a candidate
+// whose 8-gram containment in the client corpus reaches HIGH is the company's own copy on a third-party host and is
+// minted client_voice (authority "syndication"), after the registry stamp and before the text gates. The uncertain band
+// goes to a LEDGERED local band judge (role "syndication"); unresolved is refused under refuse_mint. Items shorter than
+// SYNDICATION_SHORT_ITEM_WORDS after the client's anchors are stripped are clean with no call — a 4-gram band over a
+// six-word company name scored 1.0 on the fleet (R46 diagnostic: 12 of 53 band rows were name-only).
+export const SYNDICATION_BAND_MODEL = "llama3:70b";
+export const SYNDICATION_SHORT_ITEM_WORDS = 12;
+export type SyndicationDeterministic = { score: number; band: number; words: number; verdict: "syndicated" | "clean" | "band"; method: "deterministic" | "short_item" };
+/** Words left in the item once every anchor (name, host, entity anchors) is removed, on the module's own tokenization. */
+export function wordsAfterAnchors(itemText: string, anchors: readonly string[]): number {
+  let t = String(itemText ?? "");
+  for (const a of [...anchors].map((x) => String(x ?? "").trim()).filter(Boolean).sort((x, y) => y.length - x.length)) {
+    t = t.split(new RegExp(a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi")).join(" ");
+  }
+  return normalizeWords(t).length;
+}
+/** The deterministic half of the stage: syndicated at HIGH, clean when both measures are low (or the item is short), else the band. */
+export function deterministicSyndicationVerdict(itemText: string, corpus: ClientCorpus, anchors: readonly string[] = []): SyndicationDeterministic {
+  const words = wordsAfterAnchors(itemText, anchors);
+  const score = deterministicSyndicationScore(itemText, corpus);
+  const band = bandShingleContainment(itemText, corpus);
+  if (score >= HIGH_THRESHOLD) return { score, band, words, verdict: "syndicated", method: "deterministic" };
+  if (words < SYNDICATION_SHORT_ITEM_WORDS) return { score, band, words, verdict: "clean", method: "short_item" };
+  if (score <= LOW_THRESHOLD && band < BAND_SHINGLE_THRESHOLD) return { score, band, words, verdict: "clean", method: "deterministic" };
+  return { score, band, words, verdict: "band", method: "deterministic" };
+}
+/** One raw answer from the local model with its token counts (null when the response carried none). */
+export type SyndicationTransport = (args: { model: string; prompt: string }) => Promise<{ content: string; prompt_tokens: number | null; completion_tokens: number | null }>;
+/** The ledger seam: one row per call, written BEFORE parse; resolves false when the write failed (never throws). */
+export type SyndicationLedger = (e: { usage: ModelCallRecord; promptSha: string }) => Promise<boolean>;
+export type SyndicationJudgeInput = { itemText: string; clientSample: string };
+/** true = syndicated, false = not, null = unresolved (the call failed or the answer was neither YES nor NO). */
+export type SyndicationJudge = (input: SyndicationJudgeInput) => Promise<{ syndicated: boolean | null; model: string }>;
+/** The local transport: Ollama /api/generate, token counts from prompt_eval_count / eval_count. */
+export function ollamaSyndicationTransport(base: string): SyndicationTransport {
+  const root = String(base).replace(/\/+$/, "").replace(/\/v1$/, "");
+  return async ({ model, prompt }) => {
+    const resp = await fetch(`${root}/api/generate`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model, stream: false, prompt }) });
+    if (!resp.ok) throw new Error(`ollama HTTP ${resp.status}`);
+    const data = await resp.json().catch(() => ({})) as { response?: unknown; prompt_eval_count?: unknown; eval_count?: unknown };
+    const n = (v: unknown) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
+    return { content: String(data.response ?? ""), prompt_tokens: n(data.prompt_eval_count), completion_tokens: n(data.eval_count) };
+  };
+}
+/** THE band judgment: ledger BEFORE parse; every failure mode resolves to null (unresolved), never a verdict. */
+export async function judgeSyndicationBand(
+  input: SyndicationJudgeInput,
+  opts: { transport: SyndicationTransport; ledger?: SyndicationLedger | null; model?: string },
+): Promise<{ syndicated: boolean | null; model: string }> {
+  const model = opts.model ?? SYNDICATION_BAND_MODEL;
+  const prompt = buildSyndicationBandPrompt(input.itemText, input.clientSample);
+  const promptSha = await (async (t: string) => { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join(""); })(prompt);
+  let raw = "";
+  try {
+    const r = await opts.transport({ model, prompt });
+    raw = r.content;
+    if (opts.ledger) await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens, completion_tokens: r.completion_tokens, usd: null }, promptSha });
+  } catch {
+    if (opts.ledger) await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: null, completion_tokens: null, usd: null }, promptSha });
+    return { syndicated: null, model };
+  }
+  const answer = raw.trim().toUpperCase();
+  if (answer.startsWith("YES")) return { syndicated: true, model };
+  if (answer.startsWith("NO")) return { syndicated: false, model };
+  return { syndicated: null, model };
 }
 
 export async function resolveSyndication(

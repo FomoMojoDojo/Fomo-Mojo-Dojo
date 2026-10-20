@@ -38,6 +38,7 @@ import {
 } from "./aggregatorAuthorship.ts";
 import type { AttributionHit } from "./attribution.ts";
 import { registryStamp, type RegistryClassification } from "./registryClassifier.ts";
+import { deterministicSyndicationVerdict, mostSimilarClientTexts, type ClientCorpus, type SyndicationJudge } from "./syndication.ts";
 
 export const VOICE_CLASSES: ReadonlyArray<string> = ["client_voice", "outside_voice_about_client", "competitor_voice", "market_context"];
 
@@ -46,7 +47,14 @@ export type JudgeFailurePolicy = "keep_label" | "refuse_mint";
  *  `profile_wire_boilerplate`: profiles, press wires and release pages with the subject's boilerplate close
  *  (the restamp's gate, and the regen path's). */
 export type JudgeGate = "profile" | "profile_wire_boilerplate";
-export type VoiceAuthority = "analysis_label" | "own_domain" | "registry" | "authorship_judge" | "extractor_label" | "first_person_self_description" | "attributed_speaker_subject" | "first_person_judged";
+export type VoiceAuthority = "analysis_label" | "own_domain" | "registry" | "authorship_judge" | "extractor_label" | "first_person_self_description" | "attributed_speaker_subject" | "first_person_judged" | "syndication";
+/** R38: what the syndication stage measured and decided, stamped on every regen-minted row. */
+export type SyndicationStamp = {
+  score: number; band: number; words: number;
+  verdict: "syndicated" | "clean" | "unresolved";
+  method: "deterministic" | "short_item" | "local_llm" | "unresolved";
+  model?: string; judged_at?: string;
+};
 export const FIRST_PERSON_JUDGED_RULE = "first_person_judged" as const;
 /** Text gates a caller may name (R28, R32). The regen handler names ["first_person", "attributed_speech"]; the baseline names none. */
 export type TextGate = "first_person" | "attributed_speech";
@@ -79,6 +87,10 @@ export type VoiceClassInput = {
   speakerJudge?: SpeakerJudge | null;
   /** R32: the paragraph around the candidate, for the speaker judge. */
   context?: string | null;
+  /** R38 (operator ruling R51, 2026-10-20): the syndication stage — the client corpus (built once per write call, the run's
+   *  own rows excluded), the LEDGERED band judge (null ⇒ a band candidate is refused under refuse_mint) and the client's
+   *  anchors (stripped before the short-item floor). Absent ⇒ no stage (the baseline's callers). */
+  syndication?: { corpus: ClientCorpus; judge: SyndicationJudge | null; anchors: readonly string[] } | null;
   onJudgeFailure: JudgeFailurePolicy;
   now?: () => string;
 };
@@ -99,22 +111,31 @@ export type VoiceClassDecision =
     authorship_judge?: AuthorshipStamp;
     /** R32: present when the speaker judge answered for this item */
     speaker?: SpeakerStamp;
+    /** R38: present when the syndication stage ran (the regen path) */
+    syndication?: SyndicationStamp;
   }
   | {
     ok: false;
     refused: true;
-    authority: "authorship_judge" | "speaker_judge";
+    authority: "authorship_judge" | "speaker_judge" | "syndication";
     reason: string;
     gate: GateHit | null;
     authorship_judge?: AuthorshipStamp;
     speaker?: SpeakerStamp;
+    syndication?: SyndicationStamp;
   };
 
 // ── R28: first-person self-description ─────────────────────────────────────────────────────────────────
-// A sentence whose grammatical subject is first person plural: it opens with We / We're / We've / Our / Ours, or
-// follows a sentence boundary with one. "Contact us" is imperative (us as object) and does not fire; "us" fires
-// only as a subject form, which English does not have — so the subject test is We / Our.
-const FIRST_PERSON_SUBJECT = /(^|[.!?;:]\s+|["“‘']\s*)(we|we're|we’re|we've|we’ve|we'll|we’ll|our|ours)\b/i;
+// A sentence whose grammatical subject is first person plural: We / We're / We've / Our / Ours. "Contact us" is
+// imperative (us as object) and does not fire; "us" fires only as a subject form, which English does not have — so
+// the subject test is We / Our.
+// R47 (operator ruling R51, 2026-10-20): ANYWHERE IN THE CANDIDATE, not only at a sentence start. Edgewood's
+// Psychology Today row — "Within our Acute Intensive Service programs, we serve youth ages 6-18." — is the provider's
+// own text wearing an outside class because its first person sits mid-sentence; 27 fleet rows carried the same shape.
+// Detection widened; the decision is still the speaker judge's (R45), which separates the company's copy from a
+// customer's "our home" and a platform's "our analysis".
+const FIRST_PERSON_SUBJECT = /\b(we|we're|we’re|we've|we’ve|we'll|we’ll|our|ours)\b/i;
+const SENTENCE_START_FIRST_PERSON = /(^|[.!?;:]\s+|["“‘']\s*)(we|we're|we’re|we've|we’ve|we'll|we’ll|our|ours)\b/i;
 // An attributed outside speaker exempts the line: a quotation with an attribution verb, or "according to <someone>".
 const ATTRIBUTION = /\b(said|says|say|told|tells|wrote|writes|according to|explained|explains|added|adds|noted|notes|stated|states|commented|comments|recalled|recalls)\b/i;
 const QUOTED = /["“”‘’']/;
@@ -127,7 +148,8 @@ export function firstPersonSelfDescription(text: string | null | undefined): Fir
   if (!m) return { hit: false, detail: "no first-person-plural subject" };
   if (QUOTED.test(t) && ATTRIBUTION.test(t)) return { hit: false, detail: `first person inside an attributed quotation (${ATTRIBUTION.exec(t)![0]}) — an outside speaker` };
   if (ATTRIBUTION.test(t) && !/^(we|our)\b/i.test(t)) return { hit: false, detail: `an attributed speaker (${ATTRIBUTION.exec(t)![0]}) precedes the first person` };
-  return { hit: true, detail: `first-person-plural subject "${m[2]}" with no attributed outside speaker — the company describing itself` };
+  const position = SENTENCE_START_FIRST_PERSON.test(t) ? "at a sentence start" : "mid-sentence (R47)";
+  return { hit: true, detail: `first-person-plural subject "${m[1]}" ${position} with no attributed outside speaker — who "we" is goes to the speaker judge` };
 }
 
 function labelOf(labeledClass: string | null): string | null {
@@ -147,10 +169,30 @@ function gateFor(input: VoiceClassInput): GateHit | null {
 /** Stages 1–3 and the gate test; no judge call. `needs_judge` means stage 4 applies. Exported for the sync
  *  overlay stage of the ingest path, which has no judge at that point; the async function below is the same
  *  decision with the judge call in the middle. */
-export function decideVoiceClassBeforeJudge(input: VoiceClassInput):
+export type SyndicationStage =
+  | { kind: "none" }
+  | { kind: "syndicated"; stamp: SyndicationStamp }
+  | { kind: "clean"; stamp: SyndicationStamp }
+  | { kind: "band"; stamp: SyndicationStamp };
+/** R38: the deterministic half of the syndication stage over the judged text. No model, no I/O. */
+export function syndicationStage(input: VoiceClassInput): SyndicationStage {
+  if (!input.syndication) return { kind: "none" };
+  const text = String(input.judgedText ?? "").trim();
+  if (!text) return { kind: "none" };
+  const v = deterministicSyndicationVerdict(text, input.syndication.corpus, input.syndication.anchors);
+  const base = { score: +v.score.toFixed(4), band: +v.band.toFixed(4), words: v.words };
+  if (v.verdict === "syndicated") return { kind: "syndicated", stamp: { ...base, verdict: "syndicated", method: "deterministic" } };
+  if (v.verdict === "clean") return { kind: "clean", stamp: { ...base, verdict: "clean", method: v.method } };
+  return { kind: "band", stamp: { ...base, verdict: "unresolved", method: "unresolved" } };
+}
+const syndicatedDecision = (stamp: SyndicationStamp): VoiceClassDecision =>
+  ({ ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "syndication", detail: `syndication: ${stamp.method === "local_llm" ? `the band judge (${stamp.model}) read the item as the company's own copy restated` : `8-gram containment ${stamp.score} in the client corpus — the company's own copy on a third-party host`}`, gate: null, syndication: stamp });
+
+export function decideVoiceClassBeforeJudge(input: VoiceClassInput, stage?: SyndicationStage):
   | VoiceClassDecision
   | { needs_judge: true; gate: GateHit; label: string | null }
-  | { needs_speaker: true; attribution: AttributionHit; label: string | null } {
+  | { needs_speaker: true; attribution: AttributionHit; label: string | null }
+  | { needs_syndication_judge: true; stamp: SyndicationStamp; label: string | null } {
   const label = labelOf(input.labeledClass);
   if (isAnalysisLabelled((input.item ?? null) as { voice_class?: string | null } | null)) {
     return { ok: true, voice_class: ANALYSIS_VOICE, evidence_class: "prose", authority: "analysis_label", detail: "the item is labelled analysis — our read, never the record", gate: null };
@@ -165,10 +207,26 @@ export function decideVoiceClassBeforeJudge(input: VoiceClassInput):
     }
     return { ok: true, voice_class: label, evidence_class: "prose", authority: "extractor_label", detail: `registry journalism (${input.registry.host_rule}): the label stands; never judged`, gate: null };
   }
+  // R38 (R51): THE SYNDICATION STAGE — after the registry stamp, before the text gates. Deterministic HIGH decides
+  // client_voice here; the band is handed to the ledgered band judge (voiceClassForMintedExcerpt); clean falls through.
+  const synd = stage ?? syndicationStage(input);
+  if (synd.kind === "syndicated") return syndicatedDecision(synd.stamp);
+  if (synd.kind === "band") return { needs_syndication_judge: true, stamp: synd.stamp, label };
+  return decideTextGates(input, label);
+}
+
+/** The text gates (R28/R45 first person, R32 attributed speech) and the URL gate — the stages after syndication. */
+export function decideTextGates(input: VoiceClassInput, label: string | null):
+  | VoiceClassDecision
+  | { needs_judge: true; gate: GateHit; label: string | null }
+  | { needs_speaker: true; attribution: AttributionHit; label: string | null } {
   // R28 detection, R45 decision (operator ruling 2026-10-20): a first-person candidate is DETECTED deterministically but
   // the class is JUDGED — SIAA's agent forum ("We have an affiliate who transferred from SIAA…") is a third party
   // saying "we", which the rule alone cannot see. The speaker judge decides who "we" is, with the R42 context.
-  if (input.textGates?.includes(FIRST_PERSON_RULE)) {
+  // R47: a DETECTED attribution (page-aware: quotation interiors, trailing clauses) precedes the first-person rule — the
+  // attributed form names the speaker, and a quoted "our" belongs to whoever the page quotes, not to the subject.
+  const attributed = !!(input.textGates?.includes(ATTRIBUTED_SPEECH_RULE) && input.attribution);
+  if (input.textGates?.includes(FIRST_PERSON_RULE) && !attributed) {
     const fp = firstPersonSelfDescription(input.judgedText);
     if (fp.hit) {
       const text = String(input.judgedText ?? "").trim();
@@ -189,8 +247,35 @@ function decideUrlGate(input: VoiceClassInput, label: string | null): VoiceClass
 
 /** THE decision. Async only because the speaker stage (R32) and stage 4 may call a judge. */
 export async function voiceClassForMintedExcerpt(input: VoiceClassInput): Promise<VoiceClassDecision> {
-  const pre = decideVoiceClassBeforeJudge(input);
   const nowIso = input.now ?? (() => new Date().toISOString());
+  const stage = syndicationStage(input);
+  let pre = decideVoiceClassBeforeJudge(input, stage);
+  // R38: the stamp every later decision carries when the stage ran (clean, or the band judge's answer)
+  let syndStamp: SyndicationStamp | undefined = stage.kind === "none" ? undefined : stage.stamp;
+  if ("needs_syndication_judge" in pre) {
+    const { label, stamp } = pre;
+    const text = String(input.judgedText ?? "").trim();
+    const refuseY = (reason: string, s: SyndicationStamp): VoiceClassDecision => ({ ok: false, refused: true, authority: "syndication", reason, gate: null, syndication: s });
+    const judge = input.syndication?.judge ?? null;
+    if (!judge) {
+      if (input.onJudgeFailure === "refuse_mint") return refuseY(`syndication_unresolved: the item is in the uncertain band (score ${stamp.score}, band ${stamp.band}) and no band judge is wired — not minted; retry when the local judge is available`, stamp);
+      syndStamp = stamp; pre = decideTextGates(input, label);
+    } else {
+      const sample = mostSimilarClientTexts(text, input.syndication!.corpus);
+      const j = await judge({ itemText: text, clientSample: sample });
+      if (j.syndicated === null) {
+        const s: SyndicationStamp = { ...stamp, verdict: "unresolved", method: "unresolved", model: j.model, judged_at: nowIso() };
+        if (input.onJudgeFailure === "refuse_mint") return refuseY(`syndication_unresolved: the band judge (${j.model}) returned no verdict for an item in the uncertain band (score ${stamp.score}, band ${stamp.band}) — not minted; retry next run`, s);
+        syndStamp = s; pre = decideTextGates(input, label);
+      } else if (j.syndicated) {
+        return syndicatedDecision({ ...stamp, verdict: "syndicated", method: "local_llm", model: j.model, judged_at: nowIso() });
+      } else {
+        syndStamp = { ...stamp, verdict: "clean", method: "local_llm", model: j.model, judged_at: nowIso() };
+        pre = decideTextGates(input, label);
+      }
+    }
+  }
+  const withStamp = (d: VoiceClassDecision): VoiceClassDecision => (syndStamp ? { ...d, syndication: syndStamp } : d);
   if ("needs_speaker" in pre) {
     // R32 — who is quoted or reported, and do they belong to the subject
     const { attribution, label } = pre;
@@ -204,29 +289,29 @@ export async function voiceClassForMintedExcerpt(input: VoiceClassInput): Promis
     const keepS = (detail: string, speaker?: SpeakerStamp): VoiceClassDecision =>
       ({ ok: true, voice_class: label, evidence_class: "prose", authority: "extractor_label", detail, gate: null, rule, ...(speaker ? { speaker } : {}) });
     if (!input.speakerJudge) {
-      return input.onJudgeFailure === "keep_label" ? keepS(`attributed speech (${attribution.form}); no speaker judge wired; the label stands`) : refuseS(`attributed speech (${attribution.form}) and no speaker judge is wired — not minted; retry when the local judge is available`);
+      return withStamp(input.onJudgeFailure === "keep_label" ? keepS(`attributed speech (${attribution.form}); no speaker judge wired; the label stands`) : refuseS(`attributed speech (${attribution.form}) and no speaker judge is wired — not minted; retry when the local judge is available`));
     }
     const j = await input.speakerJudge({ subjectName: input.company.name, subjectHost: input.company.host ?? "", url: input.url, candidate: text, attributionForm: attribution.form, attributionSpan: attribution.span, speakerString: attribution.speaker_string, context: String(input.context ?? input.pageText ?? "").slice(0, 2400) });
-    if (j === null) return input.onJudgeFailure === "keep_label" ? keepS(`attributed speech (${attribution.form}); speaker judge unavailable; the label stands`) : refuseS(`attributed speech (${attribution.form}) and the speaker judge was unavailable — not minted; retry next run`);
+    if (j === null) return withStamp(input.onJudgeFailure === "keep_label" ? keepS(`attributed speech (${attribution.form}); speaker judge unavailable; the label stands`) : refuseS(`attributed speech (${attribution.form}) and the speaker judge was unavailable — not minted; retry next run`));
     const stamp: SpeakerStamp = { ...j, attribution, judged_at: nowIso() };
     if (j.speaker_class === "judge_failed" || j.speaker_class === "unknown") {
       const why = `speaker ${j.speaker_class}: ${j.reason}`;
-      return input.onJudgeFailure === "keep_label" ? keepS(`${why} — the label stands`, stamp) : refuseS(`${why} — not minted`, stamp);
+      return withStamp(input.onJudgeFailure === "keep_label" ? keepS(`${why} — the label stands`, stamp) : refuseS(`${why} — not minted`, stamp));
     }
     if (j.speaker_class === "subject_company_officer" || j.speaker_class === "subject_company_text") {
-      return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: subjectAuthority, detail: `${j.speaker_class}${j.speaker_name ? `: ${j.speaker_name}` : ""}${j.speaker_role ? ` (${j.speaker_role})` : ""} — ${j.reason}`, gate: null, rule, speaker: stamp };
+      return withStamp({ ok: true, voice_class: "client_voice", evidence_class: "prose", authority: subjectAuthority, detail: `${j.speaker_class}${j.speaker_name ? `: ${j.speaker_name}` : ""}${j.speaker_role ? ` (${j.speaker_role})` : ""} — ${j.reason}`, gate: null, rule, speaker: stamp });
     }
     // third_party: the label stands with the speaker recorded; the URL gate still applies after it
     const next = decideUrlGate(input, label);
     if (!("needs_judge" in next)) {
-      if (!next.ok) return { ...next, speaker: stamp };
-      return { ...next, rule, speaker: stamp, detail: `third-party speaker${j.speaker_name ? ` ${j.speaker_name}` : ""} — ${next.detail}` };
+      if (!next.ok) return withStamp({ ...next, speaker: stamp });
+      return withStamp({ ...next, rule, speaker: stamp, detail: `third-party speaker${j.speaker_name ? ` ${j.speaker_name}` : ""} — ${next.detail}` });
     }
     const d = await judgeStage(input, next.gate, next.label, nowIso);
-    return { ...d, speaker: stamp };
+    return withStamp({ ...d, speaker: stamp });
   }
-  if (!("needs_judge" in pre)) return pre;
-  return judgeStage(input, pre.gate, pre.label, nowIso);
+  if (!("needs_judge" in pre)) return withStamp(pre);
+  return withStamp(await judgeStage(input, pre.gate, pre.label, nowIso));
 }
 
 /** Stage 4: the URL-gated authorship judge (unchanged behaviour, factored so the speaker stage can fall through to it). */

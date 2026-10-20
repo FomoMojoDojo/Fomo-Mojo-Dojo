@@ -139,6 +139,17 @@ SP=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-speaker-pro
 [ "$(echo "$SP" | jq_ "d.get('speaker_ledger_rows')")" = "$(echo "$SP" | jq_ "d.get('attribution_bearing')")" ] || fail l6 "speaker ledger rows != attribution-bearing candidates: $SP"
 [ "$(echo "$SP" | jq_ "d.get('speaker_calls')")" = "$(echo "$SP" | jq_ "d.get('attribution_bearing')")" ] || fail l6 "speaker calls != attribution-bearing candidates: $SP"
 grep -q 'callSite: regenCallSite("speaker")' supabase/functions/_shared/outsideRegenHandler.ts || fail l6 "the handler does not ledger the speaker judge"
+# l10 — R38 (R51): the syndication band judge is ledgered the same way — role "syndication", BEFORE parse, usd null (ollama)
+grep -q 'callSite: regenCallSite("syndication")' supabase/functions/_shared/outsideRegenHandler.ts || fail l10 "the handler does not ledger the syndication band judge"
+grep -q '"generator" | "judge" | "speaker" | "syndication"' supabase/functions/_shared/outsideRegenModel.ts || fail l10 "the ledger roles do not name syndication"
+python3 - supabase/functions/_shared/syndication.ts <<'PY' || exit 1
+import sys; s=open(sys.argv[1]).read()
+i=s.index('export async function judgeSyndicationBand'); body=s[i:i+2200]
+assert body.index('await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens') < body.index('const answer = raw.trim().toUpperCase()'), "FAIL step l10: the band judge parses before it ledgers"
+PY
+SY=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-syndication-probe.ts 2>&1 | tail -1)
+[ "$(echo "$SY" | jq_ "d.get('band_judge_calls')==d.get('syndication_ledger_rows')==d.get('tally_syndication')==1")" = "True" ] || fail l10 "band judge calls, syndication ledger rows and the tally disagree: $SY"
+echo "l10. R38 syndication ledger: $SY"
 grep -q 'if (opts.ledger) await opts.ledger(' supabase/functions/_shared/aggregatorAuthorship.ts || fail l6 "judgeSpeaker does not ledger before parse"
 T=$(NO_COLOR=1 deno test --allow-all --no-check supabase/functions/_shared/speakerJudge.test.ts 2>&1 | grep -E '^ok \||^FAILED \|' | tail -1 || true)
 echo "$T" | grep -q '^ok |' || fail l6 "speakerJudge tests: ${T:-no summary}"

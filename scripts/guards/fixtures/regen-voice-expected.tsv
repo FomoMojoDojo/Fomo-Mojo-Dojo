@@ -26,7 +26,7 @@ Corestar Partners	https://www.edgecumbe.co.uk/hr-insight/culture-and-values-cons
 Corestar Partners	https://www.identeco.co.uk/search/company/16427043/CORESTAR_PARTNERS_LTD	outside_voice_about_client	extractor_label
 Corestar Partners	https://www.kornferry.com/capabilities/organization-strategy/change-culture-comms/cultural-transformation	outside_voice_about_client	extractor_label
 Coreviva	https://athletechnews.com/coreviva-launches-with-physician-led-ai-enhanced-whole-body-mri-to-advance-preventive-care/	outside_voice_about_client	extractor_label
-Coreviva	https://business.newportbeach.com/directory/Details/coreviva-4149096	outside_voice_about_client	extractor_label
+Coreviva	https://business.newportbeach.com/directory/Details/coreviva-4149096	gated	authorship_judge
 Coreviva	https://coreviva.com/faq/	client_voice	own_domain
 Coreviva	https://hitconsultant.net/2025/07/09/coreviva-launches-flagship-whole-body-mri-clinic-in-newport-beach/	outside_voice_about_client	extractor_label
 Coreviva	https://radiologybusiness.com/topics/healthcare-management/healthcare-economics/radiologists-launch-coreviva-another-elective-whole-body-mri-startup	outside_voice_about_client	extractor_label
@@ -42,22 +42,22 @@ Coreviva	https://www.ocbj.com/healthcare/coreviva-opens-full-body-mri-clinic-in-
 Edgewood	https://data.sfgov.org/api/views/3had-h899/rows.rdf?accessType=DOWNLOAD	outside_voice_about_client	extractor_label
 Edgewood	https://engardio.com/blog/edgewood	outside_voice_about_client	extractor_label
 Edgewood	https://give.org/charity-reviews/children-youth/edgewood-center-for-children-and-families-in-san-francisco-ca-1116-879810	outside_voice_about_client	extractor_label
-Edgewood	https://givefreely.com/charity-directory/nonprofit/ein-941186168/	outside_voice_about_client	extractor_label
+Edgewood	https://givefreely.com/charity-directory/nonprofit/ein-941186168/	gated	authorship_judge
 Edgewood	https://grantsights.com/blog/california-healthcare-grants	outside_voice_about_client	extractor_label
 Edgewood	https://impala.digital/public/profiles/94-1186168/overview	outside_voice_about_client	extractor_label
 Edgewood	https://projects.propublica.org/nonprofits/organizations/941186168	registry: section decides	registry
-Edgewood	https://recovery.com/edgewood-center-children-and-families-san-francisco-california/	outside_voice_about_client	extractor_label
-Edgewood	https://reviews.birdeye.com/edgewood-center-for-children-and-families-155721653686376	outside_voice_about_client	extractor_label
+Edgewood	https://recovery.com/edgewood-center-children-and-families-san-francisco-california/	gated	authorship_judge
+Edgewood	https://reviews.birdeye.com/edgewood-center-for-children-and-families-155721653686376	gated	authorship_judge
 Edgewood	https://sfgov.legistar.com/LegislationDetail.aspx?ID=4332725&GUID=68264EEF-53E6-4269-ADA7-B32C035C8DED	outside_voice_about_client	extractor_label
 Edgewood	https://www.city-journal.org/article/california-youth-mental-health-crisis	outside_voice_about_client	extractor_label
-Edgewood	https://www.findhelp.org/provider/edgewood-center-for-children-and-families--san-francisco-ca/5404091359166464?postal=94102	outside_voice_about_client	extractor_label
+Edgewood	https://www.findhelp.org/provider/edgewood-center-for-children-and-families--san-francisco-ca/5404091359166464?postal=94102	gated	authorship_judge
 Edgewood	https://www.freementalhealth.us/services/san-francisco_edgewood-center-for-children-families	outside_voice_about_client	extractor_label
 Edgewood	https://www.gov.ca.gov/2026/06/29/californias-historic-investment-in-youth-behavioral-health-delivers-results-across-the-state/	outside_voice_about_client	extractor_label
 Edgewood	https://www.guidestar.org/profile/94-1186168	registry: section decides	registry
-Edgewood	https://www.niche.com/k12/edgewood-center-for-children-and-families-san-francisco-ca/	outside_voice_about_client	extractor_label
-Edgewood	https://www.privateschoolreview.com/edgewood-center-for-children-families-profile	outside_voice_about_client	extractor_label
+Edgewood	https://www.niche.com/k12/edgewood-center-for-children-and-families-san-francisco-ca/	gated	authorship_judge
+Edgewood	https://www.privateschoolreview.com/edgewood-center-for-children-families-profile	gated	authorship_judge
 Edgewood	https://www.propublica.org/article/uncommon-contract-holds-promise-california-group-homes-too-familiar-ills	outside_voice_about_client	extractor_label
-Edgewood	https://www.psychologytoday.com/us/treatment-rehab/edgewood-center-for-children-and-families-san-francisco-ca/208916	outside_voice_about_client	extractor_label
+Edgewood	https://www.psychologytoday.com/us/treatment-rehab/edgewood-center-for-children-and-families-san-francisco-ca/208916	gated	authorship_judge
 Edgewood	https://www.sfexaminer.com/archives/sf-to-provide-350k-to-help-struggling-nonprofit-care-for-youth-in-crisis/article_5462c273-1316-573d-907f-0a8c58475954.html	outside_voice_about_client	extractor_label
 Edgewood	https://www.usnews.com/education/k12/california/edgewood-center-for-children-families-410740	outside_voice_about_client	extractor_label
 FomoMojoDojo	https://customerland.net/passikoff-what-makes-a-successful-product-launch-hint-its-not-what-you-think/	outside_voice_about_client	extractor_label
@@ -83,10 +83,10 @@ Geniant	https://www.linkedin.com/company/vegastudio	gated	authorship_judge
 Geniant	https://www.newswire.com/news/geniant-joins-forces-with-eastlake-studio-to-transform-the-nature-of-21792021	gated	authorship_judge
 Geniant	https://www.newswire.com/news/geniant-launches-next-generation-experience-consulting-company-21764794	gated	authorship_judge
 Geniant	https://www.newterritory.io/stories/geniant-acquires-london-brand-experience-studio-newterritory	outside_voice_about_client	extractor_label
-Gotham Sports	https://apps.apple.com/us/app/gotham-sports/id6499055697	outside_voice_about_client	extractor_label
-Gotham Sports	https://apps.apple.com/us/app/gotham-sports/id6499055697?see-all=reviews	outside_voice_about_client	extractor_label
-Gotham Sports	https://apps.apple.com/us/app/gotham-sports/id6499055697?see-all=reviews&platform=iphone	outside_voice_about_client	extractor_label
-Gotham Sports	https://apps.apple.com/US/app/id6499055697	outside_voice_about_client	extractor_label
+Gotham Sports	https://apps.apple.com/us/app/gotham-sports/id6499055697	gated	authorship_judge
+Gotham Sports	https://apps.apple.com/us/app/gotham-sports/id6499055697?see-all=reviews	gated	authorship_judge
+Gotham Sports	https://apps.apple.com/us/app/gotham-sports/id6499055697?see-all=reviews&platform=iphone	gated	authorship_judge
+Gotham Sports	https://apps.apple.com/US/app/id6499055697	gated	authorship_judge
 Gotham Sports	https://awfulannouncing.com/streaming/gotham-sports-app-yes-msg-dark-nights.html	outside_voice_about_client	extractor_label
 Gotham Sports	https://deadline.com/2026/07/dazn-streaming-new-york-yes-msg-sports-yankees-knicks-1237012239/	outside_voice_about_client	extractor_label
 Gotham Sports	https://en.wikipedia.org/wiki/MSG_Network	outside_voice_about_client	extractor_label
@@ -94,7 +94,7 @@ Gotham Sports	https://en.wikipedia.org/wiki/YES_Network	outside_voice_about_clie
 Gotham Sports	https://frontofficesports.com/gotham-sports-lowering-prices/	outside_voice_about_client	extractor_label
 Gotham Sports	https://frontofficesports.com/yes-network-msg-yankees-knicks-leave-gotham-app-dazn-streaming/	outside_voice_about_client	extractor_label
 Gotham Sports	https://justuseapp.com/en/app/6499055697/gotham-sports/reviews	outside_voice_about_client	extractor_label
-Gotham Sports	https://play.google.com/store/apps/details?id=com.gothamsports.gotham.mobile&hl=en_US	outside_voice_about_client	extractor_label
+Gotham Sports	https://play.google.com/store/apps/details?id=com.gothamsports.gotham.mobile&hl=en_US	gated	authorship_judge
 Gotham Sports	https://seekingalpha.com/pr/19581825-the-yes-network-and-msg-networks-form-gotham-advanced-media-and-entertainment-game-a-new	outside_voice_about_client	extractor_label
 Gotham Sports	https://seekingalpha.com/pr/19831489-game-the-digital-joint-venture-between-msg-networks-and-the-yes-network-to-launch-the-gotham	outside_voice_about_client	extractor_label
 Gotham Sports	https://sports.yahoo.com/articles/dazn-replacing-gotham-sports-yes-145153632.html	outside_voice_about_client	extractor_label
@@ -114,7 +114,7 @@ Gotham Sports	https://www.streamtvinsider.com/video/yes-msg-networks-debut-gotha
 Ground Up Innovations	https://brokersnapshot.com/Company?dot=4390948&prefix=MC&docket=1722495	outside_voice_about_client	extractor_label
 Ground Up Innovations	https://forgeimpact.org/collaborators/ground-up-innovations/	outside_voice_about_client	extractor_label
 Ground Up Innovations	https://univdatos.com/reports/cleantech-market	outside_voice_about_client	extractor_label
-Ground Up Innovations	https://www.chamberofcommerce.com/business-directory/massachusetts/medford/engineering-consultant/2026735084-ground-up-innovations	outside_voice_about_client	extractor_label
+Ground Up Innovations	https://www.chamberofcommerce.com/business-directory/massachusetts/medford/engineering-consultant/2026735084-ground-up-innovations	gated	authorship_judge
 Ground Up Innovations	https://www.globenewswire.com/news-release/2022/09/12/2514445/0/en/FORGE-and-IN2-Announce-Grants-for-Cleantech-Companies.html	gated	authorship_judge
 Ground Up Innovations	https://www.startus-insights.com/innovators-guide/clean-tech-industry-report/	outside_voice_about_client	extractor_label
 Heart Coffee Roasters	https://en.wikipedia.org/wiki/Heart_Coffee_Roasters	(held)	fixture_hold
@@ -138,15 +138,15 @@ Indoor Air Quality Management	https://afenvironmental.com/restoration/	outside_v
 Indoor Air Quality Management	https://bouncewatch.com/explore/startup/iaqm-llc	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://coatingsworld.com/contents/view_breaking-news/2018-04-18/wonderpaint-iaqm-co-market-preventex-hdw	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://contractorsupplymagazine.com/pages/News---20180418-WonderPaint-and-IAQM-team-up-to-co-market-Preventex-HDW.php	gated	authorship_judge
-Indoor Air Quality Management	https://findmoldremoval.com/texas/dallas/iaqm	outside_voice_about_client	extractor_label
+Indoor Air Quality Management	https://findmoldremoval.com/texas/dallas/iaqm	gated	authorship_judge
 Indoor Air Quality Management	https://markets.financialcontent.com/wral/article/pressadvantage-2025-9-29-precision-environmental-services-expands-mold-removal-and-remediation-services-across-dallas-fort-worth-amid-seasonal-concerns	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://nadca.com/find-a-professional/indoor-air-quality-management-llc	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://pro.porch.com/forney-tx/mold-removal-specialists/iaqm-llc-26125655/pp	outside_voice_about_client	extractor_label
-Indoor Air Quality Management	https://reviews.birdeye.com/iaqm-llc-166498585041733	outside_voice_about_client	extractor_label
-Indoor Air Quality Management	https://www.alignable.com/forney-tx/iaqm	outside_voice_about_client	extractor_label
-Indoor Air Quality Management	https://www.angi.com/companylist/us/tx/forney/iaqm-llc-reviews-6181725.htm	outside_voice_about_client	extractor_label
-Indoor Air Quality Management	https://www.angi.com/companylist/us/tx/forney/indoor-air-quality-management-llc-reviews-1.htm	outside_voice_about_client	extractor_label
-Indoor Air Quality Management	https://www.angi.com/companylist/us/tx/lake-dallas/mold-testing-and-remediation.htm	outside_voice_about_client	extractor_label
+Indoor Air Quality Management	https://reviews.birdeye.com/iaqm-llc-166498585041733	gated	authorship_judge
+Indoor Air Quality Management	https://www.alignable.com/forney-tx/iaqm	gated	authorship_judge
+Indoor Air Quality Management	https://www.angi.com/companylist/us/tx/forney/iaqm-llc-reviews-6181725.htm	gated	authorship_judge
+Indoor Air Quality Management	https://www.angi.com/companylist/us/tx/forney/indoor-air-quality-management-llc-reviews-1.htm	gated	authorship_judge
+Indoor Air Quality Management	https://www.angi.com/companylist/us/tx/lake-dallas/mold-testing-and-remediation.htm	gated	authorship_judge
 Indoor Air Quality Management	https://www.barrettenv.com/about-us/	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://www.barrettenv.com/mold-inspections/	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://www.barrettenv.com/mold-inspections/clearance/	outside_voice_about_client	extractor_label
@@ -154,7 +154,7 @@ Indoor Air Quality Management	https://www.barrettenv.com/mold-testing/	outside_v
 Indoor Air Quality Management	https://www.barrettenv.com/mold-testing/commercial/	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://www.bbb.org/us/tx/dallas/profile/mold-removal/iaqm-llc-0875-90015448	gated	authorship_judge
 Indoor Air Quality Management	https://www.bbb.org/us/tx/forney/profile/mold-removal/iaqm-llc-0875-90015448	gated	authorship_judge
-Indoor Air Quality Management	https://www.buildzoom.com/contractor/iaqm-llc-tx	outside_voice_about_client	extractor_label
+Indoor Air Quality Management	https://www.buildzoom.com/contractor/iaqm-llc-tx	gated	authorship_judge
 Indoor Air Quality Management	https://www.cbinsights.com/company/indoor-air-quality-management	gated	authorship_judge
 Indoor Air Quality Management	https://www.coatingsworld.com/breaking-news/wonderpaint-iaqm-co-market-preventex-hdw/	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://www.coatingsworld.com/contents/view_breaking-news/2018-04-18/wonderpaint-iaqm-co-market-preventex-hdw/	outside_voice_about_client	extractor_label
@@ -168,10 +168,10 @@ Indoor Air Quality Management	https://www.dedicatedmold.com/about/	outside_voice
 Indoor Air Quality Management	https://www.dedicatedmold.com/areas-we-serve/	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://www.dedicatedmold.com/services/mold-remediation/	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://www.homeadvisor.com/c.Mold-Asbestos-Services.Dallas.TX.-12072.html	outside_voice_about_client	extractor_label
-Indoor Air Quality Management	https://www.homeadvisor.com/rated.IAQMIndoorAirQuality.3035078.html	outside_voice_about_client	extractor_label
-Indoor Air Quality Management	https://www.homeadvisor.com/rated.IAQMLLC.155194656.html	outside_voice_about_client	extractor_label
-Indoor Air Quality Management	https://www.homeadvisor.com/rated.iaqmllc.159217251.html	outside_voice_about_client	extractor_label
-Indoor Air Quality Management	https://www.homeadvisor.com/rated.IAQMLLC.44094116.html	outside_voice_about_client	extractor_label
+Indoor Air Quality Management	https://www.homeadvisor.com/rated.IAQMIndoorAirQuality.3035078.html	gated	authorship_judge
+Indoor Air Quality Management	https://www.homeadvisor.com/rated.IAQMLLC.155194656.html	gated	authorship_judge
+Indoor Air Quality Management	https://www.homeadvisor.com/rated.iaqmllc.159217251.html	gated	authorship_judge
+Indoor Air Quality Management	https://www.homeadvisor.com/rated.IAQMLLC.44094116.html	gated	authorship_judge
 Indoor Air Quality Management	https://www.homeadvisor.com/tloc/Dallas-TX/Indoor-Air-Quality-Testing/	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://www.indeed.com/cmp/Iaqm/reviews?fcountry=US&floc=Forney,+TX	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://www.olympicrestoration.com/	outside_voice_about_client	extractor_label
@@ -183,7 +183,7 @@ Indoor Air Quality Management	https://www.prnewswire.com/news-releases/wonderpai
 Indoor Air Quality Management	https://www.servmolddallas.com/	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://www.tdlr.texas.gov/mld/	outside_voice_about_client	extractor_label
 Indoor Air Quality Management	https://www.thegoodcontractorslist.com/contractor/air-check-one-iaqm-llc-air-quality-testing-75087/	outside_voice_about_client	extractor_label
-Indoor Air Quality Management	https://www.thumbtack.com/tx/dallas/mold-remediation/iaqm-llc/service/248555942655026207	outside_voice_about_client	extractor_label
+Indoor Air Quality Management	https://www.thumbtack.com/tx/dallas/mold-remediation/iaqm-llc/service/248555942655026207	gated	authorship_judge
 Indoor Air Quality Management	https://www.verifiedmarketreports.com/product/mold-remediation-service-market/	outside_voice_about_client	extractor_label
 Lumio	https://crossstack.substack.com/p/crossbeam-vcs-legaltech-predictions	outside_voice_about_client	extractor_label
 Lumio	https://podcasts.apple.com/za/podcast/only-happy-when-it-rains-ft-jae-um-and-ed-sohn/id1770778994?i=1000758754006	outside_voice_about_client	extractor_label
@@ -238,8 +238,8 @@ Sonos	https://en.community.sonos.com/general-feedback-and-conversation-229090/en
 Sonos	https://en.wikipedia.org/wiki/Sonos	outside_voice_about_client	extractor_label
 Sonos	https://medium.com/marketing-in-the-age-of-digital/sonos-social-media-meltdown-a-business-school-case-study-in-the-making-e659a3e04038	outside_voice_about_client	extractor_label
 Sonos	https://slickdeals.net/f/17633655-costco-members-2-count-sonos-era-100-speakers-black-or-white-375-free-shipping	outside_voice_about_client	extractor_label
-Sonos	https://www.bestbuy.com/site/brands/sonos/pcmcat348700050016.c?id=pcmcat348700050016	outside_voice_about_client	extractor_label
-Sonos	https://www.bestbuy.com/site/sonos/all-sonos-products/pcmcat1542380741851.c?id=pcmcat1542380741851	outside_voice_about_client	extractor_label
+Sonos	https://www.bestbuy.com/site/brands/sonos/pcmcat348700050016.c?id=pcmcat348700050016	gated	authorship_judge
+Sonos	https://www.bestbuy.com/site/sonos/all-sonos-products/pcmcat1542380741851.c?id=pcmcat1542380741851	gated	authorship_judge
 Sonos	https://www.billboard.com/pro/sonos-layoffs-speaker-company-cuts-200-jobs-restructure/	outside_voice_about_client	extractor_label
 Sonos	https://www.engadget.com/audio/speakers/sonos-and-ikea-end-their-partnership-130052348.html	outside_voice_about_client	extractor_label
 Sonos	https://www.globaldata.com/company-profile/sonos-inc/	outside_voice_about_client	extractor_label
@@ -276,7 +276,7 @@ whispering.ai	https://academy.whispering.ai/courses	client_voice	own_domain
 whispering.ai	https://colorwhistle.com/artificial-intelligence-statistics-for-small-business/	outside_voice_about_client	extractor_label
 whispering.ai	https://getlatka.com/companies/whispering.ai	gated	authorship_judge
 whispering.ai	https://prospeo.io/c/whispering-ai-revenue	gated	authorship_judge
-whispering.ai	https://seamless.ai/b/whispering-ai-16131131	outside_voice_about_client	extractor_label
+whispering.ai	https://seamless.ai/b/whispering-ai-16131131	gated	authorship_judge
 whispering.ai	https://sqmagazine.co.uk/prompt-engineering-statistics/	outside_voice_about_client	extractor_label
 whispering.ai	https://whispering.ai/	client_voice	own_domain
 whispering.ai	https://www.imarcgroup.com/ai-in-education-market	outside_voice_about_client	extractor_label

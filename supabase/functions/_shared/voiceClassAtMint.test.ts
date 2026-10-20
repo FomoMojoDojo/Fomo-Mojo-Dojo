@@ -205,3 +205,78 @@ Deno.test("R32: a third-party speaker on a judge-gated profile URL still reaches
   assert(baseline.ok); assertEquals(baseline.voice_class, "outside_voice_about_client"); assertEquals(baseline.speaker, undefined);
   assertEquals(c.n, 1, "the baseline shape made no speaker call");
 });
+
+// ── R47 (R51, 2026-10-20): the first-person subject ANYWHERE in the candidate is detected; the speaker judge still decides ──
+import { buildCorpusFromTexts, deterministicSyndicationVerdict, type SyndicationJudge } from "./syndication.ts";
+Deno.test("R47: a mid-sentence first person — Edgewood's Psychology Today row — is detected and judged subject_company_text ⇒ client_voice (first_person_judged); a customer review's mid-sentence 'our home' is judged third_party ⇒ the label kept with the speaker recorded; one speaker call each, zero authorship calls", async () => {
+  const calls: string[] = []; let judgeCalls = 0;
+  const judge = () => { judgeCalls++; return Promise.resolve({ verdict: "third_party" as const, entity: null, reason: "x", model: "m" }); };
+  const speakerJudge = (i: { candidate: string }) => { calls.push(i.candidate); return Promise.resolve(/Acute Intensive/.test(i.candidate)
+    ? { speaker_class: "subject_company_text" as const, speaker_name: null, speaker_role: null, reason: "the provider's own profile text", model: "m" }
+    : { speaker_class: "third_party" as const, speaker_name: "a reviewer", speaker_role: "customer", reason: "a customer describing their home", model: "m" }); };
+  const base = { url: "https://www.example-directory.com/edgewood", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "Edgewood", host: "edgewood.org" }, registry: null, judge, speakerJudge, gate: "profile_wire_boilerplate" as const, textGates: ["first_person", "attributed_speech"] as const, onJudgeFailure: "refuse_mint" as const };
+  const mid = await voiceClassForMintedExcerpt({ ...base, judgedText: "Within our Acute Intensive Service programs, we serve youth ages 6-18. Professional staff serve children who have faced severe, multiple trauma." });
+  assert(mid.ok); assertEquals(mid.voice_class, "client_voice"); assertEquals(mid.authority, "first_person_judged"); assertEquals(mid.rule, "first_person_judged"); assertEquals(mid.speaker?.attribution.form, "first_person");
+  const review = await voiceClassForMintedExcerpt({ ...base, judgedText: "Max and his team were responsive, always on time, careful with our home, and very professional." });
+  assert(review.ok); assertEquals(review.voice_class, "outside_voice_about_client"); assertEquals(review.authority, "extractor_label"); assertEquals(review.rule, "first_person_judged"); assertEquals(review.speaker?.speaker_class, "third_party");
+  assertEquals(calls.length, 2, "one speaker call per first-person candidate"); assertEquals(judgeCalls, 0, "the authorship judge was never called (the URL is not gated)");
+  // the detector itself: mid-sentence positions hit; the sentence-start case still hits; "Contact us" and a quoted attributed "we" still do not
+  assertEquals(firstPersonSelfDescription("Within our Acute Intensive Service programs, we serve youth ages 6-18.").hit, true);
+  assert(/mid-sentence \(R47\)/.test(firstPersonSelfDescription("Supervisor Matt Haney called Edgewood “an essential institution for our city.”").detail));
+  assert(/at a sentence start/.test(firstPersonSelfDescription("We help people and businesses thrive with the power of AI.").detail));
+  assertEquals(firstPersonSelfDescription("Contact us for pricing and hours.").hit, false);
+  assertEquals(firstPersonSelfDescription("'We love it,' said a customer.").hit, false);
+  // a DETECTED attribution precedes the first-person rule: the interior quotation's "our" goes to the judge as the quoted speaker, not as the subject
+  const interior = await voiceClassForMintedExcerpt({ ...base, judgedText: "Their scans were an immediate answer to the needs of our first responders.", attribution: { form: "quotation_interior", speaker_string: "Brian Bowis, Chairman of the Foundation", span: "“…”, said Brian Bowis, Chairman of the Foundation", offset: 0 } });
+  assert(interior.ok); assertEquals(interior.rule, "attributed_speech"); assertEquals(interior.speaker?.attribution.form, "quotation_interior");
+});
+
+// ── R38 (R51, 2026-10-20): the syndication stage DECIDES on the regen path — after the registry, before the text gates ──
+const CORPUS_TEXT = "We roast every bean in Burbank and supply 40 cafes across Los Angeles with fresh coffee every week.";
+const corpus = () => buildCorpusFromTexts([CORPUS_TEXT, "Acme Coffee is a specialty roaster founded in 2011 by two siblings in Burbank, California."]);
+const bandJudge = (answer: boolean | null, calls: { n: number; sample?: string }): SyndicationJudge => (i) => { calls.n++; calls.sample = i.clientSample; return Promise.resolve({ syndicated: answer, model: "fake-70b" }); };
+Deno.test("R38: a verbatim client-copy candidate (8-gram containment 1.0) on a third-party URL ⇒ client_voice, authority syndication, stamped — and the stage precedes the text gates: the same first-person text makes NO speaker call (P5 order proof)", async () => {
+  let speakerCalls = 0; let judgeCalls = 0;
+  const speakerJudge = () => { speakerCalls++; return Promise.resolve({ speaker_class: "subject_company_text" as const, speaker_name: null, speaker_role: null, reason: "r", model: "m" }); };
+  const judge = () => { judgeCalls++; return Promise.resolve({ verdict: "subject_company" as const, entity: null, reason: "r", model: "m" }); };
+  const b = { ...base({ url: "https://www.buildzoom.com/contractor/acme-coffee", judge, speakerJudge, textGates: ["first_person", "attributed_speech"] as const }), judgedText: CORPUS_TEXT, syndication: { corpus: corpus(), judge: bandJudge(null, { n: 0 }), anchors: ["Acme Coffee", "acmecoffee.com"] } };
+  const d = await voiceClassForMintedExcerpt(b);
+  assert(d.ok); assertEquals(d.voice_class, "client_voice"); assertEquals(d.authority, "syndication"); assertEquals(d.gate, null); assertEquals(d.rule, undefined);
+  assertEquals(d.syndication?.verdict, "syndicated"); assertEquals(d.syndication?.method, "deterministic"); assertEquals(d.syndication?.score, 1);
+  assertEquals(speakerCalls, 0, "the syndication stage decided before the first-person gate"); assertEquals(judgeCalls, 0, "and before the URL gate");
+  // the registry stage still precedes syndication: a registry page is section-stamped, never scored
+  const { classifyRegistryRow } = await import("./registryClassifier.ts");
+  const reg = classifyRegistryRow({ url: "https://www.propublica.org/article/acme", text: CORPUS_TEXT, snapshot: { clean_text: CORPUS_TEXT, text_sha256: "s", structured: null } });
+  const r = await voiceClassForMintedExcerpt({ ...b, url: "https://www.propublica.org/article/acme", registry: reg });
+  assert(r.ok); assertEquals(r.authority, "extractor_label"); assertEquals(r.voice_class, "outside_voice_about_client", "registry journalism: the label stands, the stage never decides");
+  assertEquals(r.syndication?.verdict, "syndicated", "the measurement is still stamped on every regen row — it decides nothing before the registry");
+  // the baseline shape (no syndication input) runs no stage: the same text is the label, no stamp
+  const baseline = await voiceClassForMintedExcerpt({ ...b, url: THIRD, syndication: null, textGates: undefined });
+  assert(baseline.ok); assertEquals(baseline.voice_class, "outside_voice_about_client"); assertEquals(baseline.syndication, undefined);
+});
+Deno.test("R38: a sub-12-word item after anchor-stripping is clean with NO band call (short_item); a clean long item carries the clean stamp through the later stages", async () => {
+  const calls = { n: 0 };
+  const short = await voiceClassForMintedExcerpt({ ...base({}), judgedText: "Acme Coffee roasts in Burbank.", syndication: { corpus: corpus(), judge: bandJudge(true, calls), anchors: ["Acme Coffee", "acmecoffee.com"] } });
+  assert(short.ok); assertEquals(short.authority, "extractor_label"); assertEquals(short.syndication?.verdict, "clean"); assertEquals(short.syndication?.method, "short_item"); assertEquals(short.syndication?.words, 3); assertEquals(calls.n, 0, "no band call for a short item");
+  const long = await voiceClassForMintedExcerpt({ ...base({}), judgedText: "The nonprofit offers care and treatment for children and teens who have suffered abuse and neglect or who grapple with serious emotional problems.", syndication: { corpus: corpus(), judge: bandJudge(true, calls), anchors: [] } });
+  assert(long.ok); assertEquals(long.authority, "extractor_label"); assertEquals(long.syndication?.verdict, "clean"); assertEquals(long.syndication?.method, "deterministic"); assertEquals(calls.n, 0);
+});
+Deno.test("R38: the uncertain band goes to the band judge with the most similar client text as TEXT B — YES ⇒ client_voice (syndication, local_llm, model stamped); NO ⇒ the stage falls through to the text gates with a clean local_llm stamp; null / no judge ⇒ REFUSED under refuse_mint with reason syndication_unresolved, the label under keep_label", async () => {
+  const BAND = "Acme Coffee roasts every bean in Burbank and supplies 40 cafes across Los Angeles with fresh coffee.";
+  const v = deterministicSyndicationVerdict(BAND, corpus(), ["Acme Coffee"]);
+  assertEquals(v.verdict, "band", `fixture must sit in the band: ${JSON.stringify(v)}`);
+  const synd = (judge: SyndicationJudge | null, over: Partial<VoiceClassInput> = {}) => ({ ...base({ textGates: ["first_person", "attributed_speech"] as const, ...over }), judgedText: BAND, syndication: { corpus: corpus(), judge, anchors: ["Acme Coffee"] } });
+  const yes = { n: 0, sample: "" as string | undefined };
+  const y = await voiceClassForMintedExcerpt(synd(bandJudge(true, yes)));
+  assert(y.ok); assertEquals(y.voice_class, "client_voice"); assertEquals(y.authority, "syndication"); assertEquals(y.syndication?.method, "local_llm"); assertEquals(y.syndication?.model, "fake-70b"); assertEquals(y.syndication?.judged_at, NOW());
+  assertEquals(yes.n, 1); assert(yes.sample!.includes(CORPUS_TEXT), "TEXT B is the most similar client text");
+  const no = { n: 0 };
+  const n = await voiceClassForMintedExcerpt(synd(bandJudge(false, no)));
+  assert(n.ok); assertEquals(n.voice_class, "outside_voice_about_client"); assertEquals(n.authority, "extractor_label"); assertEquals(n.syndication?.verdict, "clean"); assertEquals(n.syndication?.method, "local_llm"); assertEquals(no.n, 1);
+  const u = await voiceClassForMintedExcerpt(synd(bandJudge(null, { n: 0 })));
+  assert(!u.ok); assertEquals(u.authority, "syndication"); assert(u.reason.startsWith("syndication_unresolved"), u.reason); assertEquals(u.syndication?.verdict, "unresolved");
+  const none = await voiceClassForMintedExcerpt(synd(null));
+  assert(!none.ok); assert(none.reason.startsWith("syndication_unresolved") && /no band judge is wired/.test(none.reason), none.reason);
+  const kept = await voiceClassForMintedExcerpt(synd(bandJudge(null, { n: 0 }), { onJudgeFailure: "keep_label" }));
+  assert(kept.ok); assertEquals(kept.voice_class, "outside_voice_about_client"); assertEquals(kept.syndication?.verdict, "unresolved");
+});

@@ -105,3 +105,32 @@ Deno.test("R42: speakerContext = paragraph (whole) + sentences containing the sp
   assert(capped.length <= SPEAKER_CONTEXT_CAP + 200, `cut near the cap (${capped.length})`); assert(capped.startsWith("A quote:"));
   const shortTok = speakerContext(page, off, len, "the company"); assert(!shortTok.includes("founder and CEO"), "a last token under 4 chars is not searched; 'the company' matches nothing else here");
 });
+
+// ── R48 (R51, 2026-10-20): unquoted reported speech of a named speaker ─────────────────────────────────────────────
+import { matchLowerTitled, matchNameAppositive } from "./attribution.ts";
+Deno.test("R48: the Auletta sentence — a sentence-initial name with a two-segment appositive chain, then 'said' — is reported_name_appositive with the speaker string carrying the title; the two measured false positives (a possessive name, a participle) are null; a lowercase title + name + verb is reported_titled_speaker; a sentence-initial name before 'called' names the speaker of a quotation", () => {
+  const AULETTA = "Ken Auletta, Edgewood’s chief human resources officer, who led the nonprofit organization’s end of the negotiations, said management was equally pleased by the contract.";
+  const a = detectAttribution(AULETTA, "")!;
+  assertEquals(a.form, "reported_name_appositive");
+  assertEquals(a.speaker_string, "Ken Auletta, Edgewood’s chief human resources officer, who led the nonprofit organization’s end of the negotiations");
+  assertEquals(matchNameAppositive(AULETTA)?.verb, "said");
+  const g = detectAttribution("Gotham Sports, the joint venture between the YES Network and MSG Networks, announced on Friday it is reducing prices.", "")!;
+  assertEquals([g.form, g.speaker_string], ["reported_name_appositive", "Gotham Sports, the joint venture between the YES Network and MSG Networks"]);
+  const s = detectAttribution("New Hampshire-headquartered SIAA says its model and operations will remain unchanged under the new ownership plan.", "")!;
+  assertEquals([s.form, s.speaker_string], ["reported_name_appositive", "New Hampshire-headquartered SIAA"]);
+  // the false positives
+  assertEquals(detectAttribution("Spence's comments haven't gone down brilliantly with users of the r/sonos subreddit, where there's been plenty of discussion.", ""), null, "a possessive is not a speaker");
+  assertEquals(detectAttribution("The original East Burnside roastery runs a Probat L12 with a Loring S15 added later, both dialed in with Wille's cupping discipline.", ""), null, "a participle is not a report");
+  assertEquals(matchNameAppositive("Lancashire added later that the studio would grow."), null, "'added later' is read as a participle tail");
+  // P4: a lowercase title
+  const l = detectAttribution("The company's chief financial officer Greg Wagner said the department would fund the plan.", "")!;
+  assertEquals([l.form, l.speaker_string], ["reported_titled_speaker", "chief financial officer Greg Wagner"]);
+  assertEquals(matchLowerTitled("A spokeswoman Jane Doe said the deal closed.")?.speaker, "spokeswoman Jane Doe");
+  // the quoted branch prefers the sentence-initial name over the verb-then-name form
+  const h = detectAttribution("Supervisor Matt Haney called Edgewood “an essential institution for our city.”", "")!;
+  assertEquals([h.form, h.speaker_string], ["quoted_with_attribution", "Supervisor Matt Haney"]);
+  // unchanged: function words at a sentence start are never names; plain prose is not attribution
+  assertEquals(detectAttribution("They explain their unique edge: faster scan times.", "")?.form, "reported_pronoun_verb");
+  assertEquals(detectAttribution("We have an affiliate who successfully transferred from SIAA to PIIB, it took a lot of work.", ""), null);
+  assertEquals(detectAttribution("CoreViva has opened a full-body MRI clinic in Newport Beach.", ""), null);
+});
