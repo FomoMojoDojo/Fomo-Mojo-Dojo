@@ -27,7 +27,7 @@
 // The frozen guard (companies.frozen + FROZEN_COMPANY_IDS courtesy set) refuses CB1 before any
 // write, in plan and in apply.
 
-import { callClassifier, CLASSIFIER_MODEL, isLocalOllamaUrl } from "./uploadVoiceClassifier.ts";
+import { callClassifierWithUsage, CLASSIFIER_MODEL, isLocalOllamaUrl } from "./uploadVoiceClassifier.ts";
 import type { ModelCallRecord } from "./recordModelCall.ts";
 import { sanitizeForStore, sanitizeNullable } from "./sanitizeForStore.ts";
 import { isOwnDomainUrl } from "./firstReadProvenance.ts";
@@ -40,6 +40,11 @@ export type AuthorshipJudgment = { verdict: AuthorshipVerdict; entity: string | 
 export type VoiceOutcome = "client_voice" | "competitor_voice" | null;
 export type AuthorshipInput = { subjectName: string; subjectHost: string; url: string; text: string };
 export type AuthorshipJudge = (input: AuthorshipInput) => Promise<AuthorshipJudgment>;
+/** R53 (2026-10-20): the authorship judge's two seams, the speaker judge's shape. The transport is one local call returning
+ *  content + token counts; the ledger writes ONE model_calls row per call BEFORE the answer is parsed and resolves false
+ *  when the write failed (never throws). The ledger is REQUIRED: a call with none fails to compile and throws before any call. */
+export type AuthorshipTransport = (args: { model: string; system: string; user: string }) => Promise<{ content: string; prompt_tokens: number | null; completion_tokens: number | null }>;
+export type AuthorshipLedger = (e: { usage: ModelCallRecord; promptSha: string }) => Promise<boolean>;
 
 // ── URL gate ────────────────────────────────────────────────────────────────────
 // Aggregator COMPANY-PROFILE pages — the pages that reproduce a company's own "about" blurb
@@ -407,8 +412,10 @@ export function ollamaSpeakerTransport(ollamaUrl: string): SpeakerTransport {
 /** THE speaker judgment: ledger BEFORE parse; every failure mode resolves to judge_failed with the reason. */
 export async function judgeSpeaker(
   input: SpeakerInput,
-  opts: { transport: SpeakerTransport; ledger?: SpeakerLedger | null; model?: string; sha?: (s: string) => Promise<string> },
+  opts: { transport: SpeakerTransport; ledger: SpeakerLedger; model?: string; sha?: (s: string) => Promise<string> },
 ): Promise<SpeakerJudgment> {
+  // R53: the ledger is required — a call with none never reaches the model
+  if (typeof opts?.ledger !== "function") throw new Error("speaker judge: a ledger is required (R4) — no model call made");
   const model = opts.model ?? CLASSIFIER_MODEL;
   const system = SPEAKER_SYSTEM, user = buildSpeakerUser(input);
   const sha = opts.sha ?? (async (s: string) => { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join(""); });
@@ -417,9 +424,9 @@ export async function judgeSpeaker(
   try {
     const r = await opts.transport({ model, system, user });
     raw = r.content;
-    if (opts.ledger) await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens, completion_tokens: r.completion_tokens, usd: null }, promptSha });
+    await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens, completion_tokens: r.completion_tokens, usd: null }, promptSha });
   } catch (err) {
-    if (opts.ledger) await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: null, completion_tokens: null, usd: null }, promptSha });
+    await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: null, completion_tokens: null, usd: null }, promptSha });
     return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge call failed (${String((err as Error)?.message ?? err)})`, model };
   }
   let parsed: { speaker_name?: unknown; speaker_role?: unknown; speaker_class?: unknown; reason?: unknown };
@@ -441,34 +448,53 @@ export async function judgeSpeaker(
 // (which every consumer maps to "leave the label untouched").
 export async function judgeAggregatorAuthorship(
   input: AuthorshipInput,
-  opts: { ollamaUrl: string; model?: string },
+  opts: { transport: AuthorshipTransport; ledger: AuthorshipLedger; model?: string; sha?: (s: string) => Promise<string> },
 ): Promise<AuthorshipJudgment> {
+  // R53 (2026-10-20): R4 for the authorship judge — the ledger is required; a call with none never reaches the model.
+  if (typeof opts?.ledger !== "function") throw new Error("authorship judge: a ledger is required (R4) — no model call made");
   const model = opts.model ?? CLASSIFIER_MODEL;
   const tag = `${hostOf(input.url)} ${input.text.slice(0, 60)}`;
+  const system = JUDGE_SYSTEM, user = buildJudgeUser(input);
+  const sha = opts.sha ?? (async (t: string) => { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)); return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join(""); });
+  const promptSha = await sha(`${system}\n\n${user}`);
+  let raw = "";
   try {
-    const raw = await callClassifier(opts.ollamaUrl, model, JUDGE_SYSTEM, buildJudgeUser(input));
-    let parsed: { verdict?: unknown; entity?: unknown; reason?: unknown };
-    try {
-      const m = raw.match(/\{[\s\S]*\}/);
-      parsed = JSON.parse(m ? m[0] : raw) as { verdict?: unknown; entity?: unknown; reason?: unknown };
-    } catch {
-      console.warn(`[authorship] unparseable model output → judge_failed (${tag})`);
-      return { verdict: "judge_failed", entity: null, reason: `judge output was unparseable — label left unchanged. raw: ${raw.slice(0, 200)}`, model };
-    }
-    const verdict = String(parsed.verdict ?? "").trim();
-    const reason = String(parsed.reason ?? "").trim();
-    const entityRaw = parsed.entity == null ? "" : String(parsed.entity).trim();
-    const entity = entityRaw && entityRaw.toLowerCase() !== "null" ? entityRaw : null;
-    if (VERDICTS.has(verdict) && reason) {
-      return { verdict: verdict as AuthorshipVerdict, entity, reason, model };
-    }
-    console.warn(`[authorship] malformed verdict → judge_failed (${tag}): verdict='${verdict}' reasonLen=${reason.length}`);
-    return { verdict: "judge_failed", entity: null, reason: `judge returned a malformed verdict ('${verdict || "empty"}') — label left unchanged.`, model };
+    const r = await opts.transport({ model, system, user });
+    raw = r.content;
+    // ledger BEFORE parse: the call cost whether or not its answer is usable
+    await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens, completion_tokens: r.completion_tokens, usd: null }, promptSha });
   } catch (err) {
+    await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: null, completion_tokens: null, usd: null }, promptSha });
     const msg = String((err as Error)?.message ?? err);
     console.warn(`[authorship] judge call failed → judge_failed (${tag}): ${msg}`);
     return { verdict: "judge_failed", entity: null, reason: `judge call failed (${msg}) — label left unchanged.`, model };
   }
+  if (!raw) {
+    console.warn(`[authorship] judge call failed → judge_failed (${tag}): empty content`);
+    return { verdict: "judge_failed", entity: null, reason: "judge call failed (empty content) — label left unchanged.", model };
+  }
+  let parsed: { verdict?: unknown; entity?: unknown; reason?: unknown };
+  try {
+    const m = raw.match(/\{[\s\S]*\}/);
+    parsed = JSON.parse(m ? m[0] : raw) as { verdict?: unknown; entity?: unknown; reason?: unknown };
+  } catch {
+    console.warn(`[authorship] unparseable model output → judge_failed (${tag})`);
+    return { verdict: "judge_failed", entity: null, reason: `judge output was unparseable — label left unchanged. raw: ${raw.slice(0, 200)}`, model };
+  }
+  const verdict = String(parsed.verdict ?? "").trim();
+  const reason = String(parsed.reason ?? "").trim();
+  const entityRaw = parsed.entity == null ? "" : String(parsed.entity).trim();
+  const entity = entityRaw && entityRaw.toLowerCase() !== "null" ? entityRaw : null;
+  if (VERDICTS.has(verdict) && reason) {
+    return { verdict: verdict as AuthorshipVerdict, entity, reason, model };
+  }
+  console.warn(`[authorship] malformed verdict → judge_failed (${tag}): verdict='${verdict}' reasonLen=${reason.length}`);
+  return { verdict: "judge_failed", entity: null, reason: `judge returned a malformed verdict ('${verdict || "empty"}') — label left unchanged.`, model };
+}
+
+/** R53: the local authorship transport — the classifier's own request (callClassifierWithUsage), token counts read. */
+export function ollamaAuthorshipTransport(ollamaUrl: string): AuthorshipTransport {
+  return ({ model, system, user }) => callClassifierWithUsage(ollamaUrl, model, system, user);
 }
 
 /** Local-only Ollama base for the edge runtime: OLLAMA_BASE_URL, else the syndication base
@@ -697,7 +723,8 @@ function isFrozen(co: { id: string; frozen: boolean } | undefined): boolean {
  *  company_id is refused outright). Every URL-gated stored row gets one judgment. */
 export async function planRestamp(
   store: RestampStore,
-  opts: { companyId?: string; judge: AuthorshipJudge; log?: (s: string) => void },
+  /** R53: the judge is told the row's company so its ledger can key the model_calls row to it. */
+  opts: { companyId?: string; judge: (input: AuthorshipInput, ctx: { companyId: string }) => Promise<AuthorshipJudgment>; log?: (s: string) => void },
 ): Promise<{
   proposals: RestampProposal[];
   scanned: number;
@@ -752,7 +779,7 @@ export async function planRestamp(
     const cleaner = jt.source !== "claim_text" && text !== String(s.claim_text ?? "").trim();
     if (cleaner) cleanerTextAvailable++;
     const j = text
-      ? await opts.judge({ subjectName: co.name, subjectHost: hostOf(co.website ?? ""), url: String(s.source_url), text })
+      ? await opts.judge({ subjectName: co.name, subjectHost: hostOf(co.website ?? ""), url: String(s.source_url), text }, { companyId: co.id })
       : { verdict: "uncertain" as const, entity: null, reason: "empty statement — nothing to judge", model: "none" };
     const b = backing.get(s.id) ?? { echoed: 0, divergent: 0, internally_silent: 0 };
     const to = j.verdict === "judge_failed" ? null : outcomeFor(j, co.name);

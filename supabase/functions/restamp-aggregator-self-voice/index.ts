@@ -10,7 +10,10 @@
 //       Select every stored row under the predicate (signal_band='outside',
 //       voice_class='outside_voice_about_client', not superseded, URL matches an aggregator
 //       company-profile pattern), run the SAME local authorship judge on each, and RETURN the plan.
-//       ZERO writes — no ledger row, no audit row, no signal write. The operator reviews every row.
+//       No audit row, no signal write. R53 (2026-10-20): ONE write class only — every judge call writes one
+//       model_calls row (call_site restamp-aggregator-self-voice, provider ollama, usd null, keyed to the row's
+//       company, run_id null: a dry run opens no run row) BEFORE its answer is parsed; the tally
+//       { authorship, ledger_failed } is returned as model_calls. The operator reviews every row.
 //   { dry_run: false, plan: PlanRow[], run_ref? }
 //       Apply EXACTLY the reviewed rows (the operator may strike rows from the dry-run plan): for each
 //       row whose stored class still equals the plan's `from`, insert one signal_voice_restamps audit
@@ -33,12 +36,14 @@ import {
   applyRestamp,
   judgeAggregatorAuthorship,
   makeSupabaseRestampStore,
+  ollamaAuthorshipTransport,
   planRestamp,
   resolveLocalOllamaUrl,
   RestampRefusedError,
   revertRestamp,
   type PlanRow,
 } from "../_shared/aggregatorAuthorship.ts";
+import { recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -88,9 +93,20 @@ Deno.serve(async (req) => {
     }
     const model = Deno.env.get("OLLAMA_MODEL") || undefined;
     const companyId = typeof body.company_id === "string" && body.company_id ? body.company_id : undefined;
+    // R53: the dry run has no integrity or run row, so its ledger tally is returned in the body.
+    const transport = ollamaAuthorshipTransport(ollamaUrl);
+    const tally = { authorship: 0, ledger_failed: 0 };
     const out = await planRestamp(store, {
       companyId,
-      judge: (input) => judgeAggregatorAuthorship(input, { ollamaUrl, model }),
+      judge: (input, ctx) => judgeAggregatorAuthorship(input, {
+        transport, model,
+        ledger: async (e) => {
+          const ok = await recordModelCall(supabase as never, { companyId: ctx.companyId, runId: null, callSite: "restamp-aggregator-self-voice", usage: e.usage, attempt: 1, promptSha: e.promptSha });
+          tally.authorship += 1;
+          if (!ok) tally.ledger_failed += 1;
+          return ok;
+        },
+      }),
       log,
     });
     const changing = out.proposals.filter((p) => p.to !== null);
@@ -102,6 +118,7 @@ Deno.serve(async (req) => {
       gated: out.proposals.length,
       proposed_changes: changing.length,
       skipped_frozen: out.skipped_frozen,
+      model_calls: tally,
       // Rows whose judged text came from quote_source_text / evidence_excerpt AND differed from claim_text.
       cleaner_text_available: out.cleaner_text_available,
       proposals: out.proposals,

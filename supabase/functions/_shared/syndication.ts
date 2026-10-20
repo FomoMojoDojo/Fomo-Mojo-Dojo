@@ -271,8 +271,10 @@ export function ollamaSyndicationTransport(base: string): SyndicationTransport {
 /** THE band judgment: ledger BEFORE parse; every failure mode resolves to null (unresolved), never a verdict. */
 export async function judgeSyndicationBand(
   input: SyndicationJudgeInput,
-  opts: { transport: SyndicationTransport; ledger?: SyndicationLedger | null; model?: string },
+  opts: { transport: SyndicationTransport; ledger: SyndicationLedger; model?: string },
 ): Promise<{ syndicated: boolean | null; model: string }> {
+  // R53: the ledger is required — a call with none never reaches the model
+  if (typeof opts?.ledger !== "function") throw new Error("syndication band judge: a ledger is required (R4) — no model call made");
   const model = opts.model ?? SYNDICATION_BAND_MODEL;
   const prompt = buildSyndicationBandPrompt(input.itemText, input.clientSample);
   const promptSha = await (async (t: string) => { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join(""); })(prompt);
@@ -280,9 +282,9 @@ export async function judgeSyndicationBand(
   try {
     const r = await opts.transport({ model, prompt });
     raw = r.content;
-    if (opts.ledger) await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens, completion_tokens: r.completion_tokens, usd: null }, promptSha });
+    await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens, completion_tokens: r.completion_tokens, usd: null }, promptSha });
   } catch {
-    if (opts.ledger) await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: null, completion_tokens: null, usd: null }, promptSha });
+    await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: null, completion_tokens: null, usd: null }, promptSha });
     return { syndicated: null, model };
   }
   const answer = raw.trim().toUpperCase();

@@ -16,7 +16,8 @@ import { isOwnDomainUrl, normalizeHost } from "../_shared/firstReadProvenance.ts
 import { shouldChainDeltas, NO_DECLARED_SIDE_LEDGER_TEXT } from "../_shared/deltaChainGate.ts";
 import { selectFinalText, parseJsonObjectDefensive, persistSynthesisParseFailure, runSynthesisWithParseRetry } from "../_shared/synthesisJsonExtract.ts";
 // AUTHORSHIP GATE (operator ruling 2026-09-03, A) — CHANNEL ≠ VOICE on aggregator company-profile URLs.
-import { demoteAggregatorSelfVoiceInResult, judgeAggregatorAuthorship, resolveLocalOllamaUrl } from "../_shared/aggregatorAuthorship.ts";
+import { demoteAggregatorSelfVoiceInResult, judgeAggregatorAuthorship, ollamaAuthorshipTransport, resolveLocalOllamaUrl, type AuthorshipLedger } from "../_shared/aggregatorAuthorship.ts";
+import { recordModelCall } from "../_shared/recordModelCall.ts";
 import { loadRegistrySnapshots, registryUrlsInResult, stampRegistryInResult } from "../_shared/registryIngest.ts";
 import { buildNameOnlyBrief, claudeWebSearchPrompt, laneSourcesFromResult, laneStatusFromSources, resolveNameOnlyOutcome, searxVerdict, type LaneStatus, type SearchLedger } from "../_shared/nameOnlyLane.ts";
 import { INTERNAL_CALL_HEADER, isInternalServiceCall } from "../_shared/internalCall.ts";
@@ -2093,6 +2094,9 @@ Deno.serve(async (req) => {
       citation_urls?: number;
       citation_added?: number;
       citation_crawl_collisions?: number;
+      /** R53 (2026-10-20): the authorship judge's model_calls tally for this run — one row per call at call_site
+       *  public-baseline-authorship (run_id = the long_runner_runs row), ledger_failed = writes recordModelCall refused. */
+      authorship_model_calls?: { calls: number; ledger_failed: number };
     } = {
       provider: "openai_public",
       model: openaiModel,
@@ -3316,16 +3320,27 @@ Deno.serve(async (req) => {
           return normalizeHost(String(domain || ""));
         }
       })();
+      // R53: every authorship call writes one model_calls row before its answer is parsed, keyed to this run's
+      // long_runner_runs row; the tally rides on result_json.run_ledger.authorship_model_calls.
+      const authorshipTally = { calls: 0, ledger_failed: 0 };
+      const authorshipLedger: AuthorshipLedger = async (e) => {
+        const ok = await recordModelCall(supabase, { companyId: String(company_id), runId: ledgerRowId, callSite: "public-baseline-authorship", usage: e.usage, attempt: 1, promptSha: e.promptSha });
+        authorshipTally.calls += 1;
+        if (!ok) authorshipTally.ledger_failed += 1;
+        return ok;
+      };
+      const authorshipTransport = authorshipOllamaUrl ? ollamaAuthorshipTransport(authorshipOllamaUrl) : null;
       const gate = await demoteAggregatorSelfVoiceInResult(result as Record<string, unknown>, {
         subjectName: company_name,
         subjectHost: authorshipSubjectHost,
-        judge: authorshipOllamaUrl
-          ? (input) => judgeAggregatorAuthorship(input, { ollamaUrl: authorshipOllamaUrl, model: Deno.env.get("OLLAMA_MODEL") || undefined })
+        judge: authorshipTransport
+          ? (input) => judgeAggregatorAuthorship(input, { transport: authorshipTransport, ledger: authorshipLedger, model: Deno.env.get("OLLAMA_MODEL") || undefined })
           : () => Promise.resolve({ verdict: "judge_failed" as const, entity: null, reason: "local Ollama URL unavailable (local-only policy) — label left unchanged.", model: "none" }),
         log: (s) => console.log(`[baseline] authorship: ${s}`),
       });
       result = gate.result;
-      console.log(`[baseline] authorship gate: ${JSON.stringify(gate.stats)}`);
+      runLedger.authorship_model_calls = authorshipTally;
+      console.log(`[baseline] authorship gate: ${JSON.stringify(gate.stats)} model_calls=${JSON.stringify(authorshipTally)}`);
     }
     const discoveredProfileEvidence = [...socialEvidenceMerged, ...manualSeedEvidence]
       .filter((entry) => String(entry?.url || "").trim().length > 0)

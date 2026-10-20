@@ -44,7 +44,10 @@ export const MODEL_CALL_SITES: readonly ModelCallSite[] = [
   { site: "competitor-discovery", provider: "anthropic", role: "competitor web search", captured: false, note: "content blocks read, usage dropped" },
   { site: "extract-client-voice", provider: "openai", role: "client-voice regeneration", captured: false, note: "data.usage never read" },
   // R4 (2026-10-18): both roles (generator, judge) ledgered per attempt through _shared/outsideRegenModel.ts.
-  { site: "extract-outside-evidence", provider: "openai", role: "outside-evidence regeneration (generator + judge; R32 speaker judge on ollama, call_site :speaker, usd null)", captured: true },
+  { site: "extract-outside-evidence", provider: "openai", role: "outside-evidence regeneration (generator + judge; R32 speaker judge on ollama, call_site :speaker, usd null; R38 band judge :syndication; R53 authorship judge :authorship)", captured: true },
+  // R53 (2026-10-20): the authorship judge ledgers on every path — one row per call before parse (ollama, usd null).
+  { site: "public-baseline-authorship", provider: "ollama", role: "baseline aggregator authorship judge (run_id = the long_runner_runs row)", captured: true },
+  { site: "restamp-aggregator-self-voice", provider: "ollama", role: "self-voice restamp dry-run authorship judge (run_id null)", captured: true },
 ] as const;
 
 export type CostCoverage = { captured: number; total: number; uncaptured: string[]; complete: boolean };

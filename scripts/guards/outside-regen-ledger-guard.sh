@@ -28,6 +28,15 @@
 #   l8. (R41/R43) the page budget: 8 per write call, continuation under the same run_id; a URL is done when any integrity
 #       row for the run names it processed (processed_urls) or a signal carries the run_id — an empty page is never re-run.
 #   l9. (R42) the speaker context reaches past the paragraph (every sentence naming the speaker, capped).
+#   l10. (R38) the syndication band judge is ledgered the same way (role syndication, before parse).
+#   l11. (R53) the AUTHORSHIP judge obeys R4 on every path that calls it: the ledger is a REQUIRED argument (type and
+#       runtime), written before parse; extract-outside-evidence (role authorship, on the run's tally), public-baseline
+#       (call_site public-baseline-authorship, run_id the long_runner_runs row, tally on run_ledger) and the restamp dry
+#       run (call_site restamp-aggregator-self-voice, keyed to the row's company, tally in the body) each wire it. Probe
+#       scripts/guards/regen-authorship-ledger-probe.ts: on every seam ledger rows == judge calls (and == the regen
+#       tally); an unparseable answer still writes its row; no ledger => throws with zero transport calls. Data: every
+#       r3_outside_regen row whose tally names authorship calls has at least that many rows (less ledger_failed) at
+#       extract-outside-evidence:authorship in its window - "no runs" until then, NOT counted as a pass.
 #   l3. DATA — for every integrity_runs row of component r3_outside_regen ran AFTER the fix landed, the
 #       model_calls rows at call_site extract-outside-evidence:* for that company inside the run's window
 #       must number at least the pages processed. UNTIL b3 RUNS there are no such rows: this prints
@@ -39,6 +48,8 @@
 #   P2  the module records openaiRecord(model, null) — usage dropped            => l2 usd_all_nonnull true → false
 #   P2b the function carries a raw fetch to api.openai.com again                => l1 red
 #   (R8, 2026-10-18: the handler moved to _shared/outsideRegenHandler.ts; l1 reads both files)
+#   P5  judgeAggregatorAuthorship's success-path ledger write commented out (R53, 2026-10-20)
+#                                                                               => l11 regen ledger_rows 1 -> 0 (calls 1)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -150,7 +161,13 @@ PY
 SY=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-syndication-probe.ts 2>&1 | tail -1)
 [ "$(echo "$SY" | jq_ "d.get('band_judge_calls')==d.get('syndication_ledger_rows')==d.get('tally_syndication')==1")" = "True" ] || fail l10 "band judge calls, syndication ledger rows and the tally disagree: $SY"
 echo "l10. R38 syndication ledger: $SY"
-grep -q 'if (opts.ledger) await opts.ledger(' supabase/functions/_shared/aggregatorAuthorship.ts || fail l6 "judgeSpeaker does not ledger before parse"
+# R53: the speaker ledger is required now — the call is unconditional, still before parse
+python3 - supabase/functions/_shared/aggregatorAuthorship.ts <<'PYL6' || exit 1
+import sys; s=open(sys.argv[1]).read()
+i=s.index('export async function judgeSpeaker('); body=s[i:i+2400]
+assert 'ledger: SpeakerLedger;' in body, "FAIL step l6: the speaker ledger is optional again"
+assert body.index('await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens') < body.index('JSON.parse('), "FAIL step l6: judgeSpeaker parses before it ledgers"
+PYL6
 T=$(NO_COLOR=1 deno test --allow-all --no-check supabase/functions/_shared/speakerJudge.test.ts 2>&1 | grep -E '^ok \||^FAILED \|' | tail -1 || true)
 echo "$T" | grep -q '^ok |' || fail l6 "speakerJudge tests: ${T:-no summary}"
 echo "l6. R32 speaker ledger: $SP · $T"
@@ -182,4 +199,54 @@ echo "l8. R41/R43 probe: $BP"
 SC=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-speaker-context-probe.ts 2>&1 | tail -1)
 [ "$(echo "$SC" | jq_ "str(d.get('context_has_affiliation'))+'|'+str(d.get('speaker_class'))+'|'+str(d.get('voice_class'))")" = "True|subject_company_officer|client_voice" ] || fail l9 "the Brierley fixture did not resolve: $SC"
 echo "l9. R42 probe: $SC"
+
+# l11 — R53: the authorship judge is ledgered on every path (required ledger, before parse), proven on all three seams.
+A=supabase/functions/_shared/aggregatorAuthorship.ts
+python3 - "$A" <<'PYL11' || exit 1
+import re, sys; s=open(sys.argv[1]).read()
+i=s.index('export async function judgeAggregatorAuthorship('); body=s[i:s.index('\n}\n', i)]
+# R53 fix: match LIVE code only — block comments and // comments are stripped first, so a commented-out ledger write
+# is absent here (Living Memory, Oct 16: a source guard asserts a live call, not the presence of text)
+body=re.sub(r'/\*.*?\*/', '', body, flags=re.S)
+body='\n'.join(re.sub(r'(^|\s)//.*$', '', l) for l in body.split('\n'))
+assert 'ledger: AuthorshipLedger;' in body[:400], "FAIL step l11: the authorship ledger is not a required argument"
+assert 'if (typeof opts?.ledger !== "function") throw' in body, "FAIL step l11: no runtime refusal of a missing ledger"
+LIVE='await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens'
+assert LIVE in body, "FAIL step l11: the success-path ledger write is not live code (missing or commented out)"
+t=body.index('await opts.transport('); l=body.index(LIVE); p=body.index('JSON.parse(')
+assert t < l < p, "FAIL step l11: execution order is not transport -> ledger -> parse"
+assert 'callClassifier(' not in body, "FAIL step l11: the judge calls the unledgered classifier directly"
+PYL11
+grep -q 'callSite: regenCallSite("authorship")' "$H" || fail l11 "the handler does not ledger the authorship judge"
+grep -q '"generator" | "judge" | "speaker" | "syndication" | "authorship"' "$MOD" || fail l11 "the ledger roles do not name authorship"
+grep -q 'judgeAggregatorAuthorship(input, { transport, ledger,' "$FN" || fail l11 "extract-outside-evidence does not pass the run ledger to the authorship judge"
+PB=supabase/functions/public-baseline/index.ts
+grep -q 'judgeAggregatorAuthorship(input, { transport: authorshipTransport, ledger: authorshipLedger,' "$PB" || fail l11 "public-baseline does not pass a ledger to the authorship judge"
+grep -q 'callSite: "public-baseline-authorship"' "$PB" || fail l11 "public-baseline's authorship ledger is not recordModelCall at public-baseline-authorship"
+grep -q 'runLedger.authorship_model_calls = authorshipTally' "$PB" || fail l11 "public-baseline does not carry the authorship tally on its run ledger"
+RS=supabase/functions/restamp-aggregator-self-voice/index.ts
+grep -q 'callSite: "restamp-aggregator-self-voice"' "$RS" || fail l11 "the restamp dry run's authorship ledger is not recordModelCall"
+grep -q 'model_calls: tally' "$RS" || fail l11 "the restamp dry run does not return its tally"
+N=$(grep -rn 'judgeAggregatorAuthorship(' supabase/functions --include=index.ts | wc -l | tr -d ' ')
+[ "$N" = "3" ] || fail l11 "served callers of the authorship judge != 3 ($N) — a new caller must be wired and named here"
+{ grep -q 'site: "public-baseline-authorship".*captured: true' "$REG" && grep -q 'site: "restamp-aggregator-self-voice".*captured: true' "$REG"; } || fail l11 "registry lines for the authorship sites are not captured: true"
+AP=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-authorship-ledger-probe.ts 2>/dev/null | tail -1)
+[ -n "$AP" ] || fail l11 "probe printed nothing"
+[ "$(echo "$AP" | jq_ "d['regen']['judge_calls']>=1 and d['regen']['judge_calls']==d['regen']['ledger_rows']==d['regen']['tally_authorship']")" = "True" ] || fail l11 "regen: authorship calls, ledger rows and the tally disagree: $AP"
+[ "$(echo "$AP" | jq_ "d['regen']['call_site_ok'] and d['regen']['provider']=='ollama' and d['regen']['usd'] is None and d['regen']['sha_hex64']")" = "True" ] || fail l11 "regen: row shape (call site / ollama / usd null / sha): $AP"
+[ "$(echo "$AP" | jq_ "d['baseline']['judge_calls']>=1 and d['baseline']['judge_calls']==d['baseline']['ledger_rows']")" = "True" ] || fail l11 "baseline seam: authorship calls != ledger rows: $AP"
+[ "$(echo "$AP" | jq_ "d['restamp']['judge_calls']>=1 and d['restamp']['judge_calls']==d['restamp']['ledger_rows'] and d['restamp']['keyed_to_company']")" = "True" ] || fail l11 "restamp plan: authorship calls != ledger rows (or not keyed to the company): $AP"
+[ "$(echo "$AP" | jq_ "d['unparseable']['verdict']=='judge_failed' and d['unparseable']['ledger_rows']==1")" = "True" ] || fail l11 "an unparseable answer did not write its row (ledger before parse): $AP"
+[ "$(echo "$AP" | jq_ "d['no_ledger']['threw'] and d['no_ledger']['transport_calls']==0")" = "True" ] || fail l11 "a call with no ledger reached the model: $AP"
+echo "l11. R53 authorship ledger probe: $AP"
+# l11 data — never a silent pass (l3's window rule)
+ASTAND=$(psql "select count(*) from model_calls where call_site in ('extract-outside-evidence:authorship','public-baseline-authorship','restamp-aggregator-self-voice')")
+ARUNS=$(psql "select count(*) from integrity_runs where component='r3_outside_regen' and coalesce((excluded_by_rule->'model_calls'->>'authorship')::int,0) > 0")
+if [ "$ARUNS" = "0" ]; then
+  echo "l11. data: no regen run has made an authorship call since R53 — nothing to compare, NOT a pass. standing authorship ledger rows: $ASTAND"
+else
+  ABAD=$(psql "select count(*) from integrity_runs r where r.component='r3_outside_regen' and coalesce((r.excluded_by_rule->'model_calls'->>'authorship')::int,0) > 0 and (r.excluded_by_rule->'model_calls'->>'authorship')::int - coalesce((r.excluded_by_rule->'model_calls'->>'ledger_failed')::int,0) > (select count(*) from model_calls m where m.company_id=r.company_id and m.call_site='extract-outside-evidence:authorship' and m.created_at between r.ran_at - interval '5 seconds' and r.ran_at + interval '400 seconds')")
+  [ "$ABAD" = "0" ] || fail l11 "$ABAD regen run(s) tallied more authorship calls than model_calls rows at extract-outside-evidence:authorship"
+  echo "l11. data: $ARUNS regen run(s) with authorship calls, every call has its model_calls row; standing authorship ledger rows: $ASTAND"
+fi
 echo "GUARD OK"

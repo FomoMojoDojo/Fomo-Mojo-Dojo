@@ -18,7 +18,7 @@ import { sha256Hex } from "./contentIdentity.ts";
 import { type ModelCallRecord, openaiRecord } from "./recordModelCall.ts";
 import type { OpenAIUsage } from "./modelPricing.ts";
 
-export type RegenRole = "generator" | "judge" | "speaker" | "syndication";   // R32: the speaker judge (ollama) is ledgered too; R38: the syndication band judge (ollama) too
+export type RegenRole = "generator" | "judge" | "speaker" | "syndication" | "authorship";   // R32: the speaker judge (ollama) is ledgered too; R38: the syndication band judge (ollama) too; R53: the authorship judge (ollama) too
 export const REGEN_CALL_SITE = "extract-outside-evidence";
 /** The model_calls.call_site for a role — the registry's site id, suffixed like generate-public-read's. */
 export function regenCallSite(role: RegenRole): string {
@@ -40,9 +40,9 @@ export type RegenLedgerEntry = {
 export type RegenLedger = (entry: RegenLedgerEntry) => Promise<boolean>;
 
 /** The per-run tally the function writes into its integrity row (excluded_by_rule.model_calls). */
-export type RegenTally = { generator: number; judge: number; speaker: number; syndication: number; usd: number; ledger_failed: number };
+export type RegenTally = { generator: number; judge: number; speaker: number; syndication: number; authorship: number; usd: number; ledger_failed: number };
 export function emptyTally(): RegenTally {
-  return { generator: 0, judge: 0, speaker: 0, syndication: 0, usd: 0, ledger_failed: 0 };
+  return { generator: 0, judge: 0, speaker: 0, syndication: 0, authorship: 0, usd: 0, ledger_failed: 0 };
 }
 export function addToTally(t: RegenTally, e: RegenLedgerEntry, written: boolean): RegenTally {
   t[e.role] += 1;

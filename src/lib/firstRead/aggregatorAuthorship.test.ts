@@ -12,6 +12,7 @@ import {
   applyRestamp,
   judgeAggregatorAuthorship,
   matchAggregatorProfileUrl,
+  ollamaAuthorshipTransport,
   planRestamp,
   RestampRefusedError,
   type AuthorshipJudge,
@@ -135,9 +136,15 @@ describe("AUTHORSHIP decides the label (ingest branch)", () => {
 
 describe("local judge transport — verbatim-or-nothing, fail toward judge_failed", () => {
   const INPUT = { ...SUBJECT, url: OVERVIEW_URL, text: COMPANY_COPY };
-  const OPTS = { ollamaUrl: "http://localhost:11434/v1" };
+  // R53: the judge takes the transport and a REQUIRED ledger; each test asserts one ledger row per call.
+  let ledgerRows: Array<{ usage: { provider: string; prompt_tokens: number | null }; promptSha: string }> = [];
+  const OPTS = {
+    transport: ollamaAuthorshipTransport("http://localhost:11434/v1"),
+    ledger: async (e: { usage: { provider: string; prompt_tokens: number | null }; promptSha: string }) => { ledgerRows.push(e); return true; },
+  };
   const withFetch = async (stub: typeof fetch, run: () => Promise<void>) => {
     vi.stubGlobal("fetch", stub);
+    ledgerRows = [];
     try { await run(); } finally { vi.unstubAllGlobals(); }
   };
   const okResp = (content: string) => new Response(JSON.stringify({ message: { content } }), { status: 200 });
@@ -149,12 +156,16 @@ describe("local judge transport — verbatim-or-nothing, fail toward judge_faile
         const r = await judgeAggregatorAuthorship(INPUT, OPTS);
         expect(r.verdict).toBe("subject_company");
         expect(r.reason).toBe("first-person company boilerplate");
+        expect(ledgerRows.length).toBe(1);
+        expect(ledgerRows[0].usage.provider).toBe("ollama");
+        expect(ledgerRows[0].promptSha).toMatch(/^[0-9a-f]{64}$/);
       },
     );
   });
   it("unparseable output → judge_failed", async () => {
     await withFetch((() => Promise.resolve(okResp("not json"))) as typeof fetch, async () => {
       expect((await judgeAggregatorAuthorship(INPUT, OPTS)).verdict).toBe("judge_failed");
+      expect(ledgerRows.length, "ledgered before parse: an unparseable answer still cost").toBe(1);
     });
   });
   it("verdict without a reason → judge_failed (verbatim-or-nothing)", async () => {
@@ -165,6 +176,12 @@ describe("local judge transport — verbatim-or-nothing, fail toward judge_faile
   it("HTTP failure → judge_failed", async () => {
     await withFetch((() => Promise.resolve(new Response("boom", { status: 500 }))) as typeof fetch, async () => {
       expect((await judgeAggregatorAuthorship(INPUT, OPTS)).verdict).toBe("judge_failed");
+      expect(ledgerRows.length, "a failed call is ledgered with null usage").toBe(1);
+      expect(ledgerRows[0].usage.prompt_tokens).toBeNull();
+      // R53: no ledger ⇒ the judge throws before any call (the type forbids it; the cast proves the runtime check)
+      const before = ledgerRows.length;
+      await expect(judgeAggregatorAuthorship(INPUT, { transport: OPTS.transport } as unknown as typeof OPTS)).rejects.toThrow(/ledger is required/);
+      expect(ledgerRows.length).toBe(before);
     });
   });
 });

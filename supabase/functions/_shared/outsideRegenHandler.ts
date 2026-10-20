@@ -19,7 +19,7 @@ import { gateRegenUrls, requireRunId } from "./outsideRecrawlReview.ts";
 import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
 import { admitOutsideEvidence, detectAttribution, isBareAttribution, snapshotReadDate } from "./outsideEvidenceRegen.ts";
 import { regenCallSite } from "./outsideRegenModel.ts";
-import type { SpeakerJudge, SpeakerLedger } from "./aggregatorAuthorship.ts";
+import type { AuthorshipLedger, SpeakerJudge, SpeakerLedger } from "./aggregatorAuthorship.ts";
 import { finishIntegrityRun, insertIntegrityRun, IntegrityWriteRefused, openIntegrityRun } from "./integrityWrite.ts";
 import { sanitizeForStore, sanitizeNullable } from "./sanitizeForStore.ts";
 import { BODY_MODE_GUARD, classifyBodyMode } from "./bodyMode.ts";
@@ -116,7 +116,7 @@ export type RegenDeps = {
   makeLedger: (companyId: string) => RegenLedger;
   /** The local authorship judge, built ONLY on the write path like the transport; null when none is wired —
    *  under REGEN_JUDGE_FAILURE_POLICY every gated URL is then refused, never minted outside. */
-  makeJudge: () => RegenJudge | null;
+  makeJudge: (ledger: AuthorshipLedger) => RegenJudge | null;   // R53: built with the run's ledger; every call writes a model_calls row before parse
   /** R32: the speaker judge, built with the run's ledger so every call writes a model_calls row before parse. Null ⇒ attributed candidates are refused. */
   makeSpeakerJudge?: (ledger: SpeakerLedger) => SpeakerJudge | null;
   /** R38: the syndication band judge (llama3:70b on the operator's Ollama), built with the run's ledger (role "syndication").
@@ -368,7 +368,6 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   // The seams, built once per run and ONLY here. A missing key refuses before any attempt. The judge may be
   // null: then every gated URL's excerpts are refused under REGEN_JUDGE_FAILURE_POLICY, never minted outside.
   const transport = deps.makeTransport();
-  const judge = deps.makeJudge();
   // R36 (b): the run's integrity row is OPENED (status running) before the first page — a refused open refuses the run
   // before any mint; the row is FINISHED with the full payload at the end, and a refused finish leaves it failed with the
   // error, never no row.
@@ -389,6 +388,9 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   const speakerJudge: SpeakerJudge | null = deps.makeSpeakerJudge ? deps.makeSpeakerJudge((e) => ledger({ role: "speaker", callSite: regenCallSite("speaker"), usage: e.usage, attempt: 1, promptSha: e.promptSha })) : null;
   // R38: the band judge ledgers through the same tallying ledger, role "syndication", call site extract-outside-evidence:syndication
   const syndicationJudge: SyndicationJudge | null = deps.makeSyndicationJudge ? deps.makeSyndicationJudge((e) => ledger({ role: "syndication", callSite: regenCallSite("syndication"), usage: e.usage, attempt: 1, promptSha: e.promptSha })) : null;
+  // R53: the authorship judge ledgers through the same tallying ledger, role "authorship", call site extract-outside-evidence:authorship.
+  // Built here, after the ledger, rather than before the integrity row opens: the judge makes no call until the first gated excerpt.
+  const judge: RegenJudge | null = deps.makeJudge((e) => ledger({ role: "authorship", callSite: regenCallSite("authorship"), usage: e.usage, attempt: 1, promptSha: e.promptSha }));
   // R38: the client corpus ONCE per write call — every client_voice / own-domain / company-claim row of the company, the rows
   // minted under THIS run excluded so no candidate scores against itself. The baseline's own builder, the same rule.
   const corpus = await buildClientCorpus(supabase, company_id, company.host ?? "", [], (row) => String(row.raw_payload?.run_id ?? "") === runId);
@@ -566,7 +568,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   try {
     await finishIntegrityRun(supabase, integrityId, {
       status: stoppedForTime ? "failed" : "completed", examined: candidates_total, admitted: admitted_total,
-      // R4: the run's model-call tally beside its counts — {generator, judge, speaker, usd, ledger_failed}.
+      // R4: the run's model-call tally beside its counts — {generator, judge, speaker, syndication, authorship, usd, ledger_failed}.
       // R17: the voice refusals — excerpts not minted because a gated URL could not be judged; retried next run.
       excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true, mode, model_calls: tally, voice_refused_total, voice_refusals: voiceRefusals, judge_wired: judge !== null, speaker_judge_wired: speakerJudge !== null, syndication_judge_wired: syndicationJudge !== null, corpus_texts: corpus.texts.length, voice_policy: REGEN_JUDGE_FAILURE_POLICY, anchors_used: anchors, candidates: candidateRecords, processed_urls: processedUrls, opened_at: openedAt, finished_at: nowIso(), pages_budget: REGEN_PAGE_BUDGET, pages_done: processed, done_before: doneUrls.length, remaining },
     });

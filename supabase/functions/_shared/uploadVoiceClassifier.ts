@@ -72,7 +72,13 @@ function buildClassifyUser(doc: { file_name: string; file_type: string; excerpt:
   );
 }
 
-export async function callClassifier(ollamaUrl: string, model: string, system: string, user: string): Promise<string> {
+/** The one local classifier request (Ollama /api/chat, JSON mode), returning the content AND the token counts
+ *  (prompt_eval_count / eval_count) so a ledgered caller can write its model_calls row. Never throws on an empty
+ *  answer — the caller decides; throws on a transport failure or a non-ok status. R53 (2026-10-20): factored out of
+ *  callClassifier so the authorship judge can ledger; the request body is byte-identical. */
+export async function callClassifierWithUsage(
+  ollamaUrl: string, model: string, system: string, user: string,
+): Promise<{ content: string; prompt_tokens: number | null; completion_tokens: number | null }> {
   const nativeBase = ollamaUrl.replace(/\/v1\/?$/, "");
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), CLASSIFY_TIMEOUT_MS);
@@ -93,13 +99,18 @@ export async function callClassifier(ollamaUrl: string, model: string, system: s
       signal: ctrl.signal,
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json().catch(() => ({}));
-    const content = String((data as { message?: { content?: unknown } })?.message?.content ?? "");
-    if (!content) throw new Error("empty content");
-    return content;
+    const data = await resp.json().catch(() => ({})) as { message?: { content?: unknown }; prompt_eval_count?: unknown; eval_count?: unknown };
+    const n = (v: unknown) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
+    return { content: String(data?.message?.content ?? ""), prompt_tokens: n(data?.prompt_eval_count), completion_tokens: n(data?.eval_count) };
   } finally {
     clearTimeout(t);
   }
+}
+
+export async function callClassifier(ollamaUrl: string, model: string, system: string, user: string): Promise<string> {
+  const { content } = await callClassifierWithUsage(ollamaUrl, model, system, user);
+  if (!content) throw new Error("empty content");
+  return content;
 }
 
 // Pure single-document classification. Fail-toward-external is enforced HERE — the

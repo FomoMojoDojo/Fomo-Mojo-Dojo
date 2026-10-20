@@ -31,7 +31,7 @@ import { recordModelCall } from "../_shared/recordModelCall.ts";
 import { type RegenLedger, type RegenTransport } from "../_shared/outsideRegenModel.ts";
 import { runOutsideRegen, type RegenJudge } from "../_shared/outsideRegenHandler.ts";
 import { genSystem, judgeSystem, QUOTE_MAX_WORDS } from "../_shared/outsideRegenPrompts.ts";
-import { judgeAggregatorAuthorship, judgeSpeaker, ollamaSpeakerTransport, resolveLocalOllamaUrl, type SpeakerJudge, type SpeakerLedger } from "../_shared/aggregatorAuthorship.ts";
+import { judgeAggregatorAuthorship, judgeSpeaker, ollamaAuthorshipTransport, ollamaSpeakerTransport, resolveLocalOllamaUrl, type AuthorshipLedger, type SpeakerJudge, type SpeakerLedger } from "../_shared/aggregatorAuthorship.ts";
 import { isLocalOllamaUrl } from "../_shared/uploadVoiceClassifier.ts";
 import { judgeSyndicationBand, ollamaSyndicationTransport, SYNDICATION_BAND_MODEL, type SyndicationJudge, type SyndicationLedger } from "../_shared/syndication.ts";
 
@@ -65,11 +65,13 @@ function makeTransport(): RegenTransport {
 }
 /** R17: the local authorship judge (the same one public-baseline wires), built ONLY on the write path. Null when
  *  no local Ollama URL resolves — the handler then REFUSES every gated URL's excerpts (REGEN_JUDGE_FAILURE_POLICY)
- *  rather than minting them as the record speaking. */
-function makeJudge(): RegenJudge | null {
+ *  rather than minting them as the record speaking. R53: built with the run's ledger; every call writes a model_calls
+ *  row (provider ollama, role authorship, token counts from the response, usd null) before its answer is parsed. */
+function makeJudge(ledger: AuthorshipLedger): RegenJudge | null {
   const ollamaUrl = resolveLocalOllamaUrl();
   if (!ollamaUrl) return null;
-  return (input) => judgeAggregatorAuthorship(input, { ollamaUrl, model: Deno.env.get("OLLAMA_MODEL") || undefined });
+  const transport = ollamaAuthorshipTransport(ollamaUrl);
+  return (input) => judgeAggregatorAuthorship(input, { transport, ledger, model: Deno.env.get("OLLAMA_MODEL") || undefined });
 }
 /** R32: the local speaker judge, built ONLY on the write path with the run's ledger; every call writes a model_calls row
  *  (provider ollama, token counts from the response, usd null) before its answer is parsed. Null when no local Ollama
