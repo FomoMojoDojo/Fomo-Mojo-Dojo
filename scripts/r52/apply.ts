@@ -11,14 +11,15 @@
 //       judges — real model calls, each writing its model_calls row — and each authorship prompt's CONTEXT block, verdict
 //       and reason are printed — and (R55) each speaker call's sentence, attribution, speaker string, paragraph and answer.
 //       Writes NOTHING else: no integrity row, no audit row, no stamp, no class.
-//   deno run --allow-all scripts/r52/apply.ts --probe --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|p11|p12|plan-seed|apply-revert>
+//   deno run --allow-all scripts/r52/apply.ts --probe --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|p11|p12|p13|p14|p15|p16|plan-seed|apply-revert>
 //       GUARD PROBES on a throwaway company SEEDED INSIDE the probe's transaction, with FAKE local transports (no model
 //       is reachable): everything — seed, ledger rows, audit rows, integrity rows — is ROLLED BACK. One JSON line out.
 // The mode is named or refused (classifyBodyMode) — there is no default.
 import {
   applyCompany, assertCompanyWritable, assertInPlan, companyCtx, companyOrder, deriveRow, emptyTally, ledgeredJudges, localTransports, namedMode, planCompany, readReviewed, revertCompany,
-  SweepRefusedError, type ReviewedRow, type Transports,
+  shippedPromptSha, SweepRefusedError, type ReviewedRow, type Transports,
 } from "./sweepCore.ts";
+import { CLASSIFIER_MODEL } from "../../supabase/functions/_shared/uploadVoiceClassifier.ts";
 import { lit, makePsqlSweepStore, PsqlSession } from "./psqlSweepStore.ts";
 
 const out = (o: unknown) => console.log(JSON.stringify(o));
@@ -118,7 +119,7 @@ try {
     const r = await applyCompany(store, { group, runRef: String(body.run_ref ?? ""), reviewedMd5s: reviewed.md5s, transports: localTransports(), nested: false, log: (s) => console.error(s) });
     out({ mode: "apply", ...r, outcomes: undefined, outcome_counts: { changed: r.changed, unknown: r.unknown, unchanged: r.rows - r.changed - r.unknown - r.refused, refused: r.refused } });
   } else {
-    if (typeof body.name !== "string" || !body.name) throw new SweepRefusedError("no_probe_name", "--probe needs --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|p11|p12|plan-seed|apply-revert>");
+    if (typeof body.name !== "string" || !body.name) throw new SweepRefusedError("no_probe_name", "--probe needs --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|p11|p12|p13|p14|p15|p16|plan-seed|apply-revert>");
     const probe = body.name;
     await session.exec("begin;");
     const before = { model_calls: await count("select 1 from model_calls"), integrity_runs: await count("select 1 from integrity_runs"), restamps: await count("select 1 from signal_voice_restamps"), signals: await count("select 1 from signals") };
@@ -203,6 +204,51 @@ try {
       const r = await applyCompany(store, { group: g12, runRef: RUN, reviewedMd5s: ["probe"], transports: fakeTransports(counter, "subject_company", "mixed"), nested: true });
       const B = await sigRow(s.b);
       result = { kind: r.outcomes[0]?.kind ?? null, class: B.voice_class, unknown_reason: B.r52_unknown, audit_rows: await count(`select 1 from signal_voice_restamps where company_id=${lit(Z)}::uuid and run_ref=${lit(RUN)}`), transport_calls: counter.n, tally: r.model_calls };
+    } else if (probe === "p13" || probe === "p14" || probe === "p15") {
+      // R58: a stored verdict replays only when ITS OWN recorded prompt sha + model equal the current ones; the ledger is not
+      // consulted. Row A gets a stored authorship verdict (subject_company, the classifier model) and the fake judge answers
+      // third_party, so a replay and a fresh call are told apart by the verdict as well as by the transport count:
+      //   p13 no recorded sha, the CURRENT sha in the company ledger  → fresh call, replay_refused:verdict_sha_not_recorded
+      //   p14 recorded sha == current, NO ledger row                 → replayed, no call
+      //   p15 recorded sha != current, the current sha in the ledger  → fresh call, replay_refused:verdict_sha_differs
+      const [co0] = await store.loadCompanies([Z]);
+      const [a0] = await store.loadSignals([s.a]);
+      let current = "";
+      const capture = { band: () => Promise.resolve({ syndicated: false, model: "probe" }), speaker: () => Promise.resolve(null),
+        authorship: async (i: unknown) => { current = await shippedPromptSha("authorship", i as never); return { verdict: "uncertain", entity: null, reason: "capture", model: "probe" }; } };
+      await deriveRow(store, await companyCtx(store, co0), a0, "b3", capture as never);
+      const stored = { verdict: "subject_company", entity: null, reason: `guard ${probe}: the verdict already on the row`, model: CLASSIFIER_MODEL,
+        ...(probe === "p14" ? { prompt_sha: current } : probe === "p15" ? { prompt_sha: "0".repeat(64) } : {}) };
+      await session.mutate(`update signals set raw_payload = raw_payload || ${lit(JSON.stringify({ authorship_judge: stored }))}::jsonb where id=${lit(s.a)}::uuid returning id`);
+      if (probe !== "p14") await session.mutate(`insert into model_calls (company_id, run_id, call_site, provider, model, prompt_tokens, completion_tokens, usd, attempt, prompt_sha) values (${lit(Z)}::uuid, null, 'r52-voice-sweep:authorship', 'ollama', ${lit(CLASSIFIER_MODEL)}, 1, 1, null, 1, ${lit(current)}) returning id`);
+      const [a1] = await store.loadSignals([s.a]);
+      const d = await deriveRow(store, await companyCtx(store, co0), a1, "b3", ledgeredJudges(store, Z, emptyTally(), fakeTransports(counter, "third_party")));
+      const c = d.calls.find((x) => x.judge === "authorship") ?? null;
+      const transport_calls = counter.n;
+      // p13: the stamp names the refusal — apply re-derives the same row and stamps every consultation
+      let stamp_replay_refused: unknown = "not run";
+      if (probe === "p13") {
+        const ap = await refusal(() => applyCompany(store, { group: { company_id: Z, company: "ZZ R52 Guard", rows: [reviewedRow(Z, "ZZ R52 Guard", s.a, "authorship")] }, runRef: RUN, reviewedMd5s: ["probe"], transports: fakeTransports({ n: 0 }, "third_party"), nested: true }));
+        const st = (await sigRow(s.a)).r52 as { calls?: Array<Record<string, unknown>> } | null;
+        stamp_replay_refused = ap.refused ? `apply refused: ${ap.code}` : (st?.calls ?? []).find((x) => x.judge === "authorship")?.replay_refused ?? null;
+      }
+      const dec = d.decision.ok ? d.decision : null;
+      result = { current_sha: current.slice(0, 16), transport_calls, replayed: c?.replayed ?? null, replay: c?.replay ?? null, verdict: dec?.authorship_judge?.verdict ?? null,
+        call_sha_is_current: !!c && (c as { prompt_sha?: string | null }).prompt_sha === current, stamp_replay_refused };
+    } else if (probe === "p16") {
+      // R58: apply's stamp keeps the prompt sha beside every judgment, its call records name it, and the audit row of a class
+      // change carries judge_prompt_sha — each equal to a model_calls row's prompt_sha of this probe
+      await applyCompany(store, { group, runRef: RUN, reviewedMd5s: ["probe"], transports: fakeTransports(counter), nested: true });
+      const ledger = (await session.query<{ call_site: string; prompt_sha: string }>(`select call_site, prompt_sha from model_calls where company_id=${lit(Z)}::uuid`)).map((r) => r.prompt_sha);
+      const stamps = [await sigRow(s.a), await sigRow(s.b)].map((r) => r.r52 as { judgments?: Array<Record<string, unknown>>; calls?: Array<Record<string, unknown>> } | null);
+      const judgments = stamps.flatMap((st) => st?.judgments ?? []);
+      const calls = stamps.flatMap((st) => (st?.calls ?? []).filter((x) => !x.nocall));
+      const audit = await session.query<{ judge_prompt_sha: string | null }>(`select judge_prompt_sha from signal_voice_restamps where company_id=${lit(Z)}::uuid and run_ref=${lit(RUN)}`);
+      const inLedger = (v: unknown) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v) && ledger.includes(v);
+      result = { ledger_rows: ledger.length, judgments: judgments.length, calls: calls.length, audit_rows: audit.length,
+        judgments_sha_ok: judgments.length > 0 && judgments.every((j) => inLedger(j.judge_prompt_sha)),
+        calls_sha_ok: calls.length === ledger.length && calls.every((x) => inLedger(x.prompt_sha)),
+        audit_sha_ok: audit.length === 1 && inLedger(audit[0].judge_prompt_sha) };
     } else if (probe === "p11") {
       // which apply run a revert undoes (2026-10-21): apply integrity rows seeded under three probe run_refs, ids ascending.
       // (A) older reverted, newer not → the NEWER is selected, and the revert names it on its own row, after which

@@ -37,7 +37,10 @@ import { FROZEN_COMPANY_IDS } from "./frozenCompanies.ts";
 /** no_page_words (R54): the text could not be placed on a stored page, so the judge was NOT asked — no model call, no
  *  ledger row; every consumer treats it as "the label stands" (outcomeFor → null). Never accepted from the model. */
 export type AuthorshipVerdict = "subject_company" | "other_entity" | "third_party" | "uncertain" | "judge_failed" | "no_page_words";
-export type AuthorshipJudgment = { verdict: AuthorshipVerdict; entity: string | null; reason: string; model: string };
+export type AuthorshipJudgment = { verdict: AuthorshipVerdict; entity: string | null; reason: string; model: string;
+  /** R58: sha256 of the exact system + user prompt the verdict answered (null: no call was made — no_page_words); a
+   *  stored verdict replays only when this equals the prompt the shipped judge would send now */
+  prompt_sha?: string | null };
 /** What the judge may DO to a label: set client_voice, set competitor_voice, or nothing. */
 export type VoiceOutcome = "client_voice" | "competitor_voice" | null;
 // ── R54 (operator ruling, 2026-10-20): THE JUDGE SEES WHERE THE TEXT SITS ON THE PAGE ──────────────────────────────
@@ -447,7 +450,8 @@ const VERDICTS: ReadonlySet<string> = new Set(["subject_company", "other_entity"
 // with the attribution span and the surrounding paragraph, on the local model. Every call writes a model_calls row
 // (provider ollama, prompt/eval counts from the response, usd null) BEFORE the answer is parsed. Fail toward failure.
 export type SpeakerClass = "subject_company_officer" | "subject_company_text" | "third_party" | "unknown" | "mixed" | "judge_failed";
-export type SpeakerJudgment = { speaker_class: SpeakerClass; speaker_name: string | null; speaker_role: string | null; reason: string; model: string; /** R36 (a): a field carried U+0000 / a control character and was cleaned at parse */ sanitized?: true };
+export type SpeakerJudgment = { speaker_class: SpeakerClass; speaker_name: string | null; speaker_role: string | null; reason: string; model: string; /** R36 (a): a field carried U+0000 / a control character and was cleaned at parse */ sanitized?: true;
+  /** R58: sha256 of the exact system + user prompt the verdict answered */ prompt_sha?: string | null };
 export type SpeakerInput = { subjectName: string; subjectHost: string; url: string; candidate: string; attributionForm: string; attributionSpan: string; speakerString: string; context: string;
   /** R55e: the page context the authorship judge receives (authorshipContext, same constants) — REQUIRED, no default */
   pageContext: AuthorshipContext };
@@ -551,11 +555,11 @@ export async function judgeSpeaker(
     await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens, completion_tokens: r.completion_tokens, usd: null }, promptSha });
   } catch (err) {
     await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: null, completion_tokens: null, usd: null }, promptSha });
-    return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge call failed (${String((err as Error)?.message ?? err)})`, model };
+    return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge call failed (${String((err as Error)?.message ?? err)})`, model, prompt_sha: promptSha };
   }
   let parsed: { speaker_name?: unknown; speaker_role?: unknown; speaker_class?: unknown; reason?: unknown };
   try { const m = raw.match(/\{[\s\S]*\}/); parsed = JSON.parse(m ? m[0] : raw); } catch {
-    return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge output was unparseable. raw: ${raw.slice(0, 200)}`, model };
+    return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge output was unparseable. raw: ${raw.slice(0, 200)}`, model, prompt_sha: promptSha };
   }
   // R36 (a): the ONE sanitizer, at the parse boundary — speaker_name, speaker_role, reason
   const cls = String(parsed.speaker_class ?? "").trim();
@@ -563,8 +567,8 @@ export async function judgeSpeaker(
   const sName = sanitizeNullable(parsed.speaker_name), sRole = sanitizeNullable(parsed.speaker_role);
   const str = (s: string | null) => { const t = (s ?? "").trim(); return t && t.toLowerCase() !== "null" ? t : null; };
   const sanitized = sReason.changed || sName.changed || sRole.changed;
-  if (SPEAKER_CLASSES.has(cls) && reason) return { speaker_class: cls as SpeakerClass, speaker_name: str(sName.text), speaker_role: str(sRole.text), reason, model, ...(sanitized ? { sanitized: true as const } : {}) };
-  return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge returned a malformed answer (class '${cls || "empty"}')`, model };
+  if (SPEAKER_CLASSES.has(cls) && reason) return { speaker_class: cls as SpeakerClass, speaker_name: str(sName.text), speaker_role: str(sRole.text), reason, model, prompt_sha: promptSha, ...(sanitized ? { sanitized: true as const } : {}) };
+  return { speaker_class: "judge_failed", speaker_name: null, speaker_role: null, reason: `speaker judge returned a malformed answer (class '${cls || "empty"}')`, model, prompt_sha: promptSha };
 }
 
 // Pure single-statement judgment. FAIL TOWARD judge_failed is enforced HERE: the only way out is a
@@ -580,7 +584,7 @@ export async function judgeAggregatorAuthorship(
   const ctxKind = (input as { context?: { kind?: unknown } })?.context?.kind;
   if (ctxKind !== "page" && ctxKind !== "no_page") throw new Error("authorship judge: a page context is required (R54) — no model call made");
   const model = opts.model ?? CLASSIFIER_MODEL;
-  if (input.context.kind === "no_page") return { verdict: "no_page_words", entity: null, reason: `no_page_words: ${input.context.reason} — not judged; the label stands.`, model };
+  if (input.context.kind === "no_page") return { verdict: "no_page_words", entity: null, reason: `no_page_words: ${input.context.reason} — not judged; the label stands.`, model, prompt_sha: null };
   const tag = `${hostOf(input.url)} ${input.text.slice(0, 60)}`;
   const system = JUDGE_SYSTEM, user = buildJudgeUser(input);
   const sha = opts.sha ?? (async (t: string) => { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)); return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join(""); });
@@ -595,11 +599,11 @@ export async function judgeAggregatorAuthorship(
     await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: null, completion_tokens: null, usd: null }, promptSha });
     const msg = String((err as Error)?.message ?? err);
     console.warn(`[authorship] judge call failed → judge_failed (${tag}): ${msg}`);
-    return { verdict: "judge_failed", entity: null, reason: `judge call failed (${msg}) — label left unchanged.`, model };
+    return { verdict: "judge_failed", entity: null, reason: `judge call failed (${msg}) — label left unchanged.`, model, prompt_sha: promptSha };
   }
   if (!raw) {
     console.warn(`[authorship] judge call failed → judge_failed (${tag}): empty content`);
-    return { verdict: "judge_failed", entity: null, reason: "judge call failed (empty content) — label left unchanged.", model };
+    return { verdict: "judge_failed", entity: null, reason: "judge call failed (empty content) — label left unchanged.", model, prompt_sha: promptSha };
   }
   let parsed: { verdict?: unknown; entity?: unknown; reason?: unknown };
   try {
@@ -607,17 +611,17 @@ export async function judgeAggregatorAuthorship(
     parsed = JSON.parse(m ? m[0] : raw) as { verdict?: unknown; entity?: unknown; reason?: unknown };
   } catch {
     console.warn(`[authorship] unparseable model output → judge_failed (${tag})`);
-    return { verdict: "judge_failed", entity: null, reason: `judge output was unparseable — label left unchanged. raw: ${raw.slice(0, 200)}`, model };
+    return { verdict: "judge_failed", entity: null, reason: `judge output was unparseable — label left unchanged. raw: ${raw.slice(0, 200)}`, model, prompt_sha: promptSha };
   }
   const verdict = String(parsed.verdict ?? "").trim();
   const reason = String(parsed.reason ?? "").trim();
   const entityRaw = parsed.entity == null ? "" : String(parsed.entity).trim();
   const entity = entityRaw && entityRaw.toLowerCase() !== "null" ? entityRaw : null;
   if (VERDICTS.has(verdict) && reason) {
-    return { verdict: verdict as AuthorshipVerdict, entity, reason, model };
+    return { verdict: verdict as AuthorshipVerdict, entity, reason, model, prompt_sha: promptSha };
   }
   console.warn(`[authorship] malformed verdict → judge_failed (${tag}): verdict='${verdict}' reasonLen=${reason.length}`);
-  return { verdict: "judge_failed", entity: null, reason: `judge returned a malformed verdict ('${verdict || "empty"}') — label left unchanged.`, model };
+  return { verdict: "judge_failed", entity: null, reason: `judge returned a malformed verdict ('${verdict || "empty"}') — label left unchanged.`, model, prompt_sha: promptSha };
 }
 
 /** R53: the local authorship transport — the classifier's own request (callClassifierWithUsage), token counts read. */
@@ -804,6 +808,8 @@ export type AuditRow = {
   judge_entity: string | null;
   judge_reason: string;
   judge_model: string;
+  /** R58: the prompt sha the verdict answered (signal_voice_restamps.judge_prompt_sha) — null when the plan carried none */
+  judge_prompt_sha: string | null;
   source_url: string | null;
 };
 
@@ -943,6 +949,8 @@ export type PlanRow = {
   judge_entity: string | null;
   judge_reason: string;
   judge_model: string;
+  /** R58: the prompt sha the dry run's verdict answered (absent from a plan written before R58) */
+  judge_prompt_sha?: string | null;
 };
 
 /** Apply the REVIEWED plan (exactly the rows the operator kept). Frozen guard refuses the whole
@@ -992,12 +1000,12 @@ export async function applyRestamp(
     await store.insertAudit({
       company_id: s.company_id, signal_id: s.id, run_ref: runRef, ledger_run_id: ledger[s.company_id],
       old_voice_class: s.voice_class, new_voice_class: p.to,
-      judge_verdict: p.judge_verdict, judge_entity: p.judge_entity, judge_reason: p.judge_reason, judge_model: p.judge_model,
+      judge_verdict: p.judge_verdict, judge_entity: p.judge_entity, judge_reason: p.judge_reason, judge_model: p.judge_model, judge_prompt_sha: p.judge_prompt_sha ?? null,
       source_url: s.source_url,
     });
     await store.writeVoiceClass(s.id, p.to, {
       ...(s.raw_payload ?? {}),
-      voice_restamp: { run_ref: runRef, from: s.voice_class, to: p.to, judge_verdict: p.judge_verdict, judge_entity: p.judge_entity, reason: p.judge_reason, model: p.judge_model, at: new Date().toISOString() },
+      voice_restamp: { run_ref: runRef, from: s.voice_class, to: p.to, judge_verdict: p.judge_verdict, judge_entity: p.judge_entity, reason: p.judge_reason, model: p.judge_model, prompt_sha: p.judge_prompt_sha ?? null, at: new Date().toISOString() },
     });
     applied++;
     doneByCompany[s.company_id]++;

@@ -95,6 +95,16 @@
 #       4b0b3ffa's planned judge authorship → speaker.
 #   R57 / R55a''' plants (2026-10-21): P19 rule (8) removed from JUDGE_SYSTEM => v20 rule_present true → false, system sha moves;
 #       P20 the subject-verb-quote check removed => v21 6003dc65 form quoted_with_attribution → none (first_person gate path).
+#   v22. (R58) the regen mint stores the prompt sha beside every verdict: probe regen-r58-sha-probe.ts — raw_payload.speaker,
+#       authorship_judge and syndication each carry prompt_sha equal to the sha of a ledger row of that role (real judges,
+#       fake transports, no network, no db, no model).
+#   v23. (R58) the other writers do too: the public-baseline seam (demote → the baseline mapper's raw_payload), the restamp
+#       audit row (judge_prompt_sha), and the durable syndication verdict (model + prompt_sha on local_llm, null on
+#       deterministic) — same probe.
+#   R58 plants (2026-10-21): P22 the regen speaker copy drops prompt_sha => v22 speaker_sha_ok true → false;
+#       P23a judgeAggregatorAuthorship's success return drops prompt_sha => v23 baseline_sha_ok true → false;
+#       P23b the durable upsert drops prompt_sha => v23 durable prompt_sha_ok true → false;
+#       P23c applyRestamp's audit insert drops judge_prompt_sha => v23 restamp_sha_ok true → false.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -245,4 +255,11 @@ echo "v20. R57 rule (8) in the authorship system prompt (demonstration + counter
 # v21 — R55a''': a named subject + any verb + comma/colon opening a quotation is an attribution
 [ "$(q9 "d['r55a3']['form']=='quoted_with_attribution' and d['r55a3']['speaker']=='Sonos'")" = True ] || fail v21 "subject-verb-quote shape: $J9"
 echo "v21. R55a''' 'Sonos bragged, “…”' → $(q9 "d['r55a3']['form']") ($(q9 "d['r55a3']['speaker']"))"
+# v22 / v23 — R58: every judge writer stores the prompt sha beside its verdict, equal to its own ledger row's
+J58=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-r58-sha-probe.ts 2>/dev/null | tail -1)
+q58() { echo "$J58" | python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
+[ "$(q58 "d['v22']['speaker']['speaker_sha_ok'] and d['v22']['authorship']['authorship_sha_ok'] and d['v22']['syndication']['syndication_sha_ok']")" = True ] || fail v22 "a regen-minted verdict without its prompt sha: $(q58 "d['v22']")"
+echo "v22. R58 regen mint: speaker ($(q58 "d['v22']['speaker']['stamped']") stamps / $(q58 "d['v22']['speaker']['ledger_rows']") ledger rows), authorship_judge, syndication ($(q58 "d['v22']['syndication']['method']")) each carry prompt_sha = their ledger row's (speaker $(q58 "d['v22']['speaker']['ceo_sha'][:12]"))"
+[ "$(q58 "d['v23']['baseline']['baseline_sha_ok'] and d['v23']['restamp']['restamp_sha_ok'] and d['v23']['durable']['prompt_sha_ok']")" = True ] || fail v23 "a writer without its prompt sha: $(q58 "d['v23']")"
+echo "v23. R58 writers: baseline stamp (mapper raw_payload) sha $(q58 "d['v23']['baseline']['sha'][:12]") = ledger; restamp audit judge_prompt_sha = ledger; durable local_llm verdict model $(q58 "d['v23']['durable']['local_llm_model']") + sha $(q58 "d['v23']['durable']['local_llm_sha'][:12]") = sha256(prompt), deterministic null/null"
 echo "GUARD OK"

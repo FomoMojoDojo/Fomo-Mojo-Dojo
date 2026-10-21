@@ -54,7 +54,15 @@ type SyndicationVerdict = {
   score: number;
   syndicated: boolean | null; // null = uncertain band unresolved (local LLM unavailable)
   method: "deterministic" | "local_llm" | "unresolved" | "stored";
+  /** R58: a local_llm verdict carries the model that answered and the sha256 of the exact prompt it answered */
+  model?: string;
+  prompt_sha?: string;
 };
+/** R58: the prompt sha every judge records beside its verdict — sha256 hex of the exact bytes sent. */
+async function promptSha256(t: string): Promise<string> {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 function normalizeWords(text: string): string[] {
   return String(text || "")
@@ -177,7 +185,7 @@ export function bandShingleContainment(itemText: string, corpus: ClientCorpus): 
 // Local-LLM uncertain band. Ollama only (operator's machine). Returns null when the
 // local model is unavailable — callers treat null as "exclude from corroboration this
 // call, do NOT persist a verdict" (rights-conservative, loudly logged, never silent).
-async function localLlmSyndicationCheck(itemText: string, clientSample: string): Promise<boolean | null> {
+async function localLlmSyndicationCheck(itemText: string, clientSample: string): Promise<{ answer: boolean | null; model: string; prompt_sha: string }> {
   // OLLAMA_SYNDICATION_BASE_URL deliberately bypasses [edge_runtime.secrets], which maps
   // OLLAMA_BASE_URL = env(OLLAMA_BASE_URL) and clobbers the .env.local value with the
   // (empty) shell env at stack start. Vars NOT in that mapping pass through (Dify pattern).
@@ -189,7 +197,10 @@ async function localLlmSyndicationCheck(itemText: string, clientSample: string):
   // latency plus a second flip surface and saves nothing. Measured ~18s cold / a few s warm
   // per item; band items are rare (2-3 per run).
   const model = (globalThis as any).Deno?.env?.get?.("OLLAMA_SYNDICATION_MODEL") || "llama3:70b";
-  if (!base) { console.warn("[syndication] local LLM: no base URL in runtime env (OLLAMA_SYNDICATION_BASE_URL / OLLAMA_BASE_URL both unset)"); return null; }
+  // R58: the verdict carries its model and the sha of the exact prompt, so a stored verdict names what it answered
+  const prompt = buildSyndicationBandPrompt(itemText, clientSample);
+  const prompt_sha = await promptSha256(prompt);
+  if (!base) { console.warn("[syndication] local LLM: no base URL in runtime env (OLLAMA_SYNDICATION_BASE_URL / OLLAMA_BASE_URL both unset)"); return { answer: null, model, prompt_sha }; }
   try {
     // OLLAMA_BASE_URL in this stack ends in /v1 (OpenAI-compat path); the native
     // generate API lives at the root — strip a trailing /v1 before appending.
@@ -197,17 +208,17 @@ async function localLlmSyndicationCheck(itemText: string, clientSample: string):
     const res = await fetch(`${root}/api/generate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model, stream: false, prompt: buildSyndicationBandPrompt(itemText, clientSample) }),
+      body: JSON.stringify({ model, stream: false, prompt }),
     });
-    if (!res.ok) { console.warn("[syndication] local LLM HTTP error", { status: res.status }); return null; }
+    if (!res.ok) { console.warn("[syndication] local LLM HTTP error", { status: res.status }); return { answer: null, model, prompt_sha }; }
     const data = await res.json();
     const answer = String((data as any)?.response || "").trim().toUpperCase();
-    if (answer.startsWith("YES")) return true;
-    if (answer.startsWith("NO")) return false;
-    return null;
+    if (answer.startsWith("YES")) return { answer: true, model, prompt_sha };
+    if (answer.startsWith("NO")) return { answer: false, model, prompt_sha };
+    return { answer: null, model, prompt_sha };
   } catch (error) {
     console.warn("[syndication] local LLM fetch failed", { message: String(error instanceof Error ? error.message : error).slice(0, 200) });
-    return null;
+    return { answer: null, model, prompt_sha };
   }
 }
 
@@ -255,8 +266,9 @@ export type SyndicationTransport = (args: { model: string; prompt: string }) => 
 /** The ledger seam: one row per call, written BEFORE parse; resolves false when the write failed (never throws). */
 export type SyndicationLedger = (e: { usage: ModelCallRecord; promptSha: string }) => Promise<boolean>;
 export type SyndicationJudgeInput = { itemText: string; clientSample: string };
-/** true = syndicated, false = not, null = unresolved (the call failed or the answer was neither YES nor NO). */
-export type SyndicationJudge = (input: SyndicationJudgeInput) => Promise<{ syndicated: boolean | null; model: string }>;
+/** true = syndicated, false = not, null = unresolved (the call failed or the answer was neither YES nor NO).
+ *  R58: prompt_sha = sha256 of the exact prompt the answer was given for (absent only from stubs and fakes). */
+export type SyndicationJudge = (input: SyndicationJudgeInput) => Promise<{ syndicated: boolean | null; model: string; prompt_sha?: string }>;
 /** The local transport: Ollama /api/generate, token counts from prompt_eval_count / eval_count. */
 export function ollamaSyndicationTransport(base: string): SyndicationTransport {
   const root = String(base).replace(/\/+$/, "").replace(/\/v1$/, "");
@@ -272,12 +284,12 @@ export function ollamaSyndicationTransport(base: string): SyndicationTransport {
 export async function judgeSyndicationBand(
   input: SyndicationJudgeInput,
   opts: { transport: SyndicationTransport; ledger: SyndicationLedger; model?: string },
-): Promise<{ syndicated: boolean | null; model: string }> {
+): Promise<{ syndicated: boolean | null; model: string; prompt_sha: string }> {
   // R53: the ledger is required — a call with none never reaches the model
   if (typeof opts?.ledger !== "function") throw new Error("syndication band judge: a ledger is required (R4) — no model call made");
   const model = opts.model ?? SYNDICATION_BAND_MODEL;
   const prompt = buildSyndicationBandPrompt(input.itemText, input.clientSample);
-  const promptSha = await (async (t: string) => { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join(""); })(prompt);
+  const promptSha = await promptSha256(prompt);
   let raw = "";
   try {
     const r = await opts.transport({ model, prompt });
@@ -285,12 +297,13 @@ export async function judgeSyndicationBand(
     await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: r.prompt_tokens, completion_tokens: r.completion_tokens, usd: null }, promptSha });
   } catch {
     await opts.ledger({ usage: { provider: "ollama", model, prompt_tokens: null, completion_tokens: null, usd: null }, promptSha });
-    return { syndicated: null, model };
+    return { syndicated: null, model, prompt_sha: promptSha };
   }
+  // R58: every answer carries the sha of the prompt it answered — the same sha the ledger row holds
   const answer = raw.trim().toUpperCase();
-  if (answer.startsWith("YES")) return { syndicated: true, model };
-  if (answer.startsWith("NO")) return { syndicated: false, model };
-  return { syndicated: null, model };
+  if (answer.startsWith("YES")) return { syndicated: true, model, prompt_sha: promptSha };
+  if (answer.startsWith("NO")) return { syndicated: false, model, prompt_sha: promptSha };
+  return { syndicated: null, model, prompt_sha: promptSha };
 }
 
 export async function resolveSyndication(
@@ -308,11 +321,11 @@ export async function resolveSyndication(
   }
   const targetedSample = mostSimilarClientTexts(itemText, corpus) || clientSampleForLlm;
   const llm = await localLlmSyndicationCheck(itemText, targetedSample);
-  if (llm === null) {
+  if (llm.answer === null) {
     console.warn("[syndication] uncertain band UNRESOLVED — local LLM unavailable; item excluded from corroboration this call, verdict NOT persisted", { score });
     return { score, syndicated: null, method: "unresolved" };
   }
-  return { score, syndicated: llm, method: "local_llm" };
+  return { score, syndicated: llm.answer, method: "local_llm", model: llm.model, prompt_sha: llm.prompt_sha };
 }
 
 // ── B2.0.1: durable verdict store — one content identity, one verdict ─────────────
@@ -375,6 +388,9 @@ export async function resolveSyndicationDurable(opts: {
             syndicated: verdict.syndicated,
             syndication_score: Number(verdict.score.toFixed(4)),
             method: verdict.method,
+            // R58: a local_llm verdict records its model and prompt sha; a deterministic one was not a judge's answer
+            model: verdict.method === "local_llm" ? verdict.model ?? null : null,
+            prompt_sha: verdict.method === "local_llm" ? verdict.prompt_sha ?? null : null,
           },
           { onConflict: "company_id,source_url,text_hash", ignoreDuplicates: true },
         );

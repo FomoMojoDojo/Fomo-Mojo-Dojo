@@ -29,6 +29,13 @@
 #       B (newer reverted) → the older; C (only row reverted) → refused no_unreverted_apply; E (two unreverted) → the newer.
 #   p12 (R55d) a speaker judge answering mixed on a seeded row: recorded unknown:mixed_candidate, the class stands, no
 #       audit row, one ledgered speaker call.
+#   p13 (R58) a stored verdict with NO recorded prompt sha, the current sha in the company ledger → a fresh call (transport
+#       1, verdict the fresh one), call replay replay_refused:verdict_sha_not_recorded, and the stamp names it.
+#   p14 (R58) a stored verdict whose recorded sha equals the current prompt, no ledger row → replayed (transport 0).
+#   p15 (R58) a stored verdict whose recorded sha differs, the current sha in the ledger → a fresh call,
+#       replay_refused:verdict_sha_differs.
+#   p16 (R58) apply's stamp keeps the prompt sha beside every judgment and every call record, and the audit row of a class
+#       change carries judge_prompt_sha — each equal to one of the probe's own model_calls rows.
 #   p7  plan mode writes nothing: it runs in a READ ONLY transaction, no transaction id is assigned, and the four
 #       tables are unchanged after it; it reaches every reviewed row.
 #
@@ -45,6 +52,9 @@
 #   P10 (R54 P3) deriveRow's baseline context falls back to the row's own text as the page => p10 planned_judges none → authorship
 #   P11a applyRunToRevert's not-exists(revert names it) clause removed => p11 b_selects_unreverted_older true → false, c_refused → None
 #   P11b applyRunToRevert ordered ascending (the 2026-10-21 defect)   => p11 e_selects_newer true → false
+#   R58 (2026-10-21): p13–p15 are RED on HEAD 0145a5ad — the R52 key (current sha anywhere in the ledger): p13 transport 1 → 0
+#       (replay matched, verdict subject_company), p14 0 → 1 (prompt_unledgered), p15 1 → 0 (matched);
+#   P16 stampJudgments drops judge_prompt_sha                       => p16 judgments_sha_ok true → false
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -122,6 +132,17 @@ echo "p12. a mixed speaker answer → unknown ($(echo "$J12" | jq_ "d['unknown_r
 # p11 — which apply run a revert undoes
 J11=$(probe p11); [ "$(echo "$J11" | jq_ "str(d['a_selects_newer'])+'|'+str(d['revert_names_newer'])+'|'+str(d['a_after_revert_refused'])+'|'+str(d['b_selects_unreverted_older'])+'|'+str(d['c_refused'])+'|'+str(d['e_selects_newer'])+'|'+str(d['rolled_back'])")" = "True|True|no_unreverted_apply|True|no_unreverted_apply|True|True" ] || fail p11 "apply-run selection: $J11"
 echo "p11. revert undoes the newest unreverted apply row: A → newer ($(echo "$J11" | jq_ "d['ids']['a']")), named on the revert row, then none left; B → unreverted older; C → refused no_unreverted_apply; E → newer of two"
+
+# p13–p15 — R58: a stored verdict replays only on its OWN recorded prompt sha + model
+J13=$(probe p13); [ "$(echo "$J13" | jq_ "str(d['transport_calls'])+'|'+str(d['replayed'])+'|'+str(d['replay'])+'|'+str(d['verdict'])+'|'+str(d['call_sha_is_current'])+'|'+str(d['stamp_replay_refused'])+'|'+str(d['rolled_back'])")" = "1|False|replay_refused:verdict_sha_not_recorded|third_party|True|verdict_sha_not_recorded|True" ] || fail p13 "no recorded sha, current sha ledgered: $J13"
+echo "p13. no recorded sha + the current sha in the ledger → fresh call (1, third_party), replay_refused:verdict_sha_not_recorded, stamped"
+J14=$(probe p14); [ "$(echo "$J14" | jq_ "str(d['transport_calls'])+'|'+str(d['replayed'])+'|'+str(d['replay'])+'|'+str(d['verdict'])+'|'+str(d['rolled_back'])")" = "0|True|matched|subject_company|True" ] || fail p14 "recorded sha equal, no ledger row: $J14"
+echo "p14. recorded sha = current ($(echo "$J14" | jq_ "d['current_sha']")), no ledger row → replayed (0 calls, the stored subject_company)"
+J15=$(probe p15); [ "$(echo "$J15" | jq_ "str(d['transport_calls'])+'|'+str(d['replayed'])+'|'+str(d['replay'])+'|'+str(d['verdict'])+'|'+str(d['rolled_back'])")" = "1|False|replay_refused:verdict_sha_differs|third_party|True" ] || fail p15 "recorded sha differs, current sha ledgered: $J15"
+echo "p15. recorded sha ≠ current, the current sha in the ledger → fresh call (1, third_party), replay_refused:verdict_sha_differs"
+# p16 — R58: the stamp, the call records and the audit row keep the prompt sha
+J16=$(probe p16); [ "$(echo "$J16" | jq_ "str(d['judgments_sha_ok'])+'|'+str(d['calls_sha_ok'])+'|'+str(d['audit_sha_ok'])+'|'+str(d['rolled_back'])")" = "True|True|True|True" ] || fail p16 "prompt sha on stamp / calls / audit: $J16"
+echo "p16. stamp judgments ($(echo "$J16" | jq_ "d['judgments']")), call records ($(echo "$J16" | jq_ "d['calls']")) and the audit row each carry a prompt sha = one of the probe's $(echo "$J16" | jq_ "d['ledger_rows']") model_calls rows"
 
 # p7 — plan mode writes nothing
 set +e; P=$(NO_COLOR=1 deno run --allow-all --no-check $R52/plan.ts --plan --reviewed="$REVIEWED" --reviewed-md5="$REVIEWED_MD5" 2>/dev/null | tail -1); rc=$?; set -e

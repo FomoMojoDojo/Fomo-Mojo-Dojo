@@ -50,6 +50,10 @@
 #   (R8, 2026-10-18: the handler moved to _shared/outsideRegenHandler.ts; l1 reads both files)
 #   P5  judgeAggregatorAuthorship's success-path ledger write commented out (R53, 2026-10-20)
 #                                                                               => l11 regen ledger_rows 1 -> 0 (calls 1)
+#   l12. (R58, 2026-10-21) the verdict stores that keep verdicts in columns record the prompt sha beside the verdict: the
+#        restamp audit insert (applyRestamp) and the R52 sweep's audit insert name judge_prompt_sha; the durable syndication
+#        upsert writes model + prompt_sha. Data half: every signal_voice_restamps judge row and every local_llm
+#        syndication_verdicts row written since R58 landed carries them — "nothing to compare, NOT a pass" until one exists.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -248,5 +252,24 @@ else
   ABAD=$(psql "select count(*) from integrity_runs r where r.component='r3_outside_regen' and coalesce((r.excluded_by_rule->'model_calls'->>'authorship')::int,0) > 0 and (r.excluded_by_rule->'model_calls'->>'authorship')::int - coalesce((r.excluded_by_rule->'model_calls'->>'ledger_failed')::int,0) > (select count(*) from model_calls m where m.company_id=r.company_id and m.call_site='extract-outside-evidence:authorship' and m.created_at between r.ran_at - interval '5 seconds' and r.ran_at + interval '400 seconds')")
   [ "$ABAD" = "0" ] || fail l11 "$ABAD regen run(s) tallied more authorship calls than model_calls rows at extract-outside-evidence:authorship"
   echo "l11. data: $ARUNS regen run(s) with authorship calls, every call has its model_calls row; standing authorship ledger rows: $ASTAND"
+fi
+# l12 — R58: the column stores record the prompt sha beside the verdict
+R58_LANDED='2026-10-21 16:48:00+00'
+AA=supabase/functions/_shared/aggregatorAuthorship.ts; SY=supabase/functions/_shared/syndication.ts
+grep -q 'judge_model: p.judge_model, judge_prompt_sha: p.judge_prompt_sha ?? null,' "$AA" || fail l12 "the restamp audit insert does not write judge_prompt_sha"
+grep -q 'judge_verdict, judge_entity, judge_reason, judge_model, judge_prompt_sha, source_url)' scripts/r52/psqlSweepStore.ts || fail l12 "the R52 audit insert does not write judge_prompt_sha"
+grep -q 'model: verdict.method === "local_llm" ? verdict.model ?? null : null,' "$SY" || fail l12 "the durable syndication upsert does not write model"
+grep -q 'prompt_sha: verdict.method === "local_llm" ? verdict.prompt_sha ?? null : null,' "$SY" || fail l12 "the durable syndication upsert does not write prompt_sha"
+RN=$(psql "select count(*) from signal_voice_restamps where applied_at >= '$R58_LANDED' and judge_verdict is distinct from 'r52_revert' and judge_model not in ('deterministic','none')")
+RBAD=$(psql "select count(*) from signal_voice_restamps where applied_at >= '$R58_LANDED' and judge_verdict is distinct from 'r52_revert' and judge_model not in ('deterministic','none') and judge_prompt_sha is null")
+SN=$(psql "select count(*) from syndication_verdicts where created_at >= '$R58_LANDED' and method='local_llm'")
+SBAD=$(psql "select count(*) from syndication_verdicts where created_at >= '$R58_LANDED' and method='local_llm' and (model is null or prompt_sha is null)")
+[ "$RBAD" = 0 ] || fail l12 "$RBAD judge audit row(s) since R58 without judge_prompt_sha"
+[ "$SBAD" = 0 ] || fail l12 "$SBAD local_llm syndication verdict(s) since R58 without model / prompt_sha"
+echo "l12. source: restamp + R52 audit inserts write judge_prompt_sha; the durable upsert writes model + prompt_sha (local_llm only)"
+if [ "$RN" = 0 ] && [ "$SN" = 0 ]; then
+  echo "l12. data: no judge audit row and no local_llm syndication verdict since R58 ($R58_LANDED) — nothing to compare, NOT a pass"
+else
+  echo "l12. data: since R58, $RN judge audit row(s) and $SN local_llm syndication verdict(s), every one with its prompt sha"
 fi
 echo "GUARD OK"

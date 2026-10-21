@@ -26,6 +26,8 @@ export type SweepAuditRow = { id: string; company_id: string; signal_id: string;
 export type SweepAuditInsert = {
   company_id: string; signal_id: string; run_ref: string; old_voice_class: string | null; new_voice_class: string;
   judge_verdict: string; judge_entity: string | null; judge_reason: string; judge_model: string; source_url: string | null;
+  /** R58: the prompt sha the verdict answered (null for a revert row or a deterministic authority) */
+  judge_prompt_sha?: string | null;
   /** backfill only: the time of the event the row records (default now()) */
   applied_at?: string;
 };
@@ -122,8 +124,8 @@ export function makePsqlSweepStore(s: PsqlSession) {
       }
     },
     async insertAudit(a: SweepAuditInsert): Promise<string> {
-      const r = await s.mutate<{ id: string }>(`insert into signal_voice_restamps (company_id, signal_id, run_ref, ledger_run_id, old_voice_class, new_voice_class, judge_verdict, judge_entity, judge_reason, judge_model, source_url)
-        values (${lit(a.company_id)}::uuid, ${lit(a.signal_id)}::uuid, ${lit(a.run_ref)}, null, ${lit(a.old_voice_class)}, ${lit(a.new_voice_class)}, ${lit(a.judge_verdict)}, ${lit(a.judge_entity)}, ${lit(a.judge_reason)}, ${lit(a.judge_model)}, ${lit(a.source_url)}) returning id`);
+      const r = await s.mutate<{ id: string }>(`insert into signal_voice_restamps (company_id, signal_id, run_ref, ledger_run_id, old_voice_class, new_voice_class, judge_verdict, judge_entity, judge_reason, judge_model, judge_prompt_sha, source_url)
+        values (${lit(a.company_id)}::uuid, ${lit(a.signal_id)}::uuid, ${lit(a.run_ref)}, null, ${lit(a.old_voice_class)}, ${lit(a.new_voice_class)}, ${lit(a.judge_verdict)}, ${lit(a.judge_entity)}, ${lit(a.judge_reason)}, ${lit(a.judge_model)}, ${lit(a.judge_prompt_sha ?? null)}, ${lit(a.source_url)}) returning id`);
       if (a.applied_at) await s.mutate(`update signal_voice_restamps set applied_at=${lit(a.applied_at)}::timestamptz where id=${lit(r[0]?.id ?? "")}::uuid returning id`);
       if (r.length !== 1) throw new Error("audit insert returned no id");
       return r[0].id;

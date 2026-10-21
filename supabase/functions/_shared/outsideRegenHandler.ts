@@ -540,8 +540,9 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
           generator_reason: cand.reason, judge_reason: keepByQuote.get(c)?.reason ?? null,
           voice_authority: { authority: voice.authority, detail: voice.detail, policy: REGEN_JUDGE_FAILURE_POLICY, gate: voice.gate, ...(voice.rule ? { rule: voice.rule } : {}) },
           ...(voice.authorship_judge ? { authorship_judge: voice.authorship_judge } : {}),
-          // R32: who was quoted or reported, as the judge found; the detected attribution beside it
-          ...(voice.speaker ? { speaker: { speaker_name: voice.speaker.speaker_name, speaker_role: voice.speaker.speaker_role, speaker_class: voice.speaker.speaker_class, reason: voice.speaker.reason, model: voice.speaker.model, judged_at: voice.speaker.judged_at }, attribution: voice.speaker.attribution } : voiceInput.attribution ? { attribution: voiceInput.attribution } : {}),
+          // R32: who was quoted or reported, as the judge found; the detected attribution beside it. R58: every stored
+          // verdict (speaker, authorship_judge, syndication) carries the prompt_sha it answered — the replay key
+          ...(voice.speaker ? { speaker: { speaker_name: voice.speaker.speaker_name, speaker_role: voice.speaker.speaker_role, speaker_class: voice.speaker.speaker_class, reason: voice.speaker.reason, model: voice.speaker.model, prompt_sha: voice.speaker.prompt_sha ?? null, judged_at: voice.speaker.judged_at }, attribution: voice.speaker.attribution } : voiceInput.attribution ? { attribution: voiceInput.attribution } : {}),
           ...(voiceInput.registry ? { registry: voiceInput.registry } : {}),
           // R38: what the syndication stage measured and decided — on every minted row of the regen path
           ...(voice.syndication ? { syndication: voice.syndication } : {}),

@@ -125,7 +125,7 @@ Deno.serve(async (req) => {
       // The apply payload for the rows that WOULD change — the operator strikes rows, then posts it back.
       plan: changing.map<PlanRow>((p) => ({
         signal_id: p.signal_id, from: p.from, to: p.to as "client_voice" | "competitor_voice",
-        judge_verdict: p.judge.verdict, judge_entity: p.judge.entity, judge_reason: p.judge.reason, judge_model: p.judge.model,
+        judge_verdict: p.judge.verdict, judge_entity: p.judge.entity, judge_reason: p.judge.reason, judge_model: p.judge.model, judge_prompt_sha: p.judge.prompt_sha ?? null,
       })),
     });
   } catch (err) {

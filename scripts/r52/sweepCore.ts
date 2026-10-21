@@ -16,14 +16,16 @@
 //                                 judgedText = judgedTextFor (shipped), no page, no text gates, no syndication stage
 //   policy                        keep_label, always (R52): a judge failure or "unknown" leaves the class and is recorded
 //
-// A JUDGMENT ALREADY ON THE ROW STANDS ONLY WHERE JUDGE + QUESTION + PROMPT SHA MATCH (R52 ruling 2026-10-20): a stored
+// A JUDGMENT ALREADY ON THE ROW STANDS ONLY WHERE ITS OWN MODEL + PROMPT SHA MATCH (R58, signed 2026-10-21): a stored
 // speaker stamp (raw_payload.speaker) or authorship stamp (raw_payload.authorship_judge) is REPLAYED — no model call —
-// only when (1) its model is the model this sweep would ask, and (2) the company's model_calls ledger holds a row of that
-// judge role and model whose prompt_sha equals sha256(system + user) of the prompt the SHIPPED judge would send for this
-// row now. The sha is the shipped judge's own: the judge is invoked with a refusing transport and a capturing ledger
-// (shippedPromptSha) — no model reachable, nothing written. A stored verdict under a different prompt or question, or
-// with no ledgered prompt (every pre-R53 authorship stamp), is re-asked. A stored judge_failed is not a judgment: it is
-// re-asked. Plan mode counts only the calls that would be made.
+// only when (1) its model is the model this sweep would ask, and (2) the prompt_sha RECORDED BESIDE THAT VERDICT equals
+// sha256(system + user) of the prompt the SHIPPED judge would send for this row now. The sha is the shipped judge's own:
+// the judge is invoked with a refusing transport and a capturing ledger (shippedPromptSha) — no model reachable, nothing
+// written. The company's ledger is NOT consulted: a ledger row proves a prompt was sent, not that THIS verdict answered
+// it (the R52 key let a fresh call make an older verdict replayable — 5cf5b9c7). A verdict with no recorded sha (every
+// pre-R58 stamp) is re-asked, stamped replay_refused:verdict_sha_not_recorded; a different sha is re-asked, stamped
+// replay_refused:verdict_sha_differs. A stored judge_failed is not a judgment: it is re-asked. Plan mode counts only the
+// calls that would be made.
 //
 // PLAN is the upper bound of calls: the stub band judge answers "not syndicated" and the stub speaker "third party", so
 // every later stage the shipped order can reach is reached (band → speaker → URL-gated authorship).
@@ -130,13 +132,15 @@ export function assertCompanyWritable(co: SweepCompany | undefined, companyId: s
 
 // ── judges ────────────────────────────────────────────────────────────────────────────────────────────────────
 export type BaseJudges = {
-  band: (i: SyndicationJudgeInput) => Promise<{ syndicated: boolean | null; model: string }>;
+  band: (i: SyndicationJudgeInput) => Promise<{ syndicated: boolean | null; model: string; prompt_sha?: string }>;
   speaker: (i: SpeakerInput) => Promise<SpeakerJudgment | null>;
   authorship: (i: AuthorshipInput) => Promise<AuthorshipJudgment | null>;
 };
-/** replay: why a stored judgment was or was not replayed (null when the row carried none). */
+/** replay: why a stored judgment was or was not replayed (null when the row carried none) — R58: matched only on the
+ *  verdict's OWN model + prompt sha. prompt_sha: the sha of the prompt the answer was given for (fresh or replayed). */
 /** nocall (R54): the judge was consulted but NOT called — the row has no page words; not a model call, never counted. */
-export type CallRecord = { judge: JudgeName; replayed: boolean; unknown: string | null; model: string; replay?: "matched" | "model_differs" | "prompt_unledgered" | null; nocall?: true };
+export type ReplayOutcome = "matched" | "replay_refused:model_differs" | "replay_refused:verdict_sha_not_recorded" | "replay_refused:verdict_sha_differs";
+export type CallRecord = { judge: JudgeName; replayed: boolean; unknown: string | null; model: string; replay?: ReplayOutcome | null; prompt_sha?: string | null; nocall?: true };
 export type Tally = { band: number; speaker: number; authorship: number; ledger_failed: number };
 export const emptyTally = (): Tally => ({ band: 0, speaker: 0, authorship: 0, ledger_failed: 0 });
 
@@ -168,8 +172,8 @@ export function ledgeredJudges(store: SweepStore, companyId: string, tally: Tall
     authorship: (i) => judgeAggregatorAuthorship(i, { transport: t.authorship, ledger: ledgerFor("authorship"), model: CLASSIFIER_MODEL }),
   };
 }
-type StoredSpeaker = { speaker_class?: string; speaker_name?: string | null; speaker_role?: string | null; reason?: string; model?: string };
-type StoredAuthorship = { verdict?: string; entity?: string | null; reason?: string; model?: string };
+type StoredSpeaker = { speaker_class?: string; speaker_name?: string | null; speaker_role?: string | null; reason?: string; model?: string; prompt_sha?: string | null };
+type StoredAuthorship = { verdict?: string; entity?: string | null; reason?: string; model?: string; prompt_sha?: string | null };
 /** The prompt sha the SHIPPED judge would ledger for this input: the judge runs with a transport that refuses (no model
  *  reachable) and a ledger that only captures — it hashes its own system + user exactly as on a real call. */
 export async function shippedPromptSha(role: "speaker" | "authorship", i: SpeakerInput | AuthorshipInput): Promise<string> {
@@ -184,33 +188,33 @@ export async function shippedPromptSha(role: "speaker" | "authorship", i: Speake
   if (!sha) throw new Error(`shippedPromptSha(${role}): the judge ledgered no prompt sha`);
   return sha;
 }
-export const ledgerKey = (role: string, model: string, sha: string) => `${role}|${model}|${sha}`;
-/** Per row: replay a stored judgment only where judge + question + prompt sha match the ledger; otherwise call the base
- *  judge. Every consultation recorded. */
-function rowJudges(row: SweepSignal, base: BaseJudges, calls: CallRecord[], ledgered: ReadonlySet<string>): BaseJudges {
+/** Per row: replay a stored judgment only where ITS OWN model + prompt sha equal the current ones (R58); otherwise call
+ *  the base judge. Every consultation recorded. */
+function rowJudges(row: SweepSignal, base: BaseJudges, calls: CallRecord[]): BaseJudges {
   const rp = row.raw_payload ?? {};
-  const replayable = async (role: "speaker" | "authorship", storedModel: string | undefined, i: SpeakerInput | AuthorshipInput) => {
-    if (storedModel !== CLASSIFIER_MODEL) return "model_differs" as const;
-    return ledgered.has(ledgerKey(role, storedModel, await shippedPromptSha(role, i))) ? "matched" as const : "prompt_unledgered" as const;
+  const replayable = async (role: "speaker" | "authorship", stored: { model?: string; prompt_sha?: string | null }, i: SpeakerInput | AuthorshipInput): Promise<ReplayOutcome> => {
+    if (stored.model !== CLASSIFIER_MODEL) return "replay_refused:model_differs";
+    if (typeof stored.prompt_sha !== "string" || !stored.prompt_sha) return "replay_refused:verdict_sha_not_recorded";
+    return stored.prompt_sha === await shippedPromptSha(role, i) ? "matched" : "replay_refused:verdict_sha_differs";
   };
   return {
     band: async (i) => {
       const r = await base.band(i);
-      calls.push({ judge: "band", replayed: false, unknown: r.syndicated === null ? `band judge unresolved (${r.model})` : null, model: r.model });
+      calls.push({ judge: "band", replayed: false, unknown: r.syndicated === null ? `band judge unresolved (${r.model})` : null, model: r.model, prompt_sha: r.prompt_sha ?? null });
       return r;
     },
     speaker: async (i) => {
       const st = rp.speaker as StoredSpeaker | undefined;
       const stored = !!st && typeof st === "object" && !!st.speaker_class && st.speaker_class !== "judge_failed";
-      const replay = stored ? await replayable("speaker", st!.model, i) : null;
+      const replay = stored ? await replayable("speaker", st!, i) : null;
       if (replay === "matched") {
-        const j = { speaker_class: st!.speaker_class, speaker_name: st!.speaker_name ?? null, speaker_role: st!.speaker_role ?? null, reason: String(st!.reason ?? "stored"), model: String(st!.model) } as SpeakerJudgment;
-        calls.push({ judge: "speaker", replayed: true, unknown: j.speaker_class === "unknown" ? `stored speaker unknown: ${j.reason}` : j.speaker_class === "mixed" ? `mixed_candidate: ${j.reason}` : null, model: j.model, replay });
+        const j = { speaker_class: st!.speaker_class, speaker_name: st!.speaker_name ?? null, speaker_role: st!.speaker_role ?? null, reason: String(st!.reason ?? "stored"), model: String(st!.model), prompt_sha: st!.prompt_sha ?? null } as SpeakerJudgment;
+        calls.push({ judge: "speaker", replayed: true, unknown: j.speaker_class === "unknown" ? `stored speaker unknown: ${j.reason}` : j.speaker_class === "mixed" ? `mixed_candidate: ${j.reason}` : null, model: j.model, replay, prompt_sha: j.prompt_sha ?? null });
         return j;
       }
       const r = await base.speaker(i);
       // R55d: a mixed answer is recorded unknown:mixed_candidate — the label stands, no class write
-      calls.push({ judge: "speaker", replayed: false, unknown: !r ? "speaker judge unavailable" : r.speaker_class === "mixed" ? `mixed_candidate: ${r.reason}` : (r.speaker_class === "unknown" || r.speaker_class === "judge_failed") ? `speaker ${r.speaker_class}: ${r.reason}` : null, model: r?.model ?? "none", replay });
+      calls.push({ judge: "speaker", replayed: false, unknown: !r ? "speaker judge unavailable" : r.speaker_class === "mixed" ? `mixed_candidate: ${r.reason}` : (r.speaker_class === "unknown" || r.speaker_class === "judge_failed") ? `speaker ${r.speaker_class}: ${r.reason}` : null, model: r?.model ?? "none", replay, prompt_sha: r?.prompt_sha ?? null });
       return r;
     },
     authorship: async (i) => {
@@ -222,14 +226,14 @@ function rowJudges(row: SweepSignal, base: BaseJudges, calls: CallRecord[], ledg
       }
       const st = rp.authorship_judge as StoredAuthorship | undefined;
       const stored = !!st && typeof st === "object" && !!st.verdict && st.verdict !== "judge_failed";
-      const replay = stored ? await replayable("authorship", st!.model, i) : null;
+      const replay = stored ? await replayable("authorship", st!, i) : null;
       if (replay === "matched") {
-        const j = { verdict: st!.verdict, entity: st!.entity ?? null, reason: String(st!.reason ?? "stored"), model: String(st!.model) } as AuthorshipJudgment;
-        calls.push({ judge: "authorship", replayed: true, unknown: j.verdict === "uncertain" ? `stored authorship uncertain: ${j.reason}` : null, model: j.model, replay });
+        const j = { verdict: st!.verdict, entity: st!.entity ?? null, reason: String(st!.reason ?? "stored"), model: String(st!.model), prompt_sha: st!.prompt_sha ?? null } as AuthorshipJudgment;
+        calls.push({ judge: "authorship", replayed: true, unknown: j.verdict === "uncertain" ? `stored authorship uncertain: ${j.reason}` : null, model: j.model, replay, prompt_sha: j.prompt_sha ?? null });
         return j;
       }
       const r = await base.authorship(i);
-      calls.push({ judge: "authorship", replayed: false, unknown: !r ? "authorship judge unavailable" : (r.verdict === "judge_failed" || r.verdict === "uncertain") ? `authorship ${r.verdict}: ${r.reason}` : null, model: r?.model ?? "none", replay });
+      calls.push({ judge: "authorship", replayed: false, unknown: !r ? "authorship judge unavailable" : (r.verdict === "judge_failed" || r.verdict === "uncertain") ? `authorship ${r.verdict}: ${r.reason}` : null, model: r?.model ?? "none", replay, prompt_sha: r?.prompt_sha ?? null });
       return r;
     },
   };
@@ -238,12 +242,12 @@ export const madeCall = (c: CallRecord) => !c.replayed && !c.nocall;
 export const callsString = (calls: CallRecord[]) => calls.filter(madeCall).map((c) => c.judge).join("+") || "none";
 
 // ── per-company context: the inputs the mint path had ────────────────────────────────────────────────────────
-export type CompanyCtx = { company: SweepCompany; name: string; host: string | null; anchors: readonly string[]; corpusByRun: Map<string, ClientCorpus>; ledgered: ReadonlySet<string> };
+export type CompanyCtx = { company: SweepCompany; name: string; host: string | null; anchors: readonly string[]; corpusByRun: Map<string, ClientCorpus> };
 export async function companyCtx(store: SweepStore, co: SweepCompany): Promise<CompanyCtx> {
   const ca = clientAnchorsFor(co as { name?: unknown; website?: unknown; entity_anchors_json?: unknown });
   if (!ca.ok) throw new SweepRefusedError("client_unnamed", `${co.id}: ${ca.reason}`);
-  const ledgered = new Set((await store.ledgeredPromptShas(co.id)).map((r) => ledgerKey(r.role, r.model, r.prompt_sha)));
-  return { company: co, name: ca.name ?? "", host: ca.host, anchors: ca.anchors, corpusByRun: new Map(), ledgered };
+  // R58: the ledger is not consulted for replay — a verdict replays on its OWN recorded prompt sha (rowJudges)
+  return { company: co, name: ca.name ?? "", host: ca.host, anchors: ca.anchors, corpusByRun: new Map() };
 }
 async function corpusFor(store: SweepStore, ctx: CompanyCtx, runId: string): Promise<ClientCorpus> {
   let c = ctx.corpusByRun.get(runId);
@@ -257,7 +261,7 @@ export type Derived = { decision: VoiceClassDecision; calls: CallRecord[]; basis
 /** THE re-decision of one existing row, through the shipped authority under keep_label. */
 export async function deriveRow(store: SweepStore, ctx: CompanyCtx, row: SweepSignal, era: "b3" | "baseline", base: BaseJudges, now: () => string = () => new Date().toISOString()): Promise<Derived> {
   const calls: CallRecord[] = [];
-  const j = rowJudges(row, base, calls, ctx.ledgered);
+  const j = rowJudges(row, base, calls);
   const rp = row.raw_payload ?? {};
   const company = { name: ctx.name, host: ctx.host };
   const url = String(row.source_url ?? "");
@@ -361,19 +365,20 @@ export function assertInPlan(rowIds: readonly string[], reviewedIds: ReadonlySet
 /** Every judge that answered for a row, in the audit row's field shape (judge_verdict / judge_entity / judge_reason /
  *  judge_model) — stored on EVERY stamp, so an unchanged or unknown row keeps the judge's full reason too (R52 batch-1
  *  ruling: the stamp on an unchanged row had kept only the authority's detail, never the reason). Empty when no judge ran. */
-export type StampJudgment = { judge: JudgeName; judge_verdict: string; judge_entity: string | null; judge_reason: string; judge_model: string };
+export type StampJudgment = { judge: JudgeName; judge_verdict: string; judge_entity: string | null; judge_reason: string; judge_model: string;
+  /** R58: the prompt sha the verdict answered — the key a later replay is decided on */ judge_prompt_sha: string | null };
 export function stampJudgments(d: Extract<VoiceClassDecision, { ok: true }>): StampJudgment[] {
   const j: StampJudgment[] = [];
-  if (d.syndication && d.syndication.method === "local_llm") j.push({ judge: "band", judge_verdict: d.syndication.verdict, judge_entity: null, judge_reason: d.detail, judge_model: String(d.syndication.model ?? "unknown") });
-  if (d.speaker) j.push({ judge: "speaker", judge_verdict: d.speaker.speaker_class, judge_entity: d.speaker.speaker_name, judge_reason: d.speaker.reason, judge_model: d.speaker.model });
-  if (d.authorship_judge) j.push({ judge: "authorship", judge_verdict: d.authorship_judge.verdict, judge_entity: d.authorship_judge.entity, judge_reason: d.authorship_judge.reason, judge_model: d.authorship_judge.model });
+  if (d.syndication && d.syndication.method === "local_llm") j.push({ judge: "band", judge_verdict: d.syndication.verdict, judge_entity: null, judge_reason: d.detail, judge_model: String(d.syndication.model ?? "unknown"), judge_prompt_sha: d.syndication.prompt_sha ?? null });
+  if (d.speaker) j.push({ judge: "speaker", judge_verdict: d.speaker.speaker_class, judge_entity: d.speaker.speaker_name, judge_reason: d.speaker.reason, judge_model: d.speaker.model, judge_prompt_sha: d.speaker.prompt_sha ?? null });
+  if (d.authorship_judge) j.push({ judge: "authorship", judge_verdict: d.authorship_judge.verdict, judge_entity: d.authorship_judge.entity, judge_reason: d.authorship_judge.reason, judge_model: d.authorship_judge.model, judge_prompt_sha: d.authorship_judge.prompt_sha ?? null });
   return j;
 }
-function auditFields(d: Extract<VoiceClassDecision, { ok: true }>): { verdict: string; entity: string | null; reason: string; model: string } {
-  if (d.authority === "authorship_judge" && d.authorship_judge) return { verdict: d.authorship_judge.verdict, entity: d.authorship_judge.entity, reason: d.authorship_judge.reason, model: d.authorship_judge.model };
-  if (d.speaker) return { verdict: d.speaker.speaker_class, entity: d.speaker.speaker_name, reason: d.speaker.reason, model: d.speaker.model };
-  if (d.authority === "syndication" && d.syndication) return { verdict: "syndicated", entity: null, reason: d.detail, model: d.syndication.model ?? "deterministic" };
-  return { verdict: d.authority, entity: null, reason: d.detail, model: "deterministic" };
+function auditFields(d: Extract<VoiceClassDecision, { ok: true }>): { verdict: string; entity: string | null; reason: string; model: string; prompt_sha: string | null } {
+  if (d.authority === "authorship_judge" && d.authorship_judge) return { verdict: d.authorship_judge.verdict, entity: d.authorship_judge.entity, reason: d.authorship_judge.reason, model: d.authorship_judge.model, prompt_sha: d.authorship_judge.prompt_sha ?? null };
+  if (d.speaker) return { verdict: d.speaker.speaker_class, entity: d.speaker.speaker_name, reason: d.speaker.reason, model: d.speaker.model, prompt_sha: d.speaker.prompt_sha ?? null };
+  if (d.authority === "syndication" && d.syndication) return { verdict: "syndicated", entity: null, reason: d.detail, model: d.syndication.model ?? "deterministic", prompt_sha: d.syndication.prompt_sha ?? null };
+  return { verdict: d.authority, entity: null, reason: d.detail, model: "deterministic", prompt_sha: null };
 }
 /**
  * Apply one company: refusals first (by value, then plan-equals-reviewed, then every row in plan), then the integrity row
@@ -421,7 +426,7 @@ export async function applyCompany(store: SweepStore, args: {
       const callStr = callsString(d.calls);
       const unknownReasons = d.calls.map((c) => c.unknown).filter((x): x is string => !!x);
       const from = s.voice_class;
-      const stampBase = { run_ref: runRef, rules: R52_RULES, policy: R52_POLICY, at: new Date().toISOString(), calls: d.calls.map((c) => ({ judge: c.judge, replayed: c.replayed, model: c.model, ...(c.nocall ? { nocall: true } : {}) })), basis: d.basis, ...(s.raw_payload === null ? { payload_was_null: true } : {}) };
+      const stampBase = { run_ref: runRef, rules: R52_RULES, policy: R52_POLICY, at: new Date().toISOString(), calls: d.calls.map((c) => ({ judge: c.judge, replayed: c.replayed, model: c.model, prompt_sha: c.prompt_sha ?? null, ...(c.replay && c.replay !== "matched" ? { replay_refused: c.replay.slice("replay_refused:".length) } : {}), ...(c.nocall ? { nocall: true } : {}) })), basis: d.basis, ...(s.raw_payload === null ? { payload_was_null: true } : {}) };
       if (!d.decision.ok) {
         // keep_label never refuses; a refusal here would be an un-mint — the row is refused and NOTHING is written to it
         outcomes.push({ signal_id: id, kind: "refused", from, to: null, reason: `unmint_refused: ${d.decision.reason}`, calls: callStr });
@@ -433,7 +438,7 @@ export async function applyCompany(store: SweepStore, args: {
       if (to && to !== from && AUDITABLE.has(to)) {
         const a = auditFields(dec);
         await tx(store, args.nested, async () => {
-          await store.insertAudit({ company_id: s.company_id, signal_id: id, run_ref: runRef, old_voice_class: from, new_voice_class: to, judge_verdict: a.verdict, judge_entity: a.entity, judge_reason: a.reason, judge_model: a.model, source_url: s.source_url });
+          await store.insertAudit({ company_id: s.company_id, signal_id: id, run_ref: runRef, old_voice_class: from, new_voice_class: to, judge_verdict: a.verdict, judge_entity: a.entity, judge_reason: a.reason, judge_model: a.model, judge_prompt_sha: a.prompt_sha, source_url: s.source_url });
           await store.writeSignal(id, runRef, { voice_class: to, raw_payload: { r52: stamp } });
         });
         outcomes.push({ signal_id: id, kind: "changed", from, to, reason: dec.detail, calls: callStr });

@@ -54,6 +54,8 @@ export type SyndicationStamp = {
   verdict: "syndicated" | "clean" | "unresolved";
   method: "deterministic" | "short_item" | "local_llm" | "unresolved";
   model?: string; judged_at?: string;
+  /** R58: sha256 of the exact prompt the band judge answered (absent when no judge was asked) */
+  prompt_sha?: string;
 };
 export const FIRST_PERSON_JUDGED_RULE = "first_person_judged" as const;
 /** Text gates a caller may name (R28, R32). The regen handler names ["first_person", "attributed_speech"]; the baseline names none. */
@@ -273,13 +275,13 @@ export async function voiceClassForMintedExcerpt(input: VoiceClassInput): Promis
       const sample = mostSimilarClientTexts(text, input.syndication!.corpus);
       const j = await judge({ itemText: text, clientSample: sample });
       if (j.syndicated === null) {
-        const s: SyndicationStamp = { ...stamp, verdict: "unresolved", method: "unresolved", model: j.model, judged_at: nowIso() };
+        const s: SyndicationStamp = { ...stamp, verdict: "unresolved", method: "unresolved", model: j.model, ...(j.prompt_sha ? { prompt_sha: j.prompt_sha } : {}), judged_at: nowIso() };
         if (input.onJudgeFailure === "refuse_mint") return refuseY(`syndication_unresolved: the band judge (${j.model}) returned no verdict for an item in the uncertain band (score ${stamp.score}, band ${stamp.band}) — not minted; retry next run`, s);
         syndStamp = s; pre = decideTextGates(input, label);
       } else if (j.syndicated) {
-        return syndicatedDecision({ ...stamp, verdict: "syndicated", method: "local_llm", model: j.model, judged_at: nowIso() });
+        return syndicatedDecision({ ...stamp, verdict: "syndicated", method: "local_llm", model: j.model, ...(j.prompt_sha ? { prompt_sha: j.prompt_sha } : {}), judged_at: nowIso() });
       } else {
-        syndStamp = { ...stamp, verdict: "clean", method: "local_llm", model: j.model, judged_at: nowIso() };
+        syndStamp = { ...stamp, verdict: "clean", method: "local_llm", model: j.model, ...(j.prompt_sha ? { prompt_sha: j.prompt_sha } : {}), judged_at: nowIso() };
         pre = decideTextGates(input, label);
       }
     }
