@@ -29,6 +29,7 @@ import { classifyRegistryRow } from "./registryClassifier.ts";
 import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type JudgeFailurePolicy, type VoiceClassInput, type TextGate } from "./voiceClassAtMint.ts";
 import { authorshipContext, type AuthorshipInput, type AuthorshipJudgment } from "./aggregatorAuthorship.ts";
 import { clientAnchorsFor } from "./clientAnchors.ts";
+import { loadConfirmedRelatedEntities, ownHostsFor, type RelatedEntityRow } from "./ownHosts.ts";
 import { nearestSpan, type NearestSpan } from "./nearestSpan.ts";
 import { speakerContext } from "./attribution.ts";
 import { buildClientCorpus, type SyndicationJudge, type SyndicationLedger } from "./syndication.ts";
@@ -156,8 +157,8 @@ export type PlanRow = {
 
 /** R17: the URL-level voice decision a plan reports — the same function the write path runs per excerpt, with no
  *  judge (a plan calls no model) and no excerpt (a registry page's class is per section). */
-export function planVoiceFor(url: string, pageText: string, company: { name: string; host: string | null }, registry: ReturnType<typeof classifyRegistryRow>): PlanVoice {
-  const pre = decideVoiceClassBeforeJudge({ url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText, judgedText: null, company, registry, judge: null, gate: "profile_wire_boilerplate", onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY });
+export function planVoiceFor(url: string, pageText: string, company: { name: string; host: string | null; related?: readonly RelatedEntityRow[] }, registry: ReturnType<typeof classifyRegistryRow>, asOf?: string | null): PlanVoice {
+  const pre = decideVoiceClassBeforeJudge({ url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText, judgedText: null, company, ...(company.related?.length ? { asOf: asOf ?? null } : {}), registry, judge: null, gate: "profile_wire_boilerplate", onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY });
   if ("needs_speaker" in pre) return { class: "(speaker judge decides)", authority: "speaker_judge", refusal: null };   // R32: never on plan (no candidate text), typed for completeness
   if ("needs_syndication_judge" in pre) return { class: "(band judge decides)", authority: "syndication", refusal: null };   // R38: never on plan (no syndication input), typed for completeness
   if ("needs_judge" in pre) return { class: "(judge decides)", authority: "authorship_judge", refusal: `gated (${pre.gate.via} ${pre.gate.host}): every excerpt is judged on write; with no judge wired each is refused, not minted` };
@@ -263,7 +264,10 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     return { status: 400, body: { ok: false, error: ca.reason, guard: ca.guard } };
   }
   const anchors = ca.anchors;
-  const company = { name: ca.name ?? "", host: ca.host };
+  // E1/E2: the company's CONFIRMED related entities — their hosts join the own-host set from their effective date;
+  // none (every company until one is confirmed) ⇒ the single-host company, exactly as before
+  const related = await loadConfirmedRelatedEntities(supabase, company_id);
+  const company = { name: ca.name ?? "", host: ca.host, ...(related.length ? { related } : {}) };
 
   // Basis: newest ok (real-body) snapshot per URL. NO fetch. `structured` rides along for the registry classifier's ld hint.
   const { data: snapRows } = await supabase
@@ -327,7 +331,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
         blanked_signal_ids: (blankedByUrl.get(url) ?? []).sort(),
         ...estimateUrl(chars),
         review: reviewStateOf(url, gate, runId),
-        voice: planVoiceFor(url, snap.clean_text, company, registryFor(url, null)),
+        voice: planVoiceFor(url, snap.clean_text, company, registryFor(url, null), snap.readDate),
         done: mintedUnderRun.has(url),   // R41: already minted under this run_id
       };
     });
@@ -393,7 +397,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   const judge: RegenJudge | null = deps.makeJudge((e) => ledger({ role: "authorship", callSite: regenCallSite("authorship"), usage: e.usage, attempt: 1, promptSha: e.promptSha }));
   // R38: the client corpus ONCE per write call — every client_voice / own-domain / company-claim row of the company, the rows
   // minted under THIS run excluded so no candidate scores against itself. The baseline's own builder, the same rule.
-  const corpus = await buildClientCorpus(supabase, company_id, company.host ?? "", [], (row) => String(row.raw_payload?.run_id ?? "") === runId);
+  const corpus = await buildClientCorpus(supabase, company_id, related.length ? ownHostsFor({ host: company.host }, related) : (company.host ?? ""), [], (row) => String(row.raw_payload?.run_id ?? "") === runId);
   let voice_refused_total = 0;
   const voiceRefusals: Array<{ url: string; reason: string; excerpts: number }> = [];
 
@@ -496,6 +500,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       // R17: THE voice class, from the one shared authority — never a literal here. An unjudged gated row is refused.
       const voiceInput: VoiceClassInput = {
         url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText: clean_text, judgedText: verdictA.excerpt, company,
+        // E2: the effective-date rule reads the page's crawl date
+        ...(related.length ? { asOf: readDate } : {}),
         registry: registryFor(url, verdictA.excerpt), judge, gate: "profile_wire_boilerplate", textGates: REGEN_TEXT_GATES, onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY, now: nowIso,
         // R54: the authorship judge reads the excerpt in place — the page in memory at the slice-asserted offset
         authorshipContext: authorshipContext(clean_text, verdictA.excerpt, verdictA.offset),
@@ -540,6 +546,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
           generator_reason: cand.reason, judge_reason: keepByQuote.get(c)?.reason ?? null,
           voice_authority: { authority: voice.authority, detail: voice.detail, policy: REGEN_JUDGE_FAILURE_POLICY, gate: voice.gate, ...(voice.rule ? { rule: voice.rule } : {}) },
           ...(voice.authorship_judge ? { authorship_judge: voice.authorship_judge } : {}),
+          // E4: the related entity the URL is on — {id, name, host, relation, basis} — on every row a related-entity rule decided
+          ...(voice.entity ? { entity: voice.entity } : {}),
           // R32: who was quoted or reported, as the judge found; the detected attribution beside it. R58: every stored
           // verdict (speaker, authorship_judge, syndication) carries the prompt_sha it answered — the replay key
           ...(voice.speaker ? { speaker: { speaker_name: voice.speaker.speaker_name, speaker_role: voice.speaker.speaker_role, speaker_class: voice.speaker.speaker_class, reason: voice.speaker.reason, model: voice.speaker.model, prompt_sha: voice.speaker.prompt_sha ?? null, judged_at: voice.speaker.judged_at }, attribution: voice.speaker.attribution } : voiceInput.attribution ? { attribution: voiceInput.attribution } : {}),

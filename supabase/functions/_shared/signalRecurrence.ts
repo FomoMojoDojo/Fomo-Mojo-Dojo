@@ -23,6 +23,7 @@
 //                insert / delete — a no-change rerun is byte-identical
 //                INCLUDING computed_at).
 
+import { loadConfirmedRelatedEntities, ownHostsFor } from "./ownHosts.ts";
 import { recurrenceEligibleRow } from "./listingClass.ts";
 import { fetchAllRows } from "./fetchAllRows.ts";
 import { isFilingClassRow } from "./registryClassifier.ts";
@@ -278,6 +279,10 @@ async function loadEligibleSignals(
     .from("companies").select("name, website").eq("id", companyId).maybeSingle();
   if (cErr) throw new Error(`companies load failed: ${cErr.message}`);
   const ownDomain = registrableDomain((company as { website?: string } | null)?.website ?? null);
+  // E2: a confirmed related entity in effect is own too — its registrable domain joins the excluded set. This site keeps
+  // ITS rule (registrable-domain equality, the independence unit — not isOwnDomainUrl's equal-or-subdomain: on a
+  // signup.<domain> website the two disagree), applied to every host of the own-host set.
+  const relatedDomains = new Set(ownHostsFor({ website: null }, await loadConfirmedRelatedEntities(supabase, companyId)).hosts.map((h) => registrableDomain(h.host)).filter((d): d is string => !!d));
   const companyName = String((company as { name?: string } | null)?.name ?? "this company");
 
   const { data, error } = await supabase
@@ -298,7 +303,7 @@ async function loadEligibleSignals(
     if (row.syndicated_from_client === true) continue; // design Q3
     const domain = registrableDomain(row.source_url);
     if (!domain) continue;
-    if (ownDomain && domain === ownDomain) continue; // own-domain excluded
+    if ((ownDomain && domain === ownDomain) || relatedDomains.has(domain)) continue; // own-domain excluded (E2: and a related entity's)
     if (isFilingClassRow(row)) continue; // C1: filing-class registry rows are own voice through a registry — excluded like own-domain
     if (!String(row.claim_text ?? "").trim()) continue;
     signals.push({

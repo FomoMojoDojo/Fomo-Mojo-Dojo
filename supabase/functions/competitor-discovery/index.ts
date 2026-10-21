@@ -19,6 +19,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { persistSignalsAndRebuildClaims } from "../_shared/evidencePhase1.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
+import { loadConfirmedRelatedEntities, ownHostMatchHost, ownHostsFor, type OwnHostSet, type RelatedEntityRow } from "../_shared/ownHosts.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -51,6 +52,7 @@ type AdmissibleInputs = {
   jobFraming: { journeyTitle: string; stepLabels: string[] } | null; // job_steps, ONLY when public-derived (gate below)
   jobFramingGate: "public_derived" | "inadmissible_fell_back" | "no_pin";
   excludeDomains: string[];   // companies.public_source_filters_json.exclude_domains
+  related: RelatedEntityRow[]; // E1: company_related_entities, status confirmed (the client's own — never a competitor)
 };
 
 async function buildAdmissibleQueryInputs(
@@ -125,7 +127,8 @@ async function buildAdmissibleQueryInputs(
     }
   }
 
-  return { companyName, companyDomain, categoryArchetype, jobFraming, jobFramingGate, excludeDomains };
+  const related = await loadConfirmedRelatedEntities(supabase, companyId);
+  return { companyName, companyDomain, categoryArchetype, jobFraming, jobFramingGate, excludeDomains, related };
 }
 
 // ── Prompt (two-phase in one call) ─────────────────────────────────────────────
@@ -166,7 +169,7 @@ export function buildCompetitorDiscoveryPrompt(inputs: AdmissibleInputs): string
 // ── Deterministic class guards (post-parse) ────────────────────────────────────
 // The model labels; the guards CORRECT: competitor-domain ⇒ competitor_voice, client-
 // domain or client-about ⇒ DROPPED (logged), anything else ⇒ market_context.
-function applyClassGuards(parsed: any, clientDomain: string) {
+function applyClassGuards(parsed: any, clientDomain: string, related: OwnHostSet | null = null) {
   const competitors = Array.isArray(parsed?.competitors) ? parsed.competitors : [];
   const dropped: Array<{ url: string; reason: string }> = [];
   const competitorDomains = new Set<string>(
@@ -174,11 +177,18 @@ function applyClassGuards(parsed: any, clientDomain: string) {
   );
   const isClient = (host: string) =>
     !!clientDomain && (host === clientDomain || host.endsWith(`.${clientDomain}`));
+  // E2: a CONFIRMED related entity's host is the client's own, never a competitor's (the one own-domain rule)
+  const relatedOf = (host: string) => (related ? ownHostMatchHost(host, related)?.entity ?? null : null);
   const guardItem = (item: any, owningCompetitorDomain?: string) => {
     const host = urlHost(String(item?.url || ""));
     if (!host) return null;
     if (isClient(host)) {
       dropped.push({ url: String(item?.url || ""), reason: "client-domain item in competitor run" });
+      return null;
+    }
+    const rel = relatedOf(host);
+    if (rel) {
+      dropped.push({ url: String(item?.url || ""), reason: `related-entity item in competitor run: ${rel.name} (${rel.relation})` });
       return null;
     }
     const matchedCompetitor = owningCompetitorDomain && (host === owningCompetitorDomain || host.endsWith(`.${owningCompetitorDomain}`))
@@ -187,6 +197,15 @@ function applyClassGuards(parsed: any, clientDomain: string) {
     const voice_class = matchedCompetitor ? "competitor_voice" : "market_context";
     return { ...item, voice_class };
   };
+  // E2: a confirmed related entity named as a competitor is refused whole (its domain is the client's own)
+  for (const competitor of [...competitors]) {
+    const cDomain = urlHost(`https://${String(competitor?.domain || "")}`) || String(competitor?.domain || "").toLowerCase();
+    const rel = cDomain ? relatedOf(cDomain) : null;
+    if (rel) {
+      dropped.push({ url: String(competitor?.domain || ""), reason: `confirmed related entity named as a competitor: ${rel.name} (${rel.relation})` });
+      competitors.splice(competitors.indexOf(competitor), 1);
+    }
+  }
   for (const competitor of competitors) {
     const cDomain = urlHost(`https://${String(competitor?.domain || "")}`) || String(competitor?.domain || "").toLowerCase();
     competitor.items = (Array.isArray(competitor?.items) ? competitor.items : [])
@@ -250,7 +269,9 @@ Deno.serve(async (req) => {
     // B2.1 budget: 16 searches ≈ $0.16 search billing + sonnet tokens — inside the
     // council-accepted $0.15–0.40 band (tokens may push the ceiling; per-run, operator-gated).
     const webSearchTool: Record<string, unknown> = { type: "web_search_20250305", name: "web_search", max_uses: 16 };
-    if (inputs.excludeDomains.length > 0) webSearchTool.blocked_domains = inputs.excludeDomains;
+    // E2: confirmed related hosts are the client's own — blocked from a competitor search like the exclude list (none ⇒ as before)
+    const blocked = [...inputs.excludeDomains, ...inputs.related.map((r) => r.host).filter((h) => !inputs.excludeDomains.includes(h))];
+    if (blocked.length > 0) webSearchTool.blocked_domains = blocked;
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -273,7 +294,7 @@ Deno.serve(async (req) => {
     } catch (_) { parsed = null; }
     if (!parsed) return json({ error: "Could not parse competitor-discovery JSON" }, 502);
 
-    const { parsed: guarded, dropped } = applyClassGuards(parsed, inputs.companyDomain);
+    const { parsed: guarded, dropped } = applyClassGuards(parsed, inputs.companyDomain, inputs.related.length ? ownHostsFor({ host: inputs.companyDomain }, inputs.related) : null);
     const excluded = Array.isArray(guarded?.excluded_candidates) ? guarded.excluded_candidates : [];
     console.log("[competitor-discovery] anchoring", {
       competitors: (guarded?.competitors || []).map((c: any) => ({ name: c?.name, domain: c?.domain })),

@@ -16,6 +16,7 @@
 //   own_site_not_read  → "Own site not yet read"       (not named, and 0 saved own-host pages)
 // The matching evidence (clause, url, fetched_at) is stored on the item. Pure over an in-memory record;
 // loadOwnSiteRecord gathers the record (three SELECTs) for the generator and the re-derivation.
+import { ownHostMatchHost, type OwnHostSet } from "./ownHosts.ts";
 import { hostOf } from "./publicReadStorage.ts";
 
 export type OwnSiteState = "named_on_site" | "seen_outside" | "own_site_not_read";
@@ -119,9 +120,10 @@ type Db = { from: (t: string) => any };
 
 /** The own-site record for a company: own-host pages, active own-host own_words claims, live own-host
  *  client_voice signals. Rows on any other host are dropped here — the host test is the ONLY gate. */
-export async function loadOwnSiteRecord(supabase: Db, companyId: string, ownHost: string | null): Promise<OwnSiteRecord> {
-  if (!ownHost) return { ...EMPTY_OWN_SITE_RECORD };
-  const onHost = (url: unknown) => hostOf(typeof url === "string" ? url : null) === ownHost;
+export async function loadOwnSiteRecord(supabase: Db, companyId: string, ownHost: string | null, related: OwnHostSet | null = null): Promise<OwnSiteRecord> {
+  if (!ownHost && !related) return { ...EMPTY_OWN_SITE_RECORD };
+  // the seed by exact host (this module's rule, kept); E2: a confirmed related host in effect through the one rule
+  const onHost = (url: unknown) => { const h = hostOf(typeof url === "string" ? url : null); return (!!ownHost && h === ownHost) || (!!related && !!h && !!ownHostMatchHost(h, related)?.entity); };
   const { data: pages, error: e1 } = await supabase.from("own_words_page_snapshots").select("source_url, fetched_at, clean_text").eq("company_id", companyId);
   if (e1) throw new Error(`own-site record: pages read failed: ${String(e1.message ?? e1)}`);
   const { data: claims, error: e2 } = await supabase.from("claims").select("statement, raw_payload, created_at").eq("company_id", companyId).eq("claim_type", "own_words").eq("status", "active");

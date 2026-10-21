@@ -3,6 +3,7 @@
 // (real declared statements may carry no detail column) and an Absent
 // primitive for persisted-integrity empty states.
 
+import { relatedVenueLabel, type EntityStamp } from "../../../../supabase/functions/_shared/ownHosts.ts";
 import { MarkTarget } from "@/lib/firstReadMarks/MarksContext";
 import { sourceLineOf } from "@/lib/firstRead/publishedSegment";
 import { FILING_FRAME_HEAD, PROFILE_FRAME_HEAD } from "@/views/client/workspace/InterviewOrigin";
@@ -376,6 +377,9 @@ export type FRCommitmentSource = {
   /** V1: raw_payload.source_type === "third_party_profile" — a profile the company wrote on someone
    *  else's host. Already on the row, and until now ignored. */
   thirdPartyProfile?: boolean;
+  /** E4: set when ownSite is true BECAUSE the host is a confirmed related entity's (ownHostMatch — the same one rule);
+   *  absent/null for the company's own seed host, which keeps "On your site". */
+  ownSiteEntity?: Pick<EntityStamp, "name" | "relation" | "effective_from" | "basis"> | null;
 };
 
 // ── V1 (operator ruling, 2026-10-15): EACH SOURCE IS LABELLED BY ITS OWN VENUE ──────────────────
@@ -388,7 +392,9 @@ export type FRCommitmentSource = {
 //
 // Now each source carries its own venue and the line groups them. Row classes do not change.
 export type FRVenue = typeof OWN_SITE_FRAME_HEAD | typeof FILING_FRAME_HEAD | typeof PROFILE_FRAME_HEAD
-  | typeof CHANNELS_FRAME_HEAD | typeof RECORD_FRAME_HEAD | typeof OUR_READ_HEAD;
+  | typeof CHANNELS_FRAME_HEAD | typeof RECORD_FRAME_HEAD | typeof OUR_READ_HEAD
+  /** E4: a confirmed related entity's own site (relatedVenueLabel), rendered right after "On your site" */
+  | `On ${string} site · ${string}`;
 
 /** The signed order groups render in. */
 export const VENUE_ORDER: readonly FRVenue[] = [
@@ -406,7 +412,7 @@ export function venueOf(s: FRCommitmentSource): FRVenue {
   if (s.cls === "record") return RECORD_FRAME_HEAD;
   if (s.registryFrame === "filing") return FILING_FRAME_HEAD;
   if (s.registryFrame === "profile" || s.thirdPartyProfile === true) return PROFILE_FRAME_HEAD;
-  if (s.ownSite === true) return OWN_SITE_FRAME_HEAD;
+  if (s.ownSite === true) return s.ownSiteEntity ? (relatedVenueLabel(s.ownSiteEntity) as FRVenue) : OWN_SITE_FRAME_HEAD;
   return CHANNELS_FRAME_HEAD;
 }
 
@@ -460,7 +466,9 @@ export function CommitmentSource(
   // the LINE's class still speaks when it is OUR READING: that marker lived in this component and
   // nowhere else, and dropping it would have quietly removed the one word saying the line is ours.
   if (sourceClass === "our_read") parts.push(OUR_READ_HEAD);
-  for (const venue of VENUE_ORDER) {
+  // E4: a related entity's venue sits right after "On your site", in first-shown order (none ⇒ the signed order alone)
+  const relatedVenues = [...new Set(shown.map(venueOf).filter((v) => !(VENUE_ORDER as readonly string[]).includes(v)))];
+  for (const venue of [VENUE_ORDER[0], ...relatedVenues, ...VENUE_ORDER.slice(1)]) {
     const inVenue = shown.filter((s) => venueOf(s) === venue);
     if (inVenue.length === 0) continue;
     parts.push(venue, ...inVenue.map((s) => sourceLineOf([s.host, s.published])));

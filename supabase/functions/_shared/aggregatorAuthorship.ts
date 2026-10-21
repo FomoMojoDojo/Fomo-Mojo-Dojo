@@ -31,6 +31,7 @@ import { callClassifierWithUsage, CLASSIFIER_MODEL, isLocalOllamaUrl } from "./u
 import type { ModelCallRecord } from "./recordModelCall.ts";
 import { sanitizeForStore, sanitizeNullable } from "./sanitizeForStore.ts";
 import { isOwnDomainUrl } from "./firstReadProvenance.ts";
+import { isOwnHostSet, ownHostMatch, ownHostMatchHost, ownHostsFor, relatedNamesFor, relationPhrase, type OwnHostSet, type RelatedEntityRow } from "./ownHosts.ts";
 import { voiceClassForMintedExcerpt } from "./voiceClassAtMint.ts";
 import { FROZEN_COMPANY_IDS } from "./frozenCompanies.ts";
 
@@ -227,15 +228,18 @@ export function isReleasePathShaped(url: string): boolean {
  *  EVERY close on the page is checked — a joint release carries one per company and the subject's is
  *  not necessarily the first (on IAQM's release WonderPaint's close comes first). Returns the close
  *  it matched, so a plan can show the operator what fired. Never opens the gate on its own. */
-export function subjectBoilerplateClose(pageText: string, subjectHost: string): string | null {
-  const own = String(subjectHost || "").toLowerCase().replace(/^www\d*\./, "");
+export function subjectBoilerplateClose(pageText: string, subjectHost: string | OwnHostSet): string | null {
+  // E2: the own-host SET (seed + confirmed related hosts in effect) — a close naming any of them is the subject's;
+  // a single host string keeps the pre-E1 comparison byte-for-byte
+  const set = isOwnHostSet(subjectHost) ? subjectHost : null;
+  const own = set ? (set.seed ?? "") : String(subjectHost || "").toLowerCase().replace(/^www\d*\./, "");
   const text = String(pageText || "");
-  if (!own || !text) return null;
+  if ((!own && !(set && set.hosts.length)) || !text) return null;
   for (const m of text.matchAll(/for more information[\s\S]{0,160}/gi)) {
     const seg = m[0];
     for (const d of seg.matchAll(/([a-z0-9-]+(?:\.[a-z0-9-]+)+)/gi)) {
       const name = d[1].toLowerCase().replace(/^www\d*\./, "").replace(/[.,;:]$/, "");
-      if (name === own || name.endsWith(`.${own}`)) return seg.replace(/\s+/g, " ").trim();
+      if (set ? ownHostMatchHost(name, set) !== null : (name === own || name.endsWith(`.${own}`))) return seg.replace(/\s+/g, " ").trim();
     }
   }
   return null;
@@ -246,7 +250,7 @@ export function subjectBoilerplateClose(pageText: string, subjectHost: string): 
  *  which is the fail-toward-unchanged direction this module has always taken. */
 export function matchGatedUrl(
   url: string,
-  opts?: { pageText?: string | null; subjectHost?: string | null },
+  opts?: { pageText?: string | null; subjectHost?: string | OwnHostSet | null },
 ): { host: string; path: string; via: "profile" | "wire" | "boilerplate" } | null {
   const profile = matchAggregatorProfileUrl(url);
   if (profile) return { ...profile, via: "profile" };
@@ -308,12 +312,15 @@ export function entityNamesSubject(entity: string | null, subjectName: string): 
   return ini.length >= 3 && e.replace(/\s+/g, "") === ini;
 }
 
-export function outcomeFor(j: AuthorshipJudgment, subjectName: string): VoiceOutcome {
+export function outcomeFor(j: AuthorshipJudgment, subjectName: string, relatedNames: readonly string[] = []): VoiceOutcome {
   if (j.verdict === "subject_company") return "client_voice";
   if (j.verdict === "other_entity") {
     // An "other entity" that is the subject under another spelling is an inconsistent verdict —
     // fail toward unchanged rather than mark the company's own words as a competitor's.
     if (entityNamesSubject(j.entity, subjectName)) return null;
+    // E2: an "other entity" that is a CONFIRMED related entity in effect (ownHosts.relatedNamesFor) wrote the company's
+    // own words — never a competitor's. No related names (every company today) ⇒ the pre-E1 outcome.
+    if (relatedNames.some((n) => entityNamesSubject(j.entity, n))) return "client_voice";
     return "competitor_voice";
   }
   return null;
@@ -454,7 +461,9 @@ export type SpeakerJudgment = { speaker_class: SpeakerClass; speaker_name: strin
   /** R58: sha256 of the exact system + user prompt the verdict answered */ prompt_sha?: string | null };
 export type SpeakerInput = { subjectName: string; subjectHost: string; url: string; candidate: string; attributionForm: string; attributionSpan: string; speakerString: string; context: string;
   /** R55e: the page context the authorship judge receives (authorshipContext, same constants) — REQUIRED, no default */
-  pageContext: AuthorshipContext };
+  pageContext: AuthorshipContext;
+  /** E2: the own-host set (seed + confirmed related hosts in effect); absent ⇒ subjectHost alone, the pre-E1 prompt */
+  ownHosts?: OwnHostSet };
 export type SpeakerJudge = (input: SpeakerInput) => Promise<SpeakerJudgment | null>;
 /** One raw answer from the local model with its token counts (null when the response carried none). */
 export type SpeakerTransport = (args: { model: string; system: string; user: string }) => Promise<{ content: string; prompt_tokens: number | null; completion_tokens: number | null }>;
@@ -498,7 +507,12 @@ export const SPEAKER_SYSTEM =
 // The judge called insuranceagencyalliance.com "the company's own domain, siaa.com". The own-domain comparison is COMPUTED
 // (isOwnDomainUrl, the own_domain authority's one definition) and stated; the page brief and the CONTEXT block are the same
 // ones the authorship judge receives (pageBriefFor, contextBlock over authorshipContext).
-export function ownDomainLine(url: string, subjectHost: string): string {
+export function ownDomainLine(url: string, subjectHost: string | OwnHostSet): string {
+  // E2: a URL on a confirmed related host in effect is named as that entity's own site; the seed host and a single host
+  // string read exactly as before (the prompt bytes — and so the R58 replay key — are unchanged for every company
+  // without a confirmed related entity)
+  const rel = isOwnHostSet(subjectHost) ? ownHostMatch(url, subjectHost)?.entity ?? null : null;
+  if (rel) return `HOST IS THE SUBJECT'S OWN DOMAIN: yes — the page is the own site of ${rel.name}, ${relationPhrase(rel)}\n`;
   return `HOST IS THE SUBJECT'S OWN DOMAIN: ${isOwnDomainUrl(url, subjectHost) ? "yes — the page is the subject's own site" : "no — the page is hosted by someone else"}\n`;
 }
 export function buildSpeakerUser(input: SpeakerInput): string {
@@ -508,7 +522,7 @@ export function buildSpeakerUser(input: SpeakerInput): string {
     `SUBJECT COMPANY: ${input.subjectName}${input.subjectHost ? ` (${input.subjectHost})` : ""}\n` +
     `SOURCE URL: ${input.url}\n` +
     `HOST: ${page.host}\n` +
-    ownDomainLine(input.url, input.subjectHost) +
+    ownDomainLine(input.url, input.ownHosts ?? input.subjectHost) +
     `PAGE BRIEF: ${page.brief}\n\n` +
     (ctx.kind === "page" ? contextBlock(ctx, input.candidate) : `CONTEXT — no page words: ${ctx.reason}\n\n`) +
     `SENTENCE: ${input.candidate}\n` +
@@ -663,7 +677,7 @@ export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_
   entries: T[],
   /** R54: pageFor returns the crawled page text for a URL (null when the run holds none) — REQUIRED; the judge reads the
    *  entry's text in place on that page, and an entry it cannot place is not judged. */
-  ctx: { subjectName: string; subjectHost: string; getText: (e: T) => string; judge: AuthorshipJudge; pageFor: (url: string) => string | null; maxJudged?: number; log?: (s: string) => void },
+  ctx: { subjectName: string; subjectHost: string; related?: readonly RelatedEntityRow[]; asOf?: string | null; getText: (e: T) => string; judge: AuthorshipJudge; pageFor: (url: string) => string | null; maxJudged?: number; log?: (s: string) => void },
 ): Promise<{ entries: T[]; stats: AuthorshipStats }> {
   const stats: AuthorshipStats = { considered: entries.length, gated: 0, judged: 0, changed: 0, judge_failed: 0, unavailable: 0, registry_skipped: 0, no_page_words: 0 };
   const maxJudged = ctx.maxJudged ?? DEFAULT_MAX_JUDGED;
@@ -682,7 +696,8 @@ export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_
     }
     // URL PATTERN GATES THE JUDGE. Own-domain URLs are never aggregators (the host guard owns them).
     const m = url ? matchAggregatorProfileUrl(url) : null;
-    if (!m || isOwnDomainUrl(url, ctx.subjectHost)) {
+    // E2: the own-host set when the company has confirmed related entities (else the single host, as before)
+    if (!m || isOwnDomainUrl(url, ctx.related?.length ? ownHostsFor({ host: ctx.subjectHost }, ctx.related, ctx.asOf ?? null) : ctx.subjectHost)) {
       out.push(e);
       continue;
     }
@@ -705,7 +720,7 @@ export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_
     // the gate stats and the consecutive-failure stop need.
     const d = await voiceClassForMintedExcerpt({
       url, item: null, labeledClass: String(e.voice_class ?? ""), pageText: null, judgedText: text,
-      company: { name: ctx.subjectName, host: ctx.subjectHost }, registry: null, authorshipContext: context,
+      company: { name: ctx.subjectName, host: ctx.subjectHost, ...(ctx.related?.length ? { related: ctx.related } : {}) }, ...(ctx.related?.length ? { asOf: ctx.asOf ?? null } : {}), registry: null, authorshipContext: context,
       judge: (input) => ctx.judge(input), gate: "profile", onJudgeFailure: "keep_label",
     });
     if (context.kind === "page") stats.judged++; else stats.no_page_words++;
@@ -720,7 +735,7 @@ export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_
       stats.judge_failed++;
       consecutiveFailures++;
       log(`judge failed, label untouched (${m.host} ${url}): ${stamp.reason}`);
-      out.push({ ...e, authorship_judge: stamp });
+      out.push({ ...e, authorship_judge: stamp, ...(d.entity ? { entity: d.entity } : {}) });
       continue;
     }
     consecutiveFailures = 0;
@@ -728,9 +743,9 @@ export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_
     if (d.authority === "authorship_judge" && d.voice_class !== e.voice_class) {
       stats.changed++;
       log(`${String(e.voice_class ?? "null")} → ${d.voice_class} (${stamp.verdict}${stamp.entity ? `: ${stamp.entity}` : ""}) ${url} — ${stamp.reason}`);
-      out.push({ ...e, voice_class: d.voice_class, authorship_judge: stamp });
+      out.push({ ...e, voice_class: d.voice_class, authorship_judge: stamp, ...(d.entity ? { entity: d.entity } : {}) });
     } else {
-      out.push({ ...e, authorship_judge: stamp });
+      out.push({ ...e, authorship_judge: stamp, ...(d.entity ? { entity: d.entity } : {}) });
     }
   }
   return { entries: out, stats };
@@ -740,7 +755,7 @@ export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_
  *  reads outside_voice_signals.signal|perspective and evidence_ledger.snippet|bucket). */
 export async function demoteAggregatorSelfVoiceInResult(
   result: Record<string, unknown>,
-  ctx: { subjectName: string; subjectHost: string; judge: AuthorshipJudge; pageFor: (url: string) => string | null; log?: (s: string) => void },
+  ctx: { subjectName: string; subjectHost: string; related?: readonly RelatedEntityRow[]; asOf?: string | null; judge: AuthorshipJudge; pageFor: (url: string) => string | null; log?: (s: string) => void },
 ): Promise<{ result: Record<string, unknown>; stats: Record<string, AuthorshipStats> }> {
   const stats: Record<string, AuthorshipStats> = {};
   const next = { ...result };
@@ -826,6 +841,8 @@ export type RestampStore = {
    *  does not implement it leaves (b) undecidable, so only the wire-host detector can open the
    *  gate. That is the fail-toward-unchanged direction this module has always taken. */
   loadPageTexts?(urls: string[]): Promise<Map<string, string>>;
+  /** E2: confirmed related entities per company. OPTIONAL — a store without it reads every company as single-host. */
+  loadRelatedEntities?(companyIds: string[]): Promise<Map<string, RelatedEntityRow[]>>;
   openLedger(companyId: string, runRef: string, target: number): Promise<string>;
   closeLedger(runId: string, status: "completed" | "failed", done: number, errorText?: string): Promise<void>;
   insertAudit(row: AuditRow): Promise<void>;
@@ -887,12 +904,18 @@ export async function planRestamp(
   // (b) needs the PAGE, not the row: a release's boilerplate close sits in the page text, not in
   // the claim the signal carries. Loaded once for every candidate url the store can serve.
   const hostByCompany = new Map(scope.map((c) => [c.id, hostOf(c.website ?? "")]));
+  // E2: the own-host set per company (today's date — a restamp re-decides rows now); single host when none confirmed
+  const relatedByCompany = store.loadRelatedEntities ? await store.loadRelatedEntities(scope.map((c) => c.id)) : new Map<string, RelatedEntityRow[]>();
+  const ownOf = (companyId: string): string | OwnHostSet | null => {
+    const rel = relatedByCompany.get(companyId) ?? [];
+    return rel.length ? ownHostsFor({ host: hostByCompany.get(companyId) ?? null }, rel) : (hostByCompany.get(companyId) ?? null);
+  };
   const pageTexts = store.loadPageTexts
     ? await store.loadPageTexts([...new Set(signals.map((s) => String(s.source_url ?? "")).filter(Boolean))])
     : new Map<string, string>();
   const gateOf = (s: CandidateSignal) => matchGatedUrl(String(s.source_url ?? ""), {
     pageText: pageTexts.get(String(s.source_url ?? "")) ?? null,
-    subjectHost: hostByCompany.get(s.company_id) ?? null,
+    subjectHost: ownOf(s.company_id),
   });
   const gated = signals.filter((s) => !!gateOf(s));
   // A SHUT GATE SHOWS IT LOOKED (operator ruling, 2026-10-16). Detector (b) needs the stored page;
@@ -924,7 +947,8 @@ export async function planRestamp(
       ? await opts.judge({ subjectName: co.name, subjectHost: hostOf(co.website ?? ""), url: String(s.source_url), text, context: authorshipContext(page, text, locateOnPage(page, text)) }, { companyId: co.id })
       : { verdict: "uncertain" as const, entity: null, reason: "empty statement — nothing to judge", model: "none" };
     const b = backing.get(s.id) ?? { echoed: 0, divergent: 0, internally_silent: 0 };
-    const to = j.verdict === "judge_failed" ? null : outcomeFor(j, co.name);
+    const own = ownOf(co.id);
+    const to = j.verdict === "judge_failed" ? null : (typeof own === "object" && own ? outcomeFor(j, co.name, relatedNamesFor(own)) : outcomeFor(j, co.name));
     proposals.push({
       signal_id: s.id, company_id: s.company_id, company_name: co.name, host: m.host, path: m.path, via: m.via,
       from: s.voice_class, to, held: !!s.held_at, text, text_source: jt.source, cleaner_text: cleaner, judge: j, echo_deltas: b.echoed, delta_backing: b,
@@ -1091,6 +1115,15 @@ export function makeSupabaseRestampStore(supabase: SupabaseLike): RestampStore {
     // of this function ignored `error`, that transport failure read as "no company reprints exist
     // anywhere", which is the one answer a detector must never give by accident. It THROWS now,
     // like every other read in this store, and chunks at a size long urls survive.
+    async loadRelatedEntities(companyIds) {
+      const out = new Map<string, RelatedEntityRow[]>();
+      if (companyIds.length === 0) return out;
+      const { data, error } = await supabase.from("company_related_entities")
+        .select("id, company_id, name, host, relation, effective_from, effective_basis, status").in("company_id", companyIds).eq("status", "confirmed");
+      if (error) throw new Error(`company_related_entities read failed: ${error.message}`);
+      for (const r of ((data ?? []) as Array<RelatedEntityRow & { company_id: string }>)) out.set(r.company_id, [...(out.get(r.company_id) ?? []), r]);
+      return out;
+    },
     async loadPageTexts(urls) {
       const out = new Map<string, string>();
       if (urls.length === 0) return out;

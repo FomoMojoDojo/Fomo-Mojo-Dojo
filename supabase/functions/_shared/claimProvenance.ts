@@ -10,6 +10,7 @@
 
 import { ANALYSIS_VOICE, isAnalysisRow } from "./voiceLabel.ts";
 import { callOpenAIJSON as sharedCallOpenAIJSON } from "./openaiClient.ts";
+import { isOwnHostSet, loadConfirmedRelatedEntities, ownHostMatchHost, ownHostsFor, type OwnHostSet } from "./ownHosts.ts";
 import { buildClientCorpus, resolveSyndication, resolveSyndicationDurable, type ClientCorpus } from "./syndication.ts";
 import { buildStoreSupplementBrief, type StoreSupplement } from "./storeSupplement.ts";
 import { recordIntegrityRun } from "./integrity.ts";
@@ -32,6 +33,16 @@ type ClaimProvenanceEntry = {
   basis_urls: string[];
 };
 
+/** E2: the own-host argument for the company-source predicate — the seed host, or the own-host set when the company has
+ *  confirmed related entities (loaded here when the caller passes its client and company id; none ⇒ the seed host,
+ *  exactly as before). */
+async function ownHostsOfOpts(opts: { companyWebsite?: string | null; supabase?: unknown; companyId?: string | null }): Promise<string | OwnHostSet> {
+  const seed = urlHost(String(opts.companyWebsite || ""));
+  if (!opts.supabase || !opts.companyId) return seed;
+  const related = await loadConfirmedRelatedEntities(opts.supabase as { from: (t: string) => any }, opts.companyId);
+  return related.length ? ownHostsFor({ host: seed }, related) : seed;
+}
+
 function urlHost(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
@@ -47,7 +58,7 @@ function urlHost(url: string): string {
 // a company page can masquerade as an independent item.
 function isCompanySource(
   entry: { bucket?: string; source_type?: string; url?: string; evidence_class?: string | null },
-  companyHost: string,
+  companyHost: string | OwnHostSet,
 ): boolean {
   // C1 (2026-09-17): a FILING-class row (registry classifier — Form 990 data / self-reported profile
   // sections) is the company speaking through a registry: company-source, excluded like own-domain.
@@ -56,7 +67,7 @@ function isCompanySource(
   if (String(entry?.bucket || "") === "company_claim") return true;
   if (String(entry?.source_type || "") === "profile_or_company_page") return true;
   const host = urlHost(String(entry?.url || ""));
-  if (host && companyHost && (host === companyHost || host.endsWith(`.${companyHost}`))) {
+  if (host && companyHost && (isOwnHostSet(companyHost) ? ownHostMatchHost(host, companyHost) !== null : (host === companyHost || host.endsWith(`.${companyHost}`)))) {
     return true;
   }
   return false;
@@ -90,7 +101,7 @@ const VOICE_CLASSES: ReadonlySet<string> = new Set([
 
 function classifyVoice(
   entry: { voice_class?: string; bucket?: string; source_type?: string; url?: string; evidence_class?: string | null; raw_payload?: unknown },
-  companyHost: string,
+  companyHost: string | OwnHostSet,
 ): VoiceClass {
   // S1 (signed 2026-09-18): the analysis label wins over the own-host test — a synthesis row carries the company's
   // URL by construction and must never be read as the company speaking (voiceLabel.ts, shared with the mirror).
@@ -172,12 +183,12 @@ async function gateBasisBySyndication<T>(opts: {
   return { kept, excludedSyndicated, unresolved };
 }
 
-function listCompanyClaimLedgerItems(baselineResultJson: unknown, companyWebsite?: string) {
+function listCompanyClaimLedgerItems(baselineResultJson: unknown, companyWebsite?: string, own?: string | OwnHostSet) {
   const baseline = baselineResultJson as {
     evidence_ledger?: Array<{ bucket?: string; snippet?: string; url?: string; source_type?: string }>;
   } | null;
   const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
-  const companyHost = urlHost(String(companyWebsite || ""));
+  const companyHost = own ?? urlHost(String(companyWebsite || ""));
   return ledger
     .map((item, index) => ({ index, item }))
     .filter((entry) => isCompanySource(entry.item, companyHost));
@@ -242,8 +253,8 @@ async function deriveClaimProvenance(opts: {
   } | null;
 
   const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
-  const companyHost = urlHost(String(opts.companyWebsite || ""));
-  const companyClaims = listCompanyClaimLedgerItems(opts.baselineResultJson, opts.companyWebsite);
+  const companyHost = await ownHostsOfOpts(opts);
+  const companyClaims = listCompanyClaimLedgerItems(opts.baselineResultJson, opts.companyWebsite, companyHost);
   const alignmentSummary = String(baseline?.message_alignment?.alignment_summary || "");
   if (companyClaims.length === 0 && !alignmentSummary) {
     // Integrity: "nothing to judge" is a recorded outcome, not silence.
@@ -479,8 +490,8 @@ async function judgeAttributeEvidence(opts: {
 
   // Independence is judged by PROVENANCE, all data-level (never claim text), via the
   // shared company-source predicate — the validation run that motivated it corroborated
-  // "42 states" off iaqm.com/about when bucket vocabulary alone was the test.
-  const companyHost = urlHost(String(opts.companyWebsite || ""));
+  // "42 states" off iaqm.com/about when bucket vocabulary alone was the test. E2: the own-host set.
+  const companyHost = await ownHostsOfOpts(opts);
   // B1 rights enforcement: corroboration basis = outside_voice_about_client only (see
   // classifyVoice — competitor_voice and market_context may ground other surfaces but
   // corroborate nothing).

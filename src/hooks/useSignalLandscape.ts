@@ -1,3 +1,4 @@
+import { isOwnHostSet, loadConfirmedRelatedEntities, ownHostMatchHost, ownHostsFor, type OwnHostSet, type RelatedEntityRow } from "../../supabase/functions/_shared/ownHosts.ts";
 import { ANALYSIS_VOICE, isAnalysisRow } from "../../supabase/functions/_shared/voiceLabel.ts";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -80,13 +81,14 @@ function normalizedWords(text: string): string {
 // MO-2: host derivation consolidated into src/lib/sourceHost.ts.
 const urlHost = (url: string): string => sourceHostLower(url);
 
-function isCompanySource(row: SignalRow, companyHost: string): boolean {
+function isCompanySource(row: SignalRow, companyHost: string | OwnHostSet): boolean {
   const host = urlHost(String(row.source_url || ""));
   return (
     // C1: filing-class (registry filing data / self-reported sections) is company-source — same shape as
     // the server predicate (_shared/claimProvenance.ts isCompanySource).
     String(row.evidence_class || "") === "filing" ||
-    (!!host && !!companyHost && (host === companyHost || host.endsWith(`.${companyHost}`))) ||
+    // E2: the own-host set (seed + confirmed related hosts) through the one rule; a single host string reads as before
+    (!!host && !!companyHost && (isOwnHostSet(companyHost) ? ownHostMatchHost(host, companyHost) !== null : (host === companyHost || host.endsWith(`.${companyHost}`)))) ||
     String(row.raw_payload?.source_type || "") === "profile_or_company_page" ||
     String(row.raw_payload?.bucket || "") === "company_claim"
   );
@@ -98,7 +100,7 @@ function isCompanySource(row: SignalRow, companyHost: string): boolean {
 // independent until a judge pass stamps them (lazy-stamping philosophy).
 function classifyOutsideRow(
   row: SignalRow,
-  companyHost: string,
+  companyHost: string | OwnHostSet,
 ): "client_voice" | "outside_voice_about_client" | "competitor_voice" | "market_context" | "analysis" {
   // S1 (signed 2026-09-18): the analysis label wins over the own-host test — same predicate as the edge judges.
   // S2: label, marker or SHAPE (raw_payload.hypothesis) — isAnalysisRow, the one predicate the judges read.
@@ -124,7 +126,7 @@ function classifyOutsideRow(
  * No recency window: the chip describes the accumulated evidence base. The judges'
  * supplement window governs admission to JUDGMENTS, not the inventory description.
  */
-export function computeSignalLandscape(signals: SignalRow[], companyHost = ""): SignalLandscape {
+export function computeSignalLandscape(signals: SignalRow[], companyHost: string | OwnHostSet = ""): SignalLandscape {
   const byBand: Record<SignalBand, BandStats> = {
     outside: EMPTY_BAND_STATS(),
     organization: EMPTY_BAND_STATS(),
@@ -264,7 +266,13 @@ export function useSignalLandscape(companyId: string | undefined) {
       }
 
       const companyHost = urlHost(String((companyRow as { website?: string } | null)?.website || ""));
-      setLandscape(computeSignalLandscape(data as SignalRow[], companyHost));
+      // E2: confirmed related entities join the own-host set; a failed read is logged and the landscape renders
+      // single-host (the pre-E1 view), never an empty screen
+      let related: RelatedEntityRow[] = [];
+      try { related = await loadConfirmedRelatedEntities(supabase as never, companyId); }
+      catch (e) { console.warn("[signal-landscape] related entities unreadable — single-host", e); }
+      if (cancelled) return;
+      setLandscape(computeSignalLandscape(data as SignalRow[], related.length ? ownHostsFor({ host: companyHost }, related) : companyHost));
       setLoading(false);
     })();
 

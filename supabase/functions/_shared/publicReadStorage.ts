@@ -17,6 +17,7 @@
 // Everything here is pure (no I/O); the handler gathers inputs and builds refMeta, then calls this.
 import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, type StrategyPayload } from "./cascadeRouting.ts";
 import { CASCADE_SOURCE_KEY, cascadeSourceOf } from "./publicReadPromote.ts";
+import { ownHostMatchHost, type OwnHostSet } from "./ownHosts.ts";
 import { applyOwnSiteStates, deriveOwnSiteStates, EMPTY_OWN_SITE_RECORD, type OwnSiteRecord, type OwnSiteVerdict } from "./offeringNamedOnSite.ts";
 
 export type RefMeta = { domain: string | null; date: string | null; own_site: boolean };
@@ -26,6 +27,17 @@ export type OfferingSeenOn = {
 };
 
 /** bare host of a URL (www. stripped, lowercased). null when unparseable — a synthesis row has no URL. */
+/** E2: the own-site hosts this module tests against — the seed host by EXACT equality (this module's own-site rule,
+ *  signed 2026-09-18, kept: no subdomain counts for the seed), plus confirmed related hosts in effect through the one
+ *  own-domain rule (ownHostMatchHost: equal or a subdomain — corporate.charter.com under charter.com). A bare Set is
+ *  the pre-E1 argument and reads exactly as before. */
+export type OwnSiteHosts = Set<string> | { exact: Set<string>; related: OwnHostSet | null };
+export function ownSiteHas(o: OwnSiteHosts, host: string | null | undefined): boolean {
+  if (!host) return false;
+  if (o instanceof Set) return o.has(host);
+  return o.exact.has(host) || (!!o.related && !!ownHostMatchHost(host, o.related)?.entity);
+}
+
 export function hostOf(url: string | null | undefined): string | null {
   if (!url) return null;
   try { return new URL(url).hostname.replace(/^www\./, "").toLowerCase() || null; }
@@ -38,12 +50,13 @@ export function hostOf(url: string | null | undefined): string | null {
 export function buildRefMeta(
   inputs: Array<{ id: string; source_url?: string | null; event_date?: string | null; own_site?: boolean }>,
   ownHost: string | null,
+  related: OwnHostSet | null = null,
 ): Map<string, RefMeta> {
-  const ownHosts = new Set<string>(ownHost ? [ownHost] : []);
+  const ownHosts: OwnSiteHosts = related ? { exact: new Set<string>(ownHost ? [ownHost] : []), related } : new Set<string>(ownHost ? [ownHost] : []);
   const refMeta = new Map<string, RefMeta>();
   for (const r of inputs) {
     const host = hostOf(r.source_url);
-    refMeta.set(r.id, { domain: host, date: r.event_date ?? null, own_site: host !== null && ownHosts.has(host) });
+    refMeta.set(r.id, { domain: host, date: r.event_date ?? null, own_site: host !== null && ownSiteHas(ownHosts, host) });
   }
   return refMeta;
 }
@@ -53,7 +66,7 @@ export function ownHostCitationFor(
   payload: Record<string, unknown>,
   uuidByRef: Map<string, string>,
   refMeta: Map<string, RefMeta>,
-  ownHosts: Set<string>,
+  ownHosts: OwnSiteHosts,
   refUrl: (id: string) => string | null,
 ): (index: number) => { cited: boolean; url: string | null } {
   const items = Array.isArray(payload.items) ? (payload.items as Array<Record<string, unknown>>) : [];
@@ -62,7 +75,7 @@ export function ownHostCitationFor(
     const ids = [...new Set((Array.isArray(it.refs) ? it.refs : []).filter((r): r is string => typeof r === "string").map((r) => uuidByRef.get(r.trim()) ?? r.trim()))];
     for (const id of ids) {
       const m = refMeta.get(id);
-      if (m && (m.own_site || (m.domain !== null && ownHosts.has(m.domain)))) return { cited: true, url: refUrl(id) };
+      if (m && (m.own_site || (m.domain !== null && ownSiteHas(ownHosts, m.domain)))) return { cited: true, url: refUrl(id) };
     }
     return { cited: false, url: null };
   };
@@ -92,7 +105,7 @@ export function deriveOfferingSeenOn(
   payload: Record<string, unknown>,
   uuidByRef: Map<string, string>,
   refMeta: Map<string, RefMeta>,
-  ownHosts: Set<string>,
+  ownHosts: OwnSiteHosts,
 ): OfferingSeenOn[] {
   const items = Array.isArray(payload.items) ? (payload.items as Array<Record<string, unknown>>) : [];
   return items.map((it, index) => {
@@ -100,7 +113,7 @@ export function deriveOfferingSeenOn(
     const metas = refTokens.map((t) => refMeta.get(uuidByRef.get(t) ?? t)).filter((m): m is RefMeta => !!m);
     const domains = [...new Set(metas.map((m) => m.domain).filter((d): d is string => !!d))];
     const dates = metas.map((m) => m.date).filter((d): d is string => !!d).sort();
-    const ownSite = metas.some((m) => m.own_site) || domains.some((d) => ownHosts.has(d));
+    const ownSite = metas.some((m) => m.own_site) || domains.some((d) => ownSiteHas(ownHosts, d));
     return {
       index, label: typeof it.label === "string" ? it.label : "",
       seen_on: ownSite ? "own_site" : "outside",
@@ -143,7 +156,7 @@ export function buildStoredPayloads(args: {
   verdict: Record<string, unknown>;
   uuidByRef: Map<string, string>;
   refMeta: Map<string, RefMeta>;
-  ownHosts: Set<string>;
+  ownHosts: OwnSiteHosts;
   /** The own-site record (offering only). Absent ⇒ no page was read ⇒ items not named by citation are "own_site_not_read". */
   ownSiteRecord?: OwnSiteRecord | null;
   /** URL of a ledger input by id (for the own_host_citation evidence). */

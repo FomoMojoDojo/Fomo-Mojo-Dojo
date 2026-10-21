@@ -65,6 +65,7 @@ import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { listingMayCorroborate } from "./listingCorroboration.ts";
 import { listingIdentityInput, type Listing } from "./listingDetect.ts";
 import { isOwnDomainUrl, normalizeHost } from "./firstReadProvenance.ts";
+import { loadConfirmedRelatedEntities, ownHostsFor, type OwnHostSet } from "./ownHosts.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
@@ -592,6 +593,9 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       companyHost = null;
     }
   }
+  // E2: the own-host set (seed + confirmed related hosts in effect today); no confirmed entity ⇒ the seed host alone
+  const relatedRows = await loadConfirmedRelatedEntities(args.supabase, args.companyId);
+  const ownHosts: string | OwnHostSet | null = relatedRows.length ? ownHostsFor({ host: companyHost }, relatedRows) : companyHost;
   let declared: typeof claims;
   let publicVoiceDeclaredIds: Set<string> | null = null;
   let ownWordsIneligible = 0;
@@ -602,7 +606,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     const ownVoiceSigIds = new Set(
       vSigs.filter((s) =>
         s.voice_class === "client_voice" ||
-        (s.voice_class === null && !!s.source_url && isOwnDomainUrl(s.source_url, companyHost)),
+        (s.voice_class === null && !!s.source_url && isOwnDomainUrl(s.source_url, ownHosts)),
       ).map((s) => s.id),
     );
     const analysisSigIds = new Set(vSigs.filter((s) => s.voice_class === "analysis").map((s) => s.id));
@@ -704,7 +708,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       if (pairingKind === "public_vs_public") unbackedClaimIds.add(c.id);
       continue;
     }
-    if (companyHost && urls.some((u) => isOwnDomainUrl(u, companyHost))) ownHostClaimIds.add(c.id);
+    if (ownHosts && urls.some((u) => isOwnDomainUrl(u, ownHosts))) ownHostClaimIds.add(c.id);
   }
   const observedOwnHost = (publicClaimId: string | null | undefined): boolean =>
     !!publicClaimId && ownHostClaimIds.has(publicClaimId);

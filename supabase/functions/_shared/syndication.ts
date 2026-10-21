@@ -49,6 +49,7 @@ const BAND_SHINGLE_N = 4;
 const BAND_SHINGLE_THRESHOLD = 0.1;
 
 import type { ModelCallRecord } from "./recordModelCall.ts";
+import { isOwnHostSet, ownHostMatchHost, type OwnHostSet } from "./ownHosts.ts";
 
 type SyndicationVerdict = {
   score: number;
@@ -130,7 +131,8 @@ export type CorpusRow = { claim_text?: string; evidence_excerpt?: string; source
 export async function buildClientCorpus(
   supabase: { from: (t: string) => any },
   companyId: string,
-  companyHost: string,
+  /** E2: the seed host, or the own-host set (seed + confirmed related hosts in effect) — the one own-domain rule */
+  companyHost: string | OwnHostSet,
   extraClientTexts: string[] = [],
   /** R38 (2026-10-20): rows to leave out — the regen path excludes the rows minted under its own run_id, so no candidate scores against itself. */
   exclude?: (row: CorpusRow) => boolean,
@@ -149,7 +151,7 @@ export async function buildClientCorpus(
       const isClient =
         r.voice_class === "client_voice" ||
         (r.voice_class == null && (
-          (host && companyHost && (host === companyHost || host.endsWith(`.${companyHost}`))) ||
+          (host && companyHost && (isOwnHostSet(companyHost) ? ownHostMatchHost(host, companyHost) !== null : (host === companyHost || host.endsWith(`.${companyHost}`)))) ||
           String(r.raw_payload?.source_type || "") === "profile_or_company_page" ||
           String(r.raw_payload?.bucket || "") === "company_claim"
         ));

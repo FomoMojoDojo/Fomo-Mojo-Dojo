@@ -12,6 +12,7 @@
 // cannot be expressed through this store (guard p1). A class change carries `exists(audit row)` in its WHERE clause,
 // so a class write without its audit row touches zero rows and is refused (guard p3).
 import { lit, PsqlSession } from "../lib/psqlBlankingStore.ts";
+import type { RelatedEntityRow } from "../../supabase/functions/_shared/ownHosts.ts";
 
 export { lit, PsqlSession };
 
@@ -21,7 +22,7 @@ export type SweepSignal = {
   claim_text: string | null; evidence_excerpt: string | null; quote_source_text: string | null;
   raw_payload: Record<string, unknown> | null; superseded_at: string | null; held_at: string | null; created_at: string;
 };
-export type SweepSnapshot = { clean_text: string; text_sha256: string; structured: unknown };
+export type SweepSnapshot = { clean_text: string; text_sha256: string; structured: unknown; crawled_at?: string | null };
 export type SweepAuditRow = { id: string; company_id: string; signal_id: string; run_ref: string; old_voice_class: string | null; new_voice_class: string; reverted_at: string | null };
 export type SweepAuditInsert = {
   company_id: string; signal_id: string; run_ref: string; old_voice_class: string | null; new_voice_class: string;
@@ -62,15 +63,20 @@ export function makePsqlSweepStore(s: PsqlSession) {
     },
     /** The snapshot a b3 row was minted from (raw_payload.snapshot_text_sha256), newest crawl of that text. */
     async loadSnapshot(companyId: string, sha: string): Promise<SweepSnapshot | null> {
-      const r = await s.query<SweepSnapshot>(`select clean_text, text_sha256, structured from outside_page_snapshots
+      const r = await s.query<SweepSnapshot>(`select clean_text, text_sha256, structured, crawled_at from outside_page_snapshots
         where company_id=${lit(companyId)}::uuid and text_sha256=${lit(sha)} and fetch_status='ok' and clean_text is not null order by crawled_at desc limit 1`);
       return r[0] ?? null;
     },
     /** R54: the newest ok snapshot of a URL (a baseline row's page when no sha names one). */
     async loadSnapshotByUrl(companyId: string, url: string): Promise<SweepSnapshot | null> {
-      const r = await s.query<SweepSnapshot>(`select clean_text, text_sha256, structured from outside_page_snapshots
+      const r = await s.query<SweepSnapshot>(`select clean_text, text_sha256, structured, crawled_at from outside_page_snapshots
         where company_id=${lit(companyId)}::uuid and source_url=${lit(url)} and fetch_status='ok' and clean_text is not null order by crawled_at desc limit 1`);
       return r[0] ?? null;
+    },
+    /** E1/E2: the company's CONFIRMED related entities (status filtered here) — the own-host set's members */
+    async loadRelatedEntities(companyId: string): Promise<RelatedEntityRow[]> {
+      return await s.query<RelatedEntityRow>(`select id, name, host, relation, effective_from::text effective_from, effective_basis, status from company_related_entities
+        where company_id=${lit(companyId)}::uuid and status='confirmed' order by host`);
     },
     /** A supabase-js-shaped reader for the ONE query buildClientCorpus makes (signals by company, limit 1000) — so the
      *  shipped corpus builder runs unchanged over this session. */

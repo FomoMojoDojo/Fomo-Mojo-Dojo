@@ -40,6 +40,7 @@ import {
   type ClientCorpus, type SyndicationJudgeInput, type SyndicationTransport,
 } from "../../supabase/functions/_shared/syndication.ts";
 import { CLASSIFIER_MODEL, isLocalOllamaUrl } from "../../supabase/functions/_shared/uploadVoiceClassifier.ts";
+import { ownHostsFor, type RelatedEntityRow } from "../../supabase/functions/_shared/ownHosts.ts";
 import { detectAttribution, speakerContext } from "../../supabase/functions/_shared/attribution.ts";
 import { classifyRegistryRow } from "../../supabase/functions/_shared/registryClassifier.ts";
 import { clientAnchorsFor } from "../../supabase/functions/_shared/clientAnchors.ts";
@@ -242,17 +243,19 @@ export const madeCall = (c: CallRecord) => !c.replayed && !c.nocall;
 export const callsString = (calls: CallRecord[]) => calls.filter(madeCall).map((c) => c.judge).join("+") || "none";
 
 // ── per-company context: the inputs the mint path had ────────────────────────────────────────────────────────
-export type CompanyCtx = { company: SweepCompany; name: string; host: string | null; anchors: readonly string[]; corpusByRun: Map<string, ClientCorpus> };
+export type CompanyCtx = { company: SweepCompany; name: string; host: string | null; anchors: readonly string[]; corpusByRun: Map<string, ClientCorpus>;
+  /** E1/E2: confirmed related entities — empty for every company until one is confirmed (then the single-host decision) */
+  related: RelatedEntityRow[] };
 export async function companyCtx(store: SweepStore, co: SweepCompany): Promise<CompanyCtx> {
   const ca = clientAnchorsFor(co as { name?: unknown; website?: unknown; entity_anchors_json?: unknown });
   if (!ca.ok) throw new SweepRefusedError("client_unnamed", `${co.id}: ${ca.reason}`);
   // R58: the ledger is not consulted for replay — a verdict replays on its OWN recorded prompt sha (rowJudges)
-  return { company: co, name: ca.name ?? "", host: ca.host, anchors: ca.anchors, corpusByRun: new Map() };
+  return { company: co, name: ca.name ?? "", host: ca.host, anchors: ca.anchors, corpusByRun: new Map(), related: await store.loadRelatedEntities(co.id) };
 }
 async function corpusFor(store: SweepStore, ctx: CompanyCtx, runId: string): Promise<ClientCorpus> {
   let c = ctx.corpusByRun.get(runId);
   if (!c) {
-    c = await buildClientCorpus(store.corpusClient(), ctx.company.id, ctx.host ?? "", [], (row) => String(row.raw_payload?.run_id ?? "") === runId);
+    c = await buildClientCorpus(store.corpusClient(), ctx.company.id, ctx.related.length ? ownHostsFor({ host: ctx.host }, ctx.related) : (ctx.host ?? ""), [], (row) => String(row.raw_payload?.run_id ?? "") === runId);
     ctx.corpusByRun.set(runId, c);
   }
   return c;
@@ -263,7 +266,7 @@ export async function deriveRow(store: SweepStore, ctx: CompanyCtx, row: SweepSi
   const calls: CallRecord[] = [];
   const j = rowJudges(row, base, calls);
   const rp = row.raw_payload ?? {};
-  const company = { name: ctx.name, host: ctx.host };
+  const company = { name: ctx.name, host: ctx.host, ...(ctx.related.length ? { related: ctx.related } : {}) };
   const url = String(row.source_url ?? "");
   let input: VoiceClassInput;
   let basis: Derived["basis"];
@@ -287,6 +290,8 @@ export async function deriveRow(store: SweepStore, ctx: CompanyCtx, row: SweepSi
       attribution, speakerJudge: j.speaker,
       context: page && offset !== null ? speakerContext(page, offset, length, attribution?.speaker_string || ctx.name) : null,
       syndication: { corpus: await corpusFor(store, ctx, String(rp.run_id ?? "")), judge: j.band, anchors: ctx.anchors },
+      // E2: the effective-date rule reads the page's crawl date (the row's own date when no snapshot is stored)
+      ...(ctx.related.length ? { asOf: snap?.crawled_at ?? row.created_at } : {}),
     };
   } else {
     // R54: a baseline row's judged text is read in place on the page stored for it (the excerpt guard's basis snapshot,
@@ -305,6 +310,7 @@ export async function deriveRow(store: SweepStore, ctx: CompanyCtx, row: SweepSi
       url, item: { voice_class: row.voice_class }, labeledClass: row.voice_class, pageText: null,
       judgedText: judged, company, registry: null,
       judge: j.authorship, gate: "profile_wire_boilerplate", onJudgeFailure: R52_POLICY, now,
+      ...(ctx.related.length ? { asOf: snap?.crawled_at ?? row.created_at } : {}),
     };
   }
   const decision = await voiceClassForMintedExcerpt(input);
@@ -434,7 +440,8 @@ export async function applyCompany(store: SweepStore, args: {
       }
       const dec = d.decision;
       const to = dec.voice_class;
-      const stamp = { ...stampBase, authority: dec.authority, rule: dec.rule ?? null, detail: dec.detail, from, to: to ?? from, judgments: stampJudgments(dec) };
+      // E4: a row a related-entity rule decided (or a related host's row before its effective date) names its entity
+      const stamp = { ...stampBase, authority: dec.authority, rule: dec.rule ?? null, detail: dec.detail, from, to: to ?? from, judgments: stampJudgments(dec), ...(dec.entity ? { entity: dec.entity } : {}) };
       if (to && to !== from && AUDITABLE.has(to)) {
         const a = auditFields(dec);
         await tx(store, args.nested, async () => {

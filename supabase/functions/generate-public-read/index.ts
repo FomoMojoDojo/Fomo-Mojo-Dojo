@@ -36,7 +36,8 @@ import { liveRecordCandidates, reReadRowTexts, searchLiveRecordForSpecifics, spe
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { StageRefusal, detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
 import { PromoteRefused, promoteStagedReads, recordPromoteIntegrity, recordPromoteRefusal, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
-import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type OfferingSeenOn } from "../_shared/publicReadStorage.ts";
+import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type OfferingSeenOn, type OwnSiteHosts } from "../_shared/publicReadStorage.ts";
+import { loadConfirmedRelatedEntities, ownHostsFor } from "../_shared/ownHosts.ts";
 import { loadOwnSiteRecord } from "../_shared/offeringNamedOnSite.ts";
 import { SELECTION_VERSION } from "../_shared/publicReadSelection.ts";
 import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
@@ -763,10 +764,13 @@ Respond with ONLY JSON:
     // Company own-host set — read once, used by the offering seen_on derivation.
     const { data: coRow } = await supabase.from("companies").select("website, name").eq("id", company_id).maybeSingle();
     const ownHost = hostOf((coRow as { website?: string | null } | null)?.website ?? null);
-    const ownHosts = new Set<string>(ownHost ? [ownHost] : []);
-    const refMeta = buildRefMeta(inputs, ownHost);
+    // E2: confirmed related entities in effect join the own-site hosts (none ⇒ the seed host alone, exactly as before)
+    const relatedRows = await loadConfirmedRelatedEntities(supabase, company_id);
+    const relatedSet = relatedRows.length ? ownHostsFor({ host: ownHost }, relatedRows) : null;
+    const ownHosts: OwnSiteHosts = relatedSet ? { exact: new Set<string>(ownHost ? [ownHost] : []), related: relatedSet } : new Set<string>(ownHost ? [ownHost] : []);
+    const refMeta = buildRefMeta(inputs, ownHost, relatedSet);
     // The own-site record (rule 2026-09-18): the offering's "Named on your own site" is earned against it.
-    const ownSiteRecord = await loadOwnSiteRecord(supabase, company_id, ownHost);
+    const ownSiteRecord = await loadOwnSiteRecord(supabase, company_id, ownHost, relatedSet);
     const refUrl = (id: string) => inputs.find((r) => r.id === id)?.source_url ?? null;
 
     const payloads: Partial<Record<Kind, Record<string, unknown>>> = {};

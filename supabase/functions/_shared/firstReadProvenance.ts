@@ -5,6 +5,7 @@
 // First Read surface — uploaded documents power the deeper engagement only.
 //
 import { normalizeForHash } from "./contentIdentity.ts";
+import { isOwnHostSet, ownHostMatch, type OwnHostSet } from "./ownHosts.ts";
 //
 // R1 (operator ruling, 2026-08-20): upload-derived content is excluded STRUCTURALLY, as the union
 // of two derivable tests — (a) any backing signal with source_type = 'uploaded_file', and (b) the
@@ -39,8 +40,11 @@ export function normalizeHost(host: string): string {
  * THE own-domain rule — one definition, shared by the public-baseline stamping guard and
  * clientVoiceClaimIds: the URL's host equals the company host or is a subdomain of it
  * (both www-stripped, case-insensitive).
+ * E2 (2026-10-21): the second argument may be the own-host SET (ownHosts.ownHostsFor — the seed host plus confirmed
+ * related hosts in effect); a single host string keeps the pre-E1 behaviour byte-for-byte.
  */
-export function isOwnDomainUrl(url: string, companyHost: string | null | undefined): boolean {
+export function isOwnDomainUrl(url: string, companyHost: string | OwnHostSet | null | undefined): boolean {
+  if (isOwnHostSet(companyHost)) return ownHostMatch(url, companyHost) !== null;
   if (!companyHost) return false;
   const ch = normalizeHost(companyHost);
   if (!ch) return false;
@@ -60,7 +64,7 @@ export function isOwnDomainUrl(url: string, companyHost: string | null | undefin
 export function clientVoiceClaimIds(
   refs: Array<{ claim_id: string; signal_id: string }>,
   signalById: Map<string, { voice_class?: string | null; source_url?: string | null }>,
-  companyHost: string | null | undefined,
+  companyHost: string | OwnHostSet | null | undefined,
 ): Set<string> {
   const ids = new Set<string>();
   for (const r of refs) {
@@ -124,7 +128,7 @@ export function channelReadClaimIds(
 export function ownHostSignalByClaim<S extends { source_url?: string | null; voice_class?: string | null; event_date?: string | null }>(
   refs: Array<{ claim_id: string; signal_id: string }>,
   signalById: Map<string, S>,
-  companyHost: string | null | undefined,
+  companyHost: string | OwnHostSet | null | undefined,
 ): Map<string, S> {
   const out = new Map<string, S>();
   for (const r of refs) {

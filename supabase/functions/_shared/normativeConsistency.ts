@@ -22,6 +22,7 @@
 // registrable domain, or syndicated-from-client, NEVER counts toward independence
 // — self-corroboration is structurally impossible.
 
+import { loadConfirmedRelatedEntities, ownHostsFor } from "./ownHosts.ts";
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import {
@@ -143,6 +144,8 @@ export type NormRunResult =
 async function loadRunBound(supabase: Sb, companyId: string, sourceRunId: string): Promise<{ steps: NormStep[]; sources: NormSource[]; executor: string; jtbd: string; ownDomain: string | null }> {
   const { data: company } = await supabase.from("companies").select("website").eq("id", companyId).maybeSingle();
   const ownDomain = registrableDomain((company as { website?: string } | null)?.website ?? null);
+  // E2: confirmed related entities in effect are own too (this site's rule — registrable-domain equality — per host)
+  const relatedDomains = new Set(ownHostsFor({ website: null }, await loadConfirmedRelatedEntities(supabase, companyId)).hosts.map((h) => registrableDomain(h.host)).filter((d): d is string => !!d));
 
   const { data: stepRows, error: sErr } = await supabase
     .from("normative_job_steps")
@@ -167,7 +170,7 @@ async function loadRunBound(supabase: Sb, companyId: string, sourceRunId: string
     if (r.syndicated === true) continue; // syndicated-from-client excluded
     const domain = String(r.registrable_domain || "");
     if (!domain) continue; // no independence unit
-    if (ownDomain && domain === ownDomain) continue; // own-domain excluded — self-corroboration impossible
+    if ((ownDomain && domain === ownDomain) || relatedDomains.has(domain)) continue; // own-domain excluded — self-corroboration impossible (E2: a related entity's too)
     if (!String(r.source_text || "").trim()) continue;
     sources.push({ id: r.id, content_sha: r.content_sha, source_text: r.source_text, registrable_domain: domain, host: r.host ?? null });
   }

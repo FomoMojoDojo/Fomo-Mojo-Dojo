@@ -32,6 +32,7 @@
 //                  record speaking).
 import { ANALYSIS_VOICE, isAnalysisLabelled } from "./voiceLabel.ts";
 import { isOwnDomainUrl } from "./firstReadProvenance.ts";
+import { ownHostsFor, relatedEntityFor, relatedNamesFor, type EntityStamp, type OwnHostSet, type RelatedEntityRow } from "./ownHosts.ts";
 import {
   matchAggregatorProfileUrl, matchGatedUrl, outcomeFor,
   type AuthorshipContext, type AuthorshipInput, type AuthorshipJudge, type AuthorshipJudgment, type AuthorshipStamp, type SpeakerJudge, type SpeakerJudgment,
@@ -47,7 +48,7 @@ export type JudgeFailurePolicy = "keep_label" | "refuse_mint";
  *  `profile_wire_boilerplate`: profiles, press wires and release pages with the subject's boilerplate close
  *  (the restamp's gate, and the regen path's). */
 export type JudgeGate = "profile" | "profile_wire_boilerplate";
-export type VoiceAuthority = "analysis_label" | "own_domain" | "registry" | "authorship_judge" | "extractor_label" | "first_person_self_description" | "attributed_speaker_subject" | "first_person_judged" | "syndication";
+export type VoiceAuthority = "analysis_label" | "own_domain" | "own_domain_related" | "registry" | "authorship_judge" | "extractor_label" | "first_person_self_description" | "attributed_speaker_subject" | "first_person_judged" | "syndication";
 /** R38: what the syndication stage measured and decided, stamped on every regen-minted row. */
 export type SyndicationStamp = {
   score: number; band: number; words: number;
@@ -77,7 +78,11 @@ export type VoiceClassInput = {
   pageText?: string | null;
   /** The text the judge reads for this item (an excerpt, a snippet). Empty ⇒ nothing to judge. */
   judgedText?: string | null;
-  company: { name: string; host: string | null };
+  /** E1/E2: related = the company's CONFIRMED related entities (loadConfirmedRelatedEntities); absent or empty ⇒ the
+   *  single-host decision, byte-identical. */
+  company: { name: string; host: string | null; related?: readonly RelatedEntityRow[] };
+  /** E2: the row's date for the effective-date rule (the page's crawl date; absent ⇒ today). */
+  asOf?: string | null;
   /** The registry classification the caller computed for this item (classifyRegistryRow), null when not a registry URL. */
   registry: RegistryClassification | null;
   /** Resolves null when the judge is unavailable for this call (limits, no transport). */
@@ -123,6 +128,8 @@ export type VoiceClassDecision =
     speaker?: SpeakerStamp;
     /** R38: present when the syndication stage ran (the regen path) */
     syndication?: SyndicationStamp;
+    /** E4: the related entity the URL is on (decided by own_domain_related, or before_effective — the row predates it) */
+    entity?: EntityStamp;
   }
   | {
     ok: false;
@@ -133,6 +140,7 @@ export type VoiceClassDecision =
     authorship_judge?: AuthorshipStamp;
     speaker?: SpeakerStamp;
     syndication?: SyndicationStamp;
+    entity?: EntityStamp;
   };
 
 // ── R28: first-person self-description ─────────────────────────────────────────────────────────────────
@@ -167,12 +175,29 @@ function labelOf(labeledClass: string | null): string | null {
   return VOICE_CLASSES.includes(l) ? l : null;
 }
 
+// ── E2: the own-host set and the related entity a URL is on ──────────────────────────────────────────────────────────
+const hasRelated = (input: PreJudgeInput) => !!input.company.related && input.company.related.length > 0;
+/** The own-host argument for isOwnDomainUrl: the set when the company has confirmed related entities, else the single
+ *  seed host (the pre-E1 argument — so every stage reads exactly as before). */
+function ownHostsOf(input: PreJudgeInput): string | OwnHostSet | null {
+  return hasRelated(input) ? ownHostsFor({ host: input.company.host }, input.company.related, input.asOf ?? null) : input.company.host;
+}
+function relatedOf(input: PreJudgeInput): EntityStamp | null {
+  return hasRelated(input) ? relatedEntityFor(input.url, input.company.related!, input.asOf ?? null) : null;
+}
+/** E4: a decision on a URL a related entity owns carries the entity (unless the stage that decided already set it). */
+function withEntity<D extends object>(input: PreJudgeInput, d: D): D {
+  if (!("ok" in d) || "entity" in d) return d;
+  const e = relatedOf(input);
+  return e ? { ...d, entity: e } : d;
+}
+
 function gateFor(input: PreJudgeInput): GateHit | null {
   if (input.gate === "profile") {
     const m = matchAggregatorProfileUrl(input.url);
     return m ? { host: m.host, via: "profile" } : null;
   }
-  const g = matchGatedUrl(input.url, { pageText: input.pageText ?? null, subjectHost: input.company.host ?? null });
+  const g = matchGatedUrl(input.url, { pageText: input.pageText ?? null, subjectHost: ownHostsOf(input) ?? null });
   return g ? { host: g.host, via: g.via } : null;
 }
 
@@ -199,7 +224,10 @@ const syndicatedDecision = (stamp: SyndicationStamp): VoiceClassDecision =>
   ({ ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "syndication", detail: `syndication: ${stamp.method === "local_llm" ? `the band judge (${stamp.model}) read the item as the company's own copy restated` : `8-gram containment ${stamp.score} in the client corpus — the company's own copy on a third-party host`}`, gate: null, syndication: stamp });
 
 /** The stages BEFORE the judge — it never asks the judge, so it takes no authorshipContext (R54). */
-export function decideVoiceClassBeforeJudge(input: PreJudgeInput, stage?: SyndicationStage):
+export function decideVoiceClassBeforeJudge(input: PreJudgeInput, stage?: SyndicationStage): ReturnType<typeof beforeJudgeCore> {
+  return withEntity(input, beforeJudgeCore(input, stage));
+}
+function beforeJudgeCore(input: PreJudgeInput, stage?: SyndicationStage):
   | VoiceClassDecision
   | { needs_judge: true; gate: GateHit; label: string | null }
   | { needs_speaker: true; attribution: AttributionHit; label: string | null }
@@ -210,6 +238,12 @@ export function decideVoiceClassBeforeJudge(input: PreJudgeInput, stage?: Syndic
   }
   if (input.company.host && isOwnDomainUrl(input.url, input.company.host)) {
     return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "own_domain", detail: `own domain: ${input.company.host}`, gate: null };
+  }
+  // E2: a CONFIRMED related entity's own site counts as the company's own from its effective date (no date ⇒ always,
+  // provisional); a row dated before it stays on the later stages and is stamped before_effective (withEntity)
+  const rel = relatedOf(input);
+  if (rel && rel.basis !== "before_effective") {
+    return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "own_domain_related", detail: `own domain of a related entity: ${rel.name} (${rel.relation}${rel.effective_from ? ` since ${rel.effective_from}` : ", date not confirmed"}) — ${rel.host}`, gate: null, entity: rel };
   }
   if (input.registry) {
     const stamp = registryStamp(input.registry);
@@ -258,6 +292,9 @@ function decideUrlGate(input: PreJudgeInput, label: string | null): VoiceClassDe
 
 /** THE decision. Async only because the speaker stage (R32) and stage 4 may call a judge. */
 export async function voiceClassForMintedExcerpt(input: VoiceClassInput): Promise<VoiceClassDecision> {
+  return withEntity(input, await mintedCore(input));
+}
+async function mintedCore(input: VoiceClassInput): Promise<VoiceClassDecision> {
   const nowIso = input.now ?? (() => new Date().toISOString());
   const stage = syndicationStage(input);
   let pre = decideVoiceClassBeforeJudge(input, stage);
@@ -305,6 +342,8 @@ export async function voiceClassForMintedExcerpt(input: VoiceClassInput): Promis
     // field this sits in and who writes that field on this host, with the PAGE BRIEF and the CONTEXT block — not by the
     // speaker judge (IAA's own site, a homeowner review, a partner's press-release boilerplate). Attributed speech (named
     // or titled speakers, quotation forms, reported speech) stays with the speaker judge.
+    // E2: the seed host alone is enough here — a confirmed related host in effect was decided by the own-domain stage before
+    // any judge (own_domain_related), and one dated before its effective date is not own under either form
     if (attribution.form === "first_person" && !attribution.speaker_string && !(input.company.host && isOwnDomainUrl(input.url, input.company.host))) {
       const d = await judgeStage(input, { host: hostOfUrl(input.url), via: "first_person" }, label, nowIso);
       return withStamp(d.ok ? { ...d, rule: FIRST_PERSON_RULE } : d);
@@ -317,7 +356,7 @@ export async function voiceClassForMintedExcerpt(input: VoiceClassInput): Promis
     if (!input.speakerJudge) {
       return withStamp(input.onJudgeFailure === "keep_label" ? keepS(`attributed speech (${attribution.form}); no speaker judge wired; the label stands`) : refuseS(`attributed speech (${attribution.form}) and no speaker judge is wired — not minted; retry when the local judge is available`));
     }
-    const j = await input.speakerJudge({ subjectName: input.company.name, subjectHost: input.company.host ?? "", url: input.url, candidate: text, attributionForm: attribution.form, attributionSpan: attribution.span, speakerString: attribution.speaker_string, context: String(input.context ?? input.pageText ?? "").slice(0, 2400), pageContext: input.authorshipContext });
+    const j = await input.speakerJudge({ subjectName: input.company.name, subjectHost: input.company.host ?? "", url: input.url, candidate: text, attributionForm: attribution.form, attributionSpan: attribution.span, speakerString: attribution.speaker_string, context: String(input.context ?? input.pageText ?? "").slice(0, 2400), pageContext: input.authorshipContext, ...(hasRelated(input) ? { ownHosts: ownHostsOf(input) as OwnHostSet } : {}) });
     if (j === null) return withStamp(input.onJudgeFailure === "keep_label" ? keepS(`attributed speech (${attribution.form}); speaker judge unavailable; the label stands`) : refuseS(`attributed speech (${attribution.form}) and the speaker judge was unavailable — not minted; retry next run`));
     const stamp: SpeakerStamp = { ...j, attribution, judged_at: nowIso() };
     // R55d: a mixed candidate (narrator words + a quotation) is undecidable as one speaker — recorded like unknown, the label stands
@@ -377,7 +416,8 @@ async function judgeStage(input: VoiceClassInput, gate: GateHit, label: string |
       ? keep(`gated (${gate.via} ${gate.host}); judge failed: ${j.reason}; the label stands`, stampOf("unchanged"))
       : refuse(`gated (${gate.via} ${gate.host}); judge failed: ${j.reason} — not minted; retry next run`, stampOf("unchanged"));
   }
-  const outcome = outcomeFor(j, input.company.name);
+  const own = ownHostsOf(input);
+  const outcome = typeof own === "object" && own ? outcomeFor(j, input.company.name, relatedNamesFor(own)) : outcomeFor(j, input.company.name);
   if (outcome) {
     return { ok: true, voice_class: outcome, evidence_class: "prose", authority: "authorship_judge", detail: `${j.verdict}${j.entity ? `: ${j.entity}` : ""} — ${j.reason}`, gate, authorship_judge: stampOf(outcome) };
   }

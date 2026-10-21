@@ -1,4 +1,5 @@
 // supabase/functions/public-baseline/index.ts
+import { loadConfirmedRelatedEntities } from "../_shared/ownHosts.ts";
 import { ANALYSIS_VOICE, isAnalysisLabelled } from "../_shared/voiceLabel.ts";
 import { decideVoiceClassBeforeJudge } from "../_shared/voiceClassAtMint.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -1817,6 +1818,8 @@ async function callClaudeWebSearch(opts: {
       return normalizeHost(String(opts.domain || ""));
     }
   })();
+  // E2: confirmed related entities in effect are the company's own too (none ⇒ the single host, as before)
+  const relatedForGuard = await loadConfirmedRelatedEntities(opts.supabase, opts.companyId);
   const reclassify = (arr: unknown) =>
     (Array.isArray(arr) ? arr : []).map((e: any) => {
       const url = String(e?.url || "").trim();
@@ -1829,9 +1832,11 @@ async function callClaudeWebSearch(opts: {
       // R17 (2026-10-18): the decision is the ONE shared authority's overlay stage (voiceClassAtMint.ts): analysis
       // label, then own domain, then the label when it is a known class. No registry and no judge at this stage —
       // the registry stamp and the authorship demote below call the same function with those inputs.
-      const d = decideVoiceClassBeforeJudge({ url, item: e, labeledClass, pageText: null, judgedText: null, company: { name: "", host: companyHostForGuard }, registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" });
+      const d = decideVoiceClassBeforeJudge({ url, item: e, labeledClass, pageText: null, judgedText: null, company: { name: "", host: companyHostForGuard, ...(relatedForGuard.length ? { related: relatedForGuard } : {}) }, registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" });
       const voice_class = "needs_judge" in d ? d.label : d.ok ? d.voice_class : null;
-      return { ...e, source_type, voice_class };
+      // E4: a row a related-entity rule decided names its entity (the mapper stores the record as raw_payload)
+      const entity = "ok" in d ? d.entity : undefined;
+      return { ...e, source_type, voice_class, ...(entity ? { entity } : {}) };
     });
   if (Array.isArray((parsed as any).outside_voice_signals)) {
     (parsed as any).outside_voice_signals = reclassify((parsed as any).outside_voice_signals);
@@ -3338,9 +3343,12 @@ Deno.serve(async (req) => {
         const t = String((e as { extracted?: unknown })?.extracted || "");
         if (u && t.trim() && !crawledPageByUrl.has(u)) crawledPageByUrl.set(u, t);
       }
+      // E2: the same confirmed related entities reach the authorship gate (own-domain skip, outcome names)
+      const authorshipRelated = await loadConfirmedRelatedEntities(supabase, String(company_id));
       const gate = await demoteAggregatorSelfVoiceInResult(result as Record<string, unknown>, {
         subjectName: company_name,
         subjectHost: authorshipSubjectHost,
+        ...(authorshipRelated.length ? { related: authorshipRelated } : {}),
         pageFor: (u) => crawledPageByUrl.get(u) ?? null,
         judge: authorshipTransport
           ? (input) => judgeAggregatorAuthorship(input, { transport: authorshipTransport, ledger: authorshipLedger, model: Deno.env.get("OLLAMA_MODEL") || undefined })
