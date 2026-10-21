@@ -9,8 +9,9 @@
 //   deno run --allow-all scripts/r52/apply.ts --dry-judge --company=<uuid> --signals=<id,id,…>
 //       R54 LIVE PROOF, DRY: the named rows of ONE company are derived through the shipped authority with the LOCAL ledgered
 //       judges — real model calls, each writing its model_calls row — and each authorship prompt's CONTEXT block, verdict
-//       and reason are printed. Writes NOTHING else: no integrity row, no audit row, no stamp, no class.
-//   deno run --allow-all scripts/r52/apply.ts --probe --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|p11|plan-seed|apply-revert>
+//       and reason are printed — and (R55) each speaker call's sentence, attribution, speaker string, paragraph and answer.
+//       Writes NOTHING else: no integrity row, no audit row, no stamp, no class.
+//   deno run --allow-all scripts/r52/apply.ts --probe --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|p11|p12|plan-seed|apply-revert>
 //       GUARD PROBES on a throwaway company SEEDED INSIDE the probe's transaction, with FAKE local transports (no model
 //       is reachable): everything — seed, ledger rows, audit rows, integrity rows — is ROLLED BACK. One JSON line out.
 // The mode is named or refused (classifyBodyMode) — there is no default.
@@ -31,8 +32,10 @@ const URL_A = "https://www.chamberofcommerce.com/business-directory/massachusett
 const PAGE_A = "Directory listing. ZZ R52 Guard is an engineering consultancy serving Medford and the surrounding towns with careful structural work. Contact details below.";
 const EX_A = "ZZ R52 Guard is an engineering consultancy serving Medford and the surrounding towns with careful structural work.";
 const URL_B = "https://news.zz-other.test/story";
-const PAGE_B = "Local programs. Within the new program, our counselors serve youth ages six to eighteen across the county every single week. More text follows.";
-const EX_B = "Within the new program, our counselors serve youth ages six to eighteen across the county every single week.";
+// R56 (2026-10-21): row B is ATTRIBUTED speech — speakerless first person off the subject's domain now goes to the authorship
+// judge, so the speaker-path probes (p2, p6, p9, p12) seed a named speaker
+const PAGE_B = "Local programs. “Within the new program, our counselors serve youth ages six to eighteen across the county every single week,” said Dana Roe, director of the county office. More text follows.";
+const EX_B = "“Within the new program, our counselors serve youth ages six to eighteen across the county every single week,” said Dana Roe, director of the county office.";
 const EX_C = "ZZ R52 Guard also maintains a small office near the town hall for clients who prefer to meet in person.";
 type Seeded = { a: string; b: string; c: string; h: string };
 async function seed(): Promise<Seeded> {
@@ -55,11 +58,11 @@ async function seed(): Promise<Seeded> {
   return { a, b, c, h };
 }
 /** Fake local transports: authorship says the company wrote it, speaker cannot tell, band says no. Counted. */
-function fakeTransports(counter: { n: number }, authorshipVerdict: "subject_company" | "third_party" = "subject_company"): Transports {
+function fakeTransports(counter: { n: number }, authorshipVerdict: "subject_company" | "third_party" = "subject_company", speakerClass: "unknown" | "mixed" = "unknown"): Transports {
   const tok = { prompt_tokens: 300, completion_tokens: 20 };
   return {
     authorship: () => { counter.n++; return Promise.resolve({ content: JSON.stringify({ verdict: authorshipVerdict, entity: null, reason: authorshipVerdict === "third_party" ? P8_REASON : "guard: the listing's own description text" }), ...tok }); },
-    speaker: () => { counter.n++; return Promise.resolve({ content: JSON.stringify({ speaker_name: null, speaker_role: null, speaker_class: "unknown", reason: "guard: the paragraph does not say who speaks" }), ...tok }); },
+    speaker: () => { counter.n++; return Promise.resolve({ content: JSON.stringify({ speaker_name: null, speaker_role: null, speaker_class: speakerClass, reason: speakerClass === "mixed" ? "guard p12: narration and a quoted reply in one candidate" : "guard: the paragraph does not say who speaks" }), ...tok }); },
     band: () => { counter.n++; return Promise.resolve({ content: "NO", ...tok }); },
   };
 }
@@ -87,17 +90,23 @@ try {
     const tally = emptyTally();
     const t = localTransports();
     const prompts: string[] = [];
-    const judges = ledgeredJudges(store, co.id, tally, { ...t, authorship: (a) => { prompts.push(a.user); return t.authorship(a); } });
+    const spoken: Array<{ user: string; content: string }> = [];
+    const judges = ledgeredJudges(store, co.id, tally, { ...t, authorship: (a) => { prompts.push(a.user); return t.authorship(a); },
+      speaker: async (a) => { const r = await t.speaker(a); spoken.push({ user: a.user, content: r.content }); return r; } });
     const rows = [];
     for (const id of ids) {
       const s = sigs.find((x) => x.id === id)!;
-      const before = prompts.length;
+      const before = prompts.length, sBefore = spoken.length;
       const d = await deriveRow(store, ctx, s, s.raw_payload?.run_id ? "b3" : "baseline", judges);
       const user = prompts.length > before ? prompts[prompts.length - 1] : null;
       const dec = d.decision.ok ? d.decision : null;
       rows.push({ signal_id: id, class_now: s.voice_class, basis: d.basis, calls: d.calls, decision: dec ? { voice_class: dec.voice_class, authority: dec.authority, detail: dec.detail } : d.decision,
         authorship: dec?.authorship_judge ? { verdict: dec.authorship_judge.verdict, entity: dec.authorship_judge.entity, reason: dec.authorship_judge.reason, model: dec.authorship_judge.model } : null,
-        context_block: user ? user.slice(user.indexOf("CONTEXT —"), user.indexOf("TEXT (verbatim")).trim() : null });
+        context_block: user ? user.slice(user.indexOf("CONTEXT —"), user.indexOf("TEXT (verbatim")).trim() : null,
+        // R55: what the speaker judge was handed (sentence, attribution, speaker string, paragraph) and its raw answer
+        speaker: spoken.length > sBefore ? (() => { const sp = spoken[spoken.length - 1]; const at = (k: string, end: string) => { const i = sp.user.indexOf(k); return i < 0 ? null : sp.user.slice(i + k.length, end ? sp.user.indexOf(end, i) : undefined).trim(); };
+          let answer: unknown = sp.content; try { answer = JSON.parse(sp.content); } catch { /* raw */ }
+          return { sentence: at("SENTENCE:", "\nATTRIBUTION"), attribution: at("ATTRIBUTION", "\nSPEAKER STRING"), speaker_string: at("SPEAKER STRING AS THE PAGE GIVES IT:", "\nPARAGRAPH:"), paragraph: at("PARAGRAPH:\n", "\n\nWho is the speaker"), answer }; })() : null });
     }
     out({ mode: "dry_judge", company_id: co.id, writes: "model_calls only (one ledger row per call)", model_calls: tally, rows });
   } else if (mode === "apply") {
@@ -109,7 +118,7 @@ try {
     const r = await applyCompany(store, { group, runRef: String(body.run_ref ?? ""), reviewedMd5s: reviewed.md5s, transports: localTransports(), nested: false, log: (s) => console.error(s) });
     out({ mode: "apply", ...r, outcomes: undefined, outcome_counts: { changed: r.changed, unknown: r.unknown, unchanged: r.rows - r.changed - r.unknown - r.refused, refused: r.refused } });
   } else {
-    if (typeof body.name !== "string" || !body.name) throw new SweepRefusedError("no_probe_name", "--probe needs --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|p11|plan-seed|apply-revert>");
+    if (typeof body.name !== "string" || !body.name) throw new SweepRefusedError("no_probe_name", "--probe needs --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|p11|p12|plan-seed|apply-revert>");
     const probe = body.name;
     await session.exec("begin;");
     const before = { model_calls: await count("select 1 from model_calls"), integrity_runs: await count("select 1 from integrity_runs"), restamps: await count("select 1 from signal_voice_restamps"), signals: await count("select 1 from signals") };
@@ -187,6 +196,13 @@ try {
       const row = await sigRow(np);
       const done = r as Awaited<ReturnType<typeof applyCompany>> | null;
       result = { planned_judges: planned, refused: refused.code, kind: done?.outcomes[0]?.kind ?? null, class: row.voice_class, unknown_reason: row.r52_unknown, transport_calls: counter.n, model_calls_rows: await count(`select 1 from model_calls where company_id=${lit(Z)}::uuid`), tally: done?.model_calls ?? null };
+    } else if (probe === "p12") {
+      // R55d: the speaker judge answers mixed on the seeded speaker row — recorded unknown:mixed_candidate, the class stands,
+      // no audit row, one ledgered speaker call
+      const g12 = { company_id: Z, company: "ZZ R52 Guard", rows: [group.rows[1]] };
+      const r = await applyCompany(store, { group: g12, runRef: RUN, reviewedMd5s: ["probe"], transports: fakeTransports(counter, "subject_company", "mixed"), nested: true });
+      const B = await sigRow(s.b);
+      result = { kind: r.outcomes[0]?.kind ?? null, class: B.voice_class, unknown_reason: B.r52_unknown, audit_rows: await count(`select 1 from signal_voice_restamps where company_id=${lit(Z)}::uuid and run_ref=${lit(RUN)}`), transport_calls: counter.n, tally: r.model_calls };
     } else if (probe === "p11") {
       // which apply run a revert undoes (2026-10-21): apply integrity rows seeded under three probe run_refs, ids ascending.
       // (A) older reverted, newer not → the NEWER is selected, and the revert names it on its own row, after which

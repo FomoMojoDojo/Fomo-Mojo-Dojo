@@ -1,7 +1,8 @@
 // R47 probe (R51, 2026-10-20) — the WRITE path on the test fixtures (fake db, fake transport, authorship-judge spy, fake speaker
 // judge) where the generator returns two mid-sentence first-person candidates: the provider's own profile text (judged
 // subject_company_text) and a customer review (judged third_party). Measured: the two classes, the rule, speaker_calls (2),
-// authorship calls (0). Plant P1 (the sentence-start anchor restored on FIRST_PERSON_SUBJECT): speaker_calls → 0, subject class → outside.
+// authorship calls (0). R56 (2026-10-21): both are now asked the FIELD question by the authorship judge — speaker_calls 0,
+// authorship calls 2, rule first_person. Plant P1 (the sentence-start anchor restored on FIRST_PERSON_SUBJECT): speaker_calls → 0, subject class → outside.
 import { runOutsideRegen, type RegenJudge } from "../../supabase/functions/_shared/outsideRegenHandler.ts";
 import type { RegenTransport } from "../../supabase/functions/_shared/outsideRegenModel.ts";
 import { fakeDb, seedR17, deps, CO, RUN2, U1 } from "../../supabase/functions/_shared/outsideRegenHandler.test.ts";
@@ -12,7 +13,10 @@ const db = fakeDb(seedR17());
 db.tables.companies[0].name = "Edgewood"; db.tables.companies[0].website = "https://edgewood.org";
 for (const r of db.tables.outside_page_snapshots) if (r.source_url === U1) r.clean_text = `Profile.\n${SUBJECT}\nReviews.\n${REVIEW}\nEnd.`;
 let judgeCalls = 0, speakerCalls = 0;
-const judge: RegenJudge = () => { judgeCalls++; return Promise.resolve({ verdict: "third_party", entity: null, reason: "platform", model: "m" }); };
+// R56 (2026-10-21): speakerless first person off the subject's domain is the AUTHORSHIP judge's field question — it decides both
+const judge: RegenJudge = (i) => { judgeCalls++; return Promise.resolve(/Acute Intensive/.test(i.text)
+  ? { verdict: "subject_company", entity: null, reason: "the provider's own profile text", model: "m" }
+  : { verdict: "third_party", entity: null, reason: "a customer review body", model: "m" }); };
 const t: RegenTransport = ({ system }) => Promise.resolve(system === "GEN"
   ? { content: JSON.stringify({ statements: [{ text: SUBJECT, reason: "the provider describes its program" }, { text: REVIEW, reason: "a reviewer on the provider" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } }
   : { content: JSON.stringify({ verdicts: [{ quote: SUBJECT, keep: true, reason: "about Edgewood" }, { quote: REVIEW, keep: true, reason: "about Edgewood" }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } });

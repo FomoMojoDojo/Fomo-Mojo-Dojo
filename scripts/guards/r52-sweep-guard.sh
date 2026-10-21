@@ -27,6 +27,8 @@
 #   p11 (2026-10-21) the revert undoes the NEWEST apply row for run_ref + company that no revert row names
 #       (apply_integrity_id): seeded A (older reverted) → the newer, which the revert then names, leaving none (refused);
 #       B (newer reverted) → the older; C (only row reverted) → refused no_unreverted_apply; E (two unreverted) → the newer.
+#   p12 (R55d) a speaker judge answering mixed on a seeded row: recorded unknown:mixed_candidate, the class stands, no
+#       audit row, one ledgered speaker call.
 #   p7  plan mode writes nothing: it runs in a READ ONLY transaction, no transaction id is assigned, and the four
 #       tables are unchanged after it; it reaches every reviewed row.
 #
@@ -54,8 +56,8 @@ R52=scripts/r52
 # The reviewed plan: the runner's own plan under R54 (the authorship judge reads the page; a row with no page words is
 # not judged), in backups/r52/ (gitignored, local). The R52 plan (r52run-plan.tsv, fac94fab…) and the earlier files sit
 # beside it as history.
-REVIEWED="${R52_REVIEWED:-backups/r52/r54run-plan.tsv}"
-REVIEWED_MD5="${R52_REVIEWED_MD5:-c41aafd518975348c6b3f18fc4feaa29}"
+REVIEWED="${R52_REVIEWED:-backups/r52/r57run-plan.tsv}"
+REVIEWED_MD5="${R52_REVIEWED_MD5:-431e16e9074760d59b661ff41b5ff6ea}"
 [ -f "${REVIEWED%%,*}" ] || fail s0 "reviewed plan ${REVIEWED%%,*} is missing"
 counts() { psql "select (select count(*) from model_calls)||'|'||(select count(*) from integrity_runs)||'|'||(select count(*) from signal_voice_restamps)||'|'||(select count(*) from signals)||'|'||(select md5(coalesce(string_agg(id::text||coalesce(voice_class,'')||coalesce(raw_payload::text,''),',' order by id),'')) from signals)"; }
 C0=$(counts)
@@ -114,6 +116,9 @@ echo "p9. a bare restore is refused (class stays client_voice); the revert wrote
 # p10 — R54: no page words, no call
 J10=$(probe p10); [ "$(echo "$J10" | jq_ "str(d['planned_judges'])+'|'+str(d['kind'])+'|'+str(d['class'])+'|'+str((d['unknown_reason'] or '').startswith('no_page_words'))+'|'+str(d['transport_calls'])+'|'+str(d['model_calls_rows'])+'|'+str(d['rolled_back'])")" = "none|unknown|outside_voice_about_client|True|0|0|True" ] || fail p10 "no-page row: $J10"
 echo "p10. no page words: unknown ($(echo "$J10" | jq_ "d['unknown_reason']")), label stands, 0 transport calls, 0 model_calls rows"
+# p12 — R55d: a mixed speaker answer is recorded unknown:mixed_candidate, the class stands, no audit row
+J12=$(probe p12); [ "$(echo "$J12" | jq_ "str(d['kind'])+'|'+str(d['class'])+'|'+str((d['unknown_reason'] or '').startswith('mixed_candidate'))+'|'+str(d['audit_rows'])+'|'+str(d['transport_calls'])+'|'+str(d['rolled_back'])")" = "unknown|outside_voice_about_client|True|0|1|True" ] || fail p12 "mixed speaker answer: $J12"
+echo "p12. a mixed speaker answer → unknown ($(echo "$J12" | jq_ "d['unknown_reason'][:40]")…), class stands, 0 audit rows, 1 ledgered call"
 # p11 — which apply run a revert undoes
 J11=$(probe p11); [ "$(echo "$J11" | jq_ "str(d['a_selects_newer'])+'|'+str(d['revert_names_newer'])+'|'+str(d['a_after_revert_refused'])+'|'+str(d['b_selects_unreverted_older'])+'|'+str(d['c_refused'])+'|'+str(d['e_selects_newer'])+'|'+str(d['rolled_back'])")" = "True|True|no_unreverted_apply|True|no_unreverted_apply|True|True" ] || fail p11 "apply-run selection: $J11"
 echo "p11. revert undoes the newest unreverted apply row: A → newer ($(echo "$J11" | jq_ "d['ids']['a']")), named on the revert row, then none left; B → unreverted older; C → refused no_unreverted_apply; E → newer of two"

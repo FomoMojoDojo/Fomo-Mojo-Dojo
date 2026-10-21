@@ -134,3 +134,58 @@ Deno.test("R48: the Auletta sentence — a sentence-initial name with a two-segm
   assertEquals(detectAttribution("We have an affiliate who successfully transferred from SIAA to PIIB, it took a lot of work.", ""), null);
   assertEquals(detectAttribution("CoreViva has opened a full-body MRI clinic in Newport Beach.", ""), null);
 });
+
+// ── R55a (2026-10-21): a quoted term is not a quotation — the quotation form needs an attribution marker ──────────
+Deno.test("R55a: a quoted TERM with a verb used as an adjective is not a quotation (f2630d58 → none); a true quotation keeps its form", () => {
+  const term = "The reported metrics mark the completion of the “Quantum Memory” phase (Phase 1) of Riverlane’s multi-year QEC roadmap.";
+  assertEquals(detectAttribution(term), null);
+  const q = detectAttribution("“This acquisition strengthens our position,” said David Friend, Wasabi Technologies’ co-founder and CEO.")!;
+  assertEquals(q.form, "quoted_with_attribution"); assertEquals(q.speaker_string, "David Friend");
+  const noun = detectAttribution("“We remain committed to our members,” the company said.")!;
+  assertEquals(noun.form, "quoted_with_attribution"); assertEquals(noun.speaker_string, "the company");
+  const dash = detectAttribution("“Simply Business’s technology brings value to our members.” – Meghan Leary, SVP of Strategic Partnerships of SIAA.")!;
+  assertEquals(dash.form, "quoted_with_attribution"); assertEquals(dash.speaker_string, "Meghan Leary, SVP of Strategic Partnerships of SIAA");
+});
+
+// ── R55a' (2026-10-21): the speaker of a quotation is the speaker of every sentence inside it, dash attribution included ──
+Deno.test("R55a': a candidate that opens a multi-sentence quotation takes the dash attribution after the close (08ff48ad → Leary)", () => {
+  const page = "Together, we're making it simpler for agents.” – Mike Carvalho, VP of Insurance Panel and Partnerships at Simply Business U.S.\n" +
+    "“Simply Business’s technology brings transparency, choice, and value to our members. By integrating this platform into our MarketFinder platform, we’re equipping agencies with the tools to efficiently serve the small business segment. This partnership aligns perfectly with SIAA’s mission to provide unparalleled resources to agents.” – Meghan Leary, SVP of Strategic Partnerships of SIAA.\nShare this";
+  const cand = "“Simply Business’s technology brings transparency, choice, and value to our members.";
+  const a = detectAttribution(cand, page)!;
+  assertEquals(a.form, "quotation_interior"); assertEquals(a.speaker_string, "Meghan Leary, SVP of Strategic Partnerships of SIAA");
+  const mid = "By integrating this platform into our MarketFinder platform, we’re equipping agencies with the tools to efficiently serve the small business segment.";
+  assertEquals(detectAttribution(mid, page)?.speaker_string, "Meghan Leary, SVP of Strategic Partnerships of SIAA");
+  // a closed quotation with no attribution after it stays unattributed
+  assertEquals(detectAttribution("“A plain quoted line with nothing after.", "Intro. “A plain quoted line with nothing after. Still going.” Next paragraph."), null);
+});
+
+// ── R55d (2026-10-21): narrator words + a quotation in one candidate is form mixed, detected — never judged ──────────
+Deno.test("R55d: narration then a quotation opener in one candidate (e4d0217a) is mixed; attributed speech and a quoted term are not", () => {
+  const e4 = "When the backlash hit, Sonos’s replies sounded like a robot reading legal disclaimers: “Hello, fixing the app continues to be our top priority.";
+  assertEquals(detectAttribution(e4)?.form, "mixed");
+  // an attribution clause before the quotation is attributed speech, not narration
+  assertEquals(detectAttribution("A Sonos spokesperson on Reddit with the username KeithFromSonos explained that \"No changes were made to the sound profile in the last firmware update.\"")?.form, "quoted_with_attribution");
+  // a quoted term that closes mid-sentence is not a quotation (R55a)
+  assertEquals(detectAttribution("They gambled that loyal customers would “deal with it” and moved on to the next launch."), null);
+});
+// ── R55a'' (2026-10-21): a quotation directly after an attributed quotation continues that speaker ───────────────────
+Deno.test("R55a'': 4beedd7e's quotation follows Friend's attributed one with nothing between — the speaker carries", () => {
+  const page = "The two platforms integrate with various data protection and backup providers.\n“This acquisition strengthens our position as the world’s leading pure-play cloud storage vendor,” David Friend, Wasabi Technologies’ co-founder and CEO, said in a statement . “Seagate has built a loyal enterprise customer base for Lyve Cloud storage, and we welcome those customers to Wasabi. We are focused on supporting their growth with our global network of data centers.”\nRelated Resources";
+  const a = detectAttribution("“Seagate has built a loyal enterprise customer base for Lyve Cloud storage, and we welcome those customers to Wasabi.", page)!;
+  assertEquals(a.form, "quotation_interior"); assertEquals(a.speaker_string, "David Friend, Wasabi Technologies’ co-founder and CEO");
+  // narrator words between the two quotations stop the carry
+  const page2 = page.replace("said in a statement . “Seagate", "said in a statement . Seagate became a shareholder after the deal. “Seagate");
+  assertEquals(detectAttribution("“Seagate has built a loyal enterprise customer base for Lyve Cloud storage, and we welcome those customers to Wasabi.", page2), null);
+});
+
+// ── R55a''' (2026-10-21): a named subject + any verb + comma/colon opening a quotation is an attribution ─────────────
+Deno.test("R55a''': 'the interim CEO confessed, “…”' and 'Sonos bragged, “…”' are quoted_with_attribution whatever the verb; a pronoun and a quoted term are not", () => {
+  const a = detectAttribution("Even the interim CEO confessed, “We’ve let far too many people down.”")!;
+  assertEquals(a.form, "quoted_with_attribution"); assertEquals(a.speaker_string, "the interim CEO");
+  const b = detectAttribution("By October 2024, Sonos bragged, “We’ve restored 80% of the app’s features!”")!;
+  assertEquals(b.form, "quoted_with_attribution"); assertEquals(b.speaker_string, "Sonos");
+  // negative controls: a pronoun subject is not a named one; a quoted term mid-sentence is not a quotation opener after a verb + comma
+  assertEquals(detectAttribution("It flashed, “error 1002” and quit.")?.form ?? null, null);
+  assertEquals(detectAttribution("The reported metrics mark the completion of the “Quantum Memory” phase (Phase 1) of Riverlane’s multi-year QEC roadmap."), null);
+});

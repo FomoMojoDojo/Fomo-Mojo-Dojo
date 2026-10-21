@@ -1,8 +1,11 @@
 // R32 — the speaker judge: ledger BEFORE parse; fail toward judge_failed; the prompt names the vocabulary.
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { buildSpeakerUser, judgeSpeaker, SPEAKER_SYSTEM, type SpeakerInput } from "./aggregatorAuthorship.ts";
+import { authorshipContext, buildSpeakerUser, judgeSpeaker, SPEAKER_SYSTEM, type SpeakerInput } from "./aggregatorAuthorship.ts";
 
-const input: SpeakerInput = { subjectName: "Coreviva", subjectHost: "coreviva.com", url: "https://www.ocbj.com/x", candidate: "“Our goal is to catch cancer earlier,” Alexander told the Business Journal.", attributionForm: "quoted_with_attribution", attributionSpan: "“Our goal is to catch cancer earlier,” Alexander told the Business Journal.", speakerString: "Alexander", context: "Dr. A. Alexander, Co-Founder and CEO of CoreViva, spoke to the Journal. “Our goal is to catch cancer earlier,” Alexander told the Business Journal." };
+const PARA = "Dr. A. Alexander, Co-Founder and CEO of CoreViva, spoke to the Journal. “Our goal is to catch cancer earlier,” Alexander told the Business Journal.";
+const input: SpeakerInput = { subjectName: "Coreviva", subjectHost: "coreviva.com", url: "https://www.ocbj.com/x", candidate: "“Our goal is to catch cancer earlier,” Alexander told the Business Journal.", attributionForm: "quoted_with_attribution", attributionSpan: "“Our goal is to catch cancer earlier,” Alexander told the Business Journal.", speakerString: "Alexander", context: PARA,
+  // R55e: the page context is required — built from the paragraph at the candidate's offset
+  pageContext: authorshipContext(PARA, "“Our goal is to catch cancer earlier,” Alexander told the Business Journal.", PARA.indexOf("“Our goal")) };
 const mem = () => { const rows: Array<{ usage: { provider: string; model: string; prompt_tokens: number | null; completion_tokens: number | null; usd: number | null }; promptSha: string }> = []; return { rows, ledger: (e: typeof rows[number]) => { rows.push(e); return Promise.resolve(true); } }; };
 
 Deno.test("R32: a well-formed answer parses; the ledger row (provider ollama, token counts, usd null, 64-hex sha) is written before parse", async () => {

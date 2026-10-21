@@ -372,7 +372,8 @@ const PAGE_BRIEFS: ReadonlyArray<{ host: string; brief: string }> = [
   { host: "seamless.ai", brief: "Seamless.AI data-aggregator company profile. The company description paragraph is COMPANY-SUPPLIED boilerplate (taken from the company's own site, often first person — 'We help…'); headcount, revenue, address and contact data are PLATFORM." },
   { host: "business.newportbeach.com", brief: "Newport Beach Chamber member directory listing. The 'About' text is MEMBER-SUPPLIED (the company's own copy); category, map and contact lines are PLATFORM." },
 ];
-const GENERIC_BRIEF = "Third-party company profile page. A company description / About / mission paragraph is COMPANY-SUPPLIED; ratings, review counts, complaints, financial or PPP data, headcount and revenue estimates, SIC/NAICS codes, and analyst blurbs are PLATFORM-authored.";
+// R57 (operator ruling, 2026-10-21): the generic brief names WHOSE About it is — the entity the section is named for
+const GENERIC_BRIEF = "Third-party company profile page. A company description / About / mission paragraph is COMPANY-SUPPLIED by the company it is named for — a section headed for another entity is that entity's, not the subject's; ratings, review counts, complaints, financial or PPP data, headcount and revenue estimates, SIC/NAICS codes, and analyst blurbs are PLATFORM-authored.";
 
 export function pageBriefFor(url: string): { host: string; brief: string } {
   const host = hostOf(url);
@@ -407,7 +408,11 @@ const JUDGE_SYSTEM =
   "(7) LISTING DATA IS PLATFORM-AUTHORED IN ANY FIELD: a sentence whose content is only listing data (the business name, address, " +
   "phone, URL, hours or category) is third_party wherever it sits, even under an 'About' heading ('X is located at 86 Main St in " +
   "Medford, MA 02155.' → third_party); company-supplied means prose the company wrote ('We have restored historic homes across the " +
-  "North Shore since 1998.' or 'X builds custom cabinetry for coastal homes.' → subject_company).\n" +
+  "North Shore since 1998.' or 'X builds custom cabinetry for coastal homes.' → subject_company). (8) A SECTION BELONGS TO THE ENTITY " +
+  "IT IS NAMED FOR: when the heading or the section names an entity other than the SUBJECT COMPANY ('About Acme Partners', " +
+  "'Welcome to Acme Partners'), the text is that entity's, not the subject's → third_party ('About Acme Partners' on a page where " +
+  "the SUBJECT is Beta Co → third_party), while a section named for the SUBJECT ('About Beta Co') is decided by the field rules " +
+  "and the PAGE BRIEF.\n" +
   'Return JSON only: {"verdict":"subject_company|other_entity|third_party|uncertain","entity":"<the named entity whose copy this is, or null>",' +
   '"reason":"one sentence naming the page FIELD this text comes from and who writes it on this host"}.';
 
@@ -441,15 +446,18 @@ const VERDICTS: ReadonlySet<string> = new Set(["subject_company", "other_entity"
 // and whether that person belongs to the subject. Called only for attribution-bearing candidates (detectAttribution),
 // with the attribution span and the surrounding paragraph, on the local model. Every call writes a model_calls row
 // (provider ollama, prompt/eval counts from the response, usd null) BEFORE the answer is parsed. Fail toward failure.
-export type SpeakerClass = "subject_company_officer" | "subject_company_text" | "third_party" | "unknown" | "judge_failed";
+export type SpeakerClass = "subject_company_officer" | "subject_company_text" | "third_party" | "unknown" | "mixed" | "judge_failed";
 export type SpeakerJudgment = { speaker_class: SpeakerClass; speaker_name: string | null; speaker_role: string | null; reason: string; model: string; /** R36 (a): a field carried U+0000 / a control character and was cleaned at parse */ sanitized?: true };
-export type SpeakerInput = { subjectName: string; subjectHost: string; url: string; candidate: string; attributionForm: string; attributionSpan: string; speakerString: string; context: string };
+export type SpeakerInput = { subjectName: string; subjectHost: string; url: string; candidate: string; attributionForm: string; attributionSpan: string; speakerString: string; context: string;
+  /** R55e: the page context the authorship judge receives (authorshipContext, same constants) — REQUIRED, no default */
+  pageContext: AuthorshipContext };
 export type SpeakerJudge = (input: SpeakerInput) => Promise<SpeakerJudgment | null>;
 /** One raw answer from the local model with its token counts (null when the response carried none). */
 export type SpeakerTransport = (args: { model: string; system: string; user: string }) => Promise<{ content: string; prompt_tokens: number | null; completion_tokens: number | null }>;
 /** The ledger seam: one row per call, written BEFORE parse; resolves false when the write failed (never throws). */
 export type SpeakerLedger = (e: { usage: ModelCallRecord; promptSha: string }) => Promise<boolean>;
-const SPEAKER_CLASSES: ReadonlySet<string> = new Set(["subject_company_officer", "subject_company_text", "third_party", "unknown"]);
+// R55d: "mixed" — narrator words AND a quotation in one candidate; undecidable as one speaker (the authority treats it as unknown)
+const SPEAKER_CLASSES: ReadonlySet<string> = new Set(["subject_company_officer", "subject_company_text", "third_party", "unknown", "mixed"]);
 
 export const SPEAKER_SYSTEM =
   "You identify WHO IS SPEAKING in one sentence collected from a third-party web page about a SUBJECT company. The sentence " +
@@ -464,14 +472,41 @@ export const SPEAKER_SYSTEM =
   "RULES. (1) Decide from the page's own words: a title beside the name, or an identification earlier in the paragraph. Never infer a " +
   "role from the name alone. (2) A pronoun speaker (they, he, she) resolves to whoever the paragraph last identified as speaking. " +
   "(3) The subject may appear under variants (lower-case, with LLC/Inc, an acronym). (4) If two speakers are present, answer for the " +
-  "one the attribution span names.\n" +
+  "one the attribution span names. (5) A SENTENCE ABOUT THE SUBJECT IS NOT A SENTENCE BY THE SUBJECT: subject_company_text requires " +
+  "the company's own words — first person, or speech the page attributes to the company or an officer; a narrator's sentence with no " +
+  "speaker on a third-party host is third_party ('The reported metrics mark the completion of X's roadmap.' → third_party, the " +
+  "narrator), while '\"We completed phase 1,\" said X's CEO.' → subject_company_officer. (6) THE SUBJECT COMPANY LINE NAMES THE " +
+  "SUBJECT: an officer of the company on that line is subject_company_officer whatever other companies the paragraph names ('– Meghan " +
+  "Leary, SVP of SIAA' with SUBJECT COMPANY: SIAA, on a page about Simply Business partnering with SIAA → subject_company_officer), " +
+  "while an officer of another company is third_party ('– Mike Carvalho, VP at Simply Business' with SUBJECT COMPANY: SIAA → " +
+  "third_party). (7) FIRST PERSON OFF THE SUBJECT'S DOMAIN IS THE SUBJECT'S ONLY WHEN THE PAGE SAYS SO: on a host that is not the " +
+  "subject's own domain, 'we' / 'our' is the subject's only when the page identifies the speaker as the subject or its officer; " +
+  "otherwise it is the host's or another party's voice → third_party ('Gotham Sports does not appear legitimate based on our " +
+  "analysis.' on a review site → third_party, the host), while 'We help firms price their work,' said Lumio's CEO → " +
+  "subject_company_officer. (8) A MIXED CANDIDATE IS NOT ONE SPEAKER: when the sentence holds a narrator's words AND a quotation of " +
+  "someone else, answer mixed ('When the backlash hit, Sonos's replies sounded like a robot: \"Hello, fixing the app is our top " +
+  "priority.' → mixed), while a bare quotation is the quoted speaker's ('\"Fixing the app is our top priority,\" Sonos said.' → " +
+  "subject_company_text).\n" +
   'Return JSON only: {"speaker_name":"<name as the page gives it, or null>","speaker_role":"<role as the page gives it, or null>",' +
-  '"speaker_class":"subject_company_officer|subject_company_text|third_party|unknown","reason":"one sentence citing the page words that identify the speaker"}.';
+  '"speaker_class":"subject_company_officer|subject_company_text|third_party|unknown|mixed","reason":"one sentence citing the page words that identify the speaker"}.';
 
+// ── R55e (operator ruling, 2026-10-21): THE SPEAKER JUDGE IS TOLD WHOSE PAGE IT IS, AND WHERE THE TEXT SITS ───────────────
+// The judge called insuranceagencyalliance.com "the company's own domain, siaa.com". The own-domain comparison is COMPUTED
+// (isOwnDomainUrl, the own_domain authority's one definition) and stated; the page brief and the CONTEXT block are the same
+// ones the authorship judge receives (pageBriefFor, contextBlock over authorshipContext).
+export function ownDomainLine(url: string, subjectHost: string): string {
+  return `HOST IS THE SUBJECT'S OWN DOMAIN: ${isOwnDomainUrl(url, subjectHost) ? "yes — the page is the subject's own site" : "no — the page is hosted by someone else"}\n`;
+}
 export function buildSpeakerUser(input: SpeakerInput): string {
+  const page = pageBriefFor(input.url);
+  const ctx = input.pageContext;
   return (
     `SUBJECT COMPANY: ${input.subjectName}${input.subjectHost ? ` (${input.subjectHost})` : ""}\n` +
     `SOURCE URL: ${input.url}\n` +
+    `HOST: ${page.host}\n` +
+    ownDomainLine(input.url, input.subjectHost) +
+    `PAGE BRIEF: ${page.brief}\n\n` +
+    (ctx.kind === "page" ? contextBlock(ctx, input.candidate) : `CONTEXT — no page words: ${ctx.reason}\n\n`) +
     `SENTENCE: ${input.candidate}\n` +
     `ATTRIBUTION (${input.attributionForm}): ${input.attributionSpan.slice(0, 600)}\n` +
     `SPEAKER STRING AS THE PAGE GIVES IT: ${input.speakerString || "(none)"}\n` +
@@ -503,6 +538,9 @@ export async function judgeSpeaker(
   // R53: the ledger is required — a call with none never reaches the model
   if (typeof opts?.ledger !== "function") throw new Error("speaker judge: a ledger is required (R4) — no model call made");
   const model = opts.model ?? CLASSIFIER_MODEL;
+  // R55e: the page context is required — a call with none never reaches the model
+  const pk = (input as { pageContext?: { kind?: unknown } })?.pageContext?.kind;
+  if (pk !== "page" && pk !== "no_page") throw new Error("speaker judge: a page context is required (R55e) — no model call made");
   const system = SPEAKER_SYSTEM, user = buildSpeakerUser(input);
   const sha = opts.sha ?? (async (s: string) => { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join(""); });
   const promptSha = await sha(`${system}\n\n${user}`);

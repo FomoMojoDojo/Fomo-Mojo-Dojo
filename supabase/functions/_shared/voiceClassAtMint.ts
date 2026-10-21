@@ -60,6 +60,8 @@ export const FIRST_PERSON_JUDGED_RULE = "first_person_judged" as const;
 export type TextGate = "first_person" | "attributed_speech";
 export const FIRST_PERSON_RULE = "first_person" as const;
 export const ATTRIBUTED_SPEECH_RULE = "attributed_speech" as const;
+/** R55d: the reason prefix a detected mixed candidate is recorded under (no judge call; the label stands). */
+export const MIXED_CANDIDATE = "mixed_candidate" as const;
 /** R32: what the speaker judge said, stamped on the row beside the decision. */
 export type SpeakerStamp = SpeakerJudgment & { attribution: AttributionHit; judged_at: string };
 
@@ -101,7 +103,7 @@ export type VoiceClassInput = {
 /** The input the stages BEFORE the judge read: everything but the judge's page context (R54). */
 export type PreJudgeInput = Omit<VoiceClassInput, "authorshipContext">;
 
-export type GateHit = { host: string; via: "profile" | "wire" | "boilerplate" };
+export type GateHit = { host: string; via: "profile" | "wire" | "boilerplate" | "first_person" };
 
 export type VoiceClassDecision =
   | {
@@ -295,13 +297,29 @@ export async function voiceClassForMintedExcerpt(input: VoiceClassInput): Promis
       ({ ok: false, refused: true, authority: "speaker_judge", reason, gate: null, ...(speaker ? { speaker } : {}) });
     const keepS = (detail: string, speaker?: SpeakerStamp): VoiceClassDecision =>
       ({ ok: true, voice_class: label, evidence_class: "prose", authority: "extractor_label", detail, gate: null, rule, ...(speaker ? { speaker } : {}) });
+    // ── R56 (operator ruling, 2026-10-21): SPEAKERLESS FIRST PERSON OFF THE SUBJECT'S DOMAIN IS A FIELD QUESTION ──────────
+    // Supersedes R45's first_person_judged path for first person with NO speaker string: on a host that is not the
+    // subject's own domain (own domain already decided before any judge), "we" is answered by the AUTHORSHIP judge — which
+    // field this sits in and who writes that field on this host, with the PAGE BRIEF and the CONTEXT block — not by the
+    // speaker judge (IAA's own site, a homeowner review, a partner's press-release boilerplate). Attributed speech (named
+    // or titled speakers, quotation forms, reported speech) stays with the speaker judge.
+    if (attribution.form === "first_person" && !attribution.speaker_string && !(input.company.host && isOwnDomainUrl(input.url, input.company.host))) {
+      const d = await judgeStage(input, { host: hostOfUrl(input.url), via: "first_person" }, label, nowIso);
+      return withStamp(d.ok ? { ...d, rule: FIRST_PERSON_RULE } : d);
+    }
+    // R55d: a MIXED candidate (narrator words + a quotation, detected) is never handed to the judge — unknown, the label stands
+    if (attribution.form === "mixed") {
+      const why = `${MIXED_CANDIDATE}: narrator words and a quotation in one candidate — not judged`;
+      return withStamp(input.onJudgeFailure === "keep_label" ? keepS(`${why}; the label stands`) : refuseS(`${why} — not minted`));
+    }
     if (!input.speakerJudge) {
       return withStamp(input.onJudgeFailure === "keep_label" ? keepS(`attributed speech (${attribution.form}); no speaker judge wired; the label stands`) : refuseS(`attributed speech (${attribution.form}) and no speaker judge is wired — not minted; retry when the local judge is available`));
     }
-    const j = await input.speakerJudge({ subjectName: input.company.name, subjectHost: input.company.host ?? "", url: input.url, candidate: text, attributionForm: attribution.form, attributionSpan: attribution.span, speakerString: attribution.speaker_string, context: String(input.context ?? input.pageText ?? "").slice(0, 2400) });
+    const j = await input.speakerJudge({ subjectName: input.company.name, subjectHost: input.company.host ?? "", url: input.url, candidate: text, attributionForm: attribution.form, attributionSpan: attribution.span, speakerString: attribution.speaker_string, context: String(input.context ?? input.pageText ?? "").slice(0, 2400), pageContext: input.authorshipContext });
     if (j === null) return withStamp(input.onJudgeFailure === "keep_label" ? keepS(`attributed speech (${attribution.form}); speaker judge unavailable; the label stands`) : refuseS(`attributed speech (${attribution.form}) and the speaker judge was unavailable — not minted; retry next run`));
     const stamp: SpeakerStamp = { ...j, attribution, judged_at: nowIso() };
-    if (j.speaker_class === "judge_failed" || j.speaker_class === "unknown") {
+    // R55d: a mixed candidate (narrator words + a quotation) is undecidable as one speaker — recorded like unknown, the label stands
+    if (j.speaker_class === "judge_failed" || j.speaker_class === "unknown" || j.speaker_class === "mixed") {
       const why = `speaker ${j.speaker_class}: ${j.reason}`;
       return withStamp(input.onJudgeFailure === "keep_label" ? keepS(`${why} — the label stands`, stamp) : refuseS(`${why} — not minted`, stamp));
     }
@@ -322,6 +340,10 @@ export async function voiceClassForMintedExcerpt(input: VoiceClassInput): Promis
 }
 
 /** Stage 4: the URL-gated authorship judge (unchanged behaviour, factored so the speaker stage can fall through to it). */
+/** www-stripped host of a URL ("" when unparseable) — the gate host R56 stamps for a first-person field question. */
+function hostOfUrl(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, "").toLowerCase(); } catch { return ""; }
+}
 async function judgeStage(input: VoiceClassInput, gate: GateHit, label: string | null, nowIso: () => string): Promise<VoiceClassDecision> {
   const text = String(input.judgedText ?? "").trim();
   const keep = (detail: string, stamp?: AuthorshipStamp): VoiceClassDecision =>

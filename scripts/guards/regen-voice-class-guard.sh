@@ -16,7 +16,8 @@
 #       wire + judge subject_company → client_voice; wire + judge_failed on refuse_mint → refused, on keep_label → the
 #       label with a stamp; plain third party → outside) and the handler tests (plan reports the class; write refuses
 #       an unjudged gated URL) pass.
-#   v4. (R28/R45) the first-person gate: detected by rule, DECIDED by the speaker judge — the SIAA agent-forum fixture (a
+#   v4. (R28/R45, R56 2026-10-21: speakerless first person off the subject's domain → the AUTHORSHIP judge, 0 speaker calls)
+#       the first-person gate: detected by rule, DECIDED by the speaker judge — the SIAA agent-forum fixture (a
 #       third party saying "we") keeps the label with the speaker recorded, one speaker call, zero authorship-judge calls;
 #       the baseline's call sites name no text gate.
 #   v6. (R47, R51) the first-person subject ANYWHERE in the candidate is detected (FIRST_PERSON_SUBJECT carries no sentence-start
@@ -41,6 +42,27 @@
 #       CONTEXT block says the heading names the field.
 #   v11. (R54b) the authorship system prompt carries the listing-data rule — a sentence of only listing data (name, address,
 #       phone, URL, hours, category) is platform-authored in any field — with its demonstration and counterexample.
+#   v12. (R55) the speaker system prompt carries rule (5): subject_company_text requires the company's own words — a
+#       narrator's sentence with no speaker on a third-party host is third_party — with its demonstration and counterexample.
+#   v13. (R55a) the attribution detector: a quoted term with no attribution marker (no speaker the verb attaches to, no dash
+#       attribution) is not quoted_with_attribution — f2630d58's sentence is form none; a true quotation keeps form + speaker.
+#   v14. (R55b, R55c) the speaker system prompt carries rule (6) the SUBJECT line names the subject, and rule (7) an affiliate
+#       speaking for itself in first person on its own page is third_party — each with its demonstration and counterexample.
+#       (R55c', 2026-10-21, replaced rule (7): first person off the subject's domain is the subject's only when the page
+#       identifies the speaker as the subject or its officer; otherwise third_party.)
+#   v15. (R55a', R55d) a candidate opening a multi-sentence quotation takes the dash attribution after the close as its
+#       speaker; the speaker prompt carries rule (8) (narrator words + a quotation → mixed) and mixed in the answer set.
+#   v16. (R55e i) the speaker user prompt states "HOST IS THE SUBJECT'S OWN DOMAIN: no — …" on a third-party host and
+#       "yes — …" on the subject's own (computed with isOwnDomainUrl, the own_domain authority's definition).
+#   v17. (R55e ii) the speaker user prompt carries the same PAGE BRIEF and CONTEXT block (heading, section) the authorship judge gets.
+#   v18. (R55d, R55a'') the detector: narrator words + a quotation opener in one candidate → form mixed (recorded
+#       unknown:mixed_candidate, no call); a quotation directly after an attributed quotation carries that speaker.
+#   v19. (R56) a speakerless first-person candidate on a host that is not the subject's own domain is asked the FIELD
+#       question by the authorship judge (rule first_person, gate via first_person), never the speaker judge; a first-person
+#       candidate WITH a detected attribution (speaker string) stays with the speaker judge.
+#   v20. (R57) the authorship system prompt carries rule (8): a heading or section naming an entity other than the SUBJECT makes
+#       the text that entity's → third_party (demonstration + counterexample); the generic brief says the same.
+#   v21. (R55a''') a named subject + any verb + comma/colon opening a quotation is quoted_with_attribution (6003dc65's sentence).
 #   v3. EXPECTATION — scripts/guards/regen-voice-expectation.ts recomputes (class, authority) for every in-scope URL of
 #       the plan file and compares PER URL to scripts/guards/fixtures/regen-voice-expected.tsv (gated rows expected as
 #       "gated"). Any difference is named.
@@ -60,6 +82,19 @@
 #   R54a plant (2026-10-20): P5 the section bound dropped from the before window (Math.max(sectionStart, …) → Math.max(0, …))
 #       => v10 before_has_earlier_heading false → true.
 #   R54b plant (2026-10-20): P6 rule (7) removed from JUDGE_SYSTEM => v11 rule_present true → false, system sha moves.
+#   R55 plant (2026-10-21): P7 rule (5) removed from SPEAKER_SYSTEM => v12 rule_present true → false, speaker sha moves.
+#   R55a–c plants (2026-10-21): P8 detectAttribution's marker check removed => v13 term_form none → quoted_with_attribution;
+#       P9 rule (6) removed => v14 r55b_present true → false; P10 rule (7) removed => v14 r55c_present true → false.
+#   R55a'/c'/d plants (2026-10-21): P11 the dash-after-close check removed => v15 08ff48ad speaker Leary → none; P12 rule (7')
+#       removed => v14 r55c_present true → false; P13 rule (8) removed => v15 r55d_present true → false, and the runner's
+#       mixed branch removed => r52 p12 unknown_reason mixed_candidate → (none), the seeded row no longer recorded unknown.
+#   R55e/d/a'' plants (2026-10-21): P14 own-domain line removed => v16 own_domain_no true → false; P15 the CONTEXT block
+#       removed from the speaker prompt => v17 context true → false; P16 the mixed check removed => v18 mixed → first_person path
+#       (form none); P17 the carry removed => v18 carry speaker Friend → none.
+#   R56 plant (2026-10-21): P18 the first_person → authorship branch removed => v19 first_person_judges [authorship] → [speaker];
+#       4b0b3ffa's planned judge authorship → speaker.
+#   R57 / R55a''' plants (2026-10-21): P19 rule (8) removed from JUDGE_SYSTEM => v20 rule_present true → false, system sha moves;
+#       P20 the subject-verb-quote check removed => v21 6003dc65 form quoted_with_attribution → none (first_person gate path).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -99,12 +134,12 @@ for f in supabase/functions/public-baseline/index.ts supabase/functions/_shared/
 done
 FP=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-first-person-probe.ts 2>&1 | tail -1)
 [ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('voice_class'))")" = "outside_voice_about_client" ] || fail v4 "R45: a third party saying 'we' did not keep the label: $FP"
-[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('rule'))")" = "first_person_judged" ] || fail v4 "R45: the rule is not first_person_judged: $FP"
-[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('speaker_class'))")" = "third_party" ] || fail v4 "R45: the speaker is not recorded: $FP"
-[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('speaker_calls'))")" = "1" ] || fail v4 "R45: speaker calls != 1 for one first-person candidate: $FP"
-[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('judge_calls'))")" = "0" ] || fail v4 "the authorship judge was called for a first-person candidate: $FP"
-grep -q 'needs_speaker: true, attribution: { form: "first_person"' supabase/functions/_shared/voiceClassAtMint.ts || fail v4 "R45: the first-person stage does not hand the candidate to the speaker judge"
-echo "v4. R28/R45 probe (fake transport, judge spy, fake speaker judge): $FP"
+[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('rule'))")" = "first_person" ] || fail v4 "R56: the rule is not first_person: $FP"
+[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('speaker_calls'))")" = "0" ] || fail v4 "R56: a speakerless first-person candidate reached the speaker judge: $FP"
+[ "$(echo "$FP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('judge_calls'))")" = "1" ] || fail v4 "R56: the authorship judge was not asked the field question once: $FP"
+grep -q 'needs_speaker: true, attribution: { form: "first_person"' supabase/functions/_shared/voiceClassAtMint.ts || fail v4 "R45: the first-person stage does not reach the speaker stage"
+grep -q 'attribution.form === "first_person" && !attribution.speaker_string && !(input.company.host && isOwnDomainUrl(input.url, input.company.host))' supabase/functions/_shared/voiceClassAtMint.ts || fail v4 "R56: the speakerless first-person branch to the authorship judge is missing"
+echo "v4. R28/R45/R56 probe (fake transport, judge spy, fake speaker judge): $FP"
 echo "v4. R28 source: the regen handler names [first_person]; the baseline's three call sites name no text gate"
 
 # v5 — R32: the attributed_speech gate — the CEO-quote fixture mints client_voice by the speaker judge; the third-party
@@ -119,15 +154,15 @@ grep -q 'REGEN_TEXT_GATES: ReadonlyArray<TextGate> = \["first_person", "attribut
 for f in supabase/functions/public-baseline/index.ts supabase/functions/_shared/aggregatorAuthorship.ts supabase/functions/_shared/registryIngest.ts; do grep -q 'textGates' "$f" && fail v5 "the baseline's call site $f names a text gate"; done
 echo "v5. R32 probe (fake transport, fake speaker judge): $SP"
 
-# v6 — R47: the first-person subject anywhere; detection by rule, decision by the speaker judge
+# v6 — R47: the first-person subject anywhere; detection by rule, decision by the authorship judge's field question (R56)
 V=supabase/functions/_shared/voiceClassAtMint.ts
 grep -qE '^const FIRST_PERSON_SUBJECT = /\\b\(we\|' "$V" || fail v6 "FIRST_PERSON_SUBJECT is anchored to a sentence start again (R47 undone)"
 R47=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-r47-probe.ts 2>&1 | tail -1)
 [ "$(echo "$R47" | python3 -c "import json,sys; print(json.load(sys.stdin).get('subject_class'))")" = "client_voice" ] || fail v6 "the provider's mid-sentence first person did not mint client_voice: $R47"
-[ "$(echo "$R47" | python3 -c "import json,sys; print(json.load(sys.stdin).get('subject_rule'))")" = "first_person_judged" ] || fail v6 "the rule is not first_person_judged: $R47"
+[ "$(echo "$R47" | python3 -c "import json,sys; print(json.load(sys.stdin).get('subject_rule'))")" = "first_person" ] || fail v6 "R56: the rule is not first_person: $R47"
 [ "$(echo "$R47" | python3 -c "import json,sys; print(json.load(sys.stdin).get('review_class'))")" = "outside_voice_about_client" ] || fail v6 "a customer's 'our home' lost its label: $R47"
-[ "$(echo "$R47" | python3 -c "import json,sys; print(json.load(sys.stdin).get('speaker_calls'))")" = "2" ] || fail v6 "speaker calls != 2 for two mid-sentence first-person candidates: $R47"
-[ "$(echo "$R47" | python3 -c "import json,sys; print(json.load(sys.stdin).get('judge_calls'))")" = "0" ] || fail v6 "the authorship judge was called: $R47"
+[ "$(echo "$R47" | python3 -c "import json,sys; print(json.load(sys.stdin).get('speaker_calls'))")" = "0" ] || fail v6 "R56: a speakerless first-person candidate reached the speaker judge: $R47"
+[ "$(echo "$R47" | python3 -c "import json,sys; print(json.load(sys.stdin).get('judge_calls'))")" = "2" ] || fail v6 "R56: authorship calls != 2 for two mid-sentence first-person candidates: $R47"
 echo "v6. R47 probe (fake transport, fake speaker judge): $R47"
 
 # v7 — R48 (the reported-speech forms) and R49 (the provider-written profile hosts)
@@ -179,4 +214,35 @@ echo "v10. R54a section: heading '$(q9 "d['section']['heading']")', before $(q9 
 # v11 — R54b: listing data is platform-authored in any field (system prompt rule, demonstration and counterexample)
 [ "$(q9 "d['listing']['rule_present'] and d['listing']['demonstration'] and d['listing']['counterexample']")" = True ] || fail v11 "the listing-data rule is not in the authorship system prompt: $J9"
 echo "v11. R54b listing-data rule in the system prompt (demonstration + counterexample); system sha $(q9 "d['listing']['system_sha'][:16]")"
+# v12 — R55: a sentence about the subject is not a sentence by it (speaker system prompt rule, demonstration, counterexample)
+[ "$(q9 "d['speaker']['rule_present'] and d['speaker']['demonstration'] and d['speaker']['counterexample']")" = True ] || fail v12 "the about-is-not-by rule is not in the speaker system prompt: $J9"
+echo "v12. R55 about-is-not-by rule in the speaker system prompt (demonstration + counterexample); speaker sha $(q9 "d['speaker']['system_sha'][:16]")"
+# v13 — R55a: a quoted term is not a quotation (the detector needs an attribution marker)
+[ "$(q9 "d['r55a']['term_form']=='none' and d['r55a']['quote_form']=='quoted_with_attribution' and d['r55a']['quote_speaker']=='David Friend'")" = True ] || fail v13 "the quotation form fires without an attribution marker (or a true quotation lost it): $J9"
+echo "v13. R55a quoted term → form $(q9 "d['r55a']['term_form']"); true quotation → $(q9 "d['r55a']['quote_form']") ($(q9 "d['r55a']['quote_speaker']"))"
+# v14 — R55b / R55c: the SUBJECT line names the subject; an affiliate speaking for itself is third_party
+[ "$(q9 "d['speaker']['r55b_present'] and d['speaker']['r55c_present']")" = True ] || fail v14 "R55b / R55c not in the speaker system prompt: $J9"
+echo "v14. R55b (SUBJECT line names the subject) and R55c' (first person off the subject's domain is the subject's only when the page says so) in the speaker prompt; speaker sha $(q9 "d['speaker']['system_sha'][:16]")"
+# v15 — R55a' / R55d: the dash attribution after a quotation's close names every sentence inside it; a mixed candidate is answered mixed
+[ "$(q9 "d['r55a']['dash_after_close_speaker']=='Meghan Leary, SVP of Strategic Partnerships of SIAA'")" = True ] || fail v15 "the dash attribution after the close does not name the quotation's opening sentence: $J9"
+[ "$(q9 "d['speaker']['r55d_present']")" = True ] || fail v15 "R55d (mixed) not in the speaker system prompt or answer set: $J9"
+echo "v15. R55a' opening sentence → $(q9 "d['r55a']['dash_after_close_speaker']"); R55d mixed rule + answer in the speaker prompt"
+# v16 — R55e (i): the speaker user prompt carries the computed own-domain line (no on a third-party host, yes on the subject's)
+[ "$(q9 "d['r55e']['own_domain_no'] and d['r55e']['own_domain_yes']")" = True ] || fail v16 "the own-domain line is not in the speaker user prompt: $J9"
+echo "v16. R55e own-domain line: angi.com → no, iaqm.com → yes"
+# v17 — R55e (ii): the speaker user prompt carries the authorship judge's PAGE BRIEF and CONTEXT block
+[ "$(q9 "d['r55e']['brief'] and d['r55e']['context']")" = True ] || fail v17 "the PAGE BRIEF / CONTEXT block is not in the speaker user prompt: $J9"
+echo "v17. R55e speaker prompt carries PAGE BRIEF + CONTEXT (heading 'Yes, I recommend this pro', text marked)"
+# v18 — R55d / R55a'': narration + a quotation is form mixed (no call); a quotation after an attributed one carries its speaker
+[ "$(q9 "d['r55d']['mixed_form']=='mixed' and d['r55d']['carry_speaker']=='David Friend, Wasabi Technologies’ co-founder and CEO'")" = True ] || fail v18 "mixed form or quotation carry: $J9"
+echo "v18. R55d mixed form → $(q9 "d['r55d']['mixed_form']"); R55a'' carry → $(q9 "d['r55d']['carry_speaker']")"
+# v19 — R56: speakerless first person off the subject's domain is a FIELD question (authorship judge); attributed stays with the speaker judge
+[ "$(q9 "d['r56']['first_person_judges']==['authorship'] and d['r56']['first_person_rule']=='first_person' and d['r56']['attributed_judges'][:1]==['speaker']")" = True ] || fail v19 "R56 first-person routing: $J9"
+echo "v19. R56 speakerless first person (angi.com) → $(q9 "d['r56']['first_person_judges']"); attributed → $(q9 "d['r56']['attributed_judges']")"
+# v20 — R57: an About/description section belongs to the entity it is named for (authorship rule (8) + the generic brief)
+[ "$(q9 "d['r57']['rule_present'] and d['r57']['generic_brief']")" = True ] || fail v20 "R57 not in the authorship system prompt / generic brief: $J9"
+echo "v20. R57 rule (8) in the authorship system prompt (demonstration + counterexample) and the generic brief; system sha $(q9 "d['listing']['system_sha'][:16]")"
+# v21 — R55a''': a named subject + any verb + comma/colon opening a quotation is an attribution
+[ "$(q9 "d['r55a3']['form']=='quoted_with_attribution' and d['r55a3']['speaker']=='Sonos'")" = True ] || fail v21 "subject-verb-quote shape: $J9"
+echo "v21. R55a''' 'Sonos bragged, “…”' → $(q9 "d['r55a3']['form']") ($(q9 "d['r55a3']['speaker']"))"
 echo "GUARD OK"

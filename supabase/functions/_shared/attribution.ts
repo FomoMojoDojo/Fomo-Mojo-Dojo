@@ -14,7 +14,8 @@ export type AttributionForm =
   | "reported_titled_speaker"     // <Title> <Name> said that… (R48: lowercase titles too — "chief human resources officer Ken Auletta said")
   | "reported_name_appositive"    // R48: <Name>[, appositive,]… said that… — unquoted reported speech, the name at a sentence start
   | "quotation_interior"          // the candidate sits inside an open quotation on the page; the attribution follows the close
-  | "first_person";               // R45: the candidate itself speaks as "we" — who "we" is goes to the speaker judge
+  | "first_person"                // R45: the candidate itself speaks as "we" — who "we" is goes to the speaker judge
+  | "mixed";                      // R55d: narrator words, then a quotation opener, in ONE candidate — not judged (unknown)
 export type AttributionHit = {
   form: AttributionForm;
   /** the speaker as the page names it — name and any adjacent title; "" when the clause names no one ("according to the company" → "the company") */
@@ -32,6 +33,14 @@ const NAME = "(?:(?:" + TITLE_WORDS + ")\\s+)?[A-Z][\\w.'’-]+(?:\\s+[A-Z][\\w.
 const RE_TOLD = new RegExp("(" + NAME + ")\\s+(?:told|tells)\\s+(?:the\\s+)?[A-Z][\\w.' -]+");
 const RE_SAID_NAME = new RegExp("\\b(?:" + SPEECH_VERBS + ")\\s+(" + NAME + ")");
 const RE_NAME_SAID = new RegExp(",\\s*[”\"»]?\\s*(" + NAME + ")\\s+(?:" + SPEECH_VERBS + ")\\b");   // the comma may sit inside the closing quote: ,” Alexander said
+// ── R55a (operator ruling, 2026-10-21): A QUOTED TERM IS NOT A QUOTATION ───────────────────────────────────────────
+// quantumcomputingreport's "The reported metrics mark the completion of the “Quantum Memory” phase…" was classed
+// quoted_with_attribution: quote marks around a TERM plus "reported" used as an adjective. The quotation form now needs an
+// attribution MARKER — a speaker the speech verb attaches to (named, titled, or a lowercase noun: "the company said"), or a
+// dash attribution ("…” – Meghan Leary, SVP of SIAA"). A verb alone is not a marker; with no marker the quotation form is
+// not returned and the candidate is read by the other forms (none, when nothing else fires).
+const RE_NOUN_SAID = new RegExp(",\\s*[”\"»]?\\s*((?:the|a|an|its|their|our)\\s+[a-z][\\w-]*(?:\\s+[a-z][\\w-]*){0,2})\\s+(?:" + SPEECH_VERBS + ")\\b");
+const RE_DASH_ATTRIBUTION = /[”"»]\s*[–—-]\s*([A-Z][\w.'’-]+(?:\s+[A-Z][\w.'’-]+){1,3}(?:,\s*[^.”"»]{2,80})?)/;
 const RE_ACCORDING = /\baccording to\s+((?:the\s+|its\s+|their\s+|a\s+)?[\w][\w.'’ -]{1,60}?)(?=[,.;:]|$)/i;
 const RE_PRONOUN = new RegExp("^(He|She|They|It)\\s+(?:" + SPEECH_VERBS + ")\\b");
 const RE_TITLED = new RegExp("\\b((?:" + TITLE_WORDS + ")\\s+[A-Z][\\w.'’-]+(?:\\s+[A-Z][\\w.'’-]+){0,2})\\s+(?:" + SPEECH_VERBS + ")\\b");
@@ -73,10 +82,72 @@ export function matchLowerTitled(t: string): { speaker: string; verb: string } |
   if (PARTICIPLE_TAIL.test(m[4] ?? "")) return null;
   return { speaker: clean(m[1] + " " + m[2]), verb: m[3] };
 }
+// the two speaker shapes HEAD read as an empty speaker on true quotations (parity, 2026-10-21): a name with an appositive
+// chain after the closing quote (",” David Friend, Wasabi’s co-founder and CEO, said") and a noun-phrase speaker before the
+// verb ("A Sonos spokesperson … explained that \"…\"")
+const RE_QUOTE_NAME_APPOS = new RegExp("[”\"»]\\s*(" + CAPTOK + "(?:\\s+" + CAPTOK + "){1,3})(?:\\s*\\([^)]{1,40}\\))?((?:,\\s[^,]{2,120}){1,2}),?\\s+(?:" + SPEECH_VERBS + ")\\b");
+const RE_NOUN_SPEAKER_BEFORE = new RegExp("\\b((?:A|An|The|a|an|the)\\s+(?:" + CAPTOK + "\\s+)?(?:spokesperson|spokeswoman|spokesman|representative|statement|release|announcement))\\b[^.“\"«]{0,80}?\\s(?:" + SPEECH_VERBS + ")\\b");
+// ── R55a''' (operator ruling, 2026-10-21): A NAMED SUBJECT + VERB + COMMA/COLON OPENING A QUOTATION IS AN ATTRIBUTION ─────
+// "Even the interim CEO confessed, “We’ve let far too many people down.”" / "By October 2024, Sonos bragged, “We’ve restored…”"
+// read as first person because confessed / bragged are not speech verbs. The SHAPE decides, whatever the verb: a subject
+// noun phrase (a capitalised name, or the/a/its + up to three words), a finite verb (-ed / -s), then , or : and an opening
+// mark. The speech-verb list is the backstop for the other forms.
+const SUBJECT_NP = "((?:the|a|an|its|their|our)\\s+(?:[a-z][\\w-]*\\s+){0,2}[A-Za-z][\\w-]*|[A-Z][\\w.'’&-]+(?:\\s+[A-Z][\\w.'’&-]+){0,3})";
+const RE_SUBJECT_VERB_QUOTE = new RegExp("(?:^|,\\s+|\\b(?:Even|Also|Then|Later|Soon|Now|Still|And|But)\\s+)" + SUBJECT_NP + "\\s+([a-z]+(?:ed|es|s))\\s*[,:]\\s*[“\"«]\\s*\\S");
+export function matchSubjectVerbQuote(t: string): { speaker: string; verb: string } | null {
+  const m = RE_SUBJECT_VERB_QUOTE.exec(t);
+  if (!m) return null;
+  const toks = m[1].split(/\s+/);
+  if (toks.length === 1 && SENTENCE_START_STOP.has(toks[0])) return null;   // "It said, “…" is a pronoun, not a named subject
+  return { speaker: clean(m[1]), verb: m[2] };
+}
+const quoteNameAppos = (t: string): string | undefined => { const m = RE_QUOTE_NAME_APPOS.exec(t); return m ? m[1] + m[2] : undefined; };
+// ── R55d (operator ruling, 2026-10-21): A MIXED CANDIDATE IS DETECTED, NOT JUDGED ───────────────────────────────────
+// The Sonos blog's "When the backlash hit, Sonos's replies sounded like a robot reading legal disclaimers: “Hello, fixing
+// the app continues to be our top priority." is one candidate holding the blogger's narration AND Sonos's quoted reply.
+// Mixed when: at least MIXED_MIN_NARRATOR_WORDS words precede the first opening mark and END by introducing it (":" or ","),
+// those words are not an attribution clause ("X explained that “…", "the interim CEO confessed, “…", "One user summarized
+// it: “…" are attributed speech, not narration — a speech verb or an -ed verb, optionally + it/that), and the quotation is a
+// sentence (it starts with a capital) running to the candidate's end with at least MIXED_MIN_QUOTED_WORDS words. A quoted
+// title, term or fragment ("his list of "The Top 10…"", "simply "adapt to that change"") is R55a's case, not this one.
+export const MIXED_MIN_NARRATOR_WORDS = 4;
+export const MIXED_MIN_QUOTED_WORDS = 3;
+const words = (s: string) => (s.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? []).length;
+export function isMixedCandidate(t: string): boolean {
+  const k = t.search(QUOTE_OPEN);
+  if (k <= 0) return false;
+  const pre = t.slice(0, k).trim(), post = t.slice(k + 1);
+  if (words(pre) < MIXED_MIN_NARRATOR_WORDS || !/[:,]$/.test(pre)) return false;
+  if (new RegExp("\\b(?:" + SPEECH_VERBS + "|[a-z]+ed)(?:\\s+(?:it|that|this))?\\s*[,:]$", "i").test(pre)) return false;
+  if (!/^\s*\p{Lu}/u.test(post)) return false;
+  const c = post.search(QUOTE_CLOSE);
+  const quotedPart = c >= 0 ? post.slice(0, c) : post;
+  if (c >= 0 && !/^[\s.,!?…]*$/.test(post.slice(c + 1))) return false;
+  return words(quotedPart) >= MIXED_MIN_QUOTED_WORDS;
+}
+// ── R55a'' (operator ruling, 2026-10-21): A QUOTATION THAT DIRECTLY FOLLOWS AN ATTRIBUTED QUOTATION CONTINUES THAT SPEAKER ──
+// builtinboston: "“This acquisition strengthens our position…,” David Friend, Wasabi Technologies’ co-founder and CEO, said in a
+// statement . “Seagate has built a loyal enterprise customer base…" — between the first quotation's close and the second's
+// opening there is nothing but the first one's attribution clause, so the second is Friend's too.
+function carriedSpeaker(page: string, openerAt: number): string | null {
+  const prev = page.slice(Math.max(0, openerAt - 400), openerAt);
+  const c = Math.max(prev.lastIndexOf("”"), prev.lastIndexOf("»"));
+  if (c < 0) return null;
+  const tail = prev.slice(c);
+  const clause = trailingClause(tail);
+  if (!clause) return null;
+  const at = tail.indexOf(clause);
+  if (!/^[”»\s,]*$/.test(tail.slice(0, at)) || !/^[\s.,;:]*$/.test(tail.slice(at + clause.length))) return null;   // narrator words between
+  return speakerOfClause(clause) || null;
+}
 const hasSpeechVerb = (t: string) => new RegExp("\\b(?:" + SPEECH_VERBS + ")\\b").test(t);
 const clean = (s: string) => s.replace(/\s+/g, " ").replace(/[.,;:]+$/, "").trim();
 /** The attribution clause that follows a closing quotation mark: ", said Brian Bowis, Chairman of …" up to the sentence end. */
 function trailingClause(after: string): string | null {
+  // R55a' (operator ruling, 2026-10-21): a DASH attribution after the close names the quotation's speaker too
+  // (coverager.com: "…our members. By integrating … to agents. …” – Meghan Leary, SVP of Strategic Partnerships of SIAA.")
+  const dash = /^[”"»]\s*(?:[–—]|\s-)\s*([A-Z][\w.'’-]+(?:\s+[A-Z][\w.'’-]+){1,3}(?:,\s*[^.\n”"»]{2,120})?)/.exec(after);
+  if (dash) return dash[1];
   const m = /^[”"»]?\s*,?\s*((?:(?:said|says|told|tells|added|adds|noted|notes|wrote|writes|stated|states|explained|explains|commented|comments|recalled|recalls)\s+)[^.\n]{2,160}|[^.\n]{2,80}\s+(?:said|says|told|tells|added|adds|noted|notes|wrote|writes|stated|states|explained|explains)[^.\n]{0,120})/.exec(after);
   return m ? m[1] : null;
 }
@@ -92,13 +163,20 @@ export function detectAttribution(candidate: string, pageText?: string | null, o
   const page = String(pageText ?? "");
   let offset = typeof offsetHint === "number" && offsetHint >= 0 && page.slice(offsetHint, offsetHint + t.length) === t ? offsetHint : page.indexOf(t);
   const quoted = QUOTE_OPEN.test(t) && QUOTE_CLOSE.test(t);
-  if (quoted && hasSpeechVerb(t)) {
+  if (quoted && (hasSpeechVerb(t) || RE_DASH_ATTRIBUTION.test(t))) {
     const told = RE_TOLD.exec(t); const said = RE_SAID_NAME.exec(t); const nameSaid = RE_NAME_SAID.exec(t);
     // R48: a sentence-initial name before the verb ("Supervisor Matt Haney called Edgewood “…”") names the speaker; the
     // verb-then-name form is read last, since what follows "called" is the one spoken about, not the speaker
     const appos = matchNameAppositive(t);
-    return { form: "quoted_with_attribution", speaker_string: clean(told?.[1] ?? nameSaid?.[1] ?? appos?.speaker ?? said?.[1] ?? ""), span: t, offset };
+    const speaker = clean(told?.[1] ?? nameSaid?.[1] ?? appos?.speaker ?? said?.[1] ?? RE_NOUN_SAID.exec(t)?.[1] ?? quoteNameAppos(t) ?? RE_NOUN_SPEAKER_BEFORE.exec(t)?.[1] ?? RE_DASH_ATTRIBUTION.exec(t)?.[1] ?? "");
+    // R55a: no marker (no speaker the verb attaches to, no dash attribution) — a quoted term, not a quotation; fall through
+    if (speaker) return { form: "quoted_with_attribution", speaker_string: speaker, span: t, offset };
   }
+  // R55a''': subject + any verb + , or : opening a quotation — an attribution, whatever the verb
+  const svq = matchSubjectVerbQuote(t);
+  if (svq) return { form: "quoted_with_attribution", speaker_string: svq.speaker, span: t, offset };
+  // R55d: narrator words + a quotation in one candidate — recorded unknown:mixed_candidate, never handed to a judge
+  if (isMixedCandidate(t)) return { form: "mixed", speaker_string: "", span: t, offset };
   const acc = RE_ACCORDING.exec(t);
   if (acc) return { form: "according_to", speaker_string: clean(acc[1]), span: t, offset };
   const told = RE_TOLD.exec(t);
@@ -116,14 +194,18 @@ export function detectAttribution(candidate: string, pageText?: string | null, o
   if (pron) return { form: "reported_pronoun_verb", speaker_string: pron[1], span: t, offset };
   // the open-quotation rule: the candidate sits inside a quotation that opened before it and closes after it
   if (offset >= 0 && page) {
-    const before = page.slice(Math.max(0, offset - 600), offset);
+    // R55a': the speaker of a quotation is the speaker of every sentence inside it — the opening mark may sit before the
+    // candidate OR inside it (a candidate that opens a multi-sentence quotation and ends before its close)
+    const before = page.slice(Math.max(0, offset - 600), offset + t.length);
     const lastOpen = Math.max(before.lastIndexOf("“"), before.lastIndexOf("«"), before.lastIndexOf('"'));
     if (lastOpen >= 0) {
       const sinceOpen = before.slice(lastOpen + 1);
       if (!QUOTE_CLOSE.test(sinceOpen.replace(/^"/, ""))) {   // no close between the opening mark and the candidate
         const after = page.slice(offset + t.length, offset + t.length + 700);
         const closeAt = after.search(QUOTE_CLOSE);
-        if (closeAt >= 0) {
+        // R55a': a NEW opening mark between the candidate and that close means the close ends a later quotation, not one the
+        // candidate sits in (coverager.com's narration before “For more than three decades…” – SIAA CEO Matt Masiello)
+        if (closeAt >= 0 && !/[“«]/.test(after.slice(0, closeAt))) {
           const clause = trailingClause(after.slice(closeAt));
           if (clause) {
             const unitStart = Math.max(0, offset - 600) + lastOpen;
@@ -131,6 +213,10 @@ export function detectAttribution(candidate: string, pageText?: string | null, o
             return { form: "quotation_interior", speaker_string: speakerOfClause(clause), span: page.slice(unitStart, unitEnd), offset: unitStart };
           }
         }
+        // R55a'': no attribution after the close — the speaker of the attributed quotation directly before this one carries
+        const openerAt = Math.max(0, offset - 600) + lastOpen;
+        const carried = carriedSpeaker(page, openerAt);
+        if (carried) return { form: "quotation_interior", speaker_string: carried, span: page.slice(openerAt, offset + t.length), offset: openerAt };
       }
     }
     // a quotation that is the candidate itself, with the attribution in the next sentence

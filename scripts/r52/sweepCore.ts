@@ -27,7 +27,7 @@
 //
 // PLAN is the upper bound of calls: the stub band judge answers "not syndicated" and the stub speaker "third party", so
 // every later stage the shipped order can reach is reached (band → speaker → URL-gated authorship).
-import { voiceClassForMintedExcerpt, type VoiceClassDecision, type VoiceClassInput } from "../../supabase/functions/_shared/voiceClassAtMint.ts";
+import { MIXED_CANDIDATE, voiceClassForMintedExcerpt, type VoiceClassDecision, type VoiceClassInput } from "../../supabase/functions/_shared/voiceClassAtMint.ts";
 import { REGEN_TEXT_GATES } from "../../supabase/functions/_shared/outsideRegenHandler.ts";
 import {
   authorshipContext, judgeAggregatorAuthorship, judgeSpeaker, judgedTextFor, locateOnPage, ollamaAuthorshipTransport, ollamaSpeakerTransport,
@@ -205,11 +205,12 @@ function rowJudges(row: SweepSignal, base: BaseJudges, calls: CallRecord[], ledg
       const replay = stored ? await replayable("speaker", st!.model, i) : null;
       if (replay === "matched") {
         const j = { speaker_class: st!.speaker_class, speaker_name: st!.speaker_name ?? null, speaker_role: st!.speaker_role ?? null, reason: String(st!.reason ?? "stored"), model: String(st!.model) } as SpeakerJudgment;
-        calls.push({ judge: "speaker", replayed: true, unknown: j.speaker_class === "unknown" ? `stored speaker unknown: ${j.reason}` : null, model: j.model, replay });
+        calls.push({ judge: "speaker", replayed: true, unknown: j.speaker_class === "unknown" ? `stored speaker unknown: ${j.reason}` : j.speaker_class === "mixed" ? `mixed_candidate: ${j.reason}` : null, model: j.model, replay });
         return j;
       }
       const r = await base.speaker(i);
-      calls.push({ judge: "speaker", replayed: false, unknown: !r ? "speaker judge unavailable" : (r.speaker_class === "unknown" || r.speaker_class === "judge_failed") ? `speaker ${r.speaker_class}: ${r.reason}` : null, model: r?.model ?? "none", replay });
+      // R55d: a mixed answer is recorded unknown:mixed_candidate — the label stands, no class write
+      calls.push({ judge: "speaker", replayed: false, unknown: !r ? "speaker judge unavailable" : r.speaker_class === "mixed" ? `mixed_candidate: ${r.reason}` : (r.speaker_class === "unknown" || r.speaker_class === "judge_failed") ? `speaker ${r.speaker_class}: ${r.reason}` : null, model: r?.model ?? "none", replay });
       return r;
     },
     authorship: async (i) => {
@@ -303,6 +304,9 @@ export async function deriveRow(store: SweepStore, ctx: CompanyCtx, row: SweepSi
     };
   }
   const decision = await voiceClassForMintedExcerpt(input);
+  // R55d: a detected mixed candidate reached the speaker stage and was not judged — recorded as a no-call unknown
+  const why = decision.ok ? decision.detail : decision.reason;
+  if (String(why ?? "").startsWith(`${MIXED_CANDIDATE}:`)) calls.push({ judge: "speaker", replayed: false, unknown: String(why), model: "none", nocall: true });
   return { decision, calls, basis };
 }
 
@@ -330,7 +334,7 @@ export async function planCompany(store: SweepStore, group: { company_id: string
     const fresh = callsString(d.calls);
     for (const c of d.calls) if (madeCall(c)) calls[c.judge] += 1;
     const equal = fresh === r.judges;
-    rows.push({ seq: r.seq, signal_id: r.signal_id, company_id: r.company_id, era: r.era, reviewed_judges: r.judges, fresh_judges: fresh, live: true, authority: d.decision.authority, equal, why: equal ? null : `reviewed ${r.judges} ≠ shipped ${fresh}`, basis: d.basis, replay: d.calls.filter((c) => c.replay).map((c) => `${c.judge}:${c.replay}`).join("+"), no_page_words: d.calls.some((c) => c.nocall) });
+    rows.push({ seq: r.seq, signal_id: r.signal_id, company_id: r.company_id, era: r.era, reviewed_judges: r.judges, fresh_judges: fresh, live: true, authority: d.decision.authority, equal, why: equal ? null : `reviewed ${r.judges} ≠ shipped ${fresh}`, basis: d.basis, replay: d.calls.filter((c) => c.replay).map((c) => `${c.judge}:${c.replay}`).join("+"), no_page_words: d.calls.some((c) => c.nocall && c.judge === "authorship") });
   }
   return { company_id: group.company_id, company: group.company, refused: null, rows, equal: rows.length > 0 && rows.every((x) => x.equal), calls };
 }
