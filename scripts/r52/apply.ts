@@ -10,7 +10,7 @@
 //       R54 LIVE PROOF, DRY: the named rows of ONE company are derived through the shipped authority with the LOCAL ledgered
 //       judges — real model calls, each writing its model_calls row — and each authorship prompt's CONTEXT block, verdict
 //       and reason are printed. Writes NOTHING else: no integrity row, no audit row, no stamp, no class.
-//   deno run --allow-all scripts/r52/apply.ts --probe --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|plan-seed|apply-revert>
+//   deno run --allow-all scripts/r52/apply.ts --probe --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|p11|plan-seed|apply-revert>
 //       GUARD PROBES on a throwaway company SEEDED INSIDE the probe's transaction, with FAKE local transports (no model
 //       is reachable): everything — seed, ledger rows, audit rows, integrity rows — is ROLLED BACK. One JSON line out.
 // The mode is named or refused (classifyBodyMode) — there is no default.
@@ -109,7 +109,7 @@ try {
     const r = await applyCompany(store, { group, runRef: String(body.run_ref ?? ""), reviewedMd5s: reviewed.md5s, transports: localTransports(), nested: false, log: (s) => console.error(s) });
     out({ mode: "apply", ...r, outcomes: undefined, outcome_counts: { changed: r.changed, unknown: r.unknown, unchanged: r.rows - r.changed - r.unknown - r.refused, refused: r.refused } });
   } else {
-    if (typeof body.name !== "string" || !body.name) throw new SweepRefusedError("no_probe_name", "--probe needs --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|plan-seed|apply-revert>");
+    if (typeof body.name !== "string" || !body.name) throw new SweepRefusedError("no_probe_name", "--probe needs --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|p11|plan-seed|apply-revert>");
     const probe = body.name;
     await session.exec("begin;");
     const before = { model_calls: await count("select 1 from model_calls"), integrity_runs: await count("select 1 from integrity_runs"), restamps: await count("select 1 from signal_voice_restamps"), signals: await count("select 1 from signals") };
@@ -187,6 +187,34 @@ try {
       const row = await sigRow(np);
       const done = r as Awaited<ReturnType<typeof applyCompany>> | null;
       result = { planned_judges: planned, refused: refused.code, kind: done?.outcomes[0]?.kind ?? null, class: row.voice_class, unknown_reason: row.r52_unknown, transport_calls: counter.n, model_calls_rows: await count(`select 1 from model_calls where company_id=${lit(Z)}::uuid`), tally: done?.model_calls ?? null };
+    } else if (probe === "p11") {
+      // which apply run a revert undoes (2026-10-21): apply integrity rows seeded under three probe run_refs, ids ascending.
+      // (A) older reverted, newer not → the NEWER is selected, and the revert names it on its own row, after which
+      //     nothing is left (refused); (B) newer reverted, older not → the OLDER; (C) the only apply row reverted → refused;
+      //     (E) two apply rows, neither reverted → the NEWER (the ordering; A alone cannot see it once the exclusion holds).
+      const ir = async (run: string, e: Record<string, unknown>) => Number((await session.mutate<{ id: number }>(`insert into integrity_runs (company_id, component, status, examined, admitted, excluded_by_rule, run_ref)
+        values (${lit(Z)}::uuid, 'r52_voice_sweep', 'completed', 0, 0, ${lit(JSON.stringify({ rules: "R52", run_ref: run, ...e }))}::jsonb, ${lit(run)}) returning id`))[0].id);
+      const pick = async (run: string) => { try { return { id: (await store.applyRunToRevert(run, Z)).id, refused: null as string | null }; } catch (e) { if (e instanceof SweepRefusedError) return { id: null, refused: e.code }; throw e; } };
+      const RA = "r52_guard_p11_a", RB = "r52_guard_p11_b", RC = "r52_guard_p11_c";
+      const aOld = await ir(RA, { mode: "apply", signals_md5_before: "old" }), aNew = await ir(RA, { mode: "apply", signals_md5_before: "new" });
+      await ir(RA, { mode: "revert", apply_integrity_id: aOld });
+      const bOld = await ir(RB, { mode: "apply" }), bNew = await ir(RB, { mode: "apply" });
+      await ir(RB, { mode: "revert", apply_integrity_id: bNew });
+      const cOnly = await ir(RC, { mode: "apply" });
+      await ir(RC, { mode: "revert", apply_integrity_id: cOnly });
+      const RE = "r52_guard_p11_e";
+      const eOld = await ir(RE, { mode: "apply" }), eNew = await ir(RE, { mode: "apply" });
+      const e = await pick(RE);
+      const a = await pick(RA);
+      const rv = await revertCompany(store, { runRef: RA, companyId: Z });
+      const named = (await session.query<{ n: string | null }>(`select excluded_by_rule->>'apply_integrity_id' n from integrity_runs where id=${rv.integrity_id}`))[0]?.n ?? null;
+      const aAfter = await pick(RA), b = await pick(RB), c = await pick(RC);
+      result = {
+        a_selects_newer: a.id === aNew && a.id !== aOld, revert_names_newer: rv.apply_integrity_id === aNew && named === String(aNew), revert_md5_before: rv.apply_md5_before,
+        a_after_revert_refused: aAfter.refused, b_selects_unreverted_older: b.id === bOld && b.id !== bNew, c_refused: c.refused,
+        e_selects_newer: e.id === eNew && e.id !== eOld,
+        ids: { aOld, aNew, bOld, bNew, cOnly, eOld, eNew, a: a.id, b: b.id, c: c.id, e: e.id },
+      };
     } else if (probe === "p2" || probe === "p6" || probe === "apply-revert") {
       // the full path on the seed: apply (fake transports, real ledgered judges), then revert, md5 before / after
       const md5_0 = await store.companySignalsMd5(Z);

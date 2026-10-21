@@ -149,6 +149,18 @@ export function makePsqlSweepStore(s: PsqlSession) {
         throw new Error(`signal write touched ${r.length} rows for ${id}`);
       }
     },
+    /** The apply run a revert undoes (2026-10-21): the NEWEST apply integrity row for run_ref + company that no revert
+     *  integrity row names (excluded_by_rule.apply_integrity_id — the key the revert and the 2026-10-20 backfill write).
+     *  A run_ref can carry several apply rows (a reverted run re-applied under the same ref); none left ⇒ refused. */
+    async applyRunToRevert(runRef: string, companyId: string): Promise<{ id: number; md5_before: string | null }> {
+      const r = await s.query<{ id: number; md5: string | null }>(`select a.id, a.excluded_by_rule->>'signals_md5_before' md5 from integrity_runs a
+        where a.component='r52_voice_sweep' and a.excluded_by_rule->>'mode'='apply' and a.run_ref=${lit(runRef)} and a.company_id=${lit(companyId)}::uuid
+          and not exists (select 1 from integrity_runs v where v.component='r52_voice_sweep' and v.excluded_by_rule->>'mode'='revert'
+            and v.company_id=a.company_id and v.excluded_by_rule->>'apply_integrity_id' = a.id::text)
+        order by a.id desc limit 1`);
+      if (r.length !== 1) throw new SweepRefusedError("no_unreverted_apply", `run ${runRef} has no apply row for company ${companyId} that a revert has not already undone`);
+      return { id: Number(r[0].id), md5_before: r[0].md5 };
+    },
     async loadAudit(runRef: string, companyId: string): Promise<SweepAuditRow[]> {
       return await s.query<SweepAuditRow>(`select id, company_id, signal_id, run_ref, old_voice_class, new_voice_class, reverted_at from signal_voice_restamps
         where run_ref=${lit(runRef)} and company_id=${lit(companyId)}::uuid and judge_verdict is distinct from ${lit(R52_REVERT)} order by applied_at, id`);

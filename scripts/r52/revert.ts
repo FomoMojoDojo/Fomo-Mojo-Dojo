@@ -5,6 +5,8 @@
 //       The per-batch proof: inside ONE transaction that is ROLLED BACK, revert the run for the company from its audit
 //       rows, then compare the md5 of the company's signal rows with the md5 apply recorded on the run's integrity row
 //       BEFORE its first write (excluded_by_rule.signals_md5_before). Prints both md5s and whether they are equal.
+//       The apply run is the NEWEST apply row for run_ref + company that no revert row names (apply_integrity_id) — a
+//       run_ref re-applied after a revert carries two; refused (no_unreverted_apply) when none is left.
 //       Commits nothing.
 //       The revert RECORD is written inside that transaction too and printed as its would-be shape (then rolled back).
 //   deno run --allow-all scripts/r52/revert.ts --revert --run-ref=r52_<…> --company=<uuid>
@@ -25,8 +27,6 @@ try {
   const companyId = typeof body.company === "string" ? body.company : "";
   if (!/^r52_/.test(runRef)) throw new SweepRefusedError("no_run_ref", "--run-ref=r52_<…> is required");
   if (!companyId) throw new SweepRefusedError("no_company", "--company=<uuid> is required: one company per invocation");
-  const opened = await session.query<{ id: number; md5: string | null }>(`select id, excluded_by_rule->>'signals_md5_before' md5 from integrity_runs
-    where component='r52_voice_sweep' and excluded_by_rule->>'mode'='apply' and run_ref=${lit(runRef)} and company_id=${lit(companyId)}::uuid order by id limit 1`);
   await session.exec("begin;");
   const md5Now = await store.companySignalsMd5(companyId);
   const r = await revertCompany(store, { runRef, companyId });
@@ -34,10 +34,12 @@ try {
     await session.exec("rollback;");
     const md5Rolled = await store.companySignalsMd5(companyId);
     const leftover = await session.query<{ n: number }>(`select (select count(*) from integrity_runs where id=${r.integrity_id})::int + (select count(*) from signal_voice_restamps where id in (${r.revert_audit.map((w) => lit(w.id)).join(",") || "null"}))::int n`);
-    out({ mode: "prove", ...r, integrity_id: opened[0]?.id ?? null, md5_before_apply: opened[0]?.md5 ?? null, md5_before_revert: md5Now, md5_after_revert: r.md5_after, restores_pre_apply: !!opened[0]?.md5 && r.md5_after === opened[0].md5, rolled_back: md5Rolled === md5Now && leftover[0].n === 0, would_write: { integrity_rows: 1, audit_rows: r.revert_audit } });
+    // integrity_id = the APPLY row this revert undoes (store.applyRunToRevert, inside revertCompany); revert_integrity_id
+    // = the revert's own row, rolled back here
+    out({ mode: "prove", ...r, integrity_id: r.apply_integrity_id, revert_integrity_id: r.integrity_id, md5_before_apply: r.apply_md5_before, md5_before_revert: md5Now, md5_after_revert: r.md5_after, restores_pre_apply: !!r.apply_md5_before && r.md5_after === r.apply_md5_before, rolled_back: md5Rolled === md5Now && leftover[0].n === 0, would_write: { integrity_rows: 1, audit_rows: r.revert_audit } });
   } else {
     await session.exec("commit;");
-    out({ mode: "revert", ...r, md5_before_apply: opened[0]?.md5 ?? null, restores_pre_apply: !!opened[0]?.md5 && r.md5_after === opened[0].md5 });
+    out({ mode: "revert", ...r, md5_before_apply: r.apply_md5_before, restores_pre_apply: !!r.apply_md5_before && r.md5_after === r.apply_md5_before });
   }
 } catch (e) {
   try { await session.exec("rollback;"); } catch { /* none open */ }

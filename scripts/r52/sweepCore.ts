@@ -458,7 +458,7 @@ export async function applyCompany(store: SweepStore, args: {
 
 // ── revert ────────────────────────────────────────────────────────────────────────────────────────────────────
 export type RevertAuditWritten = { id: string; signal_id: string; old_voice_class: string | null; new_voice_class: string; judge_entity: string };
-export type RevertResult = { run_ref: string; company_id: string; audit_rows: number; restored: number; skipped: string[]; unstamped: number; md5_after: string; integrity_id: number; revert_audit: RevertAuditWritten[] };
+export type RevertResult = { run_ref: string; company_id: string; apply_integrity_id: number; apply_md5_before: string | null; audit_rows: number; restored: number; skipped: string[]; unstamped: number; md5_after: string; integrity_id: number; revert_audit: RevertAuditWritten[] };
 /** Revert one company's rows of a run, from its audit rows: class back where it still holds the new value; audit marked;
  *  the r52 / r52_unknown keys removed from every row the run stamped. */
 export async function revertCompany(store: SweepStore, args: { runRef: string; companyId: string }): Promise<RevertResult> {
@@ -469,6 +469,8 @@ export async function revertCompany(store: SweepStore, args: { runRef: string; c
   // undoes) and per stamp removed from a row apply never changed (judge_entity stamp_only) — each written BEFORE its
   // restore / unstamp, which the store refuses without it. Runs inside the caller's transaction.
   const { runRef, companyId } = args;
+  // the apply run this revert undoes: newest not yet reverted; named on the revert's own integrity row (refused if none)
+  const applyRun = await store.applyRunToRevert(runRef, companyId);
   const md5Before = await store.companySignalsMd5(companyId);
   const audit = (await store.loadAudit(runRef, companyId)).filter((a) => !a.reverted_at);
   const stamped = await store.stampedRows(runRef, companyId);
@@ -476,7 +478,7 @@ export async function revertCompany(store: SweepStore, args: { runRef: string; c
   for (const a of audit) if (!cls.has(a.signal_id)) { const [s] = await store.loadSignals([a.signal_id]); if (s) cls.set(s.id, { id: s.id, voice_class: s.voice_class, source_url: s.source_url }); }
   const openedAt = new Date().toISOString();
   const integrityId = await store.openIntegrity({ company_id: companyId, component: R52_COMPONENT, run_ref: runRef,
-    excluded_by_rule: { mode: "revert", rules: R52_RULES, run_ref: runRef, apply_audit_rows: audit.length, stamped_rows: stamped.length, signals_md5_before: md5Before, opened_at: openedAt } });
+    excluded_by_rule: { mode: "revert", rules: R52_RULES, run_ref: runRef, apply_integrity_id: applyRun.id, apply_audit_rows: audit.length, stamped_rows: stamped.length, signals_md5_before: md5Before, opened_at: openedAt } });
   const written: RevertAuditWritten[] = [];
   const skipped: string[] = [];
   const recorded = new Set<string>();
@@ -502,6 +504,6 @@ export async function revertCompany(store: SweepStore, args: { runRef: string; c
   if (unstamped !== stamped.length) throw new SweepRefusedError("unaudited_unstamp", `unstamped ${unstamped} of ${stamped.length} stamped rows — a row without its revert audit row kept its stamp`);
   const md5After = await store.companySignalsMd5(companyId);
   await store.finishIntegrity(integrityId, { status: "completed", examined: stamped.length, admitted: restored,
-    excluded_by_rule: { mode: "revert", rules: R52_RULES, run_ref: runRef, apply_audit_rows: audit.length, stamped_rows: stamped.length, restored, unstamped, skipped, revert_audit_ids: written.map((w) => w.id), signals_md5_before: md5Before, signals_md5_after: md5After, opened_at: openedAt, finished_at: new Date().toISOString() } });
-  return { run_ref: runRef, company_id: companyId, audit_rows: audit.length, restored, skipped, unstamped, md5_after: md5After, integrity_id: integrityId, revert_audit: written };
+    excluded_by_rule: { mode: "revert", rules: R52_RULES, run_ref: runRef, apply_integrity_id: applyRun.id, apply_audit_rows: audit.length, stamped_rows: stamped.length, restored, unstamped, skipped, revert_audit_ids: written.map((w) => w.id), signals_md5_before: md5Before, signals_md5_after: md5After, opened_at: openedAt, finished_at: new Date().toISOString() } });
+  return { run_ref: runRef, company_id: companyId, apply_integrity_id: applyRun.id, apply_md5_before: applyRun.md5_before, audit_rows: audit.length, restored, skipped, unstamped, md5_after: md5After, integrity_id: integrityId, revert_audit: written };
 }

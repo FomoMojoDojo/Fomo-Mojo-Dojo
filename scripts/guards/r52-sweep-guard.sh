@@ -24,6 +24,9 @@
 #       restored row (apply_audit:<id>) and per stamp-only row, and restores the company md5.
 #   p10 (R54) a planned row with no page words (a baseline-era row on a gated URL, no stored page) is stamped
 #       unknown:no_page_words with the label standing and makes ZERO model calls (transport 0, model_calls rows 0).
+#   p11 (2026-10-21) the revert undoes the NEWEST apply row for run_ref + company that no revert row names
+#       (apply_integrity_id): seeded A (older reverted) → the newer, which the revert then names, leaving none (refused);
+#       B (newer reverted) → the older; C (only row reverted) → refused no_unreverted_apply; E (two unreverted) → the newer.
 #   p7  plan mode writes nothing: it runs in a READ ONLY transaction, no transaction id is assigned, and the four
 #       tables are unchanged after it; it reaches every reviewed row.
 #
@@ -38,6 +41,8 @@
 #   P8  applyCompany's stamp drops judgments                       => p8 reason_kept true → false (judgments 1 → 0)
 #   P9  restoreClass's exists(revert audit row) clause removed     => p9 bare_restore_refused true → false (class → outside)
 #   P10 (R54 P3) deriveRow's baseline context falls back to the row's own text as the page => p10 planned_judges none → authorship
+#   P11a applyRunToRevert's not-exists(revert names it) clause removed => p11 b_selects_unreverted_older true → false, c_refused → None
+#   P11b applyRunToRevert ordered ascending (the 2026-10-21 defect)   => p11 e_selects_newer true → false
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -109,6 +114,9 @@ echo "p9. a bare restore is refused (class stays client_voice); the revert wrote
 # p10 — R54: no page words, no call
 J10=$(probe p10); [ "$(echo "$J10" | jq_ "str(d['planned_judges'])+'|'+str(d['kind'])+'|'+str(d['class'])+'|'+str((d['unknown_reason'] or '').startswith('no_page_words'))+'|'+str(d['transport_calls'])+'|'+str(d['model_calls_rows'])+'|'+str(d['rolled_back'])")" = "none|unknown|outside_voice_about_client|True|0|0|True" ] || fail p10 "no-page row: $J10"
 echo "p10. no page words: unknown ($(echo "$J10" | jq_ "d['unknown_reason']")), label stands, 0 transport calls, 0 model_calls rows"
+# p11 — which apply run a revert undoes
+J11=$(probe p11); [ "$(echo "$J11" | jq_ "str(d['a_selects_newer'])+'|'+str(d['revert_names_newer'])+'|'+str(d['a_after_revert_refused'])+'|'+str(d['b_selects_unreverted_older'])+'|'+str(d['c_refused'])+'|'+str(d['e_selects_newer'])+'|'+str(d['rolled_back'])")" = "True|True|no_unreverted_apply|True|no_unreverted_apply|True|True" ] || fail p11 "apply-run selection: $J11"
+echo "p11. revert undoes the newest unreverted apply row: A → newer ($(echo "$J11" | jq_ "d['ids']['a']")), named on the revert row, then none left; B → unreverted older; C → refused no_unreverted_apply; E → newer of two"
 
 # p7 — plan mode writes nothing
 set +e; P=$(NO_COLOR=1 deno run --allow-all --no-check $R52/plan.ts --plan --reviewed="$REVIEWED" --reviewed-md5="$REVIEWED_MD5" 2>/dev/null | tail -1); rc=$?; set -e
