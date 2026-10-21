@@ -22,6 +22,8 @@
 #   p9  a revert cannot restore a row without recording it: a bare restore (no revert audit row of its own) is refused and
 #       the class stays applied; the real revert writes one integrity row (mode revert) and one r52_revert audit row per
 #       restored row (apply_audit:<id>) and per stamp-only row, and restores the company md5.
+#   p10 (R54) a planned row with no page words (a baseline-era row on a gated URL, no stored page) is stamped
+#       unknown:no_page_words with the label standing and makes ZERO model calls (transport 0, model_calls rows 0).
 #   p7  plan mode writes nothing: it runs in a READ ONLY transaction, no transaction id is assigned, and the four
 #       tables are unchanged after it; it reaches every reviewed row.
 #
@@ -35,6 +37,7 @@
 #   P7  plan.ts writes one integrity row before its reads         => p7 plan exit 0 → 1 (read-only transaction refuses)
 #   P8  applyCompany's stamp drops judgments                       => p8 reason_kept true → false (judgments 1 → 0)
 #   P9  restoreClass's exists(revert audit row) clause removed     => p9 bare_restore_refused true → false (class → outside)
+#   P10 (R54 P3) deriveRow's baseline context falls back to the row's own text as the page => p10 planned_judges none → authorship
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -43,10 +46,11 @@ psql() { docker exec -i "$DB" psql -U postgres -d postgres -Atc "$1"; }
 fail() { echo "FAIL step $1: $2"; exit 1; }
 jq_() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 R52=scripts/r52
-# The reviewed plan (ruling 2026-10-20): the runner's own plan under the judge + question + prompt-sha replay key, in
-# backups/r52/ (gitignored, local). The two pre-runner files and the pre-key runner plan sit beside it as history.
-REVIEWED="${R52_REVIEWED:-backups/r52/r52run-plan.tsv}"
-REVIEWED_MD5="${R52_REVIEWED_MD5:-fac94fab768366564e5d913a295b3560}"
+# The reviewed plan: the runner's own plan under R54 (the authorship judge reads the page; a row with no page words is
+# not judged), in backups/r52/ (gitignored, local). The R52 plan (r52run-plan.tsv, fac94fab…) and the earlier files sit
+# beside it as history.
+REVIEWED="${R52_REVIEWED:-backups/r52/r54run-plan.tsv}"
+REVIEWED_MD5="${R52_REVIEWED_MD5:-c41aafd518975348c6b3f18fc4feaa29}"
 [ -f "${REVIEWED%%,*}" ] || fail s0 "reviewed plan ${REVIEWED%%,*} is missing"
 counts() { psql "select (select count(*) from model_calls)||'|'||(select count(*) from integrity_runs)||'|'||(select count(*) from signal_voice_restamps)||'|'||(select count(*) from signals)||'|'||(select md5(coalesce(string_agg(id::text||coalesce(voice_class,'')||coalesce(raw_payload::text,''),',' order by id),'')) from signals)"; }
 C0=$(counts)
@@ -101,6 +105,10 @@ echo "p8. unchanged row: class stands, 0 audit rows, stamp keeps the judge's ans
 # p9 — the revert records itself
 J9=$(probe p9); [ "$(echo "$J9" | jq_ "str(d['bare_restore_refused'])+'|'+str(d['class_after_bare'])+'|'+str(sorted((w['row'],w['from'],w['to'],w['entity']) for w in d['revert_audit']))+'|'+str(d['restored'])+'|'+str(d['unstamped'])+'|'+str(sorted((d['integrity'] or {}).items()))+'|'+str(d['md5_after_revert_equal'])+'|'+str(d['rolled_back'])")" = "True|client_voice|[('A', 'client_voice', 'outside_voice_about_client', 'apply_audit:<A>'), ('B', 'outside_voice_about_client', 'outside_voice_about_client', 'stamp_only')]|1|2|[('admitted', 1), ('examined', 2), ('mode', 'revert'), ('status', 'completed')]|True|True" ] || fail p9 "revert record: $J9"
 echo "p9. a bare restore is refused (class stays client_voice); the revert wrote 1 integrity row (mode revert, examined 2, admitted 1) and 2 r52_revert audit rows (A apply_audit, B stamp_only) before its writes; md5 restored"
+
+# p10 — R54: no page words, no call
+J10=$(probe p10); [ "$(echo "$J10" | jq_ "str(d['planned_judges'])+'|'+str(d['kind'])+'|'+str(d['class'])+'|'+str((d['unknown_reason'] or '').startswith('no_page_words'))+'|'+str(d['transport_calls'])+'|'+str(d['model_calls_rows'])+'|'+str(d['rolled_back'])")" = "none|unknown|outside_voice_about_client|True|0|0|True" ] || fail p10 "no-page row: $J10"
+echo "p10. no page words: unknown ($(echo "$J10" | jq_ "d['unknown_reason']")), label stands, 0 transport calls, 0 model_calls rows"
 
 # p7 — plan mode writes nothing
 set +e; P=$(NO_COLOR=1 deno run --allow-all --no-check $R52/plan.ts --plan --reviewed="$REVIEWED" --reviewed-md5="$REVIEWED_MD5" 2>/dev/null | tail -1); rc=$?; set -e

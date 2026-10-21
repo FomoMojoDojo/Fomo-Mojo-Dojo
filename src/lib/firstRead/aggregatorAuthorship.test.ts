@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyAuthorshipToEntries,
   applyRestamp,
+  authorshipContext,
   judgeAggregatorAuthorship,
   matchAggregatorProfileUrl,
   ollamaAuthorshipTransport,
@@ -69,12 +70,15 @@ describe("URL gate — the pattern decides WHETHER the judge runs, never WHAT it
   });
 });
 
+// R54: the crawled page the ingest entries are read on (every planted snippet sits on it)
+const TEST_PAGE = () => ["About", COMPANY_COPY, OTHER_ENTITY_COPY, RATING_ROW, EMPLOYEE_REVIEW].join("\n");
+
 describe("AUTHORSHIP decides the label (ingest branch)", () => {
   it("planted /Overview/ company-copy row → client_voice, judge provenance stamped on the entry", async () => {
     const judge = stubJudge({ [COMPANY_COPY]: judgment("subject_company") });
     const out = await applyAuthorshipToEntries(
       [{ url: OVERVIEW_URL, snippet: COMPANY_COPY, voice_class: "outside_voice_about_client" }],
-      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge },
+      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge, pageFor: TEST_PAGE },
     );
     expect(out.entries[0].voice_class).toBe("client_voice");
     expect(judge).toHaveBeenCalledTimes(1);
@@ -88,7 +92,7 @@ describe("AUTHORSHIP decides the label (ingest branch)", () => {
     const judge = stubJudge({ [EMPLOYEE_REVIEW]: judgment("subject_company") }); // would flip if asked
     const out = await applyAuthorshipToEntries(
       [{ url: REVIEWS_URL, snippet: EMPLOYEE_REVIEW, voice_class: "outside_voice_about_client" }],
-      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge },
+      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge, pageFor: TEST_PAGE },
     );
     expect(out.entries[0].voice_class).toBe("outside_voice_about_client");
     expect(judge).not.toHaveBeenCalled();
@@ -98,7 +102,7 @@ describe("AUTHORSHIP decides the label (ingest branch)", () => {
     const judge = stubJudge({ [OTHER_ENTITY_COPY]: judgment("other_entity", "Vega") });
     const out = await applyAuthorshipToEntries(
       [{ url: OTHER_LINKEDIN_URL, snippet: OTHER_ENTITY_COPY, voice_class: "outside_voice_about_client" }],
-      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge },
+      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge, pageFor: TEST_PAGE },
     );
     expect(out.entries[0].voice_class).toBe("competitor_voice");
   });
@@ -107,7 +111,7 @@ describe("AUTHORSHIP decides the label (ingest branch)", () => {
     const judge = stubJudge({ [RATING_ROW]: judgment("third_party") });
     const out = await applyAuthorshipToEntries(
       [{ url: OVERVIEW_URL, snippet: RATING_ROW, voice_class: "outside_voice_about_client" }],
-      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge },
+      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge, pageFor: TEST_PAGE },
     );
     expect(out.entries[0].voice_class).toBe("outside_voice_about_client");
     expect(judge).toHaveBeenCalledTimes(1);
@@ -117,7 +121,7 @@ describe("AUTHORSHIP decides the label (ingest branch)", () => {
     const judge = vi.fn<AuthorshipJudge>(async () => ({ verdict: "judge_failed", entity: null, reason: "HTTP 500", model: "stub-model" }));
     const out = await applyAuthorshipToEntries(
       [{ url: OVERVIEW_URL, snippet: COMPANY_COPY, voice_class: "outside_voice_about_client" }],
-      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge },
+      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge, pageFor: TEST_PAGE },
     );
     expect(out.entries[0].voice_class).toBe("outside_voice_about_client");
     expect((out.entries[0] as { authorship_judge?: { verdict: string } }).authorship_judge?.verdict).toBe("judge_failed");
@@ -128,14 +132,14 @@ describe("AUTHORSHIP decides the label (ingest branch)", () => {
     const judge = stubJudge({ [COMPANY_COPY]: judgment("other_entity", "geniant LLC") });
     const out = await applyAuthorshipToEntries(
       [{ url: OVERVIEW_URL, snippet: COMPANY_COPY, voice_class: "outside_voice_about_client" }],
-      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge },
+      { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge, pageFor: TEST_PAGE },
     );
     expect(out.entries[0].voice_class).toBe("outside_voice_about_client");
   });
 });
 
 describe("local judge transport — verbatim-or-nothing, fail toward judge_failed", () => {
-  const INPUT = { ...SUBJECT, url: OVERVIEW_URL, text: COMPANY_COPY };
+  const INPUT = { ...SUBJECT, url: OVERVIEW_URL, text: COMPANY_COPY, context: authorshipContext(`About\n${COMPANY_COPY}`, COMPANY_COPY, 6) };
   // R53: the judge takes the transport and a REQUIRED ledger; each test asserts one ledger row per call.
   let ledgerRows: Array<{ usage: { provider: string; prompt_tokens: number | null }; promptSha: string }> = [];
   const OPTS = {

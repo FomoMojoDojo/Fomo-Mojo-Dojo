@@ -64,6 +64,12 @@ export function makePsqlSweepStore(s: PsqlSession) {
         where company_id=${lit(companyId)}::uuid and text_sha256=${lit(sha)} and fetch_status='ok' and clean_text is not null order by crawled_at desc limit 1`);
       return r[0] ?? null;
     },
+    /** R54: the newest ok snapshot of a URL (a baseline row's page when no sha names one). */
+    async loadSnapshotByUrl(companyId: string, url: string): Promise<SweepSnapshot | null> {
+      const r = await s.query<SweepSnapshot>(`select clean_text, text_sha256, structured from outside_page_snapshots
+        where company_id=${lit(companyId)}::uuid and source_url=${lit(url)} and fetch_status='ok' and clean_text is not null order by crawled_at desc limit 1`);
+      return r[0] ?? null;
+    },
     /** A supabase-js-shaped reader for the ONE query buildClientCorpus makes (signals by company, limit 1000) — so the
      *  shipped corpus builder runs unchanged over this session. */
     corpusClient() {

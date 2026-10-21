@@ -213,7 +213,7 @@ Deno.test("authorship gate: a classified registry item is never sent to the judg
     { url: GS, text: ROWS.gs_self_e756386d, voice_class: "client_voice", registry: { class: "self_reported" } },
     { url: "https://www.linkedin.com/company/edgewoodcenter", text: "Edgewood is a nonprofit provider", voice_class: "outside_voice_about_client" },
   ];
-  const { entries: out, stats } = await applyAuthorshipToEntries(entries, { subjectName: "Edgewood", subjectHost: "edgewood.org", getText: (e) => e.text, judge });
+  const { entries: out, stats } = await applyAuthorshipToEntries(entries, { subjectName: "Edgewood", subjectHost: "edgewood.org", getText: (e) => e.text, judge, pageFor: (u) => entries.find((e) => e.url === u)?.text ?? null });
   assertEquals(judged, ["https://www.linkedin.com/company/edgewoodcenter"]);
   assertEquals([stats.registry_skipped, stats.gated, stats.judged], [1, 1, 1]);
   assertEquals(out[0].voice_class, "client_voice");

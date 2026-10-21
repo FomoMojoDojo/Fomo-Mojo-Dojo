@@ -30,7 +30,7 @@
 import { voiceClassForMintedExcerpt, type VoiceClassDecision, type VoiceClassInput } from "../../supabase/functions/_shared/voiceClassAtMint.ts";
 import { REGEN_TEXT_GATES } from "../../supabase/functions/_shared/outsideRegenHandler.ts";
 import {
-  judgeAggregatorAuthorship, judgeSpeaker, judgedTextFor, ollamaAuthorshipTransport, ollamaSpeakerTransport,
+  authorshipContext, judgeAggregatorAuthorship, judgeSpeaker, judgedTextFor, locateOnPage, ollamaAuthorshipTransport, ollamaSpeakerTransport,
   type AuthorshipInput, type AuthorshipJudgment, type AuthorshipTransport, type SpeakerInput, type SpeakerJudgment, type SpeakerTransport,
 } from "../../supabase/functions/_shared/aggregatorAuthorship.ts";
 import {
@@ -132,10 +132,11 @@ export function assertCompanyWritable(co: SweepCompany | undefined, companyId: s
 export type BaseJudges = {
   band: (i: SyndicationJudgeInput) => Promise<{ syndicated: boolean | null; model: string }>;
   speaker: (i: SpeakerInput) => Promise<SpeakerJudgment | null>;
-  authorship: (i: { subjectName: string; subjectHost: string; url: string; text: string }) => Promise<AuthorshipJudgment | null>;
+  authorship: (i: AuthorshipInput) => Promise<AuthorshipJudgment | null>;
 };
 /** replay: why a stored judgment was or was not replayed (null when the row carried none). */
-export type CallRecord = { judge: JudgeName; replayed: boolean; unknown: string | null; model: string; replay?: "matched" | "model_differs" | "prompt_unledgered" | null };
+/** nocall (R54): the judge was consulted but NOT called — the row has no page words; not a model call, never counted. */
+export type CallRecord = { judge: JudgeName; replayed: boolean; unknown: string | null; model: string; replay?: "matched" | "model_differs" | "prompt_unledgered" | null; nocall?: true };
 export type Tally = { band: number; speaker: number; authorship: number; ledger_failed: number };
 export const emptyTally = (): Tally => ({ band: 0, speaker: 0, authorship: 0, ledger_failed: 0 });
 
@@ -212,6 +213,12 @@ function rowJudges(row: SweepSignal, base: BaseJudges, calls: CallRecord[], ledg
       return r;
     },
     authorship: async (i) => {
+      // R54: a row with no page words is not judged for authorship — no call, no replay; recorded unknown, the label stands
+      if (i.context.kind === "no_page") {
+        const reason = `no_page_words: ${i.context.reason}`;
+        calls.push({ judge: "authorship", replayed: false, unknown: reason, model: "none", nocall: true });
+        return { verdict: "no_page_words", entity: null, reason: `${reason} — not judged; the label stands.`, model: "none" };
+      }
       const st = rp.authorship_judge as StoredAuthorship | undefined;
       const stored = !!st && typeof st === "object" && !!st.verdict && st.verdict !== "judge_failed";
       const replay = stored ? await replayable("authorship", st!.model, i) : null;
@@ -226,7 +233,8 @@ function rowJudges(row: SweepSignal, base: BaseJudges, calls: CallRecord[], ledg
     },
   };
 }
-export const callsString = (calls: CallRecord[]) => calls.filter((c) => !c.replayed).map((c) => c.judge).join("+") || "none";
+export const madeCall = (c: CallRecord) => !c.replayed && !c.nocall;
+export const callsString = (calls: CallRecord[]) => calls.filter(madeCall).map((c) => c.judge).join("+") || "none";
 
 // ── per-company context: the inputs the mint path had ────────────────────────────────────────────────────────
 export type CompanyCtx = { company: SweepCompany; name: string; host: string | null; anchors: readonly string[]; corpusByRun: Map<string, ClientCorpus>; ledgered: ReadonlySet<string> };
@@ -244,7 +252,7 @@ async function corpusFor(store: SweepStore, ctx: CompanyCtx, runId: string): Pro
   }
   return c;
 }
-export type Derived = { decision: VoiceClassDecision; calls: CallRecord[]; basis: { page: "snapshot" | "missing" | "none"; offset: "stored" | "located" | "none" } };
+export type Derived = { decision: VoiceClassDecision; calls: CallRecord[]; basis: { page: "snapshot" | "missing" | "none"; offset: "stored" | "located" | "none"; context: "page" | "no_page" } };
 /** THE re-decision of one existing row, through the shipped authority under keep_label. */
 export async function deriveRow(store: SweepStore, ctx: CompanyCtx, row: SweepSignal, era: "b3" | "baseline", base: BaseJudges, now: () => string = () => new Date().toISOString()): Promise<Derived> {
   const calls: CallRecord[] = [];
@@ -264,8 +272,10 @@ export async function deriveRow(store: SweepStore, ctx: CompanyCtx, row: SweepSi
     const offset = stored ?? (located >= 0 ? located : null);
     const length = Number.isInteger(rp.excerpt_length) ? Number(rp.excerpt_length) : excerpt.length;
     const attribution = detectAttribution(excerpt, page, offset);
-    basis = { page: snap ? "snapshot" : "missing", offset: stored !== null ? "stored" : located >= 0 ? "located" : "none" };
+    const actx = authorshipContext(page, excerpt, offset);
+    basis = { page: snap ? "snapshot" : "missing", offset: stored !== null ? "stored" : located >= 0 ? "located" : "none", context: actx.kind };
     input = {
+      authorshipContext: actx,
       url, item: null, labeledClass: row.voice_class, pageText: page, judgedText: excerpt, company,
       registry: snap ? classifyRegistryRow({ url, text: excerpt, snapshot: { clean_text: snap.clean_text, text_sha256: snap.text_sha256, structured: snap.structured } as never }) : classifyRegistryRow({ url, text: excerpt }),
       judge: j.authorship, gate: "profile_wire_boilerplate", textGates: REGEN_TEXT_GATES, onJudgeFailure: R52_POLICY, now,
@@ -274,10 +284,21 @@ export async function deriveRow(store: SweepStore, ctx: CompanyCtx, row: SweepSi
       syndication: { corpus: await corpusFor(store, ctx, String(rp.run_id ?? "")), judge: j.band, anchors: ctx.anchors },
     };
   } else {
-    basis = { page: "none", offset: "none" };
+    // R54: a baseline row's judged text is read in place on the page stored for it (the excerpt guard's basis snapshot,
+    // else the newest snapshot of its URL); its offset is located (byte-present) — none was ever stored. pageText stays
+    // null for the GATE, exactly as before: only the judge's context reads the page.
+    const judged = judgedTextFor(row as never).text;
+    const eg = (rp.excerpt_guard ?? {}) as { basis_sha?: unknown };
+    const sha = String(rp.snapshot_text_sha256 ?? eg.basis_sha ?? "");
+    const snap = (sha ? await store.loadSnapshot(row.company_id, sha) : null) ?? (url ? await store.loadSnapshotByUrl(row.company_id, url) : null);
+    const page = snap?.clean_text ?? null;
+    const located = locateOnPage(page, judged);
+    const actx = authorshipContext(page, judged, located);
+    basis = { page: snap ? "snapshot" : "missing", offset: located !== null ? "located" : "none", context: actx.kind };
     input = {
+      authorshipContext: actx,
       url, item: { voice_class: row.voice_class }, labeledClass: row.voice_class, pageText: null,
-      judgedText: judgedTextFor(row as never).text, company, registry: null,
+      judgedText: judged, company, registry: null,
       judge: j.authorship, gate: "profile_wire_boilerplate", onJudgeFailure: R52_POLICY, now,
     };
   }
@@ -286,7 +307,7 @@ export async function deriveRow(store: SweepStore, ctx: CompanyCtx, row: SweepSi
 }
 
 // ── plan ──────────────────────────────────────────────────────────────────────────────────────────────────────
-export type PlanRow = { seq: string; signal_id: string; company_id: string; era: "b3" | "baseline"; reviewed_judges: string; fresh_judges: string; live: boolean; authority: string | null; equal: boolean; why: string | null; basis: Derived["basis"] | null; replay: string };
+export type PlanRow = { seq: string; signal_id: string; company_id: string; era: "b3" | "baseline"; reviewed_judges: string; fresh_judges: string; live: boolean; authority: string | null; equal: boolean; why: string | null; basis: Derived["basis"] | null; replay: string; /** R54: the authorship stage was reached and the row has no page words (no call) */ no_page_words: boolean };
 export type CompanyPlan = { company_id: string; company: string; refused: string | null; rows: PlanRow[]; equal: boolean; calls: Record<JudgeName, number> };
 /** Re-derive every reviewed row of one company. Zero model calls (stub judges), zero writes. */
 export async function planCompany(store: SweepStore, group: { company_id: string; company: string; rows: ReviewedRow[] }): Promise<CompanyPlan> {
@@ -303,13 +324,13 @@ export async function planCompany(store: SweepStore, group: { company_id: string
   for (const r of group.rows) {
     const s = sigs.get(r.signal_id);
     const live = !!s && s.company_id === r.company_id && !s.superseded_at && !s.held_at && s.signal_band === "outside";
-    if (!s || !live) { rows.push({ seq: r.seq, signal_id: r.signal_id, company_id: r.company_id, era: r.era, reviewed_judges: r.judges, fresh_judges: "-", live: false, authority: null, equal: false, why: !s ? "signal not found" : "signal no longer live (superseded / held / not outside / moved company)", basis: null, replay: "" }); continue; }
-    if (s.raw_payload?.r52) { rows.push({ seq: r.seq, signal_id: r.signal_id, company_id: r.company_id, era: r.era, reviewed_judges: r.judges, fresh_judges: "-", live: true, authority: null, equal: false, why: `already swept (run ${String((s.raw_payload.r52 as Record<string, unknown>).run_ref)})`, basis: null, replay: "" }); continue; }
+    if (!s || !live) { rows.push({ seq: r.seq, signal_id: r.signal_id, company_id: r.company_id, era: r.era, reviewed_judges: r.judges, fresh_judges: "-", live: false, authority: null, equal: false, why: !s ? "signal not found" : "signal no longer live (superseded / held / not outside / moved company)", basis: null, replay: "", no_page_words: false }); continue; }
+    if (s.raw_payload?.r52) { rows.push({ seq: r.seq, signal_id: r.signal_id, company_id: r.company_id, era: r.era, reviewed_judges: r.judges, fresh_judges: "-", live: true, authority: null, equal: false, why: `already swept (run ${String((s.raw_payload.r52 as Record<string, unknown>).run_ref)})`, basis: null, replay: "", no_page_words: false }); continue; }
     const d = await deriveRow(store, ctx, s, r.era, stub);
     const fresh = callsString(d.calls);
-    for (const c of d.calls) if (!c.replayed) calls[c.judge] += 1;
+    for (const c of d.calls) if (madeCall(c)) calls[c.judge] += 1;
     const equal = fresh === r.judges;
-    rows.push({ seq: r.seq, signal_id: r.signal_id, company_id: r.company_id, era: r.era, reviewed_judges: r.judges, fresh_judges: fresh, live: true, authority: d.decision.authority, equal, why: equal ? null : `reviewed ${r.judges} ≠ shipped ${fresh}`, basis: d.basis, replay: d.calls.filter((c) => c.replay).map((c) => `${c.judge}:${c.replay}`).join("+") });
+    rows.push({ seq: r.seq, signal_id: r.signal_id, company_id: r.company_id, era: r.era, reviewed_judges: r.judges, fresh_judges: fresh, live: true, authority: d.decision.authority, equal, why: equal ? null : `reviewed ${r.judges} ≠ shipped ${fresh}`, basis: d.basis, replay: d.calls.filter((c) => c.replay).map((c) => `${c.judge}:${c.replay}`).join("+"), no_page_words: d.calls.some((c) => c.nocall) });
   }
   return { company_id: group.company_id, company: group.company, refused: null, rows, equal: rows.length > 0 && rows.every((x) => x.equal), calls };
 }
@@ -392,11 +413,11 @@ export async function applyCompany(store: SweepStore, args: {
     for (const id of executeIds) {
       const s = sigs.get(id)!;
       const d = await deriveRow(store, ctx, s, eraOf.get(id) ?? "b3", base);
-      if (d.calls.some((c) => !c.replayed)) judged++;
+      if (d.calls.some(madeCall)) judged++;
       const callStr = callsString(d.calls);
       const unknownReasons = d.calls.map((c) => c.unknown).filter((x): x is string => !!x);
       const from = s.voice_class;
-      const stampBase = { run_ref: runRef, rules: R52_RULES, policy: R52_POLICY, at: new Date().toISOString(), calls: d.calls.map((c) => ({ judge: c.judge, replayed: c.replayed, model: c.model })), basis: d.basis, ...(s.raw_payload === null ? { payload_was_null: true } : {}) };
+      const stampBase = { run_ref: runRef, rules: R52_RULES, policy: R52_POLICY, at: new Date().toISOString(), calls: d.calls.map((c) => ({ judge: c.judge, replayed: c.replayed, model: c.model, ...(c.nocall ? { nocall: true } : {}) })), basis: d.basis, ...(s.raw_payload === null ? { payload_was_null: true } : {}) };
       if (!d.decision.ok) {
         // keep_label never refuses; a refusal here would be an un-mint — the row is refused and NOTHING is written to it
         outcomes.push({ signal_id: id, kind: "refused", from, to: null, reason: `unmint_refused: ${d.decision.reason}`, calls: callStr });

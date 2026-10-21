@@ -6,12 +6,16 @@
 //       not a Client Portals id); plan-equals-reviewed for every one of its rows; every row handed to the executor is in
 //       the reviewed plan. Then the integrity row is OPENED running, each row is decided by the shipped authority under
 //       keep_label with the local LEDGERED judges, and the row is FINISHED with judged / changed / unknown / ledger_failed.
-//   deno run --allow-all scripts/r52/apply.ts --probe --name=<p1|p2|p3|p4|p5|p6|p8|p9|plan-seed|apply-revert>
+//   deno run --allow-all scripts/r52/apply.ts --dry-judge --company=<uuid> --signals=<id,id,…>
+//       R54 LIVE PROOF, DRY: the named rows of ONE company are derived through the shipped authority with the LOCAL ledgered
+//       judges — real model calls, each writing its model_calls row — and each authorship prompt's CONTEXT block, verdict
+//       and reason are printed. Writes NOTHING else: no integrity row, no audit row, no stamp, no class.
+//   deno run --allow-all scripts/r52/apply.ts --probe --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|plan-seed|apply-revert>
 //       GUARD PROBES on a throwaway company SEEDED INSIDE the probe's transaction, with FAKE local transports (no model
 //       is reachable): everything — seed, ledger rows, audit rows, integrity rows — is ROLLED BACK. One JSON line out.
 // The mode is named or refused (classifyBodyMode) — there is no default.
 import {
-  applyCompany, assertInPlan, companyOrder, localTransports, namedMode, planCompany, readReviewed, revertCompany,
+  applyCompany, assertCompanyWritable, assertInPlan, companyCtx, companyOrder, deriveRow, emptyTally, ledgeredJudges, localTransports, namedMode, planCompany, readReviewed, revertCompany,
   SweepRefusedError, type ReviewedRow, type Transports,
 } from "./sweepCore.ts";
 import { lit, makePsqlSweepStore, PsqlSession } from "./psqlSweepStore.ts";
@@ -70,8 +74,33 @@ async function refusal(fn: () => Promise<unknown>): Promise<{ refused: boolean; 
 const count = async (sql: string) => (await session.query<{ n: number }>(`select count(*)::int n from (${sql}) t`))[0].n;
 
 try {
-  const { mode, body } = namedMode(Deno.args, ["apply", "probe"] as const, ["apply", "probe", "name", "company", "run_ref", "reviewed", "reviewed_md5"]);
-  if (mode === "apply") {
+  const { mode, body } = namedMode(Deno.args, ["apply", "probe", "dry_judge"] as const, ["apply", "probe", "dry_judge", "name", "company", "run_ref", "reviewed", "reviewed_md5", "signals"]);
+  if (mode === "dry_judge") {
+    if (typeof body.company !== "string" || !body.company) throw new SweepRefusedError("no_company", "--company=<uuid> is required");
+    const ids = typeof body.signals === "string" && body.signals ? body.signals.split(",") : [];
+    if (ids.length === 0) throw new SweepRefusedError("no_signals", "--signals=<id,…> is required: the dry judge names its rows");
+    const [co] = await store.loadCompanies([body.company]);
+    assertCompanyWritable(co, body.company);
+    const sigs = await store.loadSignals(ids);
+    if (sigs.length !== ids.length || sigs.some((s) => s.company_id !== body.company)) throw new SweepRefusedError("signals_not_company", "every --signals row must exist and belong to --company");
+    const ctx = await companyCtx(store, co);
+    const tally = emptyTally();
+    const t = localTransports();
+    const prompts: string[] = [];
+    const judges = ledgeredJudges(store, co.id, tally, { ...t, authorship: (a) => { prompts.push(a.user); return t.authorship(a); } });
+    const rows = [];
+    for (const id of ids) {
+      const s = sigs.find((x) => x.id === id)!;
+      const before = prompts.length;
+      const d = await deriveRow(store, ctx, s, s.raw_payload?.run_id ? "b3" : "baseline", judges);
+      const user = prompts.length > before ? prompts[prompts.length - 1] : null;
+      const dec = d.decision.ok ? d.decision : null;
+      rows.push({ signal_id: id, class_now: s.voice_class, basis: d.basis, calls: d.calls, decision: dec ? { voice_class: dec.voice_class, authority: dec.authority, detail: dec.detail } : d.decision,
+        authorship: dec?.authorship_judge ? { verdict: dec.authorship_judge.verdict, entity: dec.authorship_judge.entity, reason: dec.authorship_judge.reason, model: dec.authorship_judge.model } : null,
+        context_block: user ? user.slice(user.indexOf("CONTEXT —"), user.indexOf("TEXT (verbatim")).trim() : null });
+    }
+    out({ mode: "dry_judge", company_id: co.id, writes: "model_calls only (one ledger row per call)", model_calls: tally, rows });
+  } else if (mode === "apply") {
     const split = (v: unknown) => (typeof v === "string" && v ? v.split(",") : []);
     if (typeof body.company !== "string" || !body.company) throw new SweepRefusedError("no_company", "--company=<uuid> is required: one company per invocation");
     const reviewed = await readReviewed(split(body.reviewed), split(body.reviewed_md5));
@@ -80,7 +109,7 @@ try {
     const r = await applyCompany(store, { group, runRef: String(body.run_ref ?? ""), reviewedMd5s: reviewed.md5s, transports: localTransports(), nested: false, log: (s) => console.error(s) });
     out({ mode: "apply", ...r, outcomes: undefined, outcome_counts: { changed: r.changed, unknown: r.unknown, unchanged: r.rows - r.changed - r.unknown - r.refused, refused: r.refused } });
   } else {
-    if (typeof body.name !== "string" || !body.name) throw new SweepRefusedError("no_probe_name", "--probe needs --name=<p1|p2|p3|p4|p5|p6|p8|p9|plan-seed|apply-revert>");
+    if (typeof body.name !== "string" || !body.name) throw new SweepRefusedError("no_probe_name", "--probe needs --name=<p1|p2|p3|p4|p5|p6|p8|p9|p10|plan-seed|apply-revert>");
     const probe = body.name;
     await session.exec("begin;");
     const before = { model_calls: await count("select 1 from model_calls"), integrity_runs: await count("select 1 from integrity_runs"), restamps: await count("select 1 from signal_voice_restamps"), signals: await count("select 1 from signals") };
@@ -145,6 +174,19 @@ try {
         revert_audit: rv.revert_audit.map((w) => ({ row: w.signal_id === s.a ? "A" : w.signal_id === s.b ? "B" : "?", from: w.old_voice_class, to: w.new_voice_class, entity: w.judge_entity === `apply_audit:${applyAudit.id}` ? "apply_audit:<A>" : w.judge_entity })),
         restored: rv.restored, unstamped: rv.unstamped, integrity: ir[0] ?? null, md5_after_revert_equal: rv.md5_after === md5_0,
       };
+    } else if (probe === "p10") {
+      // R54: a baseline-era row on a gated URL with NO stored page — no page words: recorded unknown:no_page_words, the
+      // label stands, and ZERO model calls (no transport call, no model_calls row)
+      const URL_NP = "https://www.chamberofcommerce.com/business-directory/massachusetts/medford/consultant/2-zz-r52-nopage";
+      const np = (await session.mutate<{ id: string }>(`insert into signals (company_id, source_id, source_type, source_title, source_url, signal_band, evidence_type, claim_text, evidence_excerpt, topic, directness, framing_fit, structure_level, validation_status, confidence_to_use, raw_payload, voice_class)
+        values (${lit(Z)}::uuid, 'r52-guard', 'public_baseline_run', 'guard', ${lit(URL_NP)}, 'outside', 'market_signal', 'ChamberofCommerce.com lists ZZ R52 Guard at 1 Main St under Consultant category.', '', 'strategy', 'direct', 'partial', 'extracted', 'directional', 'medium', '{}'::jsonb, 'outside_voice_about_client') returning id`))[0].id;
+      const g10 = { company_id: Z, company: "ZZ R52 Guard", rows: [{ ...reviewedRow(Z, "ZZ R52 Guard", np, "none"), era: "baseline" as const }] };
+      const planned = (await planCompany(store, g10)).rows[0]?.fresh_judges ?? null;
+      let r: Awaited<ReturnType<typeof applyCompany>> | null = null;
+      const refused = await refusal(async () => { r = await applyCompany(store, { group: g10, runRef: RUN, reviewedMd5s: ["probe"], transports: fakeTransports(counter), nested: true }); });
+      const row = await sigRow(np);
+      const done = r as Awaited<ReturnType<typeof applyCompany>> | null;
+      result = { planned_judges: planned, refused: refused.code, kind: done?.outcomes[0]?.kind ?? null, class: row.voice_class, unknown_reason: row.r52_unknown, transport_calls: counter.n, model_calls_rows: await count(`select 1 from model_calls where company_id=${lit(Z)}::uuid`), tally: done?.model_calls ?? null };
     } else if (probe === "p2" || probe === "p6" || probe === "apply-revert") {
       // the full path on the seed: apply (fake transports, real ledgered judges), then revert, md5 before / after
       const md5_0 = await store.companySignalsMd5(Z);

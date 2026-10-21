@@ -34,11 +34,82 @@ import { isOwnDomainUrl } from "./firstReadProvenance.ts";
 import { voiceClassForMintedExcerpt } from "./voiceClassAtMint.ts";
 import { FROZEN_COMPANY_IDS } from "./frozenCompanies.ts";
 
-export type AuthorshipVerdict = "subject_company" | "other_entity" | "third_party" | "uncertain" | "judge_failed";
+/** no_page_words (R54): the text could not be placed on a stored page, so the judge was NOT asked — no model call, no
+ *  ledger row; every consumer treats it as "the label stands" (outcomeFor → null). Never accepted from the model. */
+export type AuthorshipVerdict = "subject_company" | "other_entity" | "third_party" | "uncertain" | "judge_failed" | "no_page_words";
 export type AuthorshipJudgment = { verdict: AuthorshipVerdict; entity: string | null; reason: string; model: string };
 /** What the judge may DO to a label: set client_voice, set competitor_voice, or nothing. */
 export type VoiceOutcome = "client_voice" | "competitor_voice" | null;
-export type AuthorshipInput = { subjectName: string; subjectHost: string; url: string; text: string };
+// ── R54 (operator ruling, 2026-10-20): THE JUDGE SEES WHERE THE TEXT SITS ON THE PAGE ──────────────────────────────
+// The judge was handed the excerpt and the host's field brief and nothing else, so it could not tell which FIELD the
+// excerpt came from: on chamberofcommerce.com it called three template contact / Q&A lines "the About field". It now
+// gets the nearest preceding heading and the page words around the excerpt, taken from the STORED page at the excerpt
+// offset (the R42 pattern: context from the page, never from the row). A text that cannot be placed on a page is not
+// judged at all (no_page_words). The context is REQUIRED — there is no default — and built by ONE helper.
+/** UTF-16 code units of page text kept before / after the excerpt. */
+export const AUTHORSHIP_CONTEXT_BEFORE = 600;
+export const AUTHORSHIP_CONTEXT_AFTER = 300;
+/** How far back (UTF-16 units) the nearest heading is searched, and the longest line that counts as a heading. */
+export const AUTHORSHIP_HEADING_LOOKBACK = 2000;
+export const AUTHORSHIP_HEADING_MAX = 48;
+export type AuthorshipPageContext = {
+  kind: "page"; heading: string | null; before: string; after: string;
+  /** the excerpt's offset in the page: UTF-16 code units (JS string index), and the same position in code points */
+  offset_utf16: number; offset_cp: number; length_utf16: number;
+};
+export type AuthorshipNoPage = { kind: "no_page"; reason: string };
+export type AuthorshipContext = AuthorshipPageContext | AuthorshipNoPage;
+export const noPageWords = (reason: string): AuthorshipNoPage => ({ kind: "no_page", reason });
+/** A heading line: short, starts with a capital letter, mostly letters, no terminal punctuation, not a time / phone line. */
+function isHeadingLine(line: string): boolean {
+  const t = line.trim();
+  if (t.length < 2 || t.length > AUTHORSHIP_HEADING_MAX) return false;
+  if (!/^[A-Z]/.test(t) || /[.!?:;,]$/.test(t)) return false;
+  if (/\d{1,2}:\d{2}|\d{3}[-.\s]\d{3}[-.]\d{4}/.test(t)) return false;
+  const letters = (t.match(/\p{L}/gu) ?? []).length;
+  return letters / t.replace(/\s/g, "").length >= 0.6;
+}
+/** THE context builder (R54): from the stored page text and the excerpt offset. The text must sit at that offset in the
+ *  page (slice-equal); otherwise — or with no page, no text, no offset — the result is no_page and the judge is not asked. */
+export function authorshipContext(pageText: string | null | undefined, text: string | null | undefined, offset: number | null | undefined): AuthorshipContext {
+  const page = typeof pageText === "string" ? pageText : "";
+  const t = String(text ?? "");
+  if (!page.trim()) return noPageWords("no stored page");
+  if (!t.trim()) return noPageWords("no text to place on the page");
+  if (offset === null || offset === undefined || !Number.isInteger(offset) || offset < 0) return noPageWords("the text has no offset on the stored page");
+  if (page.slice(offset, offset + t.length) !== t) return noPageWords(`the text is not at offset ${offset} of the stored page`);
+  // R54a (operator ruling, 2026-10-20): the context is the SECTION the text sits in — from the heading above to the next
+  // heading below, or the window cap, NEVER across a heading. The heading above is kept as the heading line, not as words.
+  const lineStart = page.lastIndexOf("\n", offset - 1) + 1;
+  let heading: string | null = null, sectionStart = 0;
+  for (let end = lineStart; end > 0 && lineStart - end <= AUTHORSHIP_HEADING_LOOKBACK;) {
+    const start = end >= 2 ? page.lastIndexOf("\n", end - 2) + 1 : 0;
+    if (isHeadingLine(page.slice(start, end))) { heading = page.slice(start, end).trim(); sectionStart = end; break; }
+    end = start;
+  }
+  const textEnd = offset + t.length, afterCap = textEnd + AUTHORSHIP_CONTEXT_AFTER;
+  let sectionEnd = afterCap;
+  for (let start = page.indexOf("\n", textEnd) + 1; start > 0 && start < afterCap;) {
+    const nl = page.indexOf("\n", start), end = nl < 0 ? page.length : nl;
+    if (isHeadingLine(page.slice(start, end))) { sectionEnd = start; break; }
+    if (nl < 0) break;
+    start = nl + 1;
+  }
+  return {
+    kind: "page", heading,
+    before: page.slice(Math.max(sectionStart, offset - AUTHORSHIP_CONTEXT_BEFORE), offset),
+    after: page.slice(textEnd, Math.min(sectionEnd, afterCap)),
+    offset_utf16: offset, offset_cp: [...page.slice(0, offset)].length, length_utf16: t.length,
+  };
+}
+/** Where a stored text sits on a page when no offset was stored: its first byte-present occurrence, else null. */
+export function locateOnPage(pageText: string | null | undefined, text: string | null | undefined): number | null {
+  const page = typeof pageText === "string" ? pageText : "", t = String(text ?? "");
+  if (!page || !t.trim()) return null;
+  const i = page.indexOf(t);
+  return i >= 0 ? i : null;
+}
+export type AuthorshipInput = { subjectName: string; subjectHost: string; url: string; text: string; context: AuthorshipContext };
 export type AuthorshipJudge = (input: AuthorshipInput) => Promise<AuthorshipJudgment>;
 /** R53 (2026-10-20): the authorship judge's two seams, the speaker judge's shape. The transport is one local call returning
  *  content + token counts; the ledger writes ONE model_calls row per call BEFORE the answer is parsed and resolves false
@@ -293,7 +364,7 @@ const PAGE_BRIEFS: ReadonlyArray<{ host: string; brief: string }> = [
   { host: "thumbtack.com", brief: "Thumbtack pro service page. The Introduction / 'About' text is PRO-WRITTEN; Overview facts (hired count, background check, years in business) are PLATFORM; review bodies are CUSTOMER-authored." },
   { host: "buildzoom.com", brief: "BuildZoom contractor profile. The 'About' narrative is CONTRACTOR-SUPPLIED or copied from the contractor's own site; license, permit history, 'Verified' badges and the BuildZoom score are PLATFORM data; reviews are CUSTOMER-authored." },
   { host: "alignable.com", brief: "Alignable business profile. The 'About Us' and the whole profile prose are BUSINESS-WRITTEN; connection and recommendation counts are PLATFORM." },
-  { host: "chamberofcommerce.com", brief: "ChamberofCommerce.com business-directory listing. The 'About' text is BUSINESS-SUPPLIED or scraped boilerplate (COMPANY-SUPPLIED); category, hours and contact lines are PLATFORM; 'Ratings and Reviews' bodies are REVIEWER-authored." },
+  { host: "chamberofcommerce.com", brief: "ChamberofCommerce.com business-directory listing. The 'About' block is TEMPLATE listing sentences the PLATFORM generates from the listing data ('X is located at …', 'X can be contacted via phone at …') unless it is free prose, which is BUSINESS-SUPPLIED (COMPANY-SUPPLIED); category, hours and contact lines are PLATFORM; 'Ratings and Reviews' bodies are REVIEWER-authored." },
   { host: "findmoldremoval.com", brief: "Find Mold Removal directory listing. The 'About' text is BUSINESS-SUPPLIED; 'Verified' badges, category and service-area lines are PLATFORM chrome." },
   { host: "apps.apple.com", brief: "Apple App Store app page. The app description, subtitle and 'What's New' notes are DEVELOPER-WRITTEN (the subject, when the subject is the developer); ratings, rankings and the 'Ratings and Reviews' bodies are USER- or PLATFORM-authored." },
   { host: "play.google.com", brief: "Google Play app page. 'About this app' and 'What's new' are DEVELOPER-WRITTEN; 'About the developer', ratings and 'Ratings and reviews' bodies are PLATFORM- or USER-authored." },
@@ -332,9 +403,23 @@ const JUDGE_SYSTEM =
   "(e.g. 'Only 3 employee reviews publicly visible.', 'SIC Code 17,179; NAICS Code 56,562.'), judge the MAIN BODY and ignore the " +
   "appended fragment. (4) The subject may appear under variants (lower-case, with LLC/Inc, an acronym). (5) On a press wire, a " +
   "release body is the issuing company's copy even when it reports an event in the third person ('X announced the acquisition of…'). " +
-  "(6) When the text could only be a company-supplied description field but you cannot tell WHICH company supplied it, answer uncertain.\n" +
+  "(6) When the text could only be a company-supplied description field but you cannot tell WHICH company supplied it, answer uncertain. " +
+  "(7) LISTING DATA IS PLATFORM-AUTHORED IN ANY FIELD: a sentence whose content is only listing data (the business name, address, " +
+  "phone, URL, hours or category) is third_party wherever it sits, even under an 'About' heading ('X is located at 86 Main St in " +
+  "Medford, MA 02155.' → third_party); company-supplied means prose the company wrote ('We have restored historic homes across the " +
+  "North Shore since 1998.' or 'X builds custom cabinetry for coastal homes.' → subject_company).\n" +
   'Return JSON only: {"verdict":"subject_company|other_entity|third_party|uncertain","entity":"<the named entity whose copy this is, or null>",' +
   '"reason":"one sentence naming the page FIELD this text comes from and who writes it on this host"}.';
+
+/** R54: the CONTEXT block — the nearest heading, then the page words with the TEXT marked ⟦ ⟧. */
+function contextBlock(c: AuthorshipPageContext, text: string): string {
+  return (
+    `CONTEXT — where the TEXT sits on the stored page; decide the FIELD from its heading and the words around it:\n` +
+    `NEAREST HEADING ABOVE THE TEXT: ${c.heading ?? "(none found)"}\n` +
+    `The heading names the FIELD the TEXT sits in; decide who wrote the TEXT within that field under the PAGE BRIEF.\n` +
+    `PAGE WORDS (the TEXT is marked ⟦ ⟧):\n…${c.before}⟦${text.slice(0, 3600)}⟧${c.after}…\n\n`
+  );
+}
 
 function buildJudgeUser(input: AuthorshipInput): string {
   const page = pageBriefFor(input.url);
@@ -343,6 +428,7 @@ function buildJudgeUser(input: AuthorshipInput): string {
     `HOST: ${page.host}\n` +
     `SOURCE URL: ${input.url}\n` +
     `PAGE BRIEF: ${page.brief}\n\n` +
+    contextBlock(input.context as AuthorshipPageContext, input.text) +
     `TEXT (verbatim, may be truncated):\n${input.text.slice(0, 3600)}\n\n` +
     `Which field is this text from, and who wrote it? Return the JSON verdict.`
   );
@@ -452,7 +538,11 @@ export async function judgeAggregatorAuthorship(
 ): Promise<AuthorshipJudgment> {
   // R53 (2026-10-20): R4 for the authorship judge — the ledger is required; a call with none never reaches the model.
   if (typeof opts?.ledger !== "function") throw new Error("authorship judge: a ledger is required (R4) — no model call made");
+  // R54: the context is required — a call with none never reaches the model; a no_page context is refused, uncalled
+  const ctxKind = (input as { context?: { kind?: unknown } })?.context?.kind;
+  if (ctxKind !== "page" && ctxKind !== "no_page") throw new Error("authorship judge: a page context is required (R54) — no model call made");
   const model = opts.model ?? CLASSIFIER_MODEL;
+  if (input.context.kind === "no_page") return { verdict: "no_page_words", entity: null, reason: `no_page_words: ${input.context.reason} — not judged; the label stands.`, model };
   const tag = `${hostOf(input.url)} ${input.text.slice(0, 60)}`;
   const system = JUDGE_SYSTEM, user = buildJudgeUser(input);
   const sha = opts.sha ?? (async (t: string) => { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)); return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join(""); });
@@ -518,6 +608,8 @@ export type AuthorshipStats = {
   unavailable: number;
   /** C1: registry items already decided by the deterministic classifier — never judged here. */
   registry_skipped: number;
+  /** R54: gated entries whose text could not be placed on the crawled page — not judged, label stands, no call. */
+  no_page_words: number;
 };
 
 export type AuthorshipStamp = AuthorshipJudgment & { applied: "client_voice" | "competitor_voice" | "unchanged"; url_rule: string; judged_at: string };
@@ -527,9 +619,11 @@ const CONSECUTIVE_FAILURES_TO_STOP = 2;
 
 export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_class?: unknown }>(
   entries: T[],
-  ctx: { subjectName: string; subjectHost: string; getText: (e: T) => string; judge: AuthorshipJudge; maxJudged?: number; log?: (s: string) => void },
+  /** R54: pageFor returns the crawled page text for a URL (null when the run holds none) — REQUIRED; the judge reads the
+   *  entry's text in place on that page, and an entry it cannot place is not judged. */
+  ctx: { subjectName: string; subjectHost: string; getText: (e: T) => string; judge: AuthorshipJudge; pageFor: (url: string) => string | null; maxJudged?: number; log?: (s: string) => void },
 ): Promise<{ entries: T[]; stats: AuthorshipStats }> {
-  const stats: AuthorshipStats = { considered: entries.length, gated: 0, judged: 0, changed: 0, judge_failed: 0, unavailable: 0, registry_skipped: 0 };
+  const stats: AuthorshipStats = { considered: entries.length, gated: 0, judged: 0, changed: 0, judge_failed: 0, unavailable: 0, registry_skipped: 0, no_page_words: 0 };
   const maxJudged = ctx.maxJudged ?? DEFAULT_MAX_JUDGED;
   const log = ctx.log ?? (() => {});
   let consecutiveFailures = 0;
@@ -556,7 +650,9 @@ export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_
       continue;
     }
     stats.gated++;
-    if (consecutiveFailures >= CONSECUTIVE_FAILURES_TO_STOP || stats.judged >= maxJudged) {
+    const page = ctx.pageFor(url);
+    const context = authorshipContext(page, text, locateOnPage(page, text));
+    if (consecutiveFailures >= CONSECUTIVE_FAILURES_TO_STOP || (context.kind === "page" && stats.judged >= maxJudged)) {
       stats.unavailable++;
       out.push(e);
       continue;
@@ -567,10 +663,10 @@ export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_
     // the gate stats and the consecutive-failure stop need.
     const d = await voiceClassForMintedExcerpt({
       url, item: null, labeledClass: String(e.voice_class ?? ""), pageText: null, judgedText: text,
-      company: { name: ctx.subjectName, host: ctx.subjectHost }, registry: null,
+      company: { name: ctx.subjectName, host: ctx.subjectHost }, registry: null, authorshipContext: context,
       judge: (input) => ctx.judge(input), gate: "profile", onJudgeFailure: "keep_label",
     });
-    stats.judged++;
+    if (context.kind === "page") stats.judged++; else stats.no_page_words++;
     const stamp = d.authorship_judge;
     if (!d.ok || !stamp) {
       // unreachable under keep_label (the policy never refuses) — fail toward unchanged, loudly
@@ -602,7 +698,7 @@ export async function applyAuthorshipToEntries<T extends { url?: unknown; voice_
  *  reads outside_voice_signals.signal|perspective and evidence_ledger.snippet|bucket). */
 export async function demoteAggregatorSelfVoiceInResult(
   result: Record<string, unknown>,
-  ctx: { subjectName: string; subjectHost: string; judge: AuthorshipJudge; log?: (s: string) => void },
+  ctx: { subjectName: string; subjectHost: string; judge: AuthorshipJudge; pageFor: (url: string) => string | null; log?: (s: string) => void },
 ): Promise<{ result: Record<string, unknown>; stats: Record<string, AuthorshipStats> }> {
   const stats: Record<string, AuthorshipStats> = {};
   const next = { ...result };
@@ -778,8 +874,10 @@ export async function planRestamp(
     const text = jt.text;
     const cleaner = jt.source !== "claim_text" && text !== String(s.claim_text ?? "").trim();
     if (cleaner) cleanerTextAvailable++;
+    // R54: the row's text is read in place on the stored page; a text the page does not carry is not judged
+    const page = pageTexts.get(String(s.source_url ?? "")) ?? null;
     const j = text
-      ? await opts.judge({ subjectName: co.name, subjectHost: hostOf(co.website ?? ""), url: String(s.source_url), text }, { companyId: co.id })
+      ? await opts.judge({ subjectName: co.name, subjectHost: hostOf(co.website ?? ""), url: String(s.source_url), text, context: authorshipContext(page, text, locateOnPage(page, text)) }, { companyId: co.id })
       : { verdict: "uncertain" as const, entity: null, reason: "empty statement — nothing to judge", model: "none" };
     const b = backing.get(s.id) ?? { echoed: 0, divergent: 0, internally_silent: 0 };
     const to = j.verdict === "judge_failed" ? null : outcomeFor(j, co.name);

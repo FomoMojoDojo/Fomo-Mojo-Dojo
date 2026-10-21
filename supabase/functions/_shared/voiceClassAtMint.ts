@@ -34,7 +34,7 @@ import { ANALYSIS_VOICE, isAnalysisLabelled } from "./voiceLabel.ts";
 import { isOwnDomainUrl } from "./firstReadProvenance.ts";
 import {
   matchAggregatorProfileUrl, matchGatedUrl, outcomeFor,
-  type AuthorshipJudge, type AuthorshipJudgment, type AuthorshipStamp, type SpeakerJudge, type SpeakerJudgment,
+  type AuthorshipContext, type AuthorshipInput, type AuthorshipJudge, type AuthorshipJudgment, type AuthorshipStamp, type SpeakerJudge, type SpeakerJudgment,
 } from "./aggregatorAuthorship.ts";
 import type { AttributionHit } from "./attribution.ts";
 import { registryStamp, type RegistryClassification } from "./registryClassifier.ts";
@@ -77,7 +77,10 @@ export type VoiceClassInput = {
   /** The registry classification the caller computed for this item (classifyRegistryRow), null when not a registry URL. */
   registry: RegistryClassification | null;
   /** Resolves null when the judge is unavailable for this call (limits, no transport). */
-  judge: ((input: { subjectName: string; subjectHost: string; url: string; text: string }) => Promise<AuthorshipJudgment | null>) | null;
+  judge: ((input: AuthorshipInput) => Promise<AuthorshipJudgment | null>) | null;
+  /** R54: where the judged text sits on the stored page — built by authorshipContext(page, text, offset), or
+   *  noPageWords(reason) when the caller holds no page. REQUIRED (no default): the URL-gate stage throws without it. */
+  authorshipContext: AuthorshipContext;
   gate: JudgeGate;
   /** R28: deterministic gates on the candidate TEXT, applied after the registry stage and before the judge. Absent ⇒ none. */
   textGates?: ReadonlyArray<TextGate>;
@@ -94,6 +97,9 @@ export type VoiceClassInput = {
   onJudgeFailure: JudgeFailurePolicy;
   now?: () => string;
 };
+
+/** The input the stages BEFORE the judge read: everything but the judge's page context (R54). */
+export type PreJudgeInput = Omit<VoiceClassInput, "authorshipContext">;
 
 export type GateHit = { host: string; via: "profile" | "wire" | "boilerplate" };
 
@@ -157,7 +163,7 @@ function labelOf(labeledClass: string | null): string | null {
   return VOICE_CLASSES.includes(l) ? l : null;
 }
 
-function gateFor(input: VoiceClassInput): GateHit | null {
+function gateFor(input: PreJudgeInput): GateHit | null {
   if (input.gate === "profile") {
     const m = matchAggregatorProfileUrl(input.url);
     return m ? { host: m.host, via: "profile" } : null;
@@ -175,7 +181,7 @@ export type SyndicationStage =
   | { kind: "clean"; stamp: SyndicationStamp }
   | { kind: "band"; stamp: SyndicationStamp };
 /** R38: the deterministic half of the syndication stage over the judged text. No model, no I/O. */
-export function syndicationStage(input: VoiceClassInput): SyndicationStage {
+export function syndicationStage(input: PreJudgeInput): SyndicationStage {
   if (!input.syndication) return { kind: "none" };
   const text = String(input.judgedText ?? "").trim();
   if (!text) return { kind: "none" };
@@ -188,7 +194,8 @@ export function syndicationStage(input: VoiceClassInput): SyndicationStage {
 const syndicatedDecision = (stamp: SyndicationStamp): VoiceClassDecision =>
   ({ ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "syndication", detail: `syndication: ${stamp.method === "local_llm" ? `the band judge (${stamp.model}) read the item as the company's own copy restated` : `8-gram containment ${stamp.score} in the client corpus — the company's own copy on a third-party host`}`, gate: null, syndication: stamp });
 
-export function decideVoiceClassBeforeJudge(input: VoiceClassInput, stage?: SyndicationStage):
+/** The stages BEFORE the judge — it never asks the judge, so it takes no authorshipContext (R54). */
+export function decideVoiceClassBeforeJudge(input: PreJudgeInput, stage?: SyndicationStage):
   | VoiceClassDecision
   | { needs_judge: true; gate: GateHit; label: string | null }
   | { needs_speaker: true; attribution: AttributionHit; label: string | null }
@@ -216,7 +223,7 @@ export function decideVoiceClassBeforeJudge(input: VoiceClassInput, stage?: Synd
 }
 
 /** The text gates (R28/R45 first person, R32 attributed speech) and the URL gate — the stages after syndication. */
-export function decideTextGates(input: VoiceClassInput, label: string | null):
+export function decideTextGates(input: PreJudgeInput, label: string | null):
   | VoiceClassDecision
   | { needs_judge: true; gate: GateHit; label: string | null }
   | { needs_speaker: true; attribution: AttributionHit; label: string | null } {
@@ -239,7 +246,7 @@ export function decideTextGates(input: VoiceClassInput, label: string | null):
   }
   return decideUrlGate(input, label);
 }
-function decideUrlGate(input: VoiceClassInput, label: string | null): VoiceClassDecision | { needs_judge: true; gate: GateHit; label: string | null } {
+function decideUrlGate(input: PreJudgeInput, label: string | null): VoiceClassDecision | { needs_judge: true; gate: GateHit; label: string | null } {
   const gate = gateFor(input);
   if (gate) return { needs_judge: true, gate, label };
   return { ok: true, voice_class: label, evidence_class: "prose", authority: "extractor_label", detail: label ? "no authority fires; the extractor's label" : "no authority fires and the label is not a known class", gate: null };
@@ -328,11 +335,19 @@ async function judgeStage(input: VoiceClassInput, gate: GateHit, label: string |
   if (!input.judge) {
     return input.onJudgeFailure === "keep_label" ? keep(`gated (${gate.via} ${gate.host}); no judge wired; the label stands`) : refuse(`gated (${gate.via} ${gate.host}) and no judge is wired — not minted; retry when the local judge is available`);
   }
-  const j = await input.judge({ subjectName: input.company.name, subjectHost: input.company.host ?? "", url: input.url, text });
+  const kind = (input as { authorshipContext?: { kind?: unknown } }).authorshipContext?.kind;
+  if (kind !== "page" && kind !== "no_page") throw new Error("voiceClassForMintedExcerpt: authorshipContext is required (R54) — build it with authorshipContext() or noPageWords()");
+  const j = await input.judge({ subjectName: input.company.name, subjectHost: input.company.host ?? "", url: input.url, text, context: input.authorshipContext });
   if (j === null) {
     return input.onJudgeFailure === "keep_label" ? keep(`gated (${gate.via} ${gate.host}); judge unavailable for this item; the label stands`) : refuse(`gated (${gate.via} ${gate.host}) and the judge was unavailable — not minted; retry next run`);
   }
   const stampOf = (applied: AuthorshipStamp["applied"]): AuthorshipStamp => ({ ...j, applied, url_rule: gate.host, judged_at: nowIso() });
+  if (j.verdict === "no_page_words") {
+    // R54: not judged — the text could not be placed on a page. The label stands (keep_label); refused under refuse_mint.
+    return input.onJudgeFailure === "keep_label"
+      ? keep(`gated (${gate.via} ${gate.host}); ${j.reason}`, stampOf("unchanged"))
+      : refuse(`gated (${gate.via} ${gate.host}); ${j.reason} — not minted`, stampOf("unchanged"));
+  }
   if (j.verdict === "judge_failed") {
     return input.onJudgeFailure === "keep_label"
       ? keep(`gated (${gate.via} ${gate.host}); judge failed: ${j.reason}; the label stands`, stampOf("unchanged"))

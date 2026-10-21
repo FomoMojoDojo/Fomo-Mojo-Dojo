@@ -2,7 +2,7 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type VoiceClassInput, firstPersonSelfDescription } from "./voiceClassAtMint.ts";
 import { classifyRegistryRow, GUIDESTAR_SELF_REPORTED_MARKER } from "./registryClassifier.ts";
-import type { AuthorshipJudgment } from "./aggregatorAuthorship.ts";
+import { authorshipContext, type AuthorshipJudgment } from "./aggregatorAuthorship.ts";
 
 const ACME = { name: "Acme Coffee", host: "acmecoffee.com" };
 const WIRE = "https://www.prnewswire.com/news-releases/acme-coffee-opens-second-roastery-300000001.html";
@@ -10,9 +10,13 @@ const PROFILE = "https://www.crunchbase.com/organization/acme-coffee";
 const THIRD = "https://reviews.example/acme-coffee";
 const OWN = "https://www.acmecoffee.com/wholesale";
 const NOW = () => "2026-10-18T12:00:00.000Z";
+// R54: the judge's page context (required); the stub judges answer regardless of it
+const TEST_CTX = authorshipContext("About\nAcme Coffee roasts in Burbank.", "Acme Coffee roasts in Burbank.", 6);
 const base = (over: Partial<VoiceClassInput>): VoiceClassInput => ({
   url: THIRD, item: null, labeledClass: "outside_voice_about_client", pageText: "Acme Coffee roasts in Burbank.", judgedText: "Acme Coffee roasts in Burbank.",
-  company: ACME, registry: null, judge: null, gate: "profile_wire_boilerplate", onJudgeFailure: "refuse_mint", now: NOW, ...over,
+  company: ACME, registry: null, judge: null, gate: "profile_wire_boilerplate", onJudgeFailure: "refuse_mint", now: NOW,
+  // R54: the judge's page context is required; the fixtures' stub judges answer regardless of it
+  authorshipContext: TEST_CTX, ...over,
 });
 const subjectJudge = (): Promise<AuthorshipJudgment> => Promise.resolve({ verdict: "subject_company", entity: null, reason: "company-supplied About field", model: "fake" });
 const failedJudge = (): Promise<AuthorshipJudgment> => Promise.resolve({ verdict: "judge_failed", entity: null, reason: "timeout", model: "fake" });
@@ -114,7 +118,7 @@ Deno.test("R28/R45: \"We help people…\" with the first_person gate named is DE
   let judgeCalls = 0, speakerCalls = 0;
   const judge = () => { judgeCalls++; return Promise.resolve({ verdict: "third_party" as const, entity: null, reason: "x", model: "m" }); };
   const speakerJudge = () => { speakerCalls++; return Promise.resolve({ speaker_class: "subject_company_text" as const, speaker_name: "whispering.ai", speaker_role: null, reason: "the paragraph is the company's own description", model: "m" }); };
-  const base = { url: "https://seamless.ai/b/whispering-ai-16131131", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "whispering.ai", host: "whispering.ai" }, registry: null, judge, speakerJudge, gate: "profile_wire_boilerplate" as const, onJudgeFailure: "refuse_mint" as const };
+  const base = { url: "https://seamless.ai/b/whispering-ai-16131131", item: null, labeledClass: "outside_voice_about_client", pageText: "p", authorshipContext: TEST_CTX, company: { name: "whispering.ai", host: "whispering.ai" }, registry: null, judge, speakerJudge, gate: "profile_wire_boilerplate" as const, onJudgeFailure: "refuse_mint" as const };
   const gated = await voiceClassForMintedExcerpt({ ...base, judgedText: "We help people and businesses thrive with the power of AI.", textGates: ["first_person"] });
   assert(gated.ok); assertEquals(gated.voice_class, "client_voice"); assertEquals(gated.authority, "first_person_judged"); assertEquals(gated.rule, "first_person_judged"); assertEquals(gated.gate, null);
   assertEquals(gated.speaker?.attribution.form, "first_person"); assertEquals(gated.speaker?.speaker_class, "subject_company_text");
@@ -127,7 +131,7 @@ Deno.test("R28/R45: \"We help people…\" with the first_person gate named is DE
 });
 
 Deno.test("R28: a third-person line is unchanged; a quoted first-person line with an attributed outside speaker is NOT gated; 'Contact us' is not a subject", async () => {
-  const base = { url: "https://reviews.example/acme", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "Acme", host: "acme.test" }, registry: null, judge: null, gate: "profile_wire_boilerplate" as const, textGates: ["first_person"] as const, onJudgeFailure: "refuse_mint" as const };
+  const base = { url: "https://reviews.example/acme", item: null, labeledClass: "outside_voice_about_client", pageText: "p", authorshipContext: TEST_CTX, company: { name: "Acme", host: "acme.test" }, registry: null, judge: null, gate: "profile_wire_boilerplate" as const, textGates: ["first_person"] as const, onJudgeFailure: "refuse_mint" as const };
   for (const t of ["Whispering AI is headquartered at 6929 North Hayden Road, Scottsdale.", "'We love it,' said a customer.", "“We’ll be back,” one reviewer wrote.", "According to the owner, we should expect a second roastery.", "Contact us for pricing and hours."]) {
     const d = await voiceClassForMintedExcerpt({ ...base, judgedText: t });
     assert(d.ok); assertEquals(d.voice_class, "outside_voice_about_client", t); assertEquals(d.authority, "extractor_label", t);
@@ -142,7 +146,7 @@ Deno.test("R28/R45: on a judge-gated profile URL a first-person candidate goes t
   let judgeCalls = 0, speakerCalls = 0;
   const judge = () => { judgeCalls++; return Promise.resolve({ verdict: "third_party" as const, entity: null, reason: "platform field", model: "m" }); };
   const speakerJudge = () => { speakerCalls++; return Promise.resolve({ speaker_class: "subject_company_officer" as const, speaker_name: "Acme Coffee", speaker_role: null, reason: "the company describing itself", model: "m" }); };
-  const base = { url: "https://www.crunchbase.com/organization/acme-coffee", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "Acme Coffee", host: "acmecoffee.com" }, registry: null, judge, speakerJudge, gate: "profile_wire_boilerplate" as const, textGates: ["first_person"] as const, onJudgeFailure: "refuse_mint" as const };
+  const base = { url: "https://www.crunchbase.com/organization/acme-coffee", item: null, labeledClass: "outside_voice_about_client", pageText: "p", authorshipContext: TEST_CTX, company: { name: "Acme Coffee", host: "acmecoffee.com" }, registry: null, judge, speakerJudge, gate: "profile_wire_boilerplate" as const, textGates: ["first_person"] as const, onJudgeFailure: "refuse_mint" as const };
   const fp = await voiceClassForMintedExcerpt({ ...base, judgedText: "We roast every bean in Burbank and supply 40 cafes." });
   assert(fp.ok); assertEquals(fp.voice_class, "client_voice"); assertEquals(fp.authority, "first_person_judged"); assertEquals(speakerCalls, 1); assertEquals(judgeCalls, 0, "the speaker judge decided; the authorship judge was never called");
   const tp = await voiceClassForMintedExcerpt({ ...base, judgedText: "Acme Coffee is a specialty roaster supplying 40 cafes." });
@@ -153,7 +157,7 @@ Deno.test("R28/R45: on a judge-gated profile URL a first-person candidate goes t
 Deno.test("R45: the SIAA agent-forum sentence ⇒ third_party ⇒ the label kept with the speaker recorded (rule first_person_judged); an unidentified first-person line ⇒ unknown ⇒ refused; a non-first-person line makes no speaker call", async () => {
   const calls: string[] = [];
   const speakerJudge = (i: { candidate: string }) => { calls.push(i.candidate); const forum = /PIIB/.test(i.candidate); return Promise.resolve(forum ? { speaker_class: "third_party" as const, speaker_name: "a forum poster", speaker_role: "insurance agent", reason: "a member agent posting on a forum, not SIAA", model: "m" } : { speaker_class: "unknown" as const, speaker_name: null, speaker_role: null, reason: "the page never says who we is", model: "m" }); };
-  const base = { url: "https://www.reddit.com/r/InsurancePros/x", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "SIAA", host: "siaa.com" }, registry: null, judge: null, speakerJudge, gate: "profile_wire_boilerplate" as const, textGates: ["first_person", "attributed_speech"] as const, onJudgeFailure: "refuse_mint" as const };
+  const base = { url: "https://www.reddit.com/r/InsurancePros/x", item: null, labeledClass: "outside_voice_about_client", pageText: "p", authorshipContext: TEST_CTX, company: { name: "SIAA", host: "siaa.com" }, registry: null, judge: null, speakerJudge, gate: "profile_wire_boilerplate" as const, textGates: ["first_person", "attributed_speech"] as const, onJudgeFailure: "refuse_mint" as const };
   const forum = await voiceClassForMintedExcerpt({ ...base, judgedText: "We have an affiliate who successfully transferred from SIAA to PIIB, it took a lot of work." });
   assert(forum.ok); assertEquals(forum.voice_class, "outside_voice_about_client"); assertEquals(forum.authority, "extractor_label"); assertEquals(forum.rule, "first_person_judged"); assertEquals(forum.speaker?.speaker_class, "third_party"); assertEquals(forum.speaker?.speaker_name, "a forum poster");
   const unknown = await voiceClassForMintedExcerpt({ ...base, judgedText: "We see this all the time, the benefits sound amazing in the start." });
@@ -168,7 +172,7 @@ import type { AttributionHit } from "./outsideEvidenceRegen.ts";
 import type { SpeakerJudge, SpeakerJudgment } from "./aggregatorAuthorship.ts";
 const ATTR: AttributionHit = { form: "quoted_with_attribution", speaker_string: "Alexander", span: "“Our goal is to catch cancer earlier,” Alexander told the Business Journal.", offset: 10 };
 const sj = (j: Partial<SpeakerJudgment>, calls: { n: number }): SpeakerJudge => () => { calls.n++; return Promise.resolve({ speaker_class: "third_party", speaker_name: null, speaker_role: null, reason: "r", model: "m", ...j }); };
-const base32 = (calls: { n: number }, j: Partial<SpeakerJudgment>) => ({ url: "https://www.ocbj.com/healthcare/coreviva-opens/", item: null, labeledClass: "outside_voice_about_client", pageText: "p", judgedText: ATTR.span, company: { name: "Coreviva", host: "coreviva.com" }, registry: null, judge: null, gate: "profile_wire_boilerplate" as const, textGates: ["first_person", "attributed_speech"] as const, attribution: ATTR, speakerJudge: sj(j, calls), onJudgeFailure: "refuse_mint" as const });
+const base32 = (calls: { n: number }, j: Partial<SpeakerJudgment>) => ({ url: "https://www.ocbj.com/healthcare/coreviva-opens/", item: null, labeledClass: "outside_voice_about_client", pageText: "p", authorshipContext: TEST_CTX, judgedText: ATTR.span, company: { name: "Coreviva", host: "coreviva.com" }, registry: null, judge: null, gate: "profile_wire_boilerplate" as const, textGates: ["first_person", "attributed_speech"] as const, attribution: ATTR, speakerJudge: sj(j, calls), onJudgeFailure: "refuse_mint" as const });
 
 Deno.test("R32: officer → client_voice (attributed_speaker_subject, rule attributed_speech, speaker stamped); company text → client_voice; third_party → the label with the speaker recorded", async () => {
   const c = { n: 0 };
@@ -214,7 +218,7 @@ Deno.test("R47: a mid-sentence first person — Edgewood's Psychology Today row 
   const speakerJudge = (i: { candidate: string }) => { calls.push(i.candidate); return Promise.resolve(/Acute Intensive/.test(i.candidate)
     ? { speaker_class: "subject_company_text" as const, speaker_name: null, speaker_role: null, reason: "the provider's own profile text", model: "m" }
     : { speaker_class: "third_party" as const, speaker_name: "a reviewer", speaker_role: "customer", reason: "a customer describing their home", model: "m" }); };
-  const base = { url: "https://www.example-directory.com/edgewood", item: null, labeledClass: "outside_voice_about_client", pageText: "p", company: { name: "Edgewood", host: "edgewood.org" }, registry: null, judge, speakerJudge, gate: "profile_wire_boilerplate" as const, textGates: ["first_person", "attributed_speech"] as const, onJudgeFailure: "refuse_mint" as const };
+  const base = { url: "https://www.example-directory.com/edgewood", item: null, labeledClass: "outside_voice_about_client", pageText: "p", authorshipContext: TEST_CTX, company: { name: "Edgewood", host: "edgewood.org" }, registry: null, judge, speakerJudge, gate: "profile_wire_boilerplate" as const, textGates: ["first_person", "attributed_speech"] as const, onJudgeFailure: "refuse_mint" as const };
   const mid = await voiceClassForMintedExcerpt({ ...base, judgedText: "Within our Acute Intensive Service programs, we serve youth ages 6-18. Professional staff serve children who have faced severe, multiple trauma." });
   assert(mid.ok); assertEquals(mid.voice_class, "client_voice"); assertEquals(mid.authority, "first_person_judged"); assertEquals(mid.rule, "first_person_judged"); assertEquals(mid.speaker?.attribution.form, "first_person");
   const review = await voiceClassForMintedExcerpt({ ...base, judgedText: "Max and his team were responsive, always on time, careful with our home, and very professional." });

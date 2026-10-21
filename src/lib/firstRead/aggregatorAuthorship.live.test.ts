@@ -9,7 +9,7 @@
 // Runs ONLY when AUTHORSHIP_LIVE=1 and a local Ollama answers — the standing suite never depends on a
 // local model. Invoke: AUTHORSHIP_LIVE=1 npx vitest run src/lib/firstRead/aggregatorAuthorship.live.test.ts
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { judgeAggregatorAuthorship, ollamaAuthorshipTransport, type AuthorshipJudgment } from "../../../supabase/functions/_shared/aggregatorAuthorship.ts";
+import { authorshipContext, judgeAggregatorAuthorship, ollamaAuthorshipTransport, type AuthorshipJudgment } from "../../../supabase/functions/_shared/aggregatorAuthorship.ts";
 
 const OLLAMA = "http://localhost:11434/v1";
 const LIVE = process.env.AUTHORSHIP_LIVE === "1";
@@ -82,7 +82,7 @@ afterAll(() => vi.unstubAllGlobals());
 // R53: the ledger is required; this live proof keeps its rows in memory (it writes no model_calls row).
 const liveLedgerRows: unknown[] = [];
 const judge = (input: typeof ROW_1e590a73): Promise<AuthorshipJudgment> =>
-  judgeAggregatorAuthorship(input, { transport: ollamaAuthorshipTransport(OLLAMA), ledger: async (e) => { liveLedgerRows.push(e); return true; } });
+  judgeAggregatorAuthorship({ ...input, context: authorshipContext(input.text, input.text, 0) }, { transport: ollamaAuthorshipTransport(OLLAMA), ledger: async (e) => { liveLedgerRows.push(e); return true; } });
 
 describe.skipIf(!LIVE)("LIVE judge on real stored texts (AUTHORSHIP_LIVE=1)", () => {
   it("Ollama is reachable for the live proof", () => {

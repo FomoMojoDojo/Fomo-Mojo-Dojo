@@ -32,6 +32,15 @@
 #       carries raw_payload.syndication; the baseline's call sites pass no syndication input.
 #   v5. (R32) the attributed_speech gate: CEO-quote fixture client_voice, third-party keeps the label, unknown refused,
 #       apostrophes not quotation marks, speaker calls = attribution-bearing candidates; the baseline names no text gate.
+#   v9. (R54) the authorship judge sees where the text sits on the page: probe regen-r54-context-probe.ts — the built prompt
+#       carries the CONTEXT block (nearest heading, page words with the TEXT marked) between PAGE BRIEF and TEXT; a no_page
+#       context makes no transport call and no ledger row (no_page_words); a call with no context throws before any call
+#       (runtime) and is a type error (r54-no-context-typecheck.ts); the regen mint hands the judge a page context.
+#   v10. (R54a) the context is the SECTION the text sits in: on a seeded page with headings above and below, the "before"
+#       words stop at the heading above (kept as the heading line) and the "after" words at the next heading below; the
+#       CONTEXT block says the heading names the field.
+#   v11. (R54b) the authorship system prompt carries the listing-data rule — a sentence of only listing data (name, address,
+#       phone, URL, hours, category) is platform-authored in any field — with its demonstration and counterexample.
 #   v3. EXPECTATION — scripts/guards/regen-voice-expectation.ts recomputes (class, authority) for every in-scope URL of
 #       the plan file and compares PER URL to scripts/guards/fixtures/regen-voice-expected.tsv (gated rows expected as
 #       "gated"). Any difference is named.
@@ -48,6 +57,9 @@
 #       entry removed => v7 gated 19 → 18 and v3 differences 0 → 4; P4 the ledger call skipped in judgeSyndicationBand => v8
 #       syndication_ledger_rows 1 → 0 ≠ band_judge_calls 1; P5 the syndication stage moved after the text gates => v8 source pin
 #       red and the authority test's order case moves syndication → first_person_judged (v2 red).
+#   R54a plant (2026-10-20): P5 the section bound dropped from the before window (Math.max(sectionStart, …) → Math.max(0, …))
+#       => v10 before_has_earlier_heading false → true.
+#   R54b plant (2026-10-20): P6 rule (7) removed from JUDGE_SYSTEM => v11 rule_present true → false, system sha moves.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -151,4 +163,20 @@ SY=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-syndication
 [ "$(echo "$SY" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('stamped_rows')==d.get('minted')==3)")" = "True" ] || fail v8 "not every minted row carries raw_payload.syndication: $SY"
 echo "v8. R38 probe (fake transport, real ledgered band judge over a fake Ollama): $SY"
 echo "v8. R38 source: the stage sits between the registry stamp and the text gates; the mint site passes corpus/judge/anchors; the baseline passes none"
+# v9 — R54: the judge's page context
+J9=$(NO_COLOR=1 deno run --allow-all --no-check scripts/guards/regen-r54-context-probe.ts 2>&1 | tail -1)
+q9() { echo "$J9" | python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
+[ "$(q9 "d['prompt']['has_block'] and d['prompt']['between_brief_and_text'] and d['prompt']['marked'] and d['prompt']['heading']=='Questions & Answers' and d['prompt']['rows']==1")" = True ] || fail v9 "the CONTEXT block is not in the built prompt: $J9"
+[ "$(q9 "d['no_page']['verdict']=='no_page_words' and d['no_page']['transport_calls']==0 and d['no_page']['ledger_rows']==0")" = True ] || fail v9 "a no_page context reached the model: $J9"
+[ "$(q9 "d['refuse']['threw'] and d['refuse']['transport_calls']==0")" = True ] || fail v9 "a call with no context was not refused at runtime: $J9"
+NO_COLOR=1 deno check scripts/guards/r54-no-context-typecheck.ts >/dev/null 2>&1 || fail v9 "a call with no context is not a type error (r54-no-context-typecheck.ts)"
+grep -q 'authorshipContext: authorshipContext(clean_text, verdictA.excerpt, verdictA.offset),' supabase/functions/_shared/outsideRegenHandler.ts || fail v9 "the mint site does not build the judge's context from the page at the excerpt offset"
+[ "$(q9 "d['mint']['judge_calls']==1 and d['mint']['kind']=='page' and d['mint']['at_offset']")" = True ] || fail v9 "the mint path did not hand the judge a page context: $J9"
+echo "v9. R54 probe: prompt sha $(q9 "d['prompt']['sha'][:16]") carries CONTEXT (heading '$(q9 "d['prompt']['heading']")'); no_page → 0 calls / 0 ledger rows; no context → refused (runtime + type); mint context kind $(q9 "d['mint']['kind']")"
+# v10 — R54a: the context is the text's section, never across a heading; the prompt says the heading names the field
+[ "$(q9 "d['section'].get('heading')=='Questions & Answers' and d['section'].get('before_has_earlier_heading') is False and d['section'].get('before_has_own_heading') is False and d['section'].get('after_has_next_heading') is False and d['section'].get('names_field') is True")" = True ] || fail v10 "the context crosses a heading or the prompt does not name the field: $J9"
+echo "v10. R54a section: heading '$(q9 "d['section']['heading']")', before $(q9 "d['section']['before_len']") / after $(q9 "d['section']['after_len']") chars, no earlier or next heading inside; prompt names the field"
+# v11 — R54b: listing data is platform-authored in any field (system prompt rule, demonstration and counterexample)
+[ "$(q9 "d['listing']['rule_present'] and d['listing']['demonstration'] and d['listing']['counterexample']")" = True ] || fail v11 "the listing-data rule is not in the authorship system prompt: $J9"
+echo "v11. R54b listing-data rule in the system prompt (demonstration + counterexample); system sha $(q9 "d['listing']['system_sha'][:16]")"
 echo "GUARD OK"

@@ -30,8 +30,8 @@ try {
   if (typeof body.out === "string" && body.out) {
     // The out file IS a reviewable plan (parseReviewedTsv reads it): judges = the shipped re-derivation, rules = R52,
     // preempted_by = the authority that decided; reviewed_judges / equal / why compare it with the plan it was run against.
-    const hdr = ["seq", "company", "company_id", "signal_id", "era", "rules", "judges", "preempted_by", "replay", "reviewed_judges", "equal", "why"];
-    const lines = plans.flatMap((p) => p.rows.map((r) => [r.seq, p.company, p.company_id, r.signal_id, r.era, R52_RULES, r.fresh_judges, r.authority ?? "", r.replay, r.reviewed_judges, String(r.equal), r.why ?? ""].join("\t")));
+    const hdr = ["seq", "company", "company_id", "signal_id", "era", "rules", "judges", "preempted_by", "replay", "no_page_words", "reviewed_judges", "equal", "why"];
+    const lines = plans.flatMap((p) => p.rows.map((r) => [r.seq, p.company, p.company_id, r.signal_id, r.era, R52_RULES, r.fresh_judges, r.authority ?? "", r.replay, String(r.no_page_words), r.reviewed_judges, String(r.equal), r.why ?? ""].join("\t")));
     await Deno.writeTextFile(body.out, [hdr.join("\t"), ...lines].join("\n") + "\n");
   }
   for (const p of plans) {
@@ -43,7 +43,8 @@ try {
     mode: "plan", read_only: true, xid_assigned: xid, companies: plans.length,
     rows: plans.reduce((a, p) => a + p.rows.length, 0),
     calls: { band: sum("band"), speaker: sum("speaker"), authorship: sum("authorship"), total: sum("band") + sum("speaker") + sum("authorship") },
-    per_company: plans.map((p) => ({ company: p.company, company_id: p.company_id, rows: p.rows.length, calls: p.calls, plan_equals_reviewed: p.refused ? `REFUSED:${p.refused}` : p.equal ? "PASS" : "FAIL", mismatches: p.rows.filter((r) => !r.equal).map((r) => ({ seq: r.seq, signal_id: r.signal_id, why: r.why })) })),
+    no_page_words: plans.reduce((a, p) => a + p.rows.filter((r) => r.no_page_words).length, 0),
+    per_company: plans.map((p) => ({ company: p.company, company_id: p.company_id, rows: p.rows.length, calls: p.calls, no_page_words: p.rows.filter((r) => r.no_page_words).length, plan_equals_reviewed: p.refused ? `REFUSED:${p.refused}` : p.equal ? "PASS" : "FAIL", mismatches: p.rows.filter((r) => !r.equal).map((r) => ({ seq: r.seq, signal_id: r.signal_id, why: r.why })) })),
     all_pass: plans.length > 0 && plans.every((p) => p.equal),
   });
 } catch (e) {

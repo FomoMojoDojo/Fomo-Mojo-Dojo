@@ -3330,9 +3330,18 @@ Deno.serve(async (req) => {
         return ok;
       };
       const authorshipTransport = authorshipOllamaUrl ? ollamaAuthorshipTransport(authorshipOllamaUrl) : null;
+      // R54: the judge reads each entry's text in place on the page this run crawled for its URL; an entry whose text is
+      // not on that page (a model summary, a synthetic social stub) is not judged — the label stands, no call
+      const crawledPageByUrl = new Map<string, string>();
+      for (const e of evidence) {
+        const u = String((e as { url?: unknown })?.url || "").trim();
+        const t = String((e as { extracted?: unknown })?.extracted || "");
+        if (u && t.trim() && !crawledPageByUrl.has(u)) crawledPageByUrl.set(u, t);
+      }
       const gate = await demoteAggregatorSelfVoiceInResult(result as Record<string, unknown>, {
         subjectName: company_name,
         subjectHost: authorshipSubjectHost,
+        pageFor: (u) => crawledPageByUrl.get(u) ?? null,
         judge: authorshipTransport
           ? (input) => judgeAggregatorAuthorship(input, { transport: authorshipTransport, ledger: authorshipLedger, model: Deno.env.get("OLLAMA_MODEL") || undefined })
           : () => Promise.resolve({ verdict: "judge_failed" as const, entity: null, reason: "local Ollama URL unavailable (local-only policy) — label left unchanged.", model: "none" }),

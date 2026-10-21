@@ -27,7 +27,7 @@ import { emptyTally, regenGenerate, regenJudge, tallyingLedger, type RegenLedger
 import { OPENAI_PRICE_PER_MTOK } from "./modelPricing.ts";
 import { classifyRegistryRow } from "./registryClassifier.ts";
 import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type JudgeFailurePolicy, type VoiceClassInput, type TextGate } from "./voiceClassAtMint.ts";
-import type { AuthorshipJudgment } from "./aggregatorAuthorship.ts";
+import { authorshipContext, type AuthorshipInput, type AuthorshipJudgment } from "./aggregatorAuthorship.ts";
 import { clientAnchorsFor } from "./clientAnchors.ts";
 import { nearestSpan, type NearestSpan } from "./nearestSpan.ts";
 import { speakerContext } from "./attribution.ts";
@@ -43,7 +43,7 @@ export const REGEN_DEFAULT_LABEL = "outside_voice_about_client";
 /** R41: pages a WRITE call processes; the approved URLs not yet minted under the run_id beyond it are `remaining`, picked up by a continuation call. */
 export const REGEN_PAGE_BUDGET = 8;
 export const FIXTURE_HELD_GUARD = "fixture_held" as const;
-export type RegenJudge = (input: { subjectName: string; subjectHost: string; url: string; text: string }) => Promise<AuthorshipJudgment | null>;
+export type RegenJudge = (input: AuthorshipInput) => Promise<AuthorshipJudgment | null>;
 
 export const REGEN_MODE_FLAGS = ["plan", "write"] as const;
 export type RegenMode = typeof REGEN_MODE_FLAGS[number];
@@ -497,6 +497,8 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       const voiceInput: VoiceClassInput = {
         url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText: clean_text, judgedText: verdictA.excerpt, company,
         registry: registryFor(url, verdictA.excerpt), judge, gate: "profile_wire_boilerplate", textGates: REGEN_TEXT_GATES, onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY, now: nowIso,
+        // R54: the authorship judge reads the excerpt in place — the page in memory at the slice-asserted offset
+        authorshipContext: authorshipContext(clean_text, verdictA.excerpt, verdictA.offset),
         // R32: attributed speech detected on the candidate with its page context; the speaker judge decides who speaks
         attribution: detectAttribution(verdictA.excerpt, clean_text, verdictA.offset), speakerJudge,
         // R42: the paragraph plus every page sentence naming the speaker (or their surname), capped — see speakerContext

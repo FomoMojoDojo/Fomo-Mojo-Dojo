@@ -11,6 +11,7 @@
 import { runOutsideRegen } from "../../supabase/functions/_shared/outsideRegenHandler.ts";
 import { regenCallSite } from "../../supabase/functions/_shared/outsideRegenModel.ts";
 import {
+  authorshipContext,
   demoteAggregatorSelfVoiceInResult, judgeAggregatorAuthorship, planRestamp,
   type AuthorshipLedger, type AuthorshipTransport, type RestampStore,
 } from "../../supabase/functions/_shared/aggregatorAuthorship.ts";
@@ -31,11 +32,13 @@ const authRows = ledgerRows.filter((e) => e.role === "authorship");
 const tally = (r.body.model_calls as Record<string, number>) ?? {};
 
 // ── baseline seam ──
+// R54: the judge reads the text in place on a page; each path is handed the page it would hold
+const PROBE_PAGE = "About\nAcme Coffee is a specialty roaster supplying 40 cafes.";
 const baseRows: unknown[] = []; let baseCalls = 0;
 const baseLedger: AuthorshipLedger = (e) => { baseRows.push(e); return Promise.resolve(true); };
 await demoteAggregatorSelfVoiceInResult(
   { outside_voice_signals: [{ url: UGATED, voice_class: "outside_voice_about_client", signal: "Acme Coffee is a specialty roaster supplying 40 cafes." }] },
-  { subjectName: "Acme Coffee", subjectHost: "acmecoffee.com", judge: (i) => { baseCalls++; return judgeAggregatorAuthorship(i, { transport: SUBJECT, ledger: baseLedger, model: "fake-qwen" }); } },
+  { subjectName: "Acme Coffee", subjectHost: "acmecoffee.com", pageFor: () => PROBE_PAGE, judge: (i) => { baseCalls++; return judgeAggregatorAuthorship(i, { transport: SUBJECT, ledger: baseLedger, model: "fake-qwen" }); } },
 );
 
 // ── restamp dry-run plan ──
@@ -43,6 +46,7 @@ const store: RestampStore = {
   loadCompanies: () => Promise.resolve([{ id: CO, name: "Acme Coffee", website: "https://acmecoffee.com", frozen: false }]),
   loadCandidateSignals: () => Promise.resolve([{ id: "sig-r53", company_id: CO, source_url: UGATED, voice_class: "outside_voice_about_client", claim_text: "Acme Coffee is a specialty roaster supplying 40 cafes.", evidence_excerpt: "Acme Coffee is a specialty roaster supplying 40 cafes.", held_at: null, raw_payload: {} }]),
   loadDeltaBacking: () => Promise.resolve(new Map()),
+  loadPageTexts: () => Promise.resolve(new Map([[UGATED, PROBE_PAGE]])),
 } as unknown as RestampStore;
 const restampRows: Array<{ companyId: string }> = []; let restampCalls = 0;
 await planRestamp(store, {
@@ -51,11 +55,11 @@ await planRestamp(store, {
 
 // ── ledger before parse: an unparseable answer still writes its row ──
 const unparseRows: unknown[] = [];
-const up = await judgeAggregatorAuthorship({ subjectName: "Acme Coffee", subjectHost: "acmecoffee.com", url: UGATED, text: "x" }, { transport: fake("not json"), ledger: (e) => { unparseRows.push(e); return Promise.resolve(true); }, model: "fake-qwen" });
+const up = await judgeAggregatorAuthorship({ subjectName: "Acme Coffee", subjectHost: "acmecoffee.com", url: UGATED, text: "x", context: authorshipContext("About\nx", "x", 6) }, { transport: fake("not json"), ledger: (e) => { unparseRows.push(e); return Promise.resolve(true); }, model: "fake-qwen" });
 
 // ── no ledger: throws before the transport ──
 const before = transportCalls; let noLedgerThrew = false;
-try { await judgeAggregatorAuthorship({ subjectName: "A", subjectHost: "a.com", url: UGATED, text: "x" }, { transport: SUBJECT } as never); } catch { noLedgerThrew = true; }
+try { await judgeAggregatorAuthorship({ subjectName: "A", subjectHost: "a.com", url: UGATED, text: "x", context: authorshipContext("About\nx", "x", 6) }, { transport: SUBJECT } as never); } catch { noLedgerThrew = true; }
 
 const row0 = authRows[0];
 console.log(JSON.stringify({
