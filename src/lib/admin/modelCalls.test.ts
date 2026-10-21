@@ -103,13 +103,14 @@ describe("an accounting failure NEVER fails the call it measures", () => {
 });
 
 describe("coverage is COMPUTED from the registry, not a maintained label", () => {
-  it("the seven sites wired in this gate are captured (+ infer-interview-market, 2b; + extract-outside-evidence, R4; + the two authorship sites, R53; + the R52 sweep runner); the rest are not", () => {
+  it("the seven sites wired in this gate are captured (+ infer-interview-market, 2b; + extract-outside-evidence, R4; + the two authorship sites, R53; + the R52 sweep runner; + the four Claude web_search sites, ruling 1 2026-10-21); the rest are not", () => {
     const cov = costCoverage();
-    expect(cov.captured).toBe(12);
+    expect(cov.captured).toBe(16);
     expect(cov.complete).toBe(false);
     expect(cov.uncaptured).toContain("ollama-local-judges");
     expect(cov.uncaptured).not.toContain("extract-outside-evidence");
-    expect(coverageLabel(cov)).toBe(`partial (12 of ${cov.total} sites)`);
+    for (const site of ["public-baseline-search", "competitor-discovery", "generate-normative-jobmap", "public-baseline-seed-lane"]) expect(cov.uncaptured).not.toContain(site);
+    expect(coverageLabel(cov)).toBe(`partial (16 of ${cov.total} sites)`);
   });
 
   it("VACUOUS PROOF — flipping one captured site to false changes coverage", () => {

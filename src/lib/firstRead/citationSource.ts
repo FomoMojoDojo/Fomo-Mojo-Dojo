@@ -154,3 +154,28 @@ export function mergeCitationSourceText(
   }
   return { added, collisions };
 }
+
+/**
+ * RULING 4 (2026-10-21) — every cited_text span the web_search tool returned, per URL, in response order, VERBATIM.
+ * extractCitationBasis keeps the longest span per URL (a basis for the quote producer); the excerpt rule needs every span,
+ * because an excerpt is lawful only when it IS one of the tool's own spans. Empty spans are dropped; nothing is joined.
+ */
+export function extractCitedSpans(responseData: unknown): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const blocks = Array.isArray((responseData as { content?: unknown })?.content) ? (responseData as { content: unknown[] }).content : [];
+  for (const block of blocks) {
+    if (!block || (block as { type?: unknown }).type !== "text") continue;
+    const citations = Array.isArray((block as { citations?: unknown }).citations) ? (block as { citations: unknown[] }).citations : [];
+    for (const c of citations) {
+      const url = String((c as { url?: unknown })?.url || "").trim();
+      const cited = typeof (c as { cited_text?: unknown })?.cited_text === "string" ? (c as { cited_text: string }).cited_text : "";
+      if (!url || !cited.trim()) continue;
+      const key = normalizeUrlKey(url);
+      if (!key) continue;
+      const list = out.get(key) ?? [];
+      if (!list.includes(cited)) list.push(cited);
+      out.set(key, list);
+    }
+  }
+  return out;
+}

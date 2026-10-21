@@ -14,6 +14,8 @@
 //   searx dead  + lane did not fire / errored → search_unavailable (the only case it may still say so)
 // Domain plans are untouched (their prompt is byte-identical — the snapshot test pins it).
 // Option B: only the company NAME goes to the lane (as domain plans already send name + site).
+import { entityPromptLine } from "./ownHostDiscovery.ts";
+import type { EntityStamp } from "./ownHosts.ts";
 import type { BaselineQueryPlan, QueryKey } from "./baselineQueryPlan.ts";
 import { QUERY_KEYS } from "./baselineQueryPlan.ts";
 
@@ -113,6 +115,8 @@ export function claudeWebSearchPrompt(opts: {
   schemaHint: string;
   /** present ⇒ name-only plan: the six passes as search intents; absent ⇒ the domain prompt, unchanged */
   nameOnlyBrief?: string | null;
+  /** E3 (2026-10-21): the confirmed related entities in effect — domain plan only; absent/empty ⇒ byte-identical */
+  relatedEntities?: ReadonlyArray<Pick<EntityStamp, "name" | "host" | "relation" | "effective_from">> | null;
 }): string {
   const nameOnly = typeof opts.nameOnlyBrief === "string" && opts.nameOnlyBrief.trim().length > 0;
   const head = nameOnly
@@ -129,7 +133,8 @@ export function claudeWebSearchPrompt(opts: {
       `offering, geography. Then discover its REAL PUBLIC FOOTPRINT: the places where outside `;
   const anchor = nameOnly
     ? `- Anchor every search to the exact entity: the name, and the location and category you established from registries and press.\n`
-    : `- Anchor every search to the exact entity: the name, the domain (${opts.domain}), and the location and category you established from its own site.\n`;
+    : `- Anchor every search to the exact entity: the name, the domain (${opts.domain}), and the location and category you established from its own site.\n` +
+      entityPromptLine(opts.relatedEntities);
   return head +
     `voices actually talk about THIS kind of business. Cover each footprint class below, ` +
     `choosing the platforms that genuinely serve this company's category and locale — the ` +

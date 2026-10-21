@@ -37,6 +37,7 @@
 // select-then-update/insert so it targets the partial index deterministically. Rule 4: a
 // non-open row is never rewritten (skipped + audited); an open row refreshes in place.
 
+import { assertSpendable, projectOpenAIUsd, type SpendCap } from "./spendCap.ts";
 import { FINDING_VOICE, BEAT_LENGTH_RULE } from "./findingVoice.ts";
 import { selectPublicInputs, type InputRow } from "./publicReadInputs.ts";
 import { companyHasClientProvidedMaterial, isPublicDefinition, type ClientMaterialVerdict } from "./clientMaterial.ts";
@@ -71,10 +72,12 @@ export function executorAdmitted(def: { provenance_type?: string | null } | null
 
 /** The default routed caller: external OpenAI when the router says so, else local Ollama (qwen). Injected so a
  *  guard can count external calls with a mocked fetch. */
-export function defaultFrontierRoutedModel(openaiKey: string, onUsage?: (u: OpenAIUsage) => void): RoutedModel {
+export function defaultFrontierRoutedModel(openaiKey: string, onUsage?: (u: OpenAIUsage) => void, spendCap?: SpendCap | null): RoutedModel {
   const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
   const local = (model: string, system: string, user: string) => callOllamaJson(ollamaUrl, model || LOCAL_GENERATOR, system, user, 120_000);
-  return makeRoutedModel({ callLocalGenerator: local, callLocalJudge: local, openaiKey, onUsage });
+  // spend cap (2026-10-21): a capped run projects and checks every external call before it is sent
+  const beforeExternal = spendCap ? (c: { model: string; system: string; user: string }) => assertSpendable(spendCap, { site: FRONTIER_CALL_SITE, model: c.model, projectedUsd: projectOpenAIUsd(c.model, { promptChars: c.system.length + c.user.length, maxOutputTokens: 4096 }) }) : undefined;
+  return makeRoutedModel({ callLocalGenerator: local, callLocalJudge: local, openaiKey, onUsage, ...(beforeExternal ? { beforeExternal } : {}) });
 }
 
 
@@ -160,6 +163,8 @@ export async function generateFrontier(args: {
   runId?: string | number | null;
   openaiApiKey: string;
   model?: string;
+  /** Spend cap (2026-10-21): present ⇒ every external call is projected and checked before it is sent. */
+  spendCap?: SpendCap | null;
   /** Test seam: the routed caller (defaults to defaultFrontierRoutedModel). */
   routedModel?: RoutedModel;
 }): Promise<FrontierResult> {
@@ -219,7 +224,7 @@ export async function generateFrontier(args: {
 
   // ── Rule 2: the model is reached only through the routed call; the ledger row is written on every call. ──
   let usage: OpenAIUsage | null = null;
-  const routed = args.routedModel ?? defaultFrontierRoutedModel(args.openaiApiKey, (u) => { usage = u; });
+  const routed = args.routedModel ?? defaultFrontierRoutedModel(args.openaiApiKey, (u) => { usage = u; }, args.spendCap ?? null);
   let mined: { mineable: boolean; body: string; observe: string; name_tension: string; open: string };
   let provider = "", model = "";
   try {

@@ -37,11 +37,15 @@ export const MODEL_CALL_SITES: readonly ModelCallSite[] = [
   { site: "ollama-local-judges", provider: "ollama", role: "all local generators and judges", captured: false, note: "prompt_eval_count/eval_count not read by any local transport" },
   { site: "dify-analyze-file", provider: "dify", role: "file analysis workflow", captured: false, note: "workflow envelope total_tokens not read" },
   { site: "run-mojo-analysis", provider: "dify", role: "mojo analysis workflow", captured: false, note: "workflow envelope total_tokens not read" },
-  { site: "public-baseline-search", provider: "anthropic", role: "baseline web search synthesis", captured: false, note: "usage captured on the failure path only, never on success" },
+  // RULING 1 (2026-10-21): every Claude web_search call — one row per call (per attempt) before parse, with tokens, the billed
+  // search count (web_search_requests) and usd (modelPricing.anthropicUsd); unledgered ⇒ refused (_shared/webSearchLedger.ts).
+  { site: "public-baseline-search", provider: "anthropic", role: "baseline web search synthesis (domain plan + name-only lane)", captured: true },
   { site: "public-baseline-synthesis", provider: "openai", role: "baseline /v1/responses synthesis", captured: false, note: "shared openaiClient never reads data.usage" },
   { site: "research-company", provider: "openai", role: "research structured synthesis", captured: false, note: "shared openaiClient never reads data.usage" },
   { site: "council-review", provider: "openai", role: "council synthesis", captured: false, note: "shared openaiClient never reads data.usage" },
-  { site: "competitor-discovery", provider: "anthropic", role: "competitor web search", captured: false, note: "content blocks read, usage dropped" },
+  { site: "competitor-discovery", provider: "anthropic", role: "competitor web search", captured: true },
+  { site: "public-baseline-seed-lane", provider: "anthropic", role: "seed-host cited-text lane (web search restricted to the seed host when the crawl read 0 seed pages)", captured: true },
+  { site: "generate-normative-jobmap", provider: "anthropic", role: "industry job-map discovery web search", captured: true },
   { site: "extract-client-voice", provider: "openai", role: "client-voice regeneration", captured: false, note: "data.usage never read" },
   // R4 (2026-10-18): both roles (generator, judge) ledgered per attempt through _shared/outsideRegenModel.ts.
   { site: "extract-outside-evidence", provider: "openai", role: "outside-evidence regeneration (generator + judge; R32 speaker judge on ollama, call_site :speaker, usd null; R38 band judge :syndication; R53 authorship judge :authorship)", captured: true },

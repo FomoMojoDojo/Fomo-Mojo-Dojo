@@ -75,10 +75,14 @@ export function makeRoutedModel(opts: {
   externalTemperature?: number;
   // Optional external-branch seed (best-effort determinism). The backstop passes 42.
   externalSeed?: number;
+  /** Spend cap (2026-10-21): awaited BEFORE an external (paid) call is sent; throwing refuses the call. Local calls are
+   *  never passed to it. Absent ⇒ unchanged. */
+  beforeExternal?: (c: { model: string; system: string; user: string }) => Promise<void>;
 }): RoutedModel {
   return async ({ role, provenances, system, user }) => {
     const choice = _resolveModel({ role, inputs: provenances.map((p) => ({ provenance: p })) });
     if (choice.provider === "external_openai") {
+      if (opts.beforeExternal) await opts.beforeExternal({ model: choice.model, system, user });
       const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, apiKey: opts.openaiKey, temperature: opts.externalTemperature, seed: opts.externalSeed }));
       opts.onUsage?.(r.usage);
       return { content: r.content, provider: choice.provider, model: choice.model };

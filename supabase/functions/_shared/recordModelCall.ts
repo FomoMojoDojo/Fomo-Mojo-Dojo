@@ -17,6 +17,8 @@ export type ModelCallRecord = {
   completion_tokens: number | null;
   /** Null when the provider returned no usage — an honest gap, never a 0. */
   usd: number | null;
+  /** Claude web_search calls only (migration 20261021030000): the billed search count. Absent ⇒ the column stays NULL. */
+  web_search_requests?: number | null;
 };
 
 /** The same price table the six sites already use, so one number is computed one way. */
@@ -71,6 +73,7 @@ export async function recordModelCall(
       usd: args.usage.usd,
       attempt: args.attempt ?? null,
       prompt_sha: args.promptSha ?? null,
+      ...(args.usage.web_search_requests !== undefined ? { web_search_requests: args.usage.web_search_requests } : {}),
     });
     if (error) {
       console.warn(`[model-calls] insert failed for ${args.callSite} (non-fatal): ${error.message}`);

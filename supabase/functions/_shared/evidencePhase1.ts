@@ -11,6 +11,8 @@ import { basisSha, EXCERPT_GUARD_VERSION, retainPublicPages, sourceKeyFor, verif
 import type { RetainedBasisMeta } from "../../../src/lib/firstRead/citationSource.ts";
 import { isSiteCrawlReceiptRow } from "../../../src/lib/siteCrawl/mint.ts";
 import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
+import { citedTextExcerpt, WEBSEARCH_CITED_TEXT } from "./citedTextExcerpt.ts";
+import type { SpendCap } from "./spendCap.ts";
 import { normalizeHost } from "./firstReadProvenance.ts";
 import { withRebuildLedger } from "./rebuildLedger.ts";
 import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
@@ -742,6 +744,9 @@ export async function applyMintExcerptGuard(args: {
   signals: SignalDraft[];
   sourceTextByUrl: Map<string, string>;
   sourceBasisMeta?: Map<string, RetainedBasisMeta> | null;
+  /** RULING 4 (2026-10-21): present ⇒ the drafts came from a Claude web_search call, and every non-analysis draft's
+   *  excerpt becomes one cited_text span the tool returned for its URL, or blank (citedTextExcerpt). Absent ⇒ unchanged. */
+  webSearchCitedSpans?: ReadonlyMap<string, readonly string[]> | null;
   now?: () => string;
 }): Promise<MintExcerptGuardStats> {
   const map = args.sourceTextByUrl;
@@ -778,6 +783,22 @@ export async function applyMintExcerptGuard(args: {
     if (isListingDraft(draft)) continue; // LISTING CLASS: the title line is verified at mint, not by the prose E4 guard
     const src = map.get(normalizeUrlKey(String(draft.source_url || "")));
     const rp = draft.raw_payload && typeof draft.raw_payload === "object" ? (draft.raw_payload as Record<string, unknown>) : {};
+    // RULING 4: a web_search row's excerpt is the tool's cited_text for its URL, or blank — never the model's summary.
+    // Analysis rows keep the carve-out (our reading, labelled as such, never asserted as the page's words).
+    if (args.webSearchCitedSpans && draft.voice_class !== "analysis") {
+      const v = citedTextExcerpt(draft.evidence_excerpt, draft.source_url, args.webSearchCitedSpans);
+      if (v.kind === "no_excerpt") continue;
+      if (v.kind === "cited") {
+        draft.evidence_excerpt = v.evidence_excerpt;
+        draft.raw_payload = { ...rp, excerpt_guard: { basis: WEBSEARCH_CITED_TEXT, traced: true, basis_sha: await basisSha(v.evidence_excerpt), guard_version: EXCERPT_GUARD_VERSION } };
+        stats.passed++;
+      } else {
+        draft.evidence_excerpt = ""; // claim_text stays: it is our summary, and the law lets it be
+        draft.raw_payload = { ...rp, excerpt_guard: { basis: WEBSEARCH_CITED_TEXT, traced: false, reason: v.reason, guard_version: EXCERPT_GUARD_VERSION, unverified_excerpt: v.unverified_excerpt } };
+        stats.dropped_unverifiable++;
+      }
+      continue;
+    }
     if (!src) {
       // NO BASIS: the excerpt cannot be the page's words, because no page was retained to say so.
       if (!normalizeForHash(draft.evidence_excerpt)) continue;
@@ -834,6 +855,10 @@ export async function ingestPublicBaselineSignals(args: {
   /** Step (a) (2026-10-16): per key, which kind of basis it is (crawl page | cited_text snippet) and the url
    *  the crawl or the search tool returned it under. Labels the retained row and gives it a joinable url. */
   sourceBasisMeta?: Map<string, RetainedBasisMeta> | null;
+  /** RULING 4 (2026-10-21): the web_search call's cited_text spans per URL — present only when the result came from it */
+  webSearchCitedSpans?: ReadonlyMap<string, readonly string[]> | null;
+  /** Spend cap (2026-10-21): a capped run's paid calls inside ingest (finding beats, frontier) are checked before sent */
+  spendCap?: SpendCap | null;
 }) {
   const signals = mapPublicBaselineOutputToSignals({
     companyId: args.companyId,
@@ -902,6 +927,7 @@ export async function ingestPublicBaselineSignals(args: {
     signals,
     sourceTextByUrl: args.sourceTextByUrl ?? new Map<string, string>(),
     sourceBasisMeta: args.sourceBasisMeta ?? null,
+    ...(args.webSearchCitedSpans ? { webSearchCitedSpans: args.webSearchCitedSpans } : {}),
   });
 
   // B2.0 ingest stamping: every outside_voice_about_client draft gets a syndication
@@ -990,7 +1016,7 @@ export async function ingestPublicBaselineSignals(args: {
   try {
     const openaiApiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
     if (openaiApiKey) {
-      await generateFindingBeats({ supabase: args.supabase, companyId: args.companyId, openaiApiKey });
+      await generateFindingBeats({ supabase: args.supabase, companyId: args.companyId, openaiApiKey, ...(args.spendCap ? { spendCap: args.spendCap } : {}) });
     } else {
       console.log("[evidence] beats skipped — no OPENAI_API_KEY");
     }
@@ -1003,7 +1029,7 @@ export async function ingestPublicBaselineSignals(args: {
   try {
     const openaiApiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
     if (openaiApiKey) {
-      await generateFrontier({ supabase: args.supabase, companyId: args.companyId, runId: args.runId, openaiApiKey });
+      await generateFrontier({ supabase: args.supabase, companyId: args.companyId, runId: args.runId, openaiApiKey, ...(args.spendCap ? { spendCap: args.spendCap } : {}) });
     } else {
       console.log("[evidence] frontier skipped — no OPENAI_API_KEY");
     }

@@ -19,6 +19,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { persistSignalsAndRebuildClaims } from "../_shared/evidencePhase1.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
+import { ledgerOrRefuse, promptShaOf, requireWebSearchLedger, webSearchLedgerFor } from "../_shared/webSearchLedger.ts";
+import { extractCitedSpans } from "../../../src/lib/firstRead/citationSource.ts";
+import { citedTextExcerpt, WEBSEARCH_CITED_TEXT } from "../_shared/citedTextExcerpt.ts";
 import { loadConfirmedRelatedEntities, ownHostMatchHost, ownHostsFor, type OwnHostSet, type RelatedEntityRow } from "../_shared/ownHosts.ts";
 
 const corsHeaders: Record<string, string> = {
@@ -273,16 +276,31 @@ Deno.serve(async (req) => {
     const blocked = [...inputs.excludeDomains, ...inputs.related.map((r) => r.host).filter((h) => !inputs.excludeDomains.includes(h))];
     if (blocked.length > 0) webSearchTool.blocked_domains = blocked;
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    // RULING 1 (2026-10-21): every web_search call writes one model_calls row before its answer is parsed; a call whose
+    // row cannot be written is refused (its answer never used). The ledger is required — built before the request.
+    const wsLedger = webSearchLedgerFor(supabase, { companyId: company_id, runId: null, callSite: "competitor-discovery" });
+    requireWebSearchLedger(wsLedger, "competitor-discovery");
+    const wsPromptSha = await promptShaOf(prompt);
+    let res: Response;
+    try {
+      res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({ model: anthropicModel, max_tokens: 8000, tools: [webSearchTool], messages: [{ role: "user", content: prompt }] }),
     });
+    } catch (netErr) {
+      await ledgerOrRefuse(wsLedger, { model: anthropicModel, usage: null, attempt: 1, promptSha: wsPromptSha }, "competitor-discovery");
+      throw netErr;
+    }
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
+      await ledgerOrRefuse(wsLedger, { model: anthropicModel, usage: null, attempt: 1, promptSha: wsPromptSha }, "competitor-discovery");
       return json({ error: `Anthropic call failed: HTTP ${res.status} ${errText.slice(0, 300)}` }, 502);
     }
     const data = await res.json();
+    await ledgerOrRefuse(wsLedger, { model: anthropicModel, usage: (data as any)?.usage ?? null, attempt: 1, promptSha: wsPromptSha }, "competitor-discovery");
+    // RULING 4 (2026-10-21): a minted row's excerpt is one cited_text span the tool returned for its URL, or blank
+    const citedSpans = extractCitedSpans(data);
     const blocks = Array.isArray((data as any)?.content) ? (data as any).content : [];
     const textBlocks = blocks.filter((b: any) => b?.type === "text" && typeof b?.text === "string");
     const finalText = textBlocks.length > 0 ? String(textBlocks[textBlocks.length - 1].text) : "";
@@ -316,6 +334,10 @@ Deno.serve(async (req) => {
     const pushDraft = (item: any, topic: string) => {
       const text = String(item?.snippet || "").trim();
       if (!text) return;
+      const ex = citedTextExcerpt(text, String(item?.url || ""), citedSpans);
+      const excerptGuard = ex.kind === "cited"
+        ? { basis: WEBSEARCH_CITED_TEXT, traced: true }
+        : ex.kind === "blanked" ? { basis: WEBSEARCH_CITED_TEXT, traced: false, reason: ex.reason, unverified_excerpt: ex.unverified_excerpt } : null;
       drafts.push({
         company_id,
         source_id: String(runRow.id),
@@ -326,7 +348,7 @@ Deno.serve(async (req) => {
         voice_class: String(item?.voice_class || "market_context"),
         evidence_type: "market_signal",
         claim_text: text,
-        evidence_excerpt: text,
+        evidence_excerpt: ex.kind === "cited" ? ex.evidence_excerpt : "",
         topic,
         framework: "competitor_discovery",
         directness: "direct",
@@ -335,7 +357,7 @@ Deno.serve(async (req) => {
         structure_level: "extracted",
         validation_status: "directional",
         confidence_to_use: Number(item?.confidence ?? 0) >= 70 ? "high" : "medium",
-        raw_payload: item,
+        raw_payload: excerptGuard ? { ...item, excerpt_guard: excerptGuard } : item,
       });
     };
     for (const competitor of (guarded?.competitors || [])) {

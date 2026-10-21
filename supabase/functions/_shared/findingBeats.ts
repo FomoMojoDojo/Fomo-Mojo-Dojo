@@ -19,6 +19,7 @@
 // Idempotent: only processes findings WHERE beats IS NULL, so re-running generates 0.
 // Render-side (Next Turn) is a separate item (2b) — nothing here renders.
 
+import { assertSpendable, projectOpenAIUsd, type SpendCap } from "./spendCap.ts";
 import { makeRoutedModel, type RoutedModel, type OpenAIUsage } from "./modelRouter.ts";
 import { callOllamaJson } from "./signalRecurrence.ts";
 import { companyHasClientProvidedMaterial } from "./clientMaterial.ts";
@@ -146,10 +147,12 @@ export function beatsRouteProvenance(register: string | null | undefined, hasCli
 }
 
 /** The default routed caller (external when the router says so, else local qwen). Injected so a guard can count calls. */
-export function defaultBeatsRoutedModel(openaiKey: string, onUsage?: (u: OpenAIUsage) => void): RoutedModel {
+export function defaultBeatsRoutedModel(openaiKey: string, onUsage?: (u: OpenAIUsage) => void, spendCap?: SpendCap | null): RoutedModel {
   const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
   const local = (model: string, system: string, user: string) => callOllamaJson(ollamaUrl, model || LOCAL_GENERATOR, system, user, 120_000);
-  return makeRoutedModel({ callLocalGenerator: local, callLocalJudge: local, openaiKey, onUsage });
+  // spend cap (2026-10-21): a capped run projects and checks every external call before it is sent
+  const beforeExternal = spendCap ? (c: { model: string; system: string; user: string }) => assertSpendable(spendCap, { site: BEATS_CALL_SITE, model: c.model, projectedUsd: projectOpenAIUsd(c.model, { promptChars: c.system.length + c.user.length, maxOutputTokens: 4096 }) }) : undefined;
+  return makeRoutedModel({ callLocalGenerator: local, callLocalJudge: local, openaiKey, onUsage, ...(beforeExternal ? { beforeExternal } : {}) });
 }
 
 export async function generateFindingBeats(args: {
@@ -157,6 +160,8 @@ export async function generateFindingBeats(args: {
   companyId: string;
   openaiApiKey: string;
   model?: string;
+  /** Spend cap (2026-10-21): present ⇒ every external call is projected and checked before it is sent. */
+  spendCap?: SpendCap | null;
   /** Test seam: the routed caller (defaults to defaultBeatsRoutedModel). */
   routedModel?: RoutedModel;
 }): Promise<{ generated: number; skipped: number; failed: number }> {
@@ -181,7 +186,7 @@ export async function generateFindingBeats(args: {
   // ruling 8: the wall predicate decides where an internal_inferred finding may go (fail closed on lookup error)
   const material = await companyHasClientProvidedMaterial(supabase, companyId);
   let usage: OpenAIUsage | null = null;
-  const routed = args.routedModel ?? defaultBeatsRoutedModel(openaiApiKey, (u) => { usage = u; });
+  const routed = args.routedModel ?? defaultBeatsRoutedModel(openaiApiKey, (u) => { usage = u; }, args.spendCap ?? null);
 
   let generated = 0;
   let failed = 0;

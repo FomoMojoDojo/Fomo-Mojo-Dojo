@@ -73,7 +73,9 @@ export function firstQuoteLine(extracted: string): string | null {
 // on every signal row; site_crawl-minted rows never become claim candidates.
 export function isSiteCrawlReceiptRow(row: { raw_payload?: unknown } | null | undefined): boolean {
   const rp = (row?.raw_payload ?? null) as { source_type?: unknown } | null;
-  return String(rp?.source_type ?? "") === "site_crawl";
+  // the seed-host cited-text lane's rows (2026-10-21) are own-site words read through the search tool — receipts too
+  const st = String(rp?.source_type ?? "");
+  return st === "site_crawl" || st === "seed_host_cited_text";
 }
 
 // Sitemap seed (ruling 4): parse <loc> URLs out of sitemap.xml text, keep
@@ -128,6 +130,10 @@ export async function mintSiteCrawlSignals(args: {
   /** Defense-in-depth (ruling: excluded domains stay excluded even if the
    *  client's own nav links them). Upstream policy filtering still applies. */
   excludeHosts?: string[];
+  /** E3/E4 (operator ruling 2026-10-21): the confirmed related entity a page's URL belongs to (a related host in the
+   *  run's own-host set), or null for the company's own seed host. A page with an entity mints with raw_payload.entity
+   *  and voice_authority own_domain_related; absent / null ⇒ the row is byte-identical to before. */
+  entityFor?: ((url: string) => Record<string, unknown> | null) | null;
   /** Injectable clock for tests. */
   nowIso?: () => string;
 }): Promise<SiteReadLedger> {
@@ -178,6 +184,7 @@ export async function mintSiteCrawlSignals(args: {
     // fallback identity, not content.
     const claimText = [title, meta].filter(Boolean).join(" — ").slice(0, 600) || `Site page ${path}`;
     const quote = firstQuoteLine(extracted);
+    const entity = args.entityFor ? args.entityFor(page.url) : null;
 
     const insertRow = {
       company_id: args.companyId,
@@ -210,6 +217,8 @@ export async function mintSiteCrawlSignals(args: {
         path,
         // retained even when no quote lifts, so supersession compare never goes blind
         ...(quote ? {} : { site_text: extracted }),
+        // E3/E4: a related entity's own site — the rule that decided it, and the entity, on the row
+        ...(entity ? { entity, voice_authority: { authority: "own_domain_related" } } : {}),
       },
     };
 

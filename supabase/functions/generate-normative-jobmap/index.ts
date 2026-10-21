@@ -18,6 +18,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { normalizeForHash, sha256Hex } from "../_shared/contentIdentity.ts";
+import { ledgerOrRefuse, promptShaOf, requireWebSearchLedger, webSearchLedgerFor } from "../_shared/webSearchLedger.ts";
 import { registrableDomain } from "../_shared/signalRecurrence.ts";
 import {
   anchorsToPromptBlock,
@@ -258,16 +259,29 @@ Deno.serve(async (req) => {
     // ── Discovery (claude_web_search) ───────────────────────────────────────────
     const webSearchTool: Record<string, unknown> = { type: "web_search_20250305", name: "web_search", max_uses: 16 };
     if (inputs.excludeDomains.length > 0) webSearchTool.blocked_domains = inputs.excludeDomains;
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    // RULING 1 (2026-10-21): every web_search call writes one model_calls row before its answer is parsed; a call whose
+    // row cannot be written is refused (its answer never used). The ledger is required — built before the request.
+    const wsLedger = webSearchLedgerFor(supabase, { companyId: company_id, runId: null, callSite: "generate-normative-jobmap" });
+    requireWebSearchLedger(wsLedger, "generate-normative-jobmap");
+    const wsPromptSha = await promptShaOf(discoveryPrompt);
+    let res: Response;
+    try {
+      res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({ model: anthropicModel, max_tokens: 8000, tools: [webSearchTool], messages: [{ role: "user", content: discoveryPrompt }] }),
     });
+    } catch (netErr) {
+      await ledgerOrRefuse(wsLedger, { model: anthropicModel, usage: null, attempt: 1, promptSha: wsPromptSha }, "generate-normative-jobmap");
+      throw netErr;
+    }
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
+      await ledgerOrRefuse(wsLedger, { model: anthropicModel, usage: null, attempt: 1, promptSha: wsPromptSha }, "generate-normative-jobmap");
       return json({ error: `Anthropic discovery failed: HTTP ${res.status} ${errText.slice(0, 300)}` }, 502);
     }
     const disc = await res.json();
+    await ledgerOrRefuse(wsLedger, { model: anthropicModel, usage: (disc as any)?.usage ?? null, attempt: 1, promptSha: wsPromptSha }, "generate-normative-jobmap");
     const blocks = Array.isArray((disc as any)?.content) ? (disc as any).content : [];
     const textBlocks = blocks.filter((b: any) => b?.type === "text" && typeof b?.text === "string");
     const finalText = textBlocks.length > 0 ? String(textBlocks[textBlocks.length - 1].text) : "";

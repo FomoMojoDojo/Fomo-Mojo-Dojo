@@ -1,5 +1,9 @@
 // supabase/functions/public-baseline/index.ts
-import { loadConfirmedRelatedEntities } from "../_shared/ownHosts.ts";
+import { loadConfirmedRelatedEntities, type OwnHostSet } from "../_shared/ownHosts.ts";
+import { countsAtEarlyAmbiguousCheck, crawlEntityFor, crawlHostFilter, discoveryHostsFor, domainPlanFallbackAdmits, entityQueryPasses, guessedProfileLinksOwnHost, isRelatedOwnHost, relatedCrawlSeeds, relatedDomainBonus, type DiscoveryHosts } from "../_shared/ownHostDiscovery.ts";
+import { promptShaOf, requireWebSearchLedger, ledgerOrRefuse, webSearchLedgerFor, type WebSearchLedger } from "../_shared/webSearchLedger.ts";
+import { assertSpendable, makeSpendCap, projectWebSearchUsd, SpendCapRefused, type SpendCap } from "../_shared/spendCap.ts";
+import { buildSeedLaneRows, SEED_LANE_CALL_SITE, SEED_LANE_MAX_TOKENS, SEED_LANE_MAX_USES, seedLanePrompt, seedLaneShouldRun, seedLaneTool, seedPagesRead } from "../_shared/seedHostLane.ts";
 import { ANALYSIS_VOICE, isAnalysisLabelled } from "../_shared/voiceLabel.ts";
 import { decideVoiceClassBeforeJudge } from "../_shared/voiceClassAtMint.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -8,7 +12,7 @@ import { mintSiteCrawlSignals, parseSitemapUrls, type SiteReadLedger } from "../
 import { buildBaselineQueryPlan, QUERY_COUNTS, QUERY_KEYS, type PlanKind } from "../_shared/baselineQueryPlan.ts";
 import { recordEvidencePresence } from "../_shared/evidencePresence.ts";
 import { normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
-import { basisMetaFor, extractCitationBasis, mergeCitationSourceText, type RetainedBasisMeta } from "../../../src/lib/firstRead/citationSource.ts";
+import { basisMetaFor, extractCitationBasis, extractCitedSpans, mergeCitationSourceText, type RetainedBasisMeta } from "../../../src/lib/firstRead/citationSource.ts";
 // FREEZE GATE — authoritative server-side frozen set (same source the delta guard uses via
 // claimDeltaSynthesis). CB1 is a SELECT-only reference fixture; this function INGESTS signals/
 // claims from scratch, so it must refuse a frozen company before any write.
@@ -466,6 +470,8 @@ function scoreCompanyMatch(args: {
   url: string;
   title?: string;
   snippet?: string;
+  /** E3: the own-host set when confirmed related entities are in effect; absent/null ⇒ the single-host score, unchanged */
+  disc?: DiscoveryHosts | null;
 }) {
   const { companyName, website, url, title = "", snippet = "" } = args;
 
@@ -481,6 +487,12 @@ function scoreCompanyMatch(args: {
   if (domain && u.includes(domain)) {
     score += 90;
     reasons.push("domain_match");
+  }
+  // E3: a URL on a confirmed related entity's host earns the same bonus (no entity in effect ⇒ null, unchanged)
+  const relBonus = domain && u.includes(domain) ? null : relatedDomainBonus(url, args.disc);
+  if (relBonus) {
+    score += relBonus.score;
+    reasons.push(relBonus.reason);
   }
 
   // 2) Domain stem match (fomomojodojo)
@@ -525,6 +537,7 @@ function scoreCompanyMatch(args: {
   const educationHit = EDUCATION_MISMATCH_TERMS.some((term) => hay.includes(term));
   const strongIdentityMatch =
     (domain && u.includes(domain)) ||
+    !!relBonus ||
     (stem && (u.includes(stem) || hay.includes(stem))) ||
     hits >= 2;
   if (educationHit && !strongIdentityMatch) {
@@ -536,7 +549,7 @@ function scoreCompanyMatch(args: {
 
   score = Math.min(100, score);
   score = Math.max(0, score);
-  return { score, reasons, variants, domain, stem };
+  return { score, reasons, variants, domain, stem, ...(relBonus ? { entity: relBonus.entity } : {}) };
 }
 
 // SRCH-1 — search-health accumulator. A suspended SearXNG answers HTTP 200 with
@@ -896,7 +909,11 @@ async function crawlWebsiteEvidence(args: {
   maxDepth?: number;
   /** A2 time guard: stop STARTING new fetches once the crawl has run this long. */
   maxMs?: number;
+  /** E3: the own-host set's membership test — when given, it replaces domainMatches(host, baseDomain) in the crawl's
+   *  three host filters (redirect target, home-page scripts, link following); absent ⇒ single-host, unchanged */
+  hostFilter?: ((host: string) => boolean) | null;
 }) {
+  const inBase = (host: string) => (args.hostFilter ? args.hostFilter(host) : domainMatches(host, args.baseDomain));
   const maxPages = Math.max(1, Number(args.maxPages || 8));
   const maxDepth = Math.max(0, Number(args.maxDepth || 2));
   // A2 (ruling 2026-08-19): 100s keeps the crawl's worst case no larger than the
@@ -977,7 +994,7 @@ async function crawlWebsiteEvidence(args: {
 
       const finalUrl = String(resp.url || next.url);
       const finalHost = getDomain(finalUrl);
-      if (!domainMatches(finalHost, args.baseDomain)) continue;
+      if (!inBase(finalHost)) continue;
       pagesFetched++;
 
       const html = await resp.text();
@@ -1003,7 +1020,7 @@ async function crawlWebsiteEvidence(args: {
       // Some sites render footer/social links via JS bundles only; inspect a few same-domain scripts on the home page.
       if (next.depth === 0 && socialSources.length < 8) {
         const scriptUrls = extractScriptUrlsFromHtml(html, finalUrl)
-          .filter((scriptUrl) => domainMatches(getDomain(scriptUrl), args.baseDomain))
+          .filter((scriptUrl) => inBase(getDomain(scriptUrl)))
           .slice(0, 4);
 
         for (const scriptUrl of scriptUrls) {
@@ -1065,7 +1082,7 @@ async function crawlWebsiteEvidence(args: {
             });
           }
           if (visited.has(link)) continue;
-          if (!domainMatches(host, args.baseDomain)) continue;
+          if (!inBase(host)) continue;
           if (queue.length >= maxPages * 6) break;
           queue.push({ url: link, depth: next.depth + 1 });
         }
@@ -1228,6 +1245,9 @@ function isSourceAllowedByPolicy(args: {
   sourceType: string;
   companyDomain: string;
   filters: PublicSourceFilters;
+  /** E3: the own-host set when confirmed related entities are in effect — a related host bypasses an include-list
+   *  whitelist exactly as the company host does; absent/null ⇒ unchanged */
+  ownHosts?: OwnHostSet | null;
 }) {
   const host = getDomain(args.url);
   const sourceType = String(args.sourceType || "").trim().toLowerCase();
@@ -1235,7 +1255,7 @@ function isSourceAllowedByPolicy(args: {
   const inExcludeDomains = args.filters.exclude_domains.some((domain) => domainMatches(host, domain));
   const inIncludeDomains = args.filters.include_domains.some((domain) => domainMatches(host, domain));
   const includeWhitelistEnabled = args.filters.include_domains.length > 0;
-  const isCompanyDomain = companyDomain ? domainMatches(host, companyDomain) : false;
+  const isCompanyDomain = (companyDomain ? domainMatches(host, companyDomain) : false) || isRelatedOwnHost(host, args.ownHosts);
 
   if (inExcludeDomains) return false;
   if (args.filters.exclude_source_types.includes(sourceType)) return false;
@@ -1725,7 +1745,14 @@ async function callClaudeWebSearch(opts: {
   ledgerRunId: string | null;
   /** Name-only lane (ruling 2026-09-18): the six passes as search intents; absent ⇒ the domain prompt, byte-identical. */
   nameOnlyBrief?: string | null;
-}): Promise<{ parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string>; citationUrlByKey: Map<string, string> }> {
+  /** RULING 1 (2026-10-21): REQUIRED — one model_calls row per call (per attempt), written before parse; a call whose row
+   *  cannot be written is refused (its answer never used). Absent ⇒ thrown before any request is sent. */
+  ledger: WebSearchLedger;
+  /** Spend cap (2026-10-21): present ⇒ each attempt is projected and checked before it is sent */
+  spendCap?: SpendCap | null;
+  /** E3: confirmed related entities in effect (domain plan) — named in the prompt as the same business; absent ⇒ unchanged */
+  relatedEntities?: Array<{ name: string; host: string; relation: "parent" | "subsidiary" | "acquired" | "brand" | "merged_into"; effective_from: string | null }> | null;
+}): Promise<{ parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string>; citationUrlByKey: Map<string, string>; citedSpans: Map<string, string[]> }> {
   const schemaHint =
     `{\n` +
     `  "category_archetype": "<string>",\n` +
@@ -1741,7 +1768,10 @@ async function callClaudeWebSearch(opts: {
 
   // ONE prompt builder for both plans (_shared/nameOnlyLane.ts): the domain form is byte-identical to the former inline
   // text (fixtures/lane/domain_prompt_HEAD_*.txt pin it); the name-only form swaps the two domain-anchored sentences.
-  const prompt = claudeWebSearchPrompt({ companyName: opts.companyName, website: opts.website, domain: opts.domain, resolvedCategory: opts.resolvedCategory, schemaHint, nameOnlyBrief: opts.nameOnlyBrief ?? null });
+  const prompt = claudeWebSearchPrompt({ companyName: opts.companyName, website: opts.website, domain: opts.domain, resolvedCategory: opts.resolvedCategory, schemaHint, nameOnlyBrief: opts.nameOnlyBrief ?? null, ...(opts.relatedEntities?.length ? { relatedEntities: opts.relatedEntities } : {}) });
+  // RULING 1: no ledger, no call
+  requireWebSearchLedger(opts.ledger, "public-baseline-search");
+  const promptSha = await promptShaOf(prompt);
 
   // Honor the company's exclude_domains: tell web_search not to search those hosts.
   // OE-2: 12 = one search per footprint class plus disambiguation/follow-up headroom.
@@ -1756,8 +1786,12 @@ async function callClaudeWebSearch(opts: {
   // doAttempt is the one live call+parse (it throws HTTP / max_tokens — those propagate, never retried).
   const { parsed, data } = await runSynthesisWithParseRetry({
     maxAttempts: 2,
-    doAttempt: async (_attempt) => {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+    doAttempt: async (attempt) => {
+      // SPEND CAP: refused before the request is sent when the attempt cannot be afforded or priced
+      await assertSpendable(opts.spendCap, { site: "public-baseline-search", model: opts.model, projectedUsd: projectWebSearchUsd(opts.model, { promptChars: prompt.length, maxUses: Number(webSearchTool.max_uses), maxTokens: 32000 }) });
+      let res: Response;
+      try {
+        res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "x-api-key": opts.apiKey,
@@ -1775,11 +1809,19 @@ async function callClaudeWebSearch(opts: {
           messages: [{ role: "user", content: prompt }],
         }),
       });
+      } catch (netErr) {
+        // the request may have reached the provider: ledger the attempt (usage unknown ⇒ NULL), then fail as before
+        await ledgerOrRefuse(opts.ledger, { model: opts.model, usage: null, attempt, promptSha }, "public-baseline-search");
+        throw netErr;
+      }
       if (!res.ok) {
         const errText = await res.text().catch(() => "");
+        await ledgerOrRefuse(opts.ledger, { model: opts.model, usage: null, attempt, promptSha }, "public-baseline-search");
         throw new Error(`Anthropic web-search call failed: HTTP ${res.status} ${errText.slice(0, 500)}`);
       }
       const d = await res.json();
+      // RULING 1: the row is written BEFORE the answer is parsed (the call cost whether or not it is usable); unledgered ⇒ refused
+      await ledgerOrRefuse(opts.ledger, { model: opts.model, usage: (d as any)?.usage ?? null, attempt, promptSha }, "public-baseline-search");
       // stop_reason honesty (require_model law): a max_tokens truncation cuts the final JSON mid-object.
       // It is its OWN error — never a parse failure, never retried, never persisted as a parse failure.
       const stopReason = String((d as any)?.stop_reason ?? "");
@@ -1855,8 +1897,42 @@ async function callClaudeWebSearch(opts: {
   const citationSourceTextByUrl = new Map<string, string>();
   const citationUrlByKey = new Map<string, string>();
   for (const [key, b] of citationBasis) { citationSourceTextByUrl.set(key, b.cited_text); citationUrlByKey.set(key, b.url); }
+  // RULING 4 (2026-10-21): every cited_text span per URL — a minted row's excerpt must be one of them, or blank
+  const citedSpans = extractCitedSpans(data);
   // parsed is guaranteed non-null here: the loop above either broke with parsed set or threw.
-  return { parsed: parsed as Record<string, unknown>, citationSourceTextByUrl, citationUrlByKey };
+  return { parsed: parsed as Record<string, unknown>, citationSourceTextByUrl, citationUrlByKey, citedSpans };
+}
+
+// SEED-HOST LANE call (2026-10-21) — one Claude web_search call with allowed_domains = [the seed host]. Ledgered before
+// parse (unledgered ⇒ refused), spend-capped before it is sent. Returns the parsed answer and every cited passage per URL.
+async function callSeedHostLane(opts: {
+  apiKey: string; model: string; companyName: string; seedHost: string; ledger: WebSearchLedger; spendCap: SpendCap | null;
+}): Promise<{ parsed: Record<string, unknown> | null; citedSpans: Map<string, string[]> }> {
+  const prompt = seedLanePrompt(opts.companyName, opts.seedHost);
+  requireWebSearchLedger(opts.ledger, SEED_LANE_CALL_SITE);
+  const promptSha = await promptShaOf(prompt);
+  await assertSpendable(opts.spendCap, { site: SEED_LANE_CALL_SITE, model: opts.model, projectedUsd: projectWebSearchUsd(opts.model, { promptChars: prompt.length, maxUses: SEED_LANE_MAX_USES, maxTokens: SEED_LANE_MAX_TOKENS }) });
+  let res: Response;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: opts.model, max_tokens: SEED_LANE_MAX_TOKENS, tools: [seedLaneTool(opts.seedHost)], messages: [{ role: "user", content: prompt }] }),
+    });
+  } catch (netErr) {
+    await ledgerOrRefuse(opts.ledger, { model: opts.model, usage: null, attempt: 1, promptSha }, SEED_LANE_CALL_SITE);
+    throw netErr;
+  }
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    await ledgerOrRefuse(opts.ledger, { model: opts.model, usage: null, attempt: 1, promptSha }, SEED_LANE_CALL_SITE);
+    throw new Error(`seed-host lane: Anthropic HTTP ${res.status} ${errText.slice(0, 300)}`);
+  }
+  const d = await res.json();
+  await ledgerOrRefuse(opts.ledger, { model: opts.model, usage: (d as any)?.usage ?? null, attempt: 1, promptSha }, SEED_LANE_CALL_SITE);
+  if (String((d as any)?.stop_reason ?? "") === "max_tokens") throw new Error("seed-host lane: output hit max_tokens — answer truncated, nothing minted");
+  const blocks = Array.isArray((d as any)?.content) ? (d as any).content : [];
+  return { parsed: parseJsonObjectDefensive(selectFinalText(blocks)), citedSpans: extractCitedSpans(d) };
 }
 
 const QUALITY_PROMPTS: Record<"no_results" | "thin" | "ambiguous" | "search_unavailable", string> = {
@@ -2161,6 +2237,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const company_id = String(body?.company_id || "").trim();
+    const spendCapStartedAt = new Date(Date.now() - 1000).toISOString();
     if (!company_id) {
       return json({ error: "company_id required" }, 400);
     }
@@ -2196,6 +2273,9 @@ Deno.serve(async (req) => {
     // FAILURE the parent row is marked failed so deltas never compute over a bad baseline.
     // parent_run_id links this baseline's ledger row + the delta stepper to the parent.
     const chain = body?.chain === true;
+    // SPEND CAP (2026-10-21): spend_cap_usd > 0 ⇒ every paid call of this run is projected and checked against the run's
+    // ledgered spend before it is sent (_shared/spendCap.ts); absent ⇒ uncapped, exactly as before.
+    const spendCapUsd = typeof body?.spend_cap_usd === "number" && Number.isFinite(body.spend_cap_usd) && body.spend_cap_usd > 0 ? Number(body.spend_cap_usd) : null;
     // The parent full_refresh row is LEDGER — machine truth, written server-side (service-role),
     // NEVER by a browser (long_runner_runs is SELECT-only under RLS for authenticated). A scheduled
     // trigger may PASS an existing parent id; a client passes only {chain:true} and public-baseline
@@ -2360,6 +2440,14 @@ Deno.serve(async (req) => {
     const variants = buildNameVariants(company_name, website);
     const spaced = splitCamelCase(company_name);
     const quoted = `"${company_name}"`;
+    // E3 (operator ruling 2026-10-21): the own-host set ON THE RUN'S DATE — the seed plus every confirmed related entity in
+    // effect today. None ⇒ discOrNull / policyOwnHosts are null and every discovery step below takes its single-host
+    // path, byte-identical (E5 parity).
+    const relatedEntityRows = noPublicSite ? [] : await loadConfirmedRelatedEntities(supabase, company_id);
+    const disc = discoveryHostsFor(website, relatedEntityRows, new Date());
+    const discOrNull: DiscoveryHosts | null = disc.hasRelated ? disc : null;
+    const policyOwnHosts: OwnHostSet | null = disc.hasRelated ? disc.set : null;
+    const spendCap: SpendCap | null = spendCapUsd != null ? makeSpendCap({ capUsd: spendCapUsd, companyId: String(company_id), since: spendCapStartedAt, supabase }) : null;
 
     // Search passes — the plan module is the ONE authority (domain: byte-identical to the pre-gate
     // strings; name_only: no domain/stem/site: terms, F/G dropped). A null pass is never sent.
@@ -2396,6 +2484,10 @@ Deno.serve(async (req) => {
     const sourcesF = await runPass("queryF");
     const sourcesG = await runPass("queryG");
     const sourcesH = await runPass("queryH");
+    // E3: one `site:<host> "<name>"` pass per confirmed related entity in effect (ENTITY_PASS_COUNT each); [] without one
+    const entityPasses = entityQueryPasses(discOrNull);
+    const entitySources: any[][] = [];
+    for (const ep of entityPasses) entitySources.push(await searxSearch(searxUrl, ep.query, ep.count, searchDiag));
     console.log("[baseline] search health", {
       queriesRun: searchDiag.queriesRun,
       queriesWithResults: searchDiag.queriesWithResults,
@@ -2411,13 +2503,14 @@ Deno.serve(async (req) => {
       source_type: "profile_or_company_page",
     }));
 
-    const rawSearchSources = mergeUnique(
+    const rawSearchSourcesBase = mergeUnique(
       mergeUnique(
         mergeUnique(mergeUnique(sourcesA, sourcesB), mergeUnique(sourcesC, sourcesD)),
         mergeUnique(sourcesE, sourcesF),
       ),
       mergeUnique(sourcesG, sourcesH),
     );
+    const rawSearchSources = entitySources.length ? mergeUnique(rawSearchSourcesBase, entitySources.flat()) : rawSearchSourcesBase;
     // ── NAME-ONLY LANE (operator ruling 2026-09-18) — discovery for a company with no public site ────
     // searx ran above and is RECORDED (runLedger.search.searx); it no longer decides the run. The web_search
     // lane runs HERE — after searx, before scoring / fetch / the thin gate — with the six name-only passes as
@@ -2425,7 +2518,7 @@ Deno.serve(async (req) => {
     // results, the fallback crawl runs over their hosts, and the gate is taken afterwards (resolveNameOnlyOutcome).
     // The lane's parsed result is REUSED as the synthesis (one call, not two). Domain plans: byte-identical path.
     const searxOutageForLedger = isUnambiguousSearchOutage(searchDiag);
-    let nameOnlyLaneOut: { parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string>; citationUrlByKey: Map<string, string> } | null = null;
+    let nameOnlyLaneOut: { parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string>; citationUrlByKey: Map<string, string>; citedSpans: Map<string, string[]> } | null = null;
     let nameOnlyLane: LaneStatus | null = null;
     let laneSources: ReturnType<typeof laneSourcesFromResult> = [];
     if (planKind === "name_only" && synthesis_engine === "claude_websearch") {
@@ -2444,6 +2537,8 @@ Deno.serve(async (req) => {
           apiKey: anthropicKey ?? "", model: anthropicModel, companyName: company_name, website, domain,
           resolvedCategory: laneCategory, excludeDomains: sourceFilters.exclude_domains,
           supabase, companyId: company_id, ledgerRunId: ledgerRowId, nameOnlyBrief,
+          ledger: webSearchLedgerFor(supabase, { companyId: String(company_id), runId: ledgerRowId, callSite: "public-baseline-search" }),
+          ...(spendCap ? { spendCap } : {}),
         });
         laneSources = laneSourcesFromResult(nameOnlyLaneOut.parsed, nameOnlyLaneOut.citationSourceTextByUrl, inferSourceType);
         nameOnlyLane = laneStatusFromSources(laneSources, null);
@@ -2458,13 +2553,22 @@ Deno.serve(async (req) => {
     // Same-domain website crawl (helps tiny footprints / thin homepages) — SKIPPED for a company with
     // no public site (gate B): there is no own domain to read, and nothing may be minted as its voice.
     const directUrl = website.startsWith("http") ? website : `https://${website}`;
+    // E3: one crawl per related host in effect (run alongside the seed crawl, each under its own A2 time guard), and
+    // every crawl's host filters test the own-host set; no entity ⇒ no extra crawl, no filter, the seed crawl unchanged.
+    const crawlHostOk = crawlHostFilter(discOrNull);
+    const relatedCrawlsP = noPublicSite ? Promise.resolve([]) : Promise.all(relatedCrawlSeeds(discOrNull).map((rs) => crawlWebsiteEvidence({ startUrl: rs.startUrl, baseDomain: rs.baseDomain, maxPages: 8, maxDepth: 2, hostFilter: crawlHostOk })));
     const crawlResult = noPublicSite ? null : await crawlWebsiteEvidence({
       startUrl: directUrl,
       baseDomain: domain,
       maxPages: 14,
       maxDepth: 2,
+      ...(crawlHostOk ? { hostFilter: crawlHostOk } : {}),
     });
-    const crawledSiteEvidence = Array.isArray(crawlResult?.siteEvidence) ? crawlResult.siteEvidence : [];
+    const relatedCrawls = await relatedCrawlsP;
+    const seedSiteEvidence = Array.isArray(crawlResult?.siteEvidence) ? crawlResult.siteEvidence : [];
+    const crawledSiteEvidence = relatedCrawls.length ? mergeEvidenceByUrl([...seedSiteEvidence, ...relatedCrawls.flatMap((c) => c.siteEvidence)]) : seedSiteEvidence;
+    // the hosts this run crawled directly (ruling 2: a domain plan's fallback reads only an own host NOT already crawled)
+    const crawledOwnHosts = noPublicSite ? [] : disc.set.hosts.map((h) => h.host);
     const discoveredSocialSources = Array.isArray(crawlResult?.socialSources) ? crawlResult.socialSources : [];
 
     const socialCandidatesFromSite = discoveredSocialSources.map((source) => ({
@@ -2495,6 +2599,7 @@ Deno.serve(async (req) => {
       { key: "queryF", label: "linkedin company", query: queryF, raw_count: sourcesF.length, sample_urls: sourcesF.slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) },
       { key: "queryG", label: "linkedin posts", query: queryG, raw_count: sourcesG.length, sample_urls: sourcesG.slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) },
       { key: "queryH", label: "broad company web", query: queryH, raw_count: sourcesH.length, sample_urls: sourcesH.slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) },
+      ...entityPasses.map((ep, i) => ({ key: ep.key, label: ep.label, query: ep.query, raw_count: entitySources[i].length, sample_urls: entitySources[i].slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) })),
       {
         key: "site_social_links",
         label: "social links from company site",
@@ -2527,9 +2632,11 @@ Deno.serve(async (req) => {
           url: r?.url,
           title: r?.title,
           snippet: r?.snippet,
+          ...(discOrNull ? { disc: discOrNull } : {}),
         });
         return {
           ...r,
+          ...(m.entity ? { match_entity: m.entity } : {}),
           source_type: inferSourceType(r?.url, r?.title, r?.snippet),
           match_score:
             r?.engine === "manual_seed_url"
@@ -2562,7 +2669,7 @@ Deno.serve(async (req) => {
       isSourceAllowedByPolicy({
         url: String(x?.url || ""),
         sourceType: String(x?.source_type || "public_web"),
-        companyDomain: domain,
+        companyDomain: domain, ownHosts: policyOwnHosts,
         filters: sourceFilters,
       }),
     );
@@ -2587,7 +2694,7 @@ Deno.serve(async (req) => {
       isSourceAllowedByPolicy({
         url: item.url,
         sourceType: item.source_type,
-        companyDomain: domain,
+        companyDomain: domain, ownHosts: policyOwnHosts,
         filters: sourceFilters,
       }),
     );
@@ -2596,7 +2703,7 @@ Deno.serve(async (req) => {
         isSourceAllowedByPolicy({
           url: item.url,
           sourceType: item.source_type,
-          companyDomain: domain,
+          companyDomain: domain, ownHosts: policyOwnHosts,
           filters: sourceFilters,
         })
       )
@@ -2613,7 +2720,7 @@ Deno.serve(async (req) => {
         isSourceAllowedByPolicy({
           url: item.url,
           sourceType: item.source_type,
-          companyDomain: domain,
+          companyDomain: domain, ownHosts: policyOwnHosts,
           filters: sourceFilters,
         })
       )
@@ -2830,7 +2937,11 @@ Deno.serve(async (req) => {
     }
 
     // If there are results but none match well (and no direct site), record ambiguous (200) and include closest sources
-    if (strong.length === 0 && medium.length === 0 && directEvidence.length === 0) {
+    // RULING 2 (fill brief step 1): on a domain plan a guessed social profile counts ZERO at this early check — it is not yet
+    // fetched, so nothing shows it links to an own host (it may still be fetched below and count once it does).
+    const earlyStrong = strong.filter((x: any) => countsAtEarlyAmbiguousCheck(x, planKind));
+    const earlyMedium = medium.filter((x: any) => countsAtEarlyAmbiguousCheck(x, planKind));
+    if (earlyStrong.length === 0 && earlyMedium.length === 0 && directEvidence.length === 0) {
       const closest = filteredAnnotated.slice(0, 10).map((x: any) => ({
         url: x.url,
         title: x.title,
@@ -2913,6 +3024,9 @@ Deno.serve(async (req) => {
     const extracted: any[] = [];
     for (const s of candidates) {
       const got = await fetchAndExtract(s.url);
+      // RULING 2 (2026-10-21): on a domain plan a GUESSED social profile (the LinkedIn slug guess) counts only if its page
+      // links to an own host — run 81 read spectrum.dev (Spectrum Technology) through the guess `spectrum-technology`.
+      const guessUnlinked = planKind === "domain" && s.engine === "linkedin_slug_guess" && got.ok && !guessedProfileLinksOwnHost(extractHttpUrlsFromText(got.text, s.url), disc.set);
       extracted.push({
         url: s.url,
         title: s.title,
@@ -2921,8 +3035,9 @@ Deno.serve(async (req) => {
         source_type: s.source_type,
         match_score: s.match_score,
         match_reason: s.match_reason,
-        extracted: got.ok ? got.text : "",
-        ok: got.ok,
+        extracted: got.ok && !guessUnlinked ? got.text : "",
+        ok: got.ok && !guessUnlinked,
+        ...(guessUnlinked ? { refused: "guessed_profile_unlinked" } : {}),
       });
     }
 
@@ -2935,12 +3050,14 @@ Deno.serve(async (req) => {
             if (!host) return "";
             if (isKnownSocialHost(host)) return "";
             if (domainMatches(host, domain)) return "";
+            // RULING 2 (2026-10-21): a domain plan never crawls a guessed origin — only an own host not already crawled
+            if (planKind === "domain" && !domainPlanFallbackAdmits(host, disc.set, crawledOwnHosts)) return "";
             if (sourceFilters.exclude_domains.some((blocked) => domainMatches(host, blocked))) return "";
             if (
               !isSourceAllowedByPolicy({
                 url: candidateUrl,
                 sourceType: "public_web",
-                companyDomain: domain,
+                companyDomain: domain, ownHosts: policyOwnHosts,
                 filters: sourceFilters,
               })
             ) return "";
@@ -2981,7 +3098,7 @@ Deno.serve(async (req) => {
             !isSourceAllowedByPolicy({
               url: page.url,
               sourceType: "public_web",
-              companyDomain: domain,
+              companyDomain: domain, ownHosts: policyOwnHosts,
               filters: sourceFilters,
             })
           ) continue;
@@ -2997,7 +3114,7 @@ Deno.serve(async (req) => {
             !isSourceAllowedByPolicy({
               url: social.url,
               sourceType: social.source_type,
-              companyDomain: domain,
+              companyDomain: domain, ownHosts: policyOwnHosts,
               filters: sourceFilters,
             })
           ) continue;
@@ -3042,7 +3159,7 @@ Deno.serve(async (req) => {
         isSourceAllowedByPolicy({
           url: String(entry?.url || ""),
           sourceType: String(entry?.source_type || "public_web"),
-          companyDomain: domain,
+          companyDomain: domain, ownHosts: policyOwnHosts,
           filters: sourceFilters,
         })
       )
@@ -3247,12 +3364,15 @@ Deno.serve(async (req) => {
     let claudeCitationSourceText = new Map<string, string>();
     // Step (a): the tool's url per citation key, so the retained basis is stored under a url the signals carry.
     let claudeCitationUrlByKey = new Map<string, string>();
+    // RULING 4: the web_search call's cited_text spans per URL (null on the OpenAI path — the rule does not apply there)
+    let claudeCitedSpans: Map<string, string[]> | null = null;
     let result: unknown;
     if (synthesis_engine === "claude_websearch" && nameOnlyLaneOut) {
       // NAME-ONLY: the lane already ran (before the gate) — reuse its result; never a second web_search.
       result = nameOnlyLaneOut.parsed;
       claudeCitationSourceText = nameOnlyLaneOut.citationSourceTextByUrl;
       claudeCitationUrlByKey = nameOnlyLaneOut.citationUrlByKey;
+      claudeCitedSpans = nameOnlyLaneOut.citedSpans;
       // past the gate ⇒ the run completes; which discovery carried it is the ledgered search_status
       runLedger.search_status = searchLedger.searx === "ok" ? "searx_and_lane" : "lane_only";
     } else if (synthesis_engine === "claude_websearch") {
@@ -3269,11 +3389,20 @@ Deno.serve(async (req) => {
         supabase,
         companyId: company_id,
         ledgerRunId: ledgerRowId,
+        // RULING 1 (2026-10-21): every web_search call writes one model_calls row before parse; unledgered ⇒ refused
+        ledger: webSearchLedgerFor(supabase, { companyId: String(company_id), runId: ledgerRowId, callSite: "public-baseline-search" }),
+        ...(spendCap ? { spendCap } : {}),
+        // E3: the confirmed related entities in effect name the same business in the prompt; none ⇒ byte-identical prompt
+        ...(discOrNull ? { relatedEntities: discOrNull.related.map((r) => r.entity) } : {}),
       });
       result = claudeOut.parsed;
       claudeCitationSourceText = claudeOut.citationSourceTextByUrl;
       claudeCitationUrlByKey = claudeOut.citationUrlByKey;
+      claudeCitedSpans = claudeOut.citedSpans;
     } else {
+      // SPEND CAP: the OpenAI synthesis writes no model_calls row (modelCallSites: public-baseline-synthesis, not captured),
+      // so its cost cannot be computed — under a cap it is refused before it is sent.
+      await assertSpendable(spendCap, { site: "public-baseline-synthesis", model: openaiModel, projectedUsd: null });
       result = await callOpenAI({
         apiKey: openaiKey,
         model: openaiModel,
@@ -3365,7 +3494,7 @@ Deno.serve(async (req) => {
         isSourceAllowedByPolicy({
           url: String(entry?.url || ""),
           sourceType: String(entry?.source_type || "profile_or_company_page"),
-          companyDomain: domain,
+          companyDomain: domain, ownHosts: policyOwnHosts,
           filters: sourceFilters,
         })
       )
@@ -3461,6 +3590,8 @@ Deno.serve(async (req) => {
       ),
       sourceTextByUrl,
       sourceBasisMeta,
+      ...(claudeCitedSpans ? { webSearchCitedSpans: claudeCitedSpans } : {}),
+      ...(spendCap ? { spendCap } : {}),
     });
 
     // OWN-DOMAIN DETERMINISTIC MINT (design gate 2026-08-18): the crawl's pages
@@ -3476,17 +3607,49 @@ Deno.serve(async (req) => {
         runId: inserted?.id ?? null,
         pages: directEvidence.map((e) => ({ url: e.url, title: e.title, meta: (e as { meta?: string }).meta ?? "", extracted: e.extracted })),
         excludeHosts: sourceFilters.exclude_domains,
+        // E3/E4: a page on a confirmed related host mints with its entity and the own_domain_related authority
+        ...(discOrNull ? { entityFor: (url: string) => crawlEntityFor(url, discOrNull) } : {}),
       });
       console.log("[site-mint] site_read", siteRead);
     } catch (mintError) {
       console.warn("[site-mint] failed — baseline result stands, site_read records the failure", mintError);
       siteRead = null;
     }
+    // SEED-HOST CITED-TEXT LANE (2026-10-21): the own-site crawl read ZERO seed-host pages (a bot-walled site) ⇒ one Claude
+    // web_search call restricted to the seed host reads the company's own site; rows are the subject's own voice by the
+    // own-domain rule, excerpt = a cited passage or blank (_shared/seedHostLane.ts). A crawl that read any seed page never
+    // runs it. Ledgered; checked against the spend cap before it is sent.
+    const seedHostForLane = disc.set.seed;
+    const seedRead = seedPagesRead(crawledSiteEvidence, seedHostForLane);
+    let seedLane: Record<string, unknown> = { ran: false, seed_pages_read: seedRead };
+    if (synthesis_engine === "claude_websearch" && seedLaneShouldRun({ noPublicSite, seedHost: seedHostForLane, seedPagesRead: seedRead })) {
+      try {
+        const lane = await callSeedHostLane({
+          apiKey: anthropicKey ?? "", model: anthropicModel, companyName: company_name, seedHost: seedHostForLane!,
+          ledger: webSearchLedgerFor(supabase, { companyId: String(company_id), runId: ledgerRowId, callSite: SEED_LANE_CALL_SITE }),
+          spendCap,
+        });
+        const { rows, stats } = buildSeedLaneRows({
+          companyId: String(company_id), runId: inserted?.id ?? null, seedHost: seedHostForLane!, parsed: lane.parsed, citedSpans: lane.citedSpans,
+          decide: (url) => decideVoiceClassBeforeJudge({ url, item: null, labeledClass: "client_voice", pageText: null, judgedText: null, company: { name: "", host: seedHostForLane! }, registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" }) as never,
+          captureDay: new Date().toISOString().slice(0, 10),
+        });
+        if (rows.length > 0) {
+          const { error: laneInsErr } = await supabase.from("signals").insert(rows);
+          if (laneInsErr) throw new Error(`seed-lane insert failed: ${laneInsErr.message}`);
+        }
+        seedLane = { ran: true, seed_pages_read: seedRead, ...stats };
+      } catch (laneErr) {
+        seedLane = { ran: true, seed_pages_read: seedRead, error: String((laneErr as Error)?.message ?? laneErr).slice(0, 300), refused_by_cap: laneErr instanceof SpendCapRefused };
+      }
+      console.log("[seed-lane]", seedLane);
+    }
     {
       const siteReadPatch = siteRead ?? { pages_read: 0, kept: 0, added: 0, superseded: 0, changes: [], failed: true };
+      const capLedger = spendCap ? { cap_usd: spendCap.capUsd, since: spendCap.since, refusals: spendCap.refusals } : null;
       const { error: siteReadErr } = await supabase
         .from("public_baseline_runs")
-        .update({ result_json: { ...withRunLedger(resultWithDiscoveredSources, runLedger), site_read: siteReadPatch } })
+        .update({ result_json: { ...withRunLedger(resultWithDiscoveredSources, { ...runLedger, seed_lane: seedLane, ...(capLedger ? { spend_cap: capLedger } : {}) }), site_read: siteReadPatch } })
         .eq("id", inserted?.id);
       if (siteReadErr) console.warn("[site-mint] site_read ledger write failed:", siteReadErr.message);
     }
