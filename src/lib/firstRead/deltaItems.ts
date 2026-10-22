@@ -44,6 +44,8 @@ export interface DeltaInput {
   relevance_verdict?: string | null;
   // SELF-ECHO GATE: observed side backed by the company's own host (claim_deltas.observed_own_host).
   observed_own_host?: boolean | null;
+  // GAP-QUALITY RULES R1–R3 (2026-10-22): the pair's ACTIVE rule refusal (claim_delta_rule_refusals_active), if any.
+  rule_refusal?: string | null;
 }
 
 // COLLISION DETECTION: drop any delta whose identity equals a non-delta (finding) item's
@@ -107,7 +109,7 @@ export function assembleDeltaItems(deltas: DeltaInput[]): RawCheckItem[] {
       // selector as beat 4. The verdict stays recorded/reversible in claim_deltas.
       // SELF-ECHO GATE (2026-09-03): the ONE admissibility predicate — relevance strike OR own-host observed
       // side ⇒ omitted from the client render. Both stay recorded/reversible in claim_deltas.
-      if (!isPairAdmissible({ relevanceVerdict: d.relevance_verdict, observedOwnHost: d.observed_own_host })) continue;
+      if (!isPairAdmissible({ relevanceVerdict: d.relevance_verdict, observedOwnHost: d.observed_own_host, ruleRefusal: d.rule_refusal })) continue;
     }
 
     items.push({

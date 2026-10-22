@@ -68,6 +68,7 @@ import { isOwnDomainUrl, normalizeHost } from "./firstReadProvenance.ts";
 import { loadConfirmedRelatedEntities, ownHostsFor, type OwnHostSet } from "./ownHosts.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { loadPageWordsDecision } from "./deltaPageWords.ts";
+import { applyDeltaRuleChecks } from "./deltaRuleChecks.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
 const DEFAULT_JUDGE_MODEL = "llama3:70b";
@@ -1348,6 +1349,9 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     // written AFTER the work so a died run leaves no false "looked" row (the orchestrator's
     // catch writes the failed row instead).
     if (pairingKind === "public_vs_public") {
+      // GAP-QUALITY RULES R1–R3 (operator ruling 2026-10-22): refuse judged pairs the judge could not see were wrong —
+      // append-only refusal rows (audit first); the verdict rows above are never edited.
+      const ruleChecks = await applyDeltaRuleChecks(args.supabase, args.companyId, { actor: "claim-delta-finalize", runRef: args.nowIso });
       await writeGapPairsIntegrity(args.supabase, args.companyId, {
         status: "completed",
         ranAtIso: args.nowIso,
@@ -1359,6 +1363,8 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
           self_voice: totals.self_voice_excluded,
           own_host: totals.own_host_excluded,
           unbacked: totals.unbacked_excluded,
+          rule_checks_examined: ruleChecks.examined,
+          rule_refusals: ruleChecks.refused,
           own_words_observed: totals.own_words_observed_excluded,
           own_words_ineligible: totals.own_words_ineligible,
           proof_guard: totals.proof_guard_excluded,

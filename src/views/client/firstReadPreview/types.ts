@@ -135,6 +135,9 @@ export type FRGapPair = {
   /** SELF-ECHO GATE (2026-09-03): the observed side is backed by the company's own host (claim_deltas.
    *  observed_own_host). Never an echo — omitted by the shared selector on every reader. */
   observedOwnHost?: boolean | null;
+  /** GAP-QUALITY RULES R1–R3 (2026-10-22): the pair's ACTIVE rule refusal (R1 | R2 | R3), or null. Out of the active set
+   *  through isPairAdmissible, like a relevance strike. */
+  ruleRefusal?: string | null;
   /** A1: evidence strength (3 strong / 2 moderate / 1 thin) — the within-category sort key. */
   evidenceRank: number;
   /** S5: backing references a location with a live status conflict. */
@@ -183,8 +186,10 @@ export type FRGapCounts = { contradicted: number; reverifying: number; unechoed:
 export type FRReverseRow = {
   /** delta id — stable render key. */
   id: string;
-  /** the public-record statement (the record's words). */
+  /** the public-record claim statement (ordering / marks text; NOT rendered as the record). */
   statement: string;
+  /** RECORD PAGE WORDS (2026-10-22): the record's verified page words, markup stripped — null ⇒ no record line. */
+  record?: string | null;
   /** real source tag (host + read date) or null (hidden). */
   sourceTag: SourceTagResult;
   /** the record signal's date, for ordering; null if undated. */

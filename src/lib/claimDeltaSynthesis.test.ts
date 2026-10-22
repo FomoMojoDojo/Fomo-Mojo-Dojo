@@ -55,6 +55,9 @@ function fakeDb(seed: {
     claim_delta_removals: [],
     // the public kind writes its own first_read_gap_pairs integrity row at the end of a write run
     integrity_runs: [],
+    // GAP-QUALITY RULES R1–R3 (2026-10-22): the public finalize writes refusals (audit row first)
+    claim_delta_rule_refusals: [],
+    claim_delta_rule_refusal_audit: [],
   };
   let nextId = 1;
   const db = {
@@ -76,6 +79,8 @@ function fakeDb(seed: {
         _filters: [] as Array<(r: Row) => boolean>,
         select() { return this; },
         eq(col: string, v: unknown) { this._filters.push((r: Row) => r[col] === v); return this; },
+        // harness fidelity (2026-10-22): the finalize's rule-check loader reads claims / refs / signals by id list
+        in(col: string, vals: unknown[]) { this._filters.push((r: Row) => vals.includes(r[col])); return this; },
         order() { return this; },
         then(resolve: (v: { data: Row[]; error: null }) => void) {
           resolve({ data: (tables[table] ?? []).filter((r) => chain._filters.every((f) => f(r))), error: null });

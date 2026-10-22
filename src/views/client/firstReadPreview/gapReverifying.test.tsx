@@ -221,8 +221,8 @@ import type { FRReverseRow } from "./types";
 const readReverse = (rows: FRReverseRow[]): FirstReadPreviewData => ({ ...EMPTY_FIRST_READ, reverseRows: rows });
 describe("beat 4 — Raised by the record (reverse arrow)", () => {
   const ROWS: FRReverseRow[] = [
-    { id: "r1", statement: "4.8 Star Rating from 148 reviewers", sourceTag: { label: "chamberofcommerce.com · read Aug 2026" }, eventDate: "2026-01-01" },
-    { id: "r2", statement: "a charming bakery and café that offers a delightful experience", sourceTag: { label: "restaurantji.com · read Aug 2026" }, eventDate: "2026-01-01" },
+    { id: "r1", statement: "4.8 Star Rating from 148 reviewers", record: "4.8 Star Rating from 148 reviewers", sourceTag: { label: "chamberofcommerce.com · read Aug 2026" }, eventDate: "2026-01-01" },
+    { id: "r2", statement: "a charming bakery and café that offers a delightful experience", record: "a charming bakery and café that offers a delightful experience", sourceTag: { label: "restaurantji.com · read Aug 2026" }, eventDate: "2026-01-01" },
   ];
 
   it("renders the section with the record rows + source tags, a distinct sub-count, and NO verdict chip", () => {
@@ -244,7 +244,7 @@ describe("beat 4 — Raised by the record (reverse arrow)", () => {
     // Edgewood has 9 renderable reverse rows (BBB, Birdeye, Charity Navigator, Glassdoor, Niche, Yelp).
     // The feature applies to every company with active-backed internally_silent record — never scoped out.
     const rows: FRReverseRow[] = Array.from({ length: 9 }, (_, i) => ({
-      id: `e${i}`, statement: `Edgewood record row ${i}`, sourceTag: { label: `host${i}.com` }, eventDate: "2026-01-01",
+      id: `e${i}`, statement: `Edgewood record row ${i}`, record: `Edgewood record row ${i}`, sourceTag: { label: `host${i}.com` }, eventDate: "2026-01-01",
     }));
     const t = render(<ActGap read={readReverse(rows)} />).container.textContent ?? "";
     expect(t.toLowerCase()).toContain("raised by the record");

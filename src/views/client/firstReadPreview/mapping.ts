@@ -307,7 +307,7 @@ export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
     // backstop run judged the held Square-ordering echoes orthogonal. (See the FRGapPair.heldEcho
     // note; the flag is set only when the public claim's sole backing is held/recrawl-pending.)
     // An own-host pair is not a held echo either — it never counts toward 'reverifying'.
-    if (isEchoPair || (isEchoDelta && p.heldEcho && !p.observedOwnHost)) sawEcho.add(p.statementId); // a real public echo existed for this statement
+    if (isEchoPair || (isEchoDelta && p.heldEcho && !p.observedOwnHost && !p.ruleRefusal)) sawEcho.add(p.statementId); // a real public echo existed for this statement
     // GATE 3 (2026-08-26): a pair whose evidence body was held/superseded arrives body-blank
     // (record AND sourceTag both null, since both come from the now-filtered public signal). It is
     // OMITTED like a struck pair — never shown as a chip-bearing blank scaffold.

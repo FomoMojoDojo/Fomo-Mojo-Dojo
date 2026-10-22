@@ -33,8 +33,11 @@ export function isRelevanceStruck(v: RelevanceVerdict): boolean {
 // divergence — it is out of the active set on EVERY reader, exactly like a relevance strike. No reader
 // re-derives hosts in the browser; the column is the authority. This is the ONE admissibility predicate
 // for a verdict pair: beat 4's grouping, the Check act's items, the reverse rows, the capture.
-export type AdmissiblePair = { relevanceVerdict?: string | null; observedOwnHost?: boolean | null };
+// GAP-QUALITY RULES R1–R3 (operator ruling 2026-10-22): an ACTIVE rule refusal (claim_delta_rule_refusals_active, keyed
+// by the pair's content identity — deltaRuleChecks.ts) takes the pair out of the active set the same way. R1/R2 leave
+// the statement Not echoed (it keeps no admissible evidence); R3 removes the pair. Absent ⇒ unchanged.
+export type AdmissiblePair = { relevanceVerdict?: string | null; observedOwnHost?: boolean | null; ruleRefusal?: string | null };
 
 export function isPairAdmissible(p: AdmissiblePair): boolean {
-  return isRelevanceActive(p.relevanceVerdict as RelevanceVerdict) && !p.observedOwnHost;
+  return isRelevanceActive(p.relevanceVerdict as RelevanceVerdict) && !p.observedOwnHost && !p.ruleRefusal;
 }

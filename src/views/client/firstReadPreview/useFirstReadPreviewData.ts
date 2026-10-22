@@ -33,6 +33,8 @@ import {
   uploadDerivedClaimIds,
 } from "../../../../supabase/functions/_shared/firstReadProvenance";
 import { normalizeForHash } from "../../../../supabase/functions/_shared/contentIdentity.ts";
+import { recordWordsForRender } from "../../../../supabase/functions/_shared/recordPageWords.ts";
+import { annotateVerifiedExcerpts } from "../../../../supabase/functions/_shared/classSourcingScope.ts";
 import { channelRowAdmission, savedPageIndex } from "@/lib/firstRead/channelAdmission";
 import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
 import { publishedSegment } from "@/lib/firstRead/publishedSegment";
@@ -97,6 +99,10 @@ const OUTSIDE_METHODOLOGY_PREFIX = "outside-";
 
 type SignalRow = {
   id: string;
+  /** R5 verified-page-words basis (excerpt_guard, source_type) — read by recordWordsForRender. */
+  raw_payload?: unknown;
+  /** set by annotateVerifiedExcerpts: a passed excerpt_verifications record for the current excerpt */
+  excerpt_verified?: boolean;
   evidence_excerpt: string | null;
   source_title: string | null;
   source_url: string | null;
@@ -131,14 +137,11 @@ function toFRListing(sig: SignalRow | null | undefined): FRListing | null {
   return { host: bareHost(url) ?? url, productName: sig.listing.product_name, price: sig.listing.price ?? null, currency: sig.listing.currency ?? null, attribution: sig.listing.attribution_text ?? null, url };
 }
 
+// RECORD PAGE WORDS (operator ruling 2026-10-22): the substring-of-claim_text test is RETIRED — since b2 claim_text may be
+// our summary, so it refused every web_search-lane record. The record shows when its excerpt is VERIFIED PAGE WORDS (R5,
+// recordPageWords.ts), markdown markup stripped; otherwise no record line. The quote warrant still governs quote marks.
 function verbatimRecord(sig: SignalRow | null): string | null {
-  if (!sig) return null; // (c)
-  const excerpt = (sig.evidence_excerpt ?? "").trim();
-  if (!excerpt) return null; // (b) empty
-  if (sig.structure_level === "interpreted") return null; // (b) synthesized signal text — not a verbatim quote
-  const src = normalizeForHash(sig.claim_text ?? "");
-  if (!src || !src.includes(normalizeForHash(excerpt))) return null; // (b) not a provable substring of captured text
-  return excerpt; // (a)
+  return recordWordsForRender(sig as unknown as Record<string, unknown> | null);
 }
 
 /** Baseline-run read dates keyed by String(public_baseline_runs.id). */
@@ -292,7 +295,7 @@ async function newestSignalByClaim(claimIds: string[]): Promise<Map<string, Sign
   // loose(): evidence_class / listing (2026-09-04) postdate the generated types.
   const { data: sigs } = await loose()
     .from("signals")
-    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, claim_text, structure_level, evidence_class, listing")
+    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, claim_text, structure_level, evidence_class, listing, raw_payload")
     .in("id", sigIds)
     // R1: outside band only — an organization-band (e.g. uploaded) signal must never
     // supply the source tag for a public-record row.
@@ -301,6 +304,8 @@ async function newestSignalByClaim(claimIds: string[]): Promise<Map<string, Sign
     // supply a beat-4 record source tag.
     .is("superseded_at", null)
     .is("held_at", null);
+  // R5: mark rows whose CURRENT excerpt carries a passed verification (reads excerpt_verifications only).
+  await annotateVerifiedExcerpts(loose() as never, (sigs ?? []) as Array<Record<string, unknown>>);
   const byId = new Map(((sigs ?? []) as SignalRow[]).map((s) => [s.id, s]));
   for (const r of refRows) {
     const s = byId.get(r.signal_id);
@@ -723,6 +728,12 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         const outsideScoreState: "scored" | "ineligible" | null =
           osState === "scored" || osState === "ineligible" ? osState : null;
 
+        // GAP-QUALITY RULES R1–R3 (2026-10-22): the company's ACTIVE rule refusals, by pair identity — isPairAdmissible
+        // takes a refused pair out of the gap (R1/R2 → its statement reads Not echoed; R3 → removed) and out of the raised rows.
+        const { data: refusalRows } = await loose()
+          .from("claim_delta_rule_refusals_active").select("content_identity, rule").eq("company_id", companyId);
+        const ruleRefusalByIdentity = new Map(((refusalRows ?? []) as Array<{ content_identity: string; rule: string }>).map((r) => [r.content_identity, r.rule]));
+
         // ── Gap pairs (beat 4) — R5; doc-derived declared excluded ──────────
         const { data: deltaRows } = await loose()
           .from("claim_deltas")
@@ -811,6 +822,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             relevanceDecidedAt: d.relevance_judged_at ?? null,
             // SELF-ECHO GATE: own-host observed side — the shared selector (isPairAdmissible) omits it everywhere.
             observedOwnHost: d.observed_own_host ?? false,
+            ruleRefusal: d.content_identity ? ruleRefusalByIdentity.get(d.content_identity) ?? null : null,
             // HELD ECHO: a confirmed/contradicted pair with NO visible signal (sig null) whose public
             // claim has a held/recrawl-pending backing — the echo exists but is walled. Keeps the
             // statement reverifying regardless of the provisional relevance verdict (mapping.ts).
@@ -838,11 +850,11 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         // NO verdict chip: the record raising a topic is neither confirmed nor contradicted.
         const { data: revDeltaRows } = await loose()
           .from("claim_deltas")
-          .select("id, public_claim_id, relevance_verdict, observed_own_host")
+          .select("id, public_claim_id, relevance_verdict, observed_own_host, content_identity")
           .eq("company_id", companyId)
           .eq("pairing_kind", "public_vs_public")
           .eq("delta_type", "internally_silent");
-        const revDeltas = (revDeltaRows ?? []) as Array<{ id: string; public_claim_id: string | null; relevance_verdict: string | null; observed_own_host: boolean | null }>;
+        const revDeltas = (revDeltaRows ?? []) as Array<{ id: string; public_claim_id: string | null; relevance_verdict: string | null; observed_own_host: boolean | null; content_identity: string | null }>;
         const revPublicIds = [...new Set(revDeltas.map((d) => d.public_claim_id).filter((x): x is string => !!x))];
         const { data: revClaimRows } = revPublicIds.length
           ? await supabase.from("claims").select("id, statement, status").in("id", revPublicIds)
@@ -855,7 +867,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         for (const d of revDeltas) {
           if (!d.public_claim_id) continue;
           // SELF-ECHO GATE: the ONE admissibility predicate (relevance strike OR own-host observed side).
-          if (!isPairAdmissible({ relevanceVerdict: d.relevance_verdict, observedOwnHost: d.observed_own_host })) continue;
+          if (!isPairAdmissible({ relevanceVerdict: d.relevance_verdict, observedOwnHost: d.observed_own_host, ruleRefusal: d.content_identity ? ruleRefusalByIdentity.get(d.content_identity) ?? null : null })) continue;
           const claim = revClaimById.get(d.public_claim_id);
           if (!claim || claim.status === "struck") continue;
           const sig = revNewest.get(d.public_claim_id) ?? null;
@@ -863,6 +875,8 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           reverseRows.push({
             id: d.id,
             statement: claim.statement,
+            // RECORD PAGE WORDS (2026-10-22): the row renders the record's verified page words, or no record line.
+            record: verbatimRecord(sig),
             sourceTag: publicSignalTag(sig, runDates),
             eventDate: sig.event_date ?? null,
           });

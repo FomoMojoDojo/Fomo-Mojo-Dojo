@@ -150,6 +150,10 @@ export function useFirstReadCapture(
     if (dErr) throw new Error(dErr.message);
     let dRows = (dData ?? []) as Array<{ id: string; delta_type: string; content_identity: string; declared_claim_id: string | null; public_claim_id: string | null; relevance_verdict: string | null; observed_own_host: boolean | null }>;
     if (dRows.length === 0) return EMPTY_DELTA;
+    // GAP-QUALITY RULES R1–R3 (2026-10-22): active rule refusals by pair identity — the one admissibility gate drops them.
+    const { data: refusalRows } = await (supabase as unknown as { from: (t: string) => any }) // eslint-disable-line @typescript-eslint/no-explicit-any
+      .from("claim_delta_rule_refusals_active").select("content_identity, rule").eq("company_id", companyId);
+    const ruleRefusalByIdentity = new Map(((refusalRows ?? []) as Array<{ content_identity: string; rule: string }>).map((r) => [r.content_identity, r.rule]));
 
     // PROVENANCE GATE (R1, 2026-08-20) — First Read is OUTSIDE-ONLY. Drop any delta whose declared
     // OR public claim is upload-derived: a backing uploaded_file signal (tier a) OR a birth record
@@ -268,6 +272,7 @@ export function useFirstReadCapture(
         source_url: rs?.source_url ?? null,
         relevance_verdict: d.relevance_verdict ?? null,
         observed_own_host: d.observed_own_host ?? false,
+        rule_refusal: ruleRefusalByIdentity.get(d.content_identity) ?? null,
       };
     });
     return assembleDeltaItems(inputs);

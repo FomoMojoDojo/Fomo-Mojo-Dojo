@@ -2011,9 +2011,10 @@ export function ActGap({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?
           </p>
           <div className="fr-stagger flex flex-col">
             {read.reverseRows.map((row) => (
-              <MarkTarget key={row.id} kind="reverse_row" keyVal={row.id} text={row.statement}>
+              <MarkTarget key={row.id} kind="reverse_row" keyVal={row.id} text={row.record ?? row.statement}>
               <div className="fr-row fr-reverse-row border-b py-8" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-                <p className="text-lg font-light leading-relaxed">{row.statement}</p>
+                {/* RECORD PAGE WORDS (2026-10-22): the record's verified page words, or no record line. */}
+                {row.record ? <p className="text-lg font-light leading-relaxed">{row.record}</p> : null}
                 {row.sourceTag ? <div className="mt-3"><SourceTag>{row.sourceTag.label}</SourceTag></div> : null}
               </div>
               </MarkTarget>
