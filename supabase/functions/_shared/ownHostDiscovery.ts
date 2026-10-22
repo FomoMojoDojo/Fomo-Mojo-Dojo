@@ -16,7 +16,7 @@
 // only hosts in the own-host set (not already crawled), and a guessed social profile (the LinkedIn slug guess) counts only
 // if its page links to an own host. Spectrum's run 81 opened its gate on spectrum.dev (Spectrum Technology) through the
 // slug guess `spectrum-technology` and the name-in-host fallback test. Name-only plans are unchanged (filed).
-import { ownHostMatch, ownHostMatchHost, ownHostsFor, relationPhrase, type EntityStamp, type OwnHostSet, type RelatedEntityRow } from "./ownHosts.ts";
+import { ownHostMatch, ownHostMatchHost, ownHostsFor, PAGE_UNDATED, relationPhrase, type EntityStamp, type OwnHostSet, type RelatedEntityRow } from "./ownHosts.ts";
 
 export const ENTITY_PASS_COUNT = 16;
 
@@ -42,10 +42,14 @@ export function relatedCrawlSeeds(d: DiscoveryHosts | null | undefined): Array<{
   return d.related.map((r) => ({ startUrl: `https://${r.host}/`, baseDomain: r.host, entity: r.entity }));
 }
 
-/** The entity a crawled page's URL belongs to (a related host in the set), else null — the seed host is never an entity. */
+/** The entity a crawled page's URL belongs to (a related host in the set), else null — the seed host is never an entity.
+ *  Ruling 13 (2026-10-22): the related-entity rule reads the PAGE's published date. A crawled page carries none (the
+ *  snapshot holds url, title, meta description and text), so on an entity WITH a relation start date it is an undated
+ *  page: own voice, basis page_undated ("· date not confirmed"). An entity with no start date keeps its own basis. */
 export function crawlEntityFor(url: string, d: DiscoveryHosts | null | undefined): EntityStamp | null {
   if (!d?.hasRelated) return null;
-  return ownHostMatch(url, d.set)?.entity ?? null;
+  const e = ownHostMatch(url, d.set)?.entity ?? null;
+  return e && e.effective_from ? { ...e, basis: PAGE_UNDATED } : e;
 }
 
 /** One `site:<host> "<name>"` pass per related entity in effect, ENTITY_PASS_COUNT results each; [] for the seed alone. */

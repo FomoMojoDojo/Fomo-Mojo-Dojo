@@ -26,8 +26,10 @@ import { lit, type PsqlSession } from "../lib/psqlBlankingStore.ts";
 export const RELATIONS = ["parent", "subsidiary", "acquired", "brand", "merged_into"] as const;
 export const BASES = ["cited", "crawl_date_provisional"] as const;
 export const BARE_NAME_MIN = 10;
-/** E1a: SEC filer CIKs by entity host — signed values only (operator ruling 2026-10-21). */
-export const FILER_CIKS: Readonly<Record<string, number>> = { "charter.com": 1091667 };
+// E1a: the signed filer CIKs and the EDGAR CIK parser moved to _shared/filerCiks.ts (ruling 12, 2026-10-22) so the mint
+// authority reads the same table; re-exported here unchanged.
+import { edgarCikOf, FILER_CIKS } from "../../supabase/functions/_shared/filerCiks.ts";
+export { edgarCikOf, FILER_CIKS };
 const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
 export type EntitySpec = {
@@ -45,16 +47,6 @@ export type SpecVerdict = { spec: EntitySpec; host: string; refusals: Array<{ co
 
 const covers = (h: string, own: string) => h === own || h.endsWith(`.${own}`);
 const hostOfUrl = (u: string) => { try { return normalizeOwnHost(new URL(u).hostname); } catch { return ""; } };
-/** The filer CIK an EDGAR archive URL is filed under (sec.gov/Archives/edgar/data/<CIK>/…), else null. */
-export function edgarCikOf(u: string): number | null {
-  try {
-    const url = new URL(u);
-    if (url.protocol !== "https:" || normalizeOwnHost(url.hostname) !== "sec.gov") return null;
-    const m = url.pathname.match(/^\/Archives\/edgar\/data\/(\d{1,10})(\/|$)/);
-    return m ? Number(m[1]) : null;
-  } catch { return null; }
-}
-
 export function validateSpecs(specs: readonly EntitySpec[], ctx: ValidationCtx): SpecVerdict[] {
   const seed = seedHostOf(ctx.company.website);
   const confirmed = ctx.existing.filter((r) => r.status === "confirmed");

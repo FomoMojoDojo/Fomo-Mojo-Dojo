@@ -27,7 +27,10 @@ export type RelatedEntityRow = {
  *  applies: the row's effective_basis when the relation is in effect at the row's date — cited (a cited relation; with no
  *  effective_from it is a standing one, "always") or crawl_date_provisional (uncited — shown "· date not confirmed") —
  *  and before_effective when the row predates the relation (it stays outside). */
-export type EntityStamp = { id: string; name: string; host: string; relation: RelatedRelation; basis: EffectiveBasis | "before_effective"; effective_from: string | null };
+export type EntityStamp = { id: string; name: string; host: string; relation: RelatedRelation; basis: EffectiveBasis | "before_effective" | "page_undated"; effective_from: string | null };
+/** Ruling 13 (2026-10-22): the basis of a row on a related entity WITH a relation start date whose PAGE carries no
+ *  published date — it keeps own voice and renders the signed "· date not confirmed". */
+export const PAGE_UNDATED = "page_undated" as const;
 /** One member of the set: entity null = the company's own seed host. */
 export type OwnHost = { host: string; entity: EntityStamp | null };
 export type OwnHostSet = { kind: "own_host_set"; seed: string | null; hosts: readonly OwnHost[] };
@@ -110,6 +113,69 @@ export function relatedEntityFor(url: string, related: readonly RelatedEntityRow
   if (!best) return null;
   return stampOf(best, relatedInEffect(best, asOf) ? best.effective_basis : "before_effective");
 }
+/** Ruling 13 (2026-10-22): THE related entity a URL is on, decided by the PAGE's published date — not the crawl or run
+ *  date. A confirmed entity with no effective_from is in effect for every page (its own basis). One with a start date:
+ *  a page published before it → before_effective (not the company's own voice); a page on or after it → its own basis;
+ *  a page with NO published date → page_undated (own voice, "· date not confirmed"). Null off every confirmed entity. */
+export function relatedEntityAtPage(url: string, related: readonly RelatedEntityRow[], pageDate: string | null): EntityStamp | null {
+  const h = hostOfUrl(url);
+  if (!h) return null;
+  let best: RelatedEntityRow | null = null;
+  for (const r of related) {
+    if (r.status !== "confirmed") continue;
+    const own = normalizeOwnHost(r.host);
+    if (own && covers(h, own) && (!best || own.length > normalizeOwnHost(best.host).length)) best = r;
+  }
+  if (!best) return null;
+  return stampOf(best, entityBasisAtPage(best, pageDate));
+}
+/** The basis an entity takes on a page with this published date (see relatedEntityAtPage). */
+export function entityBasisAtPage(r: Pick<RelatedEntityRow, "effective_from" | "effective_basis">, pageDate: string | null): EntityStamp["basis"] {
+  if (!r.effective_from) return r.effective_basis;
+  const at = dayOf(pageDate);
+  if (!at) return PAGE_UNDATED;
+  const from = dayOf(r.effective_from);
+  return from && from <= at ? r.effective_basis : "before_effective";
+}
+const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+/** Ruling 13: a page's PUBLISHED day (YYYY-MM-DD) from the date string a snapshot or a search result carries — an ISO
+ *  date, "April 30, 2025", "Apr 30, 2025" or "30 April 2025". A relative age ("3 days ago") or anything else is NOT a
+ *  published date ⇒ null (the page is undated). */
+export function publishedDayOf(raw: string | null | undefined): string | null {
+  const t = String(raw ?? "").trim();
+  if (!t) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/.exec(t);
+  const valid = (y: number, m: number, d: number) => {
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d ? dt.toISOString().slice(0, 10) : null;
+  };
+  if (iso) return valid(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+  const mon = (w: string) => { const k = w.toLowerCase().replace(/\.$/, ""); const i = MONTH_NAMES.findIndex((n) => n === k || (k.length >= 3 && n.startsWith(k))); return i < 0 ? null : i + 1; };
+  let m = /^([A-Za-z]{3,9}\.?)\s+(\d{1,2}),?\s+(\d{4})$/.exec(t);
+  if (m) { const mm = mon(m[1]); return mm ? valid(Number(m[3]), mm, Number(m[2])) : null; }
+  m = /^(\d{1,2})\s+([A-Za-z]{3,9}\.?)\s+(\d{4})$/.exec(t);
+  if (m) { const mm = mon(m[2]); return mm ? valid(Number(m[3]), mm, Number(m[1])) : null; }
+  return null;
+}
+/** Ruling 13: the published day a retained page snapshot carries (outside_page_snapshots.structured) — the og
+ *  article:published_time, else the first ld+json datePublished (nested @graph objects included) — or null. */
+export function publishedDayOfSnapshot(structured: unknown): string | null {
+  const st = (structured ?? {}) as { og?: Record<string, unknown> | null; ld_json?: unknown };
+  const og = st.og && typeof st.og === "object" ? st.og["article:published_time"] : null;
+  const fromOg = typeof og === "string" ? publishedDayOf(og) : null;
+  if (fromOg) return fromOg;
+  const stack: unknown[] = Array.isArray(st.ld_json) ? [...st.ld_json] : st.ld_json ? [st.ld_json] : [];
+  for (let n = 0; stack.length && n < 500; n++) {
+    const x = stack.shift();
+    if (!x || typeof x !== "object") continue;
+    if (Array.isArray(x)) { stack.push(...x); continue; }
+    const dp = (x as Record<string, unknown>).datePublished;
+    const day = typeof dp === "string" ? publishedDayOf(dp) : null;
+    if (day) return day;
+    for (const v of Object.values(x as Record<string, unknown>)) if (v && typeof v === "object") stack.push(v);
+  }
+  return null;
+}
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** "Aug 2026" from an ISO date (null when absent). */
 export function monthYear(d: string | null | undefined): string | null {
@@ -136,7 +202,17 @@ export function relationPhrase(e: Pick<EntityStamp, "relation" | "effective_from
 export function relatedVenueLabel(e: Pick<EntityStamp, "name" | "relation" | "effective_from" | "basis">): string {
   const n = String(e.name).trim();
   const possessive = /s$/i.test(n) ? `${n}'` : `${n}'s`;
-  return `On ${possessive} site · ${relationPhrase(e, "you")}${e.basis === "crawl_date_provisional" ? " · date not confirmed" : ""}`;
+  return `On ${possessive} site · ${relationPhrase(e, "you")}${dateNotConfirmed(e) ? " · date not confirmed" : ""}`;
+}
+/** The signed suffix applies to an uncited relation (crawl_date_provisional) and, ruling 13, to an undated page. */
+const dateNotConfirmed = (e: Pick<EntityStamp, "basis">) => e.basis === "crawl_date_provisional" || e.basis === PAGE_UNDATED;
+
+/** Ruling 12 (signed 2026-10-22): the venue a related PARENT's own SEC filing renders under — a template over the entity's
+ *  stored name and relation, never a literal: "In Charter Communications' filing · your parent company". Render-time only. */
+export function relatedFilingVenueLabel(e: Pick<EntityStamp, "name" | "relation" | "effective_from" | "basis">): string {
+  const n = String(e.name).trim();
+  const possessive = /s$/i.test(n) ? `${n}'` : `${n}'s`;
+  return `In ${possessive} filing · ${relationPhrase(e, "you")}${dateNotConfirmed(e) ? " · date not confirmed" : ""}`;
 }
 
 /** The confirmed related names in effect (for name-based authorities: an "other_entity" verdict naming one is the company). */

@@ -14,6 +14,7 @@
 //   searx dead  + lane did not fire / errored → search_unavailable (the only case it may still say so)
 // Domain plans are untouched (their prompt is byte-identical — the snapshot test pins it).
 // Option B: only the company NAME goes to the lane (as domain plans already send name + site).
+import { domainTopicsBlock, numberedIntents } from "./searchTopics.ts";
 import { entityPromptLine } from "./ownHostDiscovery.ts";
 import type { EntityStamp } from "./ownHosts.ts";
 import type { BaselineQueryPlan, QueryKey } from "./baselineQueryPlan.ts";
@@ -34,7 +35,7 @@ export type LaneSource = { url: string; title: string; snippet: string; engine: 
 /** The six name-only passes, joined as the lane's search intents (Option B: the name and its intents, nothing else). */
 export function buildNameOnlyBrief(plan: BaselineQueryPlan): string {
   const lines = QUERY_KEYS.map((k: QueryKey) => plan[k]).filter((q): q is string => typeof q === "string" && q.trim().length > 0);
-  return lines.map((q, i) => `${i + 1}. ${q}`).join("\n");
+  return numberedIntents(lines);   // ruling 10: the one numbered shape, shared with a domain plan's topics block
 }
 
 /** SRCH-1's whole-run verdict, as the ledger names it. */
@@ -117,6 +118,8 @@ export function claudeWebSearchPrompt(opts: {
   nameOnlyBrief?: string | null;
   /** E3 (2026-10-21): the confirmed related entities in effect — domain plan only; absent/empty ⇒ byte-identical */
   relatedEntities?: ReadonlyArray<Pick<EntityStamp, "name" | "host" | "relation" | "effective_from">> | null;
+  /** Ruling 10 (2026-10-22): the run's search topics (body data) — domain plan only; absent/empty ⇒ byte-identical */
+  searchTopics?: readonly string[] | null;
 }): string {
   const nameOnly = typeof opts.nameOnlyBrief === "string" && opts.nameOnlyBrief.trim().length > 0;
   const head = nameOnly
@@ -147,6 +150,7 @@ export function claudeWebSearchPrompt(opts: {
     `5. Marketplace, retail, and ordering listings — wherever its products or services are sold or listed.\n` +
     `6. Partner and customer mentions — other businesses' sites that reference this company.\n` +
     `7. Directories and registries — BBB, chambers of commerce, licensing bodies, as applicable.\n` +
+    (nameOnly ? "" : domainTopicsBlock(opts.searchTopics)) +
     `Prioritise genuine third-party sentiment over the company's own claims.\n\n` +
     `DISAMBIGUATION LAW (precision over coverage):\n` +
     anchor +

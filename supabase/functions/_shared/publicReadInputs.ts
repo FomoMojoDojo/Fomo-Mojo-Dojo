@@ -348,7 +348,7 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   // 5. deltas — the public_vs_public pairing; echoed/divergent (public confirms or contests a public claim)
   //    Ruling 5: isPairAdmissible ∧ every claim active ∧ not rejected_pairing; the gap beat's order, then id.
   const { data: dl } = await supabase
-    .from("claim_deltas").select("id, delta_type, declared_claim_id, public_claim_id, relevance_verdict, observed_own_host, operator_disposition")
+    .from("claim_deltas").select("id, delta_type, declared_claim_id, public_claim_id, relevance_verdict, observed_own_host, operator_disposition, content_identity")
     .eq("company_id", companyId).eq("pairing_kind", "public_vs_public").in("delta_type", ["echoed", "divergent"])
     .order("id", { ascending: true });
   const deltas = (dl ?? []) as SelDelta[];
@@ -377,7 +377,13 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
       }
     }
   }
-  const dSel = selectDeltas(deltas, READ_CAP.delta, claimById);
+  // Ruling 9 (2026-10-22): the company's ACTIVE rule refusals (R1–R3 and operator), by pair identity — the same view the
+  // preview reads (useFirstReadPreviewData.ts) — so a refused pair never reaches the generator's pool.
+  const { data: refusalRows, error: refusalErr } = await supabase
+    .from("claim_delta_rule_refusals_active").select("content_identity, rule").eq("company_id", companyId);
+  if (refusalErr) throw new Error(`selectPublicInputs: claim_delta_rule_refusals_active could not be read (${refusalErr.message})`);
+  const ruleRefusalByIdentity = new Map(((refusalRows ?? []) as Array<{ content_identity: string; rule: string }>).map((r) => [r.content_identity, r.rule]));
+  const dSel = selectDeltas(deltas, READ_CAP.delta, claimById, ruleRefusalByIdentity);
   dropped.push(...dSel.dropped);
   for (const d of dSel.kept) {
     const decl = d.declared_claim_id ? claimById.get(d.declared_claim_id)?.statement : "";

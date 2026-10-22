@@ -1,6 +1,6 @@
 // supabase/functions/public-baseline/index.ts
-import { loadConfirmedRelatedEntities, loadEntityExcludeHosts, seedHostOf, type OwnHostSet } from "../_shared/ownHosts.ts";
-import { capEvidenceLedger, citationEntries, isPlaceholderProfileSnippet, rawCitationSnapshot, type CitationStats } from "../_shared/citationRows.ts";
+import { loadConfirmedRelatedEntities, loadEntityExcludeHosts, publishedDayOf, seedHostOf, type OwnHostSet } from "../_shared/ownHosts.ts";
+import { capEvidenceLedger, citationEntries, isPlaceholderProfileSnippet, pageAgesByUrl, rawCitationSnapshot, type CitationStats } from "../_shared/citationRows.ts";
 import { normalizeForHash } from "../_shared/contentIdentity.ts";
 import { countsAtEarlyAmbiguousCheck, crawlEntityFor, crawlHostFilter, discoveryHostsFor, domainPlanFallbackAdmits, entityQueryPasses, guessedProfileLinksOwnHost, isRelatedOwnHost, relatedCrawlSeeds, relatedDomainBonus, type DiscoveryHosts } from "../_shared/ownHostDiscovery.ts";
 import { promptShaOf, requireWebSearchLedger, ledgerOrRefuse, webSearchLedgerFor, type WebSearchLedger } from "../_shared/webSearchLedger.ts";
@@ -28,6 +28,8 @@ import { recordModelCall } from "../_shared/recordModelCall.ts";
 import { loadRegistrySnapshots, registryUrlsInResult, stampRegistryInResult } from "../_shared/registryIngest.ts";
 import { buildNameOnlyBrief, claudeWebSearchPrompt, laneSourcesFromResult, laneStatusFromSources, resolveNameOnlyOutcome, searxVerdict, type LaneStatus, type SearchLedger } from "../_shared/nameOnlyLane.ts";
 import { INTERNAL_CALL_HEADER, isInternalServiceCall } from "../_shared/internalCall.ts";
+import { BASELINE_BODY_KEYS, parseSearchTopics, topicsRefusalForRun } from "../_shared/searchTopics.ts";
+import { unknownBodyKeys } from "../_shared/bodyMode.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1747,6 +1749,8 @@ async function callClaudeWebSearch(opts: {
   ledgerRunId: string | null;
   /** Name-only lane (ruling 2026-09-18): the six passes as search intents; absent ⇒ the domain prompt, byte-identical. */
   nameOnlyBrief?: string | null;
+  /** Ruling 10 (2026-10-22): the run's search topics (body data) — domain plan only; absent ⇒ the domain prompt, byte-identical. */
+  searchTopics?: readonly string[] | null;
   /** RULING 1 (2026-10-21): REQUIRED — one model_calls row per call (per attempt), written before parse; a call whose row
    *  cannot be written is refused (its answer never used). Absent ⇒ thrown before any request is sent. */
   ledger: WebSearchLedger;
@@ -1770,7 +1774,7 @@ async function callClaudeWebSearch(opts: {
 
   // ONE prompt builder for both plans (_shared/nameOnlyLane.ts): the domain form is byte-identical to the former inline
   // text (fixtures/lane/domain_prompt_HEAD_*.txt pin it); the name-only form swaps the two domain-anchored sentences.
-  const prompt = claudeWebSearchPrompt({ companyName: opts.companyName, website: opts.website, domain: opts.domain, resolvedCategory: opts.resolvedCategory, schemaHint, nameOnlyBrief: opts.nameOnlyBrief ?? null, ...(opts.relatedEntities?.length ? { relatedEntities: opts.relatedEntities } : {}) });
+  const prompt = claudeWebSearchPrompt({ companyName: opts.companyName, website: opts.website, domain: opts.domain, resolvedCategory: opts.resolvedCategory, schemaHint, nameOnlyBrief: opts.nameOnlyBrief ?? null, ...(opts.relatedEntities?.length ? { relatedEntities: opts.relatedEntities } : {}), ...(opts.searchTopics?.length ? { searchTopics: opts.searchTopics } : {}) });
   // RULING 1: no ledger, no call
   requireWebSearchLedger(opts.ledger, "public-baseline-search");
   const promptSha = await promptShaOf(prompt);
@@ -1878,6 +1882,8 @@ async function callClaudeWebSearch(opts: {
   (parsed as any).outside_voice_signals = [];
   (parsed as any).evidence_ledger = cit.entries;
   console.log("[baseline] citation rows", { ...cit.stats, model_items_dropped: modelItemsDropped });
+  // Ruling 13 (2026-10-22): each cited URL's published date, from its search result's page_age (absolute dates only)
+  const pageAges = pageAgesByUrl(data);
   const reclassify = (arr: unknown) =>
     (Array.isArray(arr) ? arr : []).map((e: any) => {
       const url = String(e?.url || "").trim();
@@ -1890,11 +1896,16 @@ async function callClaudeWebSearch(opts: {
       // R17 (2026-10-18): the decision is the ONE shared authority's overlay stage (voiceClassAtMint.ts): analysis
       // label, then own domain, then the label when it is a known class. No registry and no judge at this stage —
       // the registry stamp and the authorship demote below call the same function with those inputs.
-      const d = decideVoiceClassBeforeJudge({ url, item: e, labeledClass, pageText: null, judgedText: null, company: { name: "", host: companyHostForGuard, ...(relatedForGuard.length ? { related: relatedForGuard } : {}) }, registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" });
+      // Ruling 13: the related-entity rules read the PAGE's published date (null = undated), not the run date
+      const pageAge = pageAges.get(normalizeUrlKey(url)) ?? null;
+      const pageDay = publishedDayOf(pageAge);
+      const d = decideVoiceClassBeforeJudge({ url, item: e, labeledClass, pageText: null, judgedText: null, company: { name: "", host: companyHostForGuard, ...(relatedForGuard.length ? { related: relatedForGuard } : {}) }, ...(relatedForGuard.length ? { pageDate: { date: pageDay } } : {}), registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" });
       const voice_class = "needs_judge" in d ? d.label : d.ok ? d.voice_class : null;
       // E4: a row a related-entity rule decided names its entity (the mapper stores the record as raw_payload)
       const entity = "ok" in d ? d.entity : undefined;
-      return { ...e, source_type, voice_class, ...(entity ? { entity } : {}) };
+      // Ruling 12: a related parent's own filing names its authority, so the venue renders as that entity's filing
+      const filingAuthority = "ok" in d && d.ok && d.authority === "own_filing_related" ? { voice_authority: { authority: "own_filing_related" } } : {};
+      return { ...e, source_type, voice_class, ...(entity ? { entity } : {}), ...filingAuthority, ...(entity && pageAge ? { page_age: pageAge, ...(pageDay ? { page_date: pageDay } : {}) } : {}) };
     });
   if (Array.isArray((parsed as any).outside_voice_signals)) {
     (parsed as any).outside_voice_signals = reclassify((parsed as any).outside_voice_signals);
@@ -2231,6 +2242,8 @@ Deno.serve(async (req) => {
       /** R53 (2026-10-20): the authorship judge's model_calls tally for this run — one row per call at call_site
        *  public-baseline-authorship (run_id = the long_runner_runs row), ledger_failed = writes recordModelCall refused. */
       authorship_model_calls?: { calls: number; ledger_failed: number };
+      /** Ruling 10 (2026-10-22): the run's search topics as sent (body data); absent ⇒ the fixed prompt. */
+      search_topics?: string[];
     } = {
       provider: "openai_public",
       model: openaiModel,
@@ -2294,6 +2307,15 @@ Deno.serve(async (req) => {
     if (!company_id) {
       return json({ error: "company_id required" }, 400);
     }
+    // Ruling 10 (2026-10-22): a key this function does not read is refused, not ignored — a misspelled topics key would
+    // otherwise run (and pay for) the fixed prompt. Then the topic list itself: data, validated before any work.
+    const unknownKeys = unknownBodyKeys(body, BASELINE_BODY_KEYS);
+    if (unknownKeys.length > 0) {
+      return json({ error: `unknown body key(s): ${unknownKeys.join(", ")}`, status: "body_refused", unknown_keys: unknownKeys, known_keys: BASELINE_BODY_KEYS }, 400);
+    }
+    const topicsVerdict = parseSearchTopics(body.search_topics);
+    if (!topicsVerdict.ok) return json({ error: topicsVerdict.detail, status: "search_topics_refused" }, 400);
+    const searchTopics = topicsVerdict.topics;
 
     // FREEZE GATE (gate-before-artifact). CB1 is a frozen reference fixture — SELECT-only. This
     // function writes signals/claims from scratch, so it refuses a frozen company HERE, before the
@@ -2374,6 +2396,8 @@ Deno.serve(async (req) => {
     // (run_ledger.seed_lane.seed_pages_read === 0); its rows attach to that run (source_id), whose lane it completes, and
     // the lane's outcome + raw citation blocks are recorded on it (run_ledger.seed_lane_rerun, web_search_raw.seed_lane_rerun).
     if (body?.seed_lane_only === true) {
+      const seedTopicsRefusal = topicsRefusalForRun(searchTopics, { planKind: "domain", seedLaneOnly: true, engine: synthesis_engine });
+      if (seedTopicsRefusal) return json({ error: seedTopicsRefusal, status: "search_topics_refused" }, 400);
       const laneSeedHost = (companyRow as { no_public_site?: unknown } | null)?.no_public_site === true ? null : seedHostOf(website);
       if (!laneSeedHost) return json({ error: "seed_lane_only: the company has no public site / seed host", status: "seed_lane_refused" }, 400);
       if (!anthropicKey) return json({ error: "seed_lane_only: ANTHROPIC_API_KEY missing", status: "seed_lane_refused" }, 500);
@@ -2430,6 +2454,10 @@ Deno.serve(async (req) => {
     const planKind: PlanKind = noPublicSite ? "name_only" : "domain";
     runLedger.plan_kind = planKind;
     runLedger.site_crawl = noPublicSite ? "skipped_no_public_site" : "ran";
+    // Ruling 10: topics only where a domain web_search prompt will carry them; recorded on the run ledger as sent.
+    const runTopicsRefusal = topicsRefusalForRun(searchTopics, { planKind, seedLaneOnly: false, engine: synthesis_engine });
+    if (runTopicsRefusal) return json({ error: runTopicsRefusal, status: "search_topics_refused" }, 400);
+    if (searchTopics) runLedger.search_topics = searchTopics;
     if (!company_name || (!website && !noPublicSite)) {
       return json({ error: "company_name and website are required (via request or company record)" }, 400);
     }
@@ -3478,6 +3506,8 @@ Deno.serve(async (req) => {
         ...(spendCap ? { spendCap } : {}),
         // E3: the confirmed related entities in effect name the same business in the prompt; none ⇒ byte-identical prompt
         ...(discOrNull ? { relatedEntities: discOrNull.related.map((r) => r.entity) } : {}),
+        // Ruling 10: the run's topics (domain plan; refused above on any other) — inside the prompt, so inside its sha
+        ...(searchTopics ? { searchTopics } : {}),
       });
       result = claudeOut.parsed;
       claudeCitationSourceText = claudeOut.citationSourceTextByUrl;

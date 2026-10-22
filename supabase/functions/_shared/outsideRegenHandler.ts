@@ -29,7 +29,7 @@ import { classifyRegistryRow } from "./registryClassifier.ts";
 import { decideVoiceClassBeforeJudge, voiceClassForMintedExcerpt, type JudgeFailurePolicy, type VoiceClassInput, type TextGate } from "./voiceClassAtMint.ts";
 import { authorshipContext, type AuthorshipInput, type AuthorshipJudgment } from "./aggregatorAuthorship.ts";
 import { clientAnchorsFor } from "./clientAnchors.ts";
-import { loadConfirmedRelatedEntities, ownHostsFor, type RelatedEntityRow } from "./ownHosts.ts";
+import { loadConfirmedRelatedEntities, ownHostsFor, publishedDayOfSnapshot, type RelatedEntityRow } from "./ownHosts.ts";
 import { nearestSpan, type NearestSpan } from "./nearestSpan.ts";
 import { speakerContext } from "./attribution.ts";
 import { buildClientCorpus, type SyndicationJudge, type SyndicationLedger } from "./syndication.ts";
@@ -157,8 +157,9 @@ export type PlanRow = {
 
 /** R17: the URL-level voice decision a plan reports — the same function the write path runs per excerpt, with no
  *  judge (a plan calls no model) and no excerpt (a registry page's class is per section). */
-export function planVoiceFor(url: string, pageText: string, company: { name: string; host: string | null; related?: readonly RelatedEntityRow[] }, registry: ReturnType<typeof classifyRegistryRow>, asOf?: string | null): PlanVoice {
-  const pre = decideVoiceClassBeforeJudge({ url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText, judgedText: null, company, ...(company.related?.length ? { asOf: asOf ?? null } : {}), registry, judge: null, gate: "profile_wire_boilerplate", onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY });
+export function planVoiceFor(url: string, pageText: string, company: { name: string; host: string | null; related?: readonly RelatedEntityRow[] }, registry: ReturnType<typeof classifyRegistryRow>, asOf?: string | null, pageDate?: string | null): PlanVoice {
+  // Ruling 13 (2026-10-22): the related-entity rules read the PAGE's published date (the snapshot's), not the crawl date
+  const pre = decideVoiceClassBeforeJudge({ url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText, judgedText: null, company, ...(company.related?.length ? { asOf: asOf ?? null, pageDate: { date: pageDate ?? null } } : {}), registry, judge: null, gate: "profile_wire_boilerplate", onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY });
   if ("needs_speaker" in pre) return { class: "(speaker judge decides)", authority: "speaker_judge", refusal: null };   // R32: never on plan (no candidate text), typed for completeness
   if ("needs_syndication_judge" in pre) return { class: "(band judge decides)", authority: "syndication", refusal: null };   // R38: never on plan (no syndication input), typed for completeness
   if ("needs_judge" in pre) return { class: "(judge decides)", authority: "authorship_judge", refusal: `gated (${pre.gate.via} ${pre.gate.host}): every excerpt is judged on write; with no judge wired each is refused, not minted` };
@@ -331,7 +332,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
         blanked_signal_ids: (blankedByUrl.get(url) ?? []).sort(),
         ...estimateUrl(chars),
         review: reviewStateOf(url, gate, runId),
-        voice: planVoiceFor(url, snap.clean_text, company, registryFor(url, null), snap.readDate),
+        voice: planVoiceFor(url, snap.clean_text, company, registryFor(url, null), snap.readDate, publishedDayOfSnapshot(snap.structured)),
         done: mintedUnderRun.has(url),   // R41: already minted under this run_id
       };
     });
@@ -431,7 +432,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
 
   for (const url of urls) {
     if (now() - startedAt > deps.wallMs) { stoppedForTime = true; break; }
-    const { clean_text, sha, readDate } = newestByUrl.get(url)!;
+    const { clean_text, sha, readDate, structured } = newestByUrl.get(url)!;
 
     let cands: GeneratorStatement[] = [];
     try {
@@ -500,8 +501,9 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
       // R17: THE voice class, from the one shared authority — never a literal here. An unjudged gated row is refused.
       const voiceInput: VoiceClassInput = {
         url, item: null, labeledClass: REGEN_DEFAULT_LABEL, pageText: clean_text, judgedText: verdictA.excerpt, company,
-        // E2: the effective-date rule reads the page's crawl date
-        ...(related.length ? { asOf: readDate } : {}),
+        // E2: the effective-date rule reads the page's crawl date; ruling 13: the related-entity rules read the PAGE's
+        // published date (og article:published_time / ld+json datePublished on the snapshot; none ⇒ undated)
+        ...(related.length ? { asOf: readDate, pageDate: { date: publishedDayOfSnapshot(structured) } } : {}),
         registry: registryFor(url, verdictA.excerpt), judge, gate: "profile_wire_boilerplate", textGates: REGEN_TEXT_GATES, onJudgeFailure: REGEN_JUDGE_FAILURE_POLICY, now: nowIso,
         // R54: the authorship judge reads the excerpt in place — the page in memory at the slice-asserted offset
         authorshipContext: authorshipContext(clean_text, verdictA.excerpt, verdictA.offset),

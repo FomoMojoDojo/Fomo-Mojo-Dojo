@@ -44,7 +44,9 @@ import { compareBeat2, gapVerdictForDeltaType, orderGapPairs, strengthForSignal 
 // 2026-10-22 (operator ruling 4): bumped for the own-words host order — a company with confirmed related entities takes
 // its own-words seed host first, then each related host, round-robin within the cap. WHICH rows enter the pool changed
 // for those companies, so the stamp moves (for every company: the stamp names the rule, not the outcome).
-export const SELECTION_VERSION = "gpr-select-2026-10-22.1" as const;
+// 2026-10-22 (operator ruling 9): bumped — a pair whose identity carries an ACTIVE claim_delta_rule_refusal (rule R1–R3 or
+// operator) is no longer admitted; isPairAdmissible reads it, as the preview does. WHICH rows enter the pool changed.
+export const SELECTION_VERSION = "gpr-select-2026-10-22.2" as const;
 
 export type Dropped = { id: string; kind: "signal" | "own_word" | "finding" | "delta"; reason: string };
 
@@ -198,13 +200,16 @@ export function selectFindings(rows: SelFinding[], cap: number, recurrenceBacked
 export type SelDelta = {
   id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null;
   relevance_verdict: string | null; observed_own_host: boolean | null; operator_disposition: string | null;
+  content_identity?: string | null;
 };
 export type SelClaim = { id: string; statement: string | null; status: string | null; confidence?: string | null };
 
 const confidenceRank = (c: string | null | undefined) => ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[(c ?? "").toLowerCase()] ?? 1;
 
-/** D: admissible (isPairAdmissible), every claim active, not operator-rejected; ordered by the gap beat's order, then id. */
-export function selectDeltas(rows: SelDelta[], cap: number, claimById: ReadonlyMap<string, SelClaim>): { kept: SelDelta[]; dropped: Dropped[] } {
+/** D: admissible (isPairAdmissible, which reads the pair's ACTIVE rule refusal by content identity — ruling 9), every claim
+ *  active, not operator-rejected; ordered by the gap beat's order, then id. `ruleRefusalByIdentity` maps content_identity →
+ *  the refusal's rule (claim_delta_rule_refusals_active); it is required so a caller cannot silently omit it. */
+export function selectDeltas(rows: SelDelta[], cap: number, claimById: ReadonlyMap<string, SelClaim>, ruleRefusalByIdentity: ReadonlyMap<string, string>): { kept: SelDelta[]; dropped: Dropped[] } {
   const dropped: Dropped[] = [];
   const admitted: Array<{ d: SelDelta; verdict: string; evidenceRank: number }> = [];
   for (const d of rows) {
@@ -212,7 +217,10 @@ export function selectDeltas(rows: SelDelta[], cap: number, claimById: ReadonlyM
     const decl = d.declared_claim_id ? claimById.get(d.declared_claim_id) : undefined;
     const pub = d.public_claim_id ? claimById.get(d.public_claim_id) : undefined;
     if (!(decl?.statement || pub?.statement)) { dropped.push({ id: d.id, kind: "delta", reason: "no_claim_text" }); continue; }
-    if (!isPairAdmissible({ relevanceVerdict: d.relevance_verdict as never, observedOwnHost: !!d.observed_own_host })) { dropped.push({ id: d.id, kind: "delta", reason: d.observed_own_host ? "observed_own_host" : "relevance_orthogonal" }); continue; }
+    const ruleRefusal = d.content_identity ? ruleRefusalByIdentity.get(d.content_identity) ?? null : null;
+    if (!isPairAdmissible({ relevanceVerdict: d.relevance_verdict as never, observedOwnHost: !!d.observed_own_host, ruleRefusal })) {
+      dropped.push({ id: d.id, kind: "delta", reason: ruleRefusal ? `rule_refusal:${ruleRefusal}` : d.observed_own_host ? "observed_own_host" : "relevance_orthogonal" }); continue;
+    }
     if (!ids.every((id) => claimById.get(id)?.status === "active")) { dropped.push({ id: d.id, kind: "delta", reason: "claim_not_active" }); continue; }
     if (d.operator_disposition === "rejected_pairing") { dropped.push({ id: d.id, kind: "delta", reason: "rejected_pairing" }); continue; }
     admitted.push({ d, verdict: gapVerdictForDeltaType(d.delta_type) ?? "unspoken", evidenceRank: confidenceRank(pub?.confidence) });

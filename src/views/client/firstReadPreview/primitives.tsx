@@ -3,7 +3,7 @@
 // (real declared statements may carry no detail column) and an Absent
 // primitive for persisted-integrity empty states.
 
-import { relatedVenueLabel, type EntityStamp } from "../../../../supabase/functions/_shared/ownHosts.ts";
+import { relatedFilingVenueLabel, relatedVenueLabel, type EntityStamp } from "../../../../supabase/functions/_shared/ownHosts.ts";
 import { MarkTarget } from "@/lib/firstReadMarks/MarksContext";
 import { sourceLineOf } from "@/lib/firstRead/publishedSegment";
 import { FILING_FRAME_HEAD, PROFILE_FRAME_HEAD } from "@/views/client/workspace/InterviewOrigin";
@@ -380,6 +380,9 @@ export type FRCommitmentSource = {
   /** E4: set when ownSite is true BECAUSE the host is a confirmed related entity's (ownHostMatch — the same one rule);
    *  absent/null for the company's own seed host, which keeps "On your site". */
   ownSiteEntity?: Pick<EntityStamp, "name" | "relation" | "effective_from" | "basis"> | null;
+  /** Ruling 12 (2026-10-22): the row is a confirmed related PARENT's own SEC filing (stamped at mint, authority
+   *  own_filing_related) — it renders "In <entity>'s filing · your parent company". */
+  filingEntity?: Pick<EntityStamp, "name" | "relation" | "effective_from" | "basis"> | null;
 };
 
 // ── V1 (operator ruling, 2026-10-15): EACH SOURCE IS LABELLED BY ITS OWN VENUE ──────────────────
@@ -394,7 +397,9 @@ export type FRCommitmentSource = {
 export type FRVenue = typeof OWN_SITE_FRAME_HEAD | typeof FILING_FRAME_HEAD | typeof PROFILE_FRAME_HEAD
   | typeof CHANNELS_FRAME_HEAD | typeof RECORD_FRAME_HEAD | typeof OUR_READ_HEAD
   /** E4: a confirmed related entity's own site (relatedVenueLabel), rendered right after "On your site" */
-  | `On ${string} site · ${string}`;
+  | `On ${string} site · ${string}`
+  /** Ruling 12: a confirmed related parent's own filing (relatedFilingVenueLabel), grouped with the entity venues */
+  | `In ${string} filing · ${string}`;
 
 /** The signed order groups render in. */
 export const VENUE_ORDER: readonly FRVenue[] = [
@@ -410,6 +415,7 @@ export const VENUE_ORDER: readonly FRVenue[] = [
 export function venueOf(s: FRCommitmentSource): FRVenue {
   if (s.cls === "our_read") return OUR_READ_HEAD;
   if (s.cls === "record") return RECORD_FRAME_HEAD;
+  if (s.filingEntity) return relatedFilingVenueLabel(s.filingEntity) as FRVenue;
   if (s.registryFrame === "filing") return FILING_FRAME_HEAD;
   if (s.registryFrame === "profile" || s.thirdPartyProfile === true) return PROFILE_FRAME_HEAD;
   if (s.ownSite === true) return s.ownSiteEntity ? (relatedVenueLabel(s.ownSiteEntity) as FRVenue) : OWN_SITE_FRAME_HEAD;

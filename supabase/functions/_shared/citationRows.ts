@@ -71,6 +71,24 @@ export function citationEntries(responseData: unknown, opts: { excludeHosts: rea
   return { entries, stats };
 }
 
+/** Ruling 13 (2026-10-22): the page_age each web_search result carries, by normalized URL — the search result's own date
+ *  string (e.g. "April 30, 2025"), verbatim; a URL with no page_age is absent. Read from the response's
+ *  web_search_tool_result blocks (the citation itself carries no date). Pure. */
+export function pageAgesByUrl(responseData: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  const blocks = Array.isArray((responseData as { content?: unknown })?.content) ? (responseData as { content: unknown[] }).content : [];
+  for (const b of blocks) {
+    if (!b || (b as { type?: unknown }).type !== "web_search_tool_result") continue;
+    const items = (b as { content?: unknown }).content;
+    for (const it of Array.isArray(items) ? items : []) {
+      const url = String((it as { url?: unknown })?.url ?? "").trim();
+      const age = (it as { page_age?: unknown })?.page_age;
+      if (url && typeof age === "string" && age.trim() && !out.has(normalizeUrlKey(url))) out.set(normalizeUrlKey(url), age.trim());
+    }
+  }
+  return out;
+}
+
 /** The raw text blocks + citations of a response, verbatim — the snapshot a cited_text is byte-compared against. */
 export function rawCitationSnapshot(responseData: unknown): { model: unknown; stop_reason: unknown; usage: unknown; text_blocks: unknown[]; searches: unknown[] } {
   const d = (responseData ?? {}) as { model?: unknown; stop_reason?: unknown; usage?: unknown; content?: unknown[] };

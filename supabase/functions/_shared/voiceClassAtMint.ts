@@ -32,7 +32,8 @@
 //                  record speaking).
 import { ANALYSIS_VOICE, isAnalysisLabelled } from "./voiceLabel.ts";
 import { isOwnDomainUrl } from "./firstReadProvenance.ts";
-import { ownHostsFor, relatedEntityFor, relatedNamesFor, type EntityStamp, type OwnHostSet, type RelatedEntityRow } from "./ownHosts.ts";
+import { entityBasisAtPage, ownHostsFor, relatedEntityAtPage, relatedEntityFor, relatedNamesFor, type EntityStamp, type OwnHostSet, type RelatedEntityRow } from "./ownHosts.ts";
+import { edgarCikOf, filerCikOfHost } from "./filerCiks.ts";
 import {
   matchAggregatorProfileUrl, matchGatedUrl, outcomeFor,
   type AuthorshipContext, type AuthorshipInput, type AuthorshipJudge, type AuthorshipJudgment, type AuthorshipStamp, type SpeakerJudge, type SpeakerJudgment,
@@ -48,7 +49,7 @@ export type JudgeFailurePolicy = "keep_label" | "refuse_mint";
  *  `profile_wire_boilerplate`: profiles, press wires and release pages with the subject's boilerplate close
  *  (the restamp's gate, and the regen path's). */
 export type JudgeGate = "profile" | "profile_wire_boilerplate";
-export type VoiceAuthority = "analysis_label" | "own_domain" | "own_domain_related" | "registry" | "authorship_judge" | "extractor_label" | "first_person_self_description" | "attributed_speaker_subject" | "first_person_judged" | "syndication";
+export type VoiceAuthority = "analysis_label" | "own_domain" | "own_domain_related" | "own_filing_related" | "registry" | "authorship_judge" | "extractor_label" | "first_person_self_description" | "attributed_speaker_subject" | "first_person_judged" | "syndication";
 /** R38: what the syndication stage measured and decided, stamped on every regen-minted row. */
 export type SyndicationStamp = {
   score: number; band: number; words: number;
@@ -83,6 +84,10 @@ export type VoiceClassInput = {
   company: { name: string; host: string | null; related?: readonly RelatedEntityRow[] };
   /** E2: the row's date for the effective-date rule (the page's crawl date; absent ⇒ today). */
   asOf?: string | null;
+  /** Ruling 13 (2026-10-22): the PAGE's published date for the related-entity rules — present ⇒ it decides (and asOf is
+   *  not read for them): a page before the relation's start is not the company's own voice; { date: null } = an undated
+   *  page, own voice with "· date not confirmed" (basis page_undated). Absent ⇒ the E2 asOf rule, byte-identical. */
+  pageDate?: { date: string | null } | null;
   /** The registry classification the caller computed for this item (classifyRegistryRow), null when not a registry URL. */
   registry: RegistryClassification | null;
   /** Resolves null when the judge is unavailable for this call (limits, no transport). */
@@ -180,10 +185,25 @@ const hasRelated = (input: PreJudgeInput) => !!input.company.related && input.co
 /** The own-host argument for isOwnDomainUrl: the set when the company has confirmed related entities, else the single
  *  seed host (the pre-E1 argument — so every stage reads exactly as before). */
 function ownHostsOf(input: PreJudgeInput): string | OwnHostSet | null {
-  return hasRelated(input) ? ownHostsFor({ host: input.company.host }, input.company.related, input.asOf ?? null) : input.company.host;
+  // ruling 13: with a page date, the set is the one in effect on that day; an undated page reads the set in effect today
+  const asOf = input.pageDate ? (input.pageDate.date ?? null) : (input.asOf ?? null);
+  return hasRelated(input) ? ownHostsFor({ host: input.company.host }, input.company.related, asOf) : input.company.host;
 }
 function relatedOf(input: PreJudgeInput): EntityStamp | null {
-  return hasRelated(input) ? relatedEntityFor(input.url, input.company.related!, input.asOf ?? null) : null;
+  if (!hasRelated(input)) return null;
+  return input.pageDate ? relatedEntityAtPage(input.url, input.company.related!, input.pageDate.date) : relatedEntityFor(input.url, input.company.related!, input.asOf ?? null);
+}
+/** Ruling 12 (2026-10-22): the CONFIRMED related entity whose signed filer CIK (filerCiks.ts) an EDGAR archive URL is
+ *  filed under — sec.gov/Archives/edgar/data/<CIK>/…, leading zeros ignored — with its basis on this page (the ruling-13
+ *  page date when given, else E2's asOf). Null for any other URL, a CIK no confirmed entity holds, or no related entity. */
+export function relatedFilingOf(input: Pick<PreJudgeInput, "url" | "company" | "asOf" | "pageDate">): EntityStamp | null {
+  const cik = edgarCikOf(input.url);
+  if (cik == null || !input.company.related?.length) return null;
+  const r = input.company.related.find((x) => x.status === "confirmed" && filerCikOfHost(x.host) === cik);
+  if (!r) return null;
+  const basis = input.pageDate ? entityBasisAtPage(r, input.pageDate.date)
+    : (relatedEntityFor(`https://${r.host}/`, [r], input.asOf ?? null)?.basis ?? "before_effective");
+  return { id: r.id, name: r.name, host: String(r.host).replace(/^www\./i, "").toLowerCase(), relation: r.relation, basis, effective_from: r.effective_from ?? null };
 }
 /** E4: a decision on a URL a related entity owns carries the entity (unless the stage that decided already set it). */
 function withEntity<D extends object>(input: PreJudgeInput, d: D): D {
@@ -243,7 +263,14 @@ function beforeJudgeCore(input: PreJudgeInput, stage?: SyndicationStage):
   // provisional); a row dated before it stays on the later stages and is stamped before_effective (withEntity)
   const rel = relatedOf(input);
   if (rel && rel.basis !== "before_effective") {
-    return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "own_domain_related", detail: `own domain of a related entity: ${rel.name} (${rel.relation}${rel.effective_from ? ` since ${rel.effective_from}` : ", date not confirmed"}) — ${rel.host}`, gate: null, entity: rel };
+    return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "own_domain_related", detail: `own domain of a related entity: ${rel.name} (${rel.relation}${rel.effective_from ? ` since ${rel.effective_from}` : ", date not confirmed"}${rel.basis === "page_undated" ? "; the page carries no published date" : ""}) — ${rel.host}`, gate: null, entity: rel };
+  }
+  // Ruling 12 (2026-10-22): who wrote it decides the class — a confirmed PARENT's own SEC filing (EDGAR, under its signed
+  // filer CIK) is the company's own voice. Another relation has no signed venue yet: its filing keeps today's class (the
+  // later stages), unstamped. A filing dated before the relation's start stays outside, like a dated entity page.
+  const filing = relatedFilingOf(input);
+  if (filing && filing.relation === "parent" && filing.basis !== "before_effective") {
+    return { ok: true, voice_class: "client_voice", evidence_class: "prose", authority: "own_filing_related", detail: `own filing of a related entity: ${filing.name} (${filing.relation}) — SEC EDGAR CIK ${edgarCikOf(input.url)}`, gate: null, entity: filing };
   }
   if (input.registry) {
     const stamp = registryStamp(input.registry);

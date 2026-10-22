@@ -7,6 +7,8 @@
 #   d2  source: the render has no substring-of-claim_text test and reads recordWordsForRender; the finalize calls
 #       applyDeltaRuleChecks; isPairAdmissible reads ruleRefusal; neither the rules module nor the data act writes claim_deltas
 #   d3  table: claim_delta_rule_refusals / _audit refuse UPDATE and DELETE (rolled back); RLS on; anon holds nothing
+#   d5  ruling 9 (2026-10-22): the generator's pool excludes an ACTIVE refusal — selectDeltas drops it (rule_refusal:<rule>),
+#       a reverted one is admitted, the shared pool loads claim_delta_rule_refusals_active (publicReadSelection.test.ts SP*)
 #   d4  data act: plan → revert-probe (apply + revert in ONE rolled-back transaction) on the first company that has judged
 #       divergent public pairs; claim_deltas md5 unchanged; nothing survives the rollback
 # Ends by proving claim_delta_rule_refusals / _audit / claim_deltas / model_calls counts are what they were.
@@ -88,6 +90,10 @@ if [ -z "$CO" ]; then fail d4 "no company with judged divergent public pairs"; e
     ok d4 "company ${CO:0:8}: plan $N refusal(s); apply + revert rolled back; claim_deltas md5 unchanged"
   else fail d4 "revert-probe: $(echo "$RP" | grep -iE 'error|FAIL|md5|active' | head -3 | tr '\n' ' ')"; fi
 fi
+
+# d5
+R9=$( (cd supabase/functions/_shared && NO_COLOR=1 deno test -A --no-check publicReadSelection.test.ts --filter "/^SP/" 2>&1 | grep -E '^(ok|FAILED) \|' || true) )
+echo "$R9" | grep -qE '^ok \| 3 passed \| 0 failed' && ok d5 "selection excludes active refusals; reverted admitted; pool wired ($R9)" || fail d5 "selection: $R9"
 
 AFTER=$(psql_ -c "$COUNTS")
 [ "$BEFORE" = "$AFTER" ] && ok end "refusals / audit / claim_deltas md5 / model_calls unchanged (${AFTER%%|*}|…)" || fail end "changed: $BEFORE → $AFTER"

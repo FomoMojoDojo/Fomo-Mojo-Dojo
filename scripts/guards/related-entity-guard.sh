@@ -23,6 +23,11 @@
 #   e7  the signed venue strings (probe) and their render after "On your site" (vitest relatedVenue.test.tsx)
 #   e8  parity (E5): for every company with no confirmed entity, every live signal URL is own-domain under the set
 #       exactly when it is under the single host (disagree 0)
+#   e10 ruling 12 (2026-10-22): a sec.gov EDGAR filing under a CONFIRMED parent's signed CIK (filerCiks.ts; leading zeros or
+#       not) is own voice (own_filing_related), its venue the signed template; an unrelated filer's CIK, a proposed entity's
+#       and a non-parent's stay as today (relatedFilingAndDates.test.ts F1–F4)
+#   e11 ruling 13 (2026-10-22): the related-entity rules read the PAGE's published date — before the start ⇒ not own; undated
+#       ⇒ own with "· date not confirmed"; snapshot og / ld+json and search-result page_age dates (D1–D4, W)
 #   e9  the source invariant, fleet-wide: every confirmed related entity has a stored source snapshot with its quote
 #       byte-present and a confirm audit row (a seeded confirmed row is inside the set it covers)
 #
@@ -36,6 +41,11 @@
 #   P5d the name-in-quote check removed                           => e5 name_not_in_quote [name_not_in_quote] → []
 #   P5e the EDGAR CIK compare ignored (any EDGAR filer accepted)  => e5 edgar_wrong_cik [source_off_entity] → []
 #   P9  the seeded snapshot stored without its quote              => e9 violations 0 → 1
+#   P12-F  the CIK match removed (any confirmed entity's EDGAR)     => e10 F2 unrelated filer → own voice (RED)
+#   P12-F3 the confirmed-status check removed                       => e10 F3 proposed entity's CIK → own voice (RED)
+#   P12-F4 non-parent filings admitted                              => e10 F4 merged_into CIK → own voice (RED)
+#   P13-D1 the page-date check removed                              => e11 D1 a 2025 Cox page → own voice (RED)
+#   P13-D2 an undated page loses "· date not confirmed"             => e11 D2 venue string (RED)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -72,6 +82,12 @@ echo "e7. venue strings signed byte-for-byte; render: the related venue right af
 echo "e8. parity: $(q "d['e8']['urls_checked']") live signal URLs across the $(q "d['e8']['companies']") companies with no confirmed entity — the set and the single host agree on every one ($(q "d['e8']['companies_with_entities']") companies with confirmed entities are outside the invariant; $(q "d['e8']['urls_out_of_invariant']") URLs)"
 [ "$(q "d['e9']['violations']==0 and d['e9']['seeded_covered'] and d['e9']['confirmed']>=1")" = True ] || fail e9 "source invariant: $(q "d['e9']")"
 echo "e9. every confirmed related entity ($(q "d['e9']['confirmed']") incl. the seeded one) has a stored source snapshot with its quote byte-present and a confirm audit row"
+R12=$( (cd supabase/functions/_shared && NO_COLOR=1 deno test -A --no-check relatedFilingAndDates.test.ts --filter "/^F/" 2>&1 | grep -E '^(ok|FAILED) \|' || true) )
+echo "$R12" | grep -qE '^ok \| 5 passed \| 0 failed' || fail e10 "filings: $R12"
+echo "e10. ruling 12: a confirmed parent's own EDGAR filing is own voice under the signed template; unrelated / proposed / non-parent CIKs stay as today ($R12)"
+R13=$( (cd supabase/functions/_shared && NO_COLOR=1 deno test -A --no-check relatedFilingAndDates.test.ts --filter "/^(D[0-9]|W) /" 2>&1 | grep -E '^(ok|FAILED) \|' || true) )
+echo "$R13" | grep -qE '^ok \| 5 passed \| 0 failed' || fail e11 "page dates: $R13"
+echo "e11. ruling 13: the page's published date decides (before ⇒ not own; undated ⇒ own · date not confirmed); dates from snapshots and page_age ($R13)"
 [ "$(q "d['rolled_back']")" = True ] && [ "$(counts)" = "$C0" ] || fail end "the related-entity tables or signals changed across the guard"
 echo "end. company_related_entities / sources / audit and signals unchanged ($C0)"
 echo "GUARD OK"

@@ -39,3 +39,26 @@ describe("E4 venue strings (signed)", () => {
     ]} />)).toBe("On your site · spectrum.com · On Cox Communications' site · merged with your parent, Aug 2026 · cox.com · Aug 21, 2026 · In the record · en.wikipedia.org · 2025");
   });
 });
+
+// ── Rulings 12 + 13 (2026-10-22): a related parent's own filing; an undated entity page ──────────────────────────────
+describe("rulings 12 + 13 venue strings (signed)", () => {
+  it("a parent's own SEC filing → \"In Charter Communications' filing · your parent company\" (the template, not a literal)", () => {
+    expect(venueOf({ host: "sec.gov", published: null, cls: "you", ownSite: false, filingEntity: CHARTER }))
+      .toBe("In Charter Communications' filing · your parent company");
+    expect(venueOf({ host: "sec.gov", published: null, cls: "you", ownSite: false, filingEntity: { ...CHARTER, name: "Acme Holdings Group" } }))
+      .toBe("In Acme Holdings Group's filing · your parent company");
+  });
+  it("a filing row classed record stays \"In the record\" — class decides first", () => {
+    expect(venueOf({ host: "sec.gov", published: null, cls: "record", ownSite: false, filingEntity: CHARTER })).toBe("In the record");
+  });
+  it("an undated page on a dated relation trails \"· date not confirmed\"", () => {
+    expect(venueOf({ host: "cox.com", published: null, cls: "you", ownSite: true, ownSiteEntity: { ...COX, basis: "page_undated" } }))
+      .toBe("On Cox Communications' site · merged with your parent, Aug 2026 · date not confirmed");
+  });
+  it("the filing venue groups with the entity venues, after \"On your site\"", () => {
+    expect(txt(<CommitmentSource sourceClass="you" sources={[
+      { host: "sec.gov", published: null, cls: "you", ownSite: false, filingEntity: CHARTER },
+      { host: "spectrum.com", published: null, cls: "you", ownSite: true },
+    ]} />)).toBe("On your site · spectrum.com · In Charter Communications' filing · your parent company · sec.gov");
+  });
+});

@@ -16,6 +16,7 @@ import { SELECTION_VERSION, selectDeltas, selectOwnWords, selectSignals, type Se
 
 const read = (p: string) => Deno.readTextFile(new URL(p, import.meta.url));
 const NONE = new Set<string>();
+const NO_REFUSALS = new Map<string, string>();
 const sig = (id: string, url: string, text: string, created: string, extra: Partial<SelSignal> = {}): SelSignal => ({
   id, claim_text: text, evidence_excerpt: null, source_title: "Edgewood — Home", source_url: url, event_date: null,
   created_at: created, confidence_to_use: "medium", evidence_class: "prose", voice_class: "outside_voice_about_client",
@@ -60,7 +61,7 @@ const CLAIMS = new Map([
 
 Deno.test("(b) an orthogonal pair is excluded; a relevant pair stays (and own-host / rejected / struck-claim pairs drop too)", () => {
   const rows = [delta("D-orth", { relevance_verdict: "orthogonal" }), delta("D-rel"), delta("D-own", { observed_own_host: true }), delta("D-rej", { operator_disposition: "rejected_pairing" }), delta("D-struck", { declared_claim_id: "c-struck" })];
-  const { kept, dropped } = selectDeltas(rows, 15, CLAIMS);
+  const { kept, dropped } = selectDeltas(rows, 15, CLAIMS, NO_REFUSALS);
   assertEquals(kept.map((d) => d.id), ["D-rel"]);
   assertEquals(Object.fromEntries(dropped.map((d) => [d.id, d.reason])), { "D-orth": "relevance_orthogonal", "D-own": "observed_own_host", "D-rej": "rejected_pairing", "D-struck": "claim_not_active" });
 });
@@ -117,8 +118,8 @@ Deno.test("(f) determinism: shuffled input gives the same selection in the same 
   assertEquals(expected.length, 4);
   // deltas too: equal keys resolve by id whatever the arrival order
   const ds = [delta("D-b"), delta("D-a"), delta("D-c", { delta_type: "divergent" })];
-  assertEquals(selectDeltas(ds, 15, CLAIMS).kept.map((d) => d.id), ["D-c", "D-a", "D-b"]);
-  assertEquals(selectDeltas([...ds].reverse(), 15, CLAIMS).kept.map((d) => d.id), ["D-c", "D-a", "D-b"]);
+  assertEquals(selectDeltas(ds, 15, CLAIMS, NO_REFUSALS).kept.map((d) => d.id), ["D-c", "D-a", "D-b"]);
+  assertEquals(selectDeltas([...ds].reverse(), 15, CLAIMS, NO_REFUSALS).kept.map((d) => d.id), ["D-c", "D-a", "D-b"]);
 });
 
 Deno.test("(h) breadth for pairs: 3 observed claims, cap 3 → one pair per observed claim even when one claim holds the 3 top-ranked pairs", () => {
@@ -139,12 +140,12 @@ Deno.test("(h) breadth for pairs: 3 observed claims, cap 3 → one pair per obse
     delta("K-1", { delta_type: "divergent", declared_claim_id: "c-d1", public_claim_id: "c-obs-kaiser" }),
     delta("N-1", { delta_type: "echoed", declared_claim_id: "c-d2", public_claim_id: "c-obs-niche" }),
   ];
-  const { kept, dropped } = selectDeltas(rows, 3, claims);
+  const { kept, dropped } = selectDeltas(rows, 3, claims, NO_REFUSALS);
   assertEquals(kept.map((d) => d.id), ["G-1", "K-1", "N-1"], "first pass: one pair per observed claim in gap order");
   assertEquals(dropped.map((d) => d.id).sort(), ["G-2", "G-3"]);
-  assertEquals(selectDeltas(rows, 5, claims).kept.map((d) => d.id), ["G-1", "K-1", "N-1", "G-2", "G-3"], "second pass fills from the same observed claim");
+  assertEquals(selectDeltas(rows, 5, claims, NO_REFUSALS).kept.map((d) => d.id), ["G-1", "K-1", "N-1", "G-2", "G-3"], "second pass fills from the same observed claim");
   // determinism holds for pairs under breadth
-  assertEquals(selectDeltas([...rows].reverse(), 3, claims).kept.map((d) => d.id), ["G-1", "K-1", "N-1"]);
+  assertEquals(selectDeltas([...rows].reverse(), 3, claims, NO_REFUSALS).kept.map((d) => d.id), ["G-1", "K-1", "N-1"]);
 });
 
 Deno.test("(g) the ledger carries selection_version; the generator selects through the helper and imports every predicate", async () => {
@@ -153,7 +154,7 @@ Deno.test("(g) the ledger carries selection_version; the generator selects throu
   // R1 (2026-10-14): it stepped again. A signal's pool text is now rowTextOf's assembly and the
   // source title travels as its own field, so a read stamped 2026-10-07.1 was built from text no
   // drift re-read could reproduce — which is exactly what refusal 10153 was.
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-22.1");   // P1 (2026-10-14); 2026-10-22 ruling 4: the own-words host order
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-22.2");   // P1 (2026-10-14); 2026-10-22 ruling 4: own-words host order; ruling 9: rule refusals
   const gen = await read("../generate-public-read/index.ts");
   assert(gen.includes("selection_version: SELECTION_VERSION,"), "ledgerOf stamps the version");
   // P1 (2026-10-14): the call now names the kind whose citations are protected. Still the ONE helper.
@@ -176,4 +177,28 @@ Deno.test("(g) the ledger carries selection_version; the generator selects throu
   assert(mapping.includes('from "../../../../supabase/functions/_shared/previewOrder.ts"') && mapping.includes("export { GAP_VERDICT_ORDER, orderBeat2Signals, orderGapPairs, strengthForSignal };"));
   const ra = await read("../../../src/lib/firstRead/relevanceActive.ts");
   assert(ra.includes('} from "../../../supabase/functions/_shared/relevanceActive.ts";') && !ra.includes("export function isPairAdmissible"), "the client's relevanceActive re-exports the moved authority");
+});
+
+// ── Ruling 9 (2026-10-22): an ACTIVE claim_delta_rule_refusal keeps a pair out of the generator's pool ──
+//   SP1  selectDeltas reads the refusal map: a refused identity is dropped with reason rule_refusal:<rule>
+//   SP2  the shared pool loads claim_delta_rule_refusals_active and passes it to selectDeltas (source guard)
+//   neg  a REVERTED refusal is absent from the active view, so the pair stays
+Deno.test("SP1 a pair whose identity carries an active rule refusal (rule or operator) is dropped; an unrefused pair stays", () => {
+  const rows = [delta("D-r1", { content_identity: "ci-r1" }), delta("D-op", { content_identity: "ci-op" }), delta("D-ok", { content_identity: "ci-ok" }), delta("D-noid", { content_identity: null })];
+  const { kept, dropped } = selectDeltas(rows, 15, CLAIMS, new Map([["ci-r1", "R1"], ["ci-op", "operator"]]));
+  assertEquals(kept.map((d) => d.id).sort(), ["D-noid", "D-ok"]);
+  assertEquals(Object.fromEntries(dropped.map((d) => [d.id, d.reason])), { "D-r1": "rule_refusal:R1", "D-op": "rule_refusal:operator" });
+});
+Deno.test("SP1-neg a reverted refusal is not in the active view — the pair is admitted again", () => {
+  // the active view drops a refuse row once a revert row points at it; what reaches selectDeltas is that view
+  const active = new Map<string, string>();   // ci-r1 was refused and then reverted
+  assertEquals(selectDeltas([delta("D-r1", { content_identity: "ci-r1" })], 15, CLAIMS, active).kept.map((d) => d.id), ["D-r1"]);
+});
+Deno.test("SP2 the shared pool reads claim_delta_rule_refusals_active and passes it to selectDeltas; the select carries content_identity", async () => {
+  const pool = await read("./publicReadInputs.ts");
+  assert(/from\("claim_delta_rule_refusals_active"\)\.select\("content_identity, rule"\)\.eq\("company_id", companyId\)/.test(pool), "the active refusals are loaded for the company");
+  assert(/selectDeltas\(deltas, READ_CAP\.delta, claimById, ruleRefusalByIdentity\)/.test(pool), "and passed to selectDeltas");
+  assert(/from\("claim_deltas"\)\.select\("[^"]*\bcontent_identity\b[^"]*"\)/.test(pool), "the pair select carries content_identity");
+  const sel = await read("./publicReadSelection.ts");
+  assert(/isPairAdmissible\(\{[^}]*\bruleRefusal\b[^}]*\}\)/.test(sel), "selectDeltas passes ruleRefusal to the ONE gate");
 });

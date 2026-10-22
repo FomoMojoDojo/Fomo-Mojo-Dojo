@@ -9,6 +9,8 @@
 // public-baseline directly.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { parseSearchTopics, RESEARCH_BODY_KEYS } from "../_shared/searchTopics.ts";
+import { unknownBodyKeys } from "../_shared/bodyMode.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -201,6 +203,11 @@ Deno.serve(async (req) => {
     const trigger = String(body?.trigger || "manual").trim();
 
     if (!companyId) return json({ error: "company_id is required" }, 400);
+    // Ruling 10 (2026-10-22): unknown keys refused; search_topics validated here (before the flow row) and forwarded as sent.
+    const unknownKeys = unknownBodyKeys(body, RESEARCH_BODY_KEYS);
+    if (unknownKeys.length > 0) return json({ error: `unknown body key(s): ${unknownKeys.join(", ")}`, status: "body_refused", unknown_keys: unknownKeys }, 400);
+    const topicsVerdict = parseSearchTopics(body.search_topics);
+    if (!topicsVerdict.ok) return json({ error: topicsVerdict.detail, status: "search_topics_refused" }, 400);
 
     const userId = userRes.user.id;
 
@@ -210,7 +217,7 @@ Deno.serve(async (req) => {
       return json({ error: "Failed to create flow run record" }, 500);
     }
 
-    const stageInput = { company_id: companyId };
+    const stageInput: Record<string, unknown> = { company_id: companyId, ...(topicsVerdict.topics ? { search_topics: topicsVerdict.topics } : {}) };
     const stageRunId = await startStageRun({
       supabase,
       runId,
@@ -227,7 +234,7 @@ Deno.serve(async (req) => {
         supabaseUrl,
         anonKey,
         authHeader,
-        body: { company_id: companyId },
+        body: stageInput,
       });
     } catch (err) {
       const errorText = String((err as Error)?.message || err);

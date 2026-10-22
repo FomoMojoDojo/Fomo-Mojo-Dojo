@@ -21,6 +21,9 @@
 #   d9  ruling 4: a summary excerpt is blanked (claim_text kept, basis websearch_cited_text), an excerpt inside a cited span
 #       becomes that span, an analysis row keeps its text; public-baseline hands the spans to ingest
 #   d10 ruling 2 (fill brief): a guessed profile counts zero at the early ambiguous check on a domain plan; wired
+#   d21 ruling 10 (2026-10-22): per-run search topics — in the domain prompt as a numbered list (inside its sha), absent ⇒
+#       byte-identical; over-length / blank / duplicate / newline refused; an unknown body key still refused; topics on a
+#       name-only / seed-lane / openai run refused; both handlers wired (searchTopics.test.ts T1–T6)
 #   d11 the spend cap: an unpriced model under a cap is refused before any request (stubbed fetch: 0 calls); an affordable
 #       call passes, an over-cap one refuses; public-baseline checks before each web_search attempt, the lane, the OpenAI path
 #   d12 the seed-host lane runs only when the own-site crawl read 0 seed pages; wired on that count
@@ -108,6 +111,9 @@ echo "d18. the lane-only entry runs the lane alone (no main call, crawl, search 
 echo "d19. own-words: seed host first, then related, round-robin in the cap (8 seed rows kept against 30 older related rows; 0 without an order); no order ⇒ identical; wired"
 [ "$(q "d['d20']==dict(gpt41_usd=2.8,wired=True)")" = True ] || fail d20 "per-model pricing: $(q "d['d20']")"
 echo "d20. claim deltas ledger each model at its signed price (gpt-4.1: 1M in + 100k out = \$2.80); wired"
+R10=$( (cd supabase/functions/_shared && NO_COLOR=1 deno test -A --no-check searchTopics.test.ts --filter "/^T/" 2>&1 | grep -E '^(ok|FAILED) \|' || true) )
+echo "$R10" | grep -qE '^ok \| 7 passed \| 0 failed' || fail d21 "search topics: $R10"
+echo "d21. ruling 10: topics enter the domain prompt as a numbered list (none ⇒ byte-identical); bad topics and unknown keys refused; wired ($R10)"
 [ "$(q "d['rolled_back']")" = True ] && [ "$(counts)" = "$C0" ] || fail end "model_calls or signals changed across the guard"
 echo "end. model_calls / signals unchanged ($C0)"
 echo "GUARD OK"

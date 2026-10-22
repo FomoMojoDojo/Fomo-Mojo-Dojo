@@ -1102,7 +1102,22 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         // V1 (2026-10-15): each source carries what the renderer needs to name ITS OWN venue —
         // ownSite from isOwnDomainUrl (the single authority, the same predicate the stamping guard
         // uses), and the third_party_profile marker that was already on the row and ignored.
-        const sourceById = new Map<string, { host: string; published: string | null; publishedAt: string | null; registryFrame: "filing" | "profile" | null; ownSite: boolean; ownSiteEntity?: EntityStamp | null; thirdPartyProfile: boolean }>();
+        const sourceById = new Map<string, { host: string; published: string | null; publishedAt: string | null; registryFrame: "filing" | "profile" | null; ownSite: boolean; ownSiteEntity?: EntityStamp | null; filingEntity?: EntityStamp | null; thirdPartyProfile: boolean }>();
+        // Rulings 12 + 13 (2026-10-22): what the MINT stamped on the row decides two venues the host alone cannot —
+        // a related parent's own filing (authority own_filing_related) and an undated entity page (basis page_undated,
+        // "· date not confirmed"). A row without the stamp renders exactly as before.
+        const stampedEntityOf = (rp: unknown): EntityStamp | null => {
+          const e = (rp as { entity?: unknown } | null)?.entity as EntityStamp | undefined;
+          return e && typeof e === "object" && typeof e.name === "string" && typeof e.relation === "string" ? e : null;
+        };
+        const stampedVenueOf = (url: string, rp: unknown): { ownSiteEntity?: EntityStamp | null; filingEntity?: EntityStamp | null } => {
+          const stamped = stampedEntityOf(rp);
+          const authority = ((rp as { voice_authority?: { authority?: unknown } } | null)?.voice_authority?.authority) ?? null;
+          if (stamped && authority === "own_filing_related") return { filingEntity: stamped };
+          const base = ownSiteEntityOf(url);
+          if (stamped && stamped.basis === "page_undated" && base.ownSiteEntity && base.ownSiteEntity.host === stamped.host) return { ownSiteEntity: stamped };
+          return base;
+        };
         if (classedIds.size > 0) {
           const ids = [...classedIds];
           const hostOf = (raw: string | null | undefined): string => {
@@ -1113,8 +1128,15 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             const chunk = ids.slice(i, i + 200);
             const [sg, ow] = await Promise.all([
               loose().from("signals").select("id, source_url, event_date, raw_payload").in("id", chunk),
-              loose().from("own_words_candidates").select("id, source_url").in("id", chunk),
+              loose().from("own_words_candidates").select("id, source_url, signal_id").in("id", chunk),
             ]);
+            // ruling 13: an own-words row's venue reads its backing signal's stamp (the candidate carries none)
+            const backingIds = [...new Set(((ow.data ?? []) as Array<{ signal_id?: string | null }>).map((r) => r.signal_id).filter((x): x is string => !!x))];
+            const backingPayload = new Map<string, unknown>();
+            if (backingIds.length) {
+              const { data: bs } = await loose().from("signals").select("id, raw_payload").in("id", backingIds);
+              for (const b of ((bs ?? []) as Array<{ id: string; raw_payload?: unknown }>)) backingPayload.set(b.id, b.raw_payload ?? null);
+            }
             for (const r of ((sg.data ?? []) as Array<{ id: string; source_url: string | null; event_date: string | null; raw_payload?: { date?: unknown; source_type?: unknown; registry?: { page_type?: unknown } } | null }>)) {
               // published: event_date, falling back to raw_payload.date. event_date_precision is NOT
               // consulted — it reads 'day' on every row in the record, undated ones included.
@@ -1123,17 +1145,17 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
               sourceById.set(r.id, {
                 host: hostOf(r.source_url), published: publishedSegment(raw), publishedAt: raw,
                 registryFrame: pt === "filing_data" ? "filing" : (pt ? "profile" : null),
-                ownSite: isOwnDomainUrl(String(r.source_url ?? ""), companyHost), ...ownSiteEntityOf(String(r.source_url ?? "")),
+                ownSite: isOwnDomainUrl(String(r.source_url ?? ""), companyHost), ...stampedVenueOf(String(r.source_url ?? ""), r.raw_payload ?? null),
                 thirdPartyProfile: r.raw_payload?.source_type === "third_party_profile",
               });
             }
-            for (const r of ((ow.data ?? []) as Array<{ id: string; source_url: string | null }>)) {
+            for (const r of ((ow.data ?? []) as Array<{ id: string; source_url: string | null; signal_id?: string | null }>)) {
               // own words carry no event date — the segment is omitted, never invented
               if (!sourceById.has(r.id)) {
                 sourceById.set(r.id, {
                   host: hostOf(r.source_url), published: null, publishedAt: null, registryFrame: null,
                   // an own-words row carries no registry marker; its venue is decided by host alone
-                  ownSite: isOwnDomainUrl(String(r.source_url ?? ""), companyHost), ...ownSiteEntityOf(String(r.source_url ?? "")), thirdPartyProfile: false,
+                  ownSite: isOwnDomainUrl(String(r.source_url ?? ""), companyHost), ...stampedVenueOf(String(r.source_url ?? ""), r.signal_id ? backingPayload.get(r.signal_id) ?? null : null), thirdPartyProfile: false,
                 });
               }
             }
@@ -1154,7 +1176,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             if (c !== "record" && c !== "you") continue;
             const sv = sourceById.get(id);
             if (!sv || !sv.host) continue;
-            sources.push({ host: sv.host, published: sv.published, publishedAt: sv.publishedAt, cls: c, registryFrame: sv.registryFrame, ownSite: sv.ownSite, ...(sv.ownSiteEntity !== undefined ? { ownSiteEntity: sv.ownSiteEntity } : {}), thirdPartyProfile: sv.thirdPartyProfile });
+            sources.push({ host: sv.host, published: sv.published, publishedAt: sv.publishedAt, cls: c, registryFrame: sv.registryFrame, ownSite: sv.ownSite, ...(sv.ownSiteEntity !== undefined ? { ownSiteEntity: sv.ownSiteEntity } : {}), ...(sv.filingEntity ? { filingEntity: sv.filingEntity } : {}), thirdPartyProfile: sv.thirdPartyProfile });
           }
           return { cls, sources };
         };
@@ -1172,7 +1194,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             if (c !== "record" && c !== "you") continue;               // our own rows attribute nothing
             const s = sourceById.get(id);
             if (!s || !s.host) continue;
-            sources.push({ host: s.host, published: s.published, publishedAt: s.publishedAt, cls: c, registryFrame: s.registryFrame, ownSite: s.ownSite, ...(s.ownSiteEntity !== undefined ? { ownSiteEntity: s.ownSiteEntity } : {}), thirdPartyProfile: s.thirdPartyProfile });
+            sources.push({ host: s.host, published: s.published, publishedAt: s.publishedAt, cls: c, registryFrame: s.registryFrame, ownSite: s.ownSite, ...(s.ownSiteEntity !== undefined ? { ownSiteEntity: s.ownSiteEntity } : {}), ...(s.filingEntity ? { filingEntity: s.filingEntity } : {}), thirdPartyProfile: s.thirdPartyProfile });
           }
           return { cls, sources };
         };
@@ -1226,7 +1248,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
               if (c !== "record" && c !== "you") continue;
               const sv = sourceById.get(id);
               if (!sv || !sv.host) continue;
-              sources.push({ host: sv.host, published: sv.published, publishedAt: sv.publishedAt, cls: c, registryFrame: sv.registryFrame, ownSite: sv.ownSite, ...(sv.ownSiteEntity !== undefined ? { ownSiteEntity: sv.ownSiteEntity } : {}), thirdPartyProfile: sv.thirdPartyProfile });
+              sources.push({ host: sv.host, published: sv.published, publishedAt: sv.publishedAt, cls: c, registryFrame: sv.registryFrame, ownSite: sv.ownSite, ...(sv.ownSiteEntity !== undefined ? { ownSiteEntity: sv.ownSiteEntity } : {}), ...(sv.filingEntity ? { filingEntity: sv.filingEntity } : {}), thirdPartyProfile: sv.thirdPartyProfile });
             }
           }
           // VS3: RENDER ONLY. The stored slot text is untouched — the signature covers it, the slot

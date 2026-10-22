@@ -45,6 +45,12 @@ export type BodyModeVerdict<M extends string = string> =
     unknown_keys: string[];
   };
 
+/** The keys of `body` outside `knownKeys` — the unknown-key half of the rule, for a handler with no mode flags (ruling 10,
+ *  2026-10-22: public-baseline and run-public-research refuse a key they do not read rather than ignore it). */
+export function unknownBodyKeys(body: Readonly<Record<string, unknown>>, knownKeys: readonly string[]): string[] {
+  return Object.keys(body).filter((k) => !knownKeys.includes(k));
+}
+
 /** THE one decision. Exactly one of `modes` is true in `body`, and no key outside `knownKeys`.
  *  R8: both lists are REQUIRED — a caller that cannot say which modes and keys it reads has no
  *  business classifying a body, and a default list would be a second function's rule in disguise. */
@@ -54,7 +60,7 @@ export function classifyBodyMode<M extends string>(
   knownKeys: readonly string[],
 ): BodyModeVerdict<M> {
   const modes_named = modes.filter((f) => body[f] === true);
-  const unknown_keys = Object.keys(body).filter((k) => !knownKeys.includes(k));
+  const unknown_keys = unknownBodyKeys(body, knownKeys);
   if (modes_named.length === 1 && unknown_keys.length === 0) {
     return { ok: true, mode: modes_named[0] };
   }
