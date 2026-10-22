@@ -455,7 +455,31 @@ export function unsourcedNames(input: {
   const own = new Set(String(input.companyName ?? "").toLowerCase().split(/\s+/).filter(Boolean));
   return namesIn(input.text)
     .filter((n) => !(own.size > 0 && n.toLowerCase().split(/[\s\/]+/).every((w) => own.has(w))))
-    .filter((n) => !input.citedSourceTexts.some((srcText) => nameSourcedIn(n, srcText)));   // R5: the fold, on word boundaries
+    .filter((n) => !input.citedSourceTexts.some((srcText) => nameSourcedIn(n, srcText)))   // R5: the fold, on word boundaries
+    .filter((n) => !openerShortenedSourced(input.text, n, input.citedSourceTexts));        // N1o
+}
+
+// ── N1o (operator ruling, 2026-10-22): A SENTENCE-OPENING WORD IS TESTED OFF A NAME ──────────────
+// Spectrum's strategy refused on "Provide Anytime Upgrade" (13317) and "Offer Anytime Upgrade" (13318),
+// and its offering on "The Repair" (13236): a word capitalised only because it opens the line or a
+// sentence was fused into the capitalised run, minting a name no row states — while 950e6c89 states
+// "Anytime Upgrade" verbatim. N1d drops a closed set of auxiliaries; a verb or article can open a
+// line too. So a name that BEGINS a line or a sentence is also tested with its first word removed, and
+// passes if that shortened name is verbatim (the fold: case-insensitive, word boundaries) in a cited
+// row. A name mid-sentence is untouched, and a shortened name no row states is still refused.
+
+/** Does `name` begin the line, or a sentence of it? Case-sensitive: it is the capitalised run. */
+export function nameOpensSentence(text: string, name: string): boolean {
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[.!?]\\s+|\\n)\\s*["'“‘(]?${esc}`).test(String(text ?? ""));
+}
+
+/** N1o: a sentence-opening name whose shortened form (first word removed) a cited row states. */
+export function openerShortenedSourced(text: string, name: string, citedSourceTexts: readonly string[]): boolean {
+  if (!nameOpensSentence(text, name)) return false;
+  const shortened = name.trim().split(/\s+/).slice(1).join(" ");
+  if (!shortened) return false;
+  return citedSourceTexts.some((src) => nameSourcedIn(shortened, src));
 }
 
 // ── O1 (operator ruling, 2026-10-15): AN ITEM'S LABEL IS CHECKED LIKE ITS STATEMENT ────────────

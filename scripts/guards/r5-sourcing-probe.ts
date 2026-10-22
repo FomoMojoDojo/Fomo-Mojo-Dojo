@@ -4,6 +4,7 @@
 //      an unverified excerpt reads as nothing; every builder of row text reads through rowTextOf
 //   r2 the gap beat's state: Spectrum's shape (skipped row, newer own-words) is not_compared; the hook uses the function
 //   r3 matching folds case, possessives and punctuation; word boundaries hold
+//   r4 N1o: a sentence-opening word is tested off a name; a shortened name no cited row states is still refused
 import { rowTextOf, ROW_TEXT_COLUMNS } from "../../supabase/functions/_shared/classSourcingScope.ts";
 import { nameSourcedIn, s1Unsourced, sourcedIn, unsourcedNames } from "../../supabase/functions/_shared/classFactCheck.ts";
 
@@ -37,4 +38,11 @@ const r3 = {
   boundary: !nameSourcedIn("Air", "a fair price"), figure_in_token: sourcedIn("5", "nationwide 5G access"),
   name_case: unsourcedNames({ text: "Spectrum Mobile’s trade-in", cls: "you", citedSourceTexts: ["eligible customers can use spectrum mobile's $100 trade-in"] }).length === 0,
 };
-console.log(JSON.stringify({ r1, r2, r3 }));
+// r4 N1o (2026-10-22): a sentence-opening word is tested off a name — the shortened name must be in a cited row
+const ANYTIME = "Anytime Upgrade : Included in the Spectrum Mobile Unlimited Plus plan, Anytime Upgrade allows customers to upgrade their phones whenever they want.";
+const r4 = {
+  opener_verb_passes: unsourcedNames({ text: "Provide Anytime Upgrade, allowing customers to upgrade their phones whenever they want.", cls: "you", citedSourceTexts: [ANYTIME] }).length === 0,
+  negative_refused: unsourcedNames({ text: "Provide Turbo Upgrade, allowing customers to upgrade whenever they want.", cls: "you", citedSourceTexts: [ANYTIME] }).join("|"),
+  mid_sentence_refused: unsourcedNames({ text: "Customers can Provide Anytime Upgrade today.", cls: "you", citedSourceTexts: [ANYTIME] }).join("|"),
+};
+console.log(JSON.stringify({ r1, r2, r3, r4 }));

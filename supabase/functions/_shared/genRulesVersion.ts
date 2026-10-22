@@ -54,4 +54,10 @@
 // the judge stays gpt-4.1-mini. A read produced by a different generator is not comparable to one
 // produced by the old generator, so the version has to move with it — and the generator model id is
 // now stamped inside every stored input_ledger beside this version, not only on the sibling columns.
-export const GEN_RULES_VERSION = "2026-10-15.4" as const;
+// R5-P (operator ruling, 2026-10-22): bumped because the GENERATION PROMPT changed — a current-read line
+// reaches the still-sourced block only if every specific in it passes R5 against its own cited rows
+// (predecessorSourcing.ts). Spectrum's strategy restated 43542649's "45 states" / "largest" four times
+// (13246–13249) because those lines were shown to the model while no row carried page words for them.
+//   2026-10-15.4  MODEL TRIAL — generator gpt-4.1-mini -> gpt-4.1 (the previous value of this stamp).
+//   2026-10-22.1  R5-P — R5-failing predecessor lines are withheld from the prompt.
+export const GEN_RULES_VERSION = "2026-10-22.1" as const;
