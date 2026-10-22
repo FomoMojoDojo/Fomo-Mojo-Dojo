@@ -14,6 +14,8 @@
 #   v6  coupling: a level-flagged predecessor line is licensed by continuity, never demanded (Spectrum ua[3])
 #   v7  ruling 15: an alternative uncited (A1), not named in its cited rows' page words (A2), or named only by our read (A3)
 #       refuses; an empty field records an alternative gap, never a guess
+#   v8  ruling 27: a level-flagged line's cascade_source mirror is withheld with it (field suffix + text), so continuity
+#       licenses the drop — Spectrum's strategy attempt 2 (integrity 13803) over fixtures/readLevel/spectrum-strategy-mirror
 #
 # Plants (each injected live, the guard RED with the measured value moved, restored md5-identical, GREEN):
 #   P1  L1 coverage threshold dropped to 0                       => v1 every cited line flags (RED)
@@ -26,6 +28,7 @@
 #   PA1 an uncited alternative admitted                           => v7 A1 (RED)
 #   PA2 the name-in-page-words check removed                      => v7 A2 (RED)
 #   PA3 our read admitted as the naming row (the empty field filled by the model) => v7 A3 (RED)
+#   P8  the mirror match dropped from levelWithheldKeys (top-level path only) => v8 continuity demands the mirror (RED)
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 export PATH="$HOME/.deno/bin:$PATH"
@@ -55,6 +58,7 @@ check v7 "A2 an alternative" "A2: name absent from the cited rows' page words re
 check v7 "A3 an alternative" "A3: an alternative named only by our read refused"
 check v7 "A ok:" "a record- or company-named, cited alternative passes"
 check v7 "G an empty field" "an empty field records an alternative gap, never a guess"
+check v8 "C8 mirror" "a level-flagged line's cascade_source mirror is withheld; continuity licenses the drop (Spectrum 13803)"
 N=$(echo "$T" | grep -E '^ok \|' | head -1)
 [ -n "$N" ] && ok all "$N" || fail all "$(echo "$T" | grep -E 'FAILED|error:' | head -3 | tr '\n' ' ')"
 

@@ -902,7 +902,8 @@ Respond with ONLY JSON:
       // ── Ruling 14: a CURRENT line flagged at level joins the withheld set — never shown as still-sourced, never
       // demanded by continuity, never carried. The model may drop it; continuity licenses the drop.
       const level = levelHitsOfStored(kind, row?.payload ?? null);
-      const out = { verdicts: g.verdicts, withheld: unionWithheld(g.withheld, levelWithheldKeys(level)), level };
+      // Ruling 27: the read's own lines go in, so a flagged line's cascade_source mirror is withheld with it.
+      const out = { verdicts: g.verdicts, withheld: unionWithheld(g.withheld, levelWithheldKeys(level, linesOfStoredPayload(row?.payload ?? null))), level };
       predecessorGateCache[kind] = out;
       return out;
     };

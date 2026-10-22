@@ -184,9 +184,19 @@ export function levelItemsOfOfferingPayload(payload: Record<string, unknown> | n
 /** Which checks put a CURRENT-read line into the withheld set. All four: a predecessor line that echoes the offering is
  *  not demanded back (L1 logs on the NEW attempt, but continuity must not require the model to restate it). */
 export const WITHHELD_LEVEL_CHECKS: ReadonlySet<LevelCheck> = new Set(["L1", "L2", "L3", "L4"]);
-/** The predecessor-line keys (predecessorLineKey: field NUL text) of the current read's lines flagged at level. */
-export function levelWithheldKeys(hits: readonly LevelHit[]): Set<string> {
-  return new Set(hits.filter((h) => WITHHELD_LEVEL_CHECKS.has(h.check)).map((h) => `${h.field}\u0000${h.text}`));
+/** The predecessor-line keys (predecessorLineKey: field NUL text) of the current read's lines flagged at level.
+ *  Ruling 27 (2026-10-22): a stored read may carry a line twice — a strategy read keeps each rung at the top level AND
+ *  under cascade_source — and the hits name only the top-level path. Given the read's `lines`, every line whose field IS
+ *  the hit's field or ENDS WITH "." + it, and whose text is the hit's text, is withheld too; otherwise continuity demands
+ *  the mirror copy of a line the level rule asked the model to drop (Spectrum's strategy, integrity 13803). */
+export function levelWithheldKeys(hits: readonly LevelHit[], lines: readonly LevelLine[] = []): Set<string> {
+  const flagged = hits.filter((h) => WITHHELD_LEVEL_CHECKS.has(h.check));
+  const out = new Set(flagged.map((h) => `${h.field}\u0000${h.text}`));
+  for (const l of lines) {
+    const f = l.field ?? "";
+    if (flagged.some((h) => l.text === h.text && (f === h.field || f.endsWith(`.${h.field}`)))) out.add(`${f}\u0000${l.text}`);
+  }
+  return out;
 }
 /** The withheld set continuity, the prompt and the carries read: R5-P's, unioned with the level keys. */
 export function unionWithheld(r5: ReadonlySet<string>, level: ReadonlySet<string>): Set<string> {

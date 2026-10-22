@@ -1,0 +1,116 @@
+{
+ "_note": "Copied text (2026-10-22): Spectrum's CURRENT strategy read 7afb165a (carries the cascade_source mirror) and the staged attempt-2 payload refused at continuity_line_dropped (integrity 13803). No live read.",
+ "current_strategy": {
+  "how_to_win": "Provide expansive coverage, instant connectivity with the latest WiFi 7 technology, and unique customer benefits such as Anytime Upgrade and 24/7/365 100% U.S.-based phone support.",
+  "where_to_play": "Serve over 57 million customers in 41 states with internet, mobile, and TV services, including the nation’s fastest-growing mobile provider.",
+  "cascade_source": {
+   "how_to_win": "Provide expansive coverage, instant connectivity with the latest WiFi 7 technology, and unique customer benefits such as Anytime Upgrade and 24/7/365 100% U.S.-based phone support.",
+   "where_to_play": "Serve over 57 million customers in 41 states with internet, mobile, and TV services, including the nation’s fastest-growing mobile provider.",
+   "management_systems": [],
+   "winning_aspiration": "Deliver expansive coverage and instant connectivity with the latest WiFi 7 technology, offer the nation’s fastest-growing mobile service, and differentiate with features like Anytime Upgrade and 24/7/365 100% U.S.-based phone support.",
+   "must_have_capabilities": [
+    {
+     "text": "Ability to deliver expansive WiFi coverage and instant connectivity with the latest WiFi 7 technology.",
+     "class": "you",
+     "citations": [
+      "0cb18200-2821-459d-aaff-4656f328c7ad"
+     ]
+    },
+    {
+     "text": "Offer Anytime Upgrade, allowing customers to upgrade their phones whenever they want.",
+     "class": "you",
+     "citations": [
+      "950e6c89-0035-4151-932e-832de6efe95f"
+     ]
+    },
+    {
+     "text": "Maintain 24/7/365 100% U.S.-based phone support for all customers.",
+     "class": "you",
+     "citations": [
+      "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+     ]
+    }
+   ]
+  },
+  "how_to_win_class": "you",
+  "management_systems": [],
+  "winning_aspiration": "Deliver expansive coverage and instant connectivity with the latest WiFi 7 technology, offer the nation’s fastest-growing mobile service, and differentiate with features like Anytime Upgrade and 24/7/365 100% U.S.-based phone support.",
+  "where_to_play_class": "you",
+  "how_to_win_citations": [
+   "0cb18200-2821-459d-aaff-4656f328c7ad",
+   "950e6c89-0035-4151-932e-832de6efe95f",
+   "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+  ],
+  "must_have_capabilities": [
+   {
+    "text": "Ability to deliver expansive WiFi coverage and instant connectivity with the latest WiFi 7 technology.",
+    "class": "you",
+    "citations": [
+     "0cb18200-2821-459d-aaff-4656f328c7ad"
+    ]
+   },
+   {
+    "text": "Offer Anytime Upgrade, allowing customers to upgrade their phones whenever they want.",
+    "class": "you",
+    "citations": [
+     "950e6c89-0035-4151-932e-832de6efe95f"
+    ]
+   },
+   {
+    "text": "Maintain 24/7/365 100% U.S.-based phone support for all customers.",
+    "class": "you",
+    "citations": [
+     "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+    ]
+   }
+  ],
+  "where_to_play_citations": [
+   "1149c6be-ae4b-4cac-a1ac-d0c239001171",
+   "8b6975a1-5b3a-4a3b-a84b-85da55c06e14",
+   "35b30486-0369-4ab2-934a-fa37d3b3fc4a"
+  ],
+  "winning_aspiration_class": "you",
+  "winning_aspiration_citations": [
+   "0cb18200-2821-459d-aaff-4656f328c7ad",
+   "950e6c89-0035-4151-932e-832de6efe95f",
+   "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+  ]
+ },
+ "attempt2_strategy": {
+  "how_to_win": "Deliver expansive WiFi coverage and instant connectivity with the latest WiFi 7 technology, and maintain 24/7/365 100% U.S.-based phone support for all customers.",
+  "where_to_play": "Internet, mobile, and TV services for customers in 41 states.",
+  "how_to_win_class": "you",
+  "management_systems": [],
+  "winning_aspiration": "Serve over 57 million customers in 41 states with internet, mobile, and TV services, including the nation’s fastest-growing mobile provider.",
+  "where_to_play_class": "you",
+  "how_to_win_citations": [
+   "0cb18200-2821-459d-aaff-4656f328c7ad",
+   "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+  ],
+  "must_have_capabilities": [
+   {
+    "text": "Ability to deliver expansive WiFi coverage and instant connectivity with the latest WiFi 7 technology.",
+    "class": "you",
+    "citations": [
+     "0cb18200-2821-459d-aaff-4656f328c7ad"
+    ]
+   },
+   {
+    "text": "Maintain 24/7/365 100% U.S.-based phone support for all customers.",
+    "class": "you",
+    "citations": [
+     "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+    ]
+   }
+  ],
+  "where_to_play_citations": [
+   "1149c6be-ae4b-4cac-a1ac-d0c239001171"
+  ],
+  "winning_aspiration_class": "you",
+  "winning_aspiration_citations": [
+   "1149c6be-ae4b-4cac-a1ac-d0c239001171",
+   "8b6975a1-5b3a-4a3b-a84b-85da55c06e14",
+   "35b30486-0369-4ab2-934a-fa37d3b3fc4a"
+  ]
+ }
+}

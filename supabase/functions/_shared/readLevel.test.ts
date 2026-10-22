@@ -68,6 +68,29 @@ Deno.test("C7 coupling — a level-flagged predecessor line is LICENSED by conti
   assert(split.licensed.some((l) => /U\.S\.-based phone support/.test(JSON.stringify(l))), "ua[3] is licensed");
 });
 
+// Ruling 27: a strategy read stores each rung twice — at the top level and under cascade_source. The level hits name the
+// top-level path, so the mirror copy stayed demanded: Spectrum's staged strategy dropped "Offer Anytime Upgrade" (L1+L2)
+// and continuity refused it through cascade_source.must_have_capabilities[1] (integrity 13803).
+const MIRROR = JSON.parse(await Deno.readTextFile(new URL("./fixtures/readLevel/spectrum-strategy-mirror-20261022.json", import.meta.url))) as Record<string, Record<string, unknown>>;
+Deno.test("C8 mirror — a level-flagged line's cascade_source mirror is withheld too, so continuity licenses the drop (Spectrum 13803)", () => {
+  const current = linesOfStoredPayload(MIRROR.current_strategy);
+  const staged = linesOfStoredPayload(MIRROR.attempt2_strategy);
+  const hits = levelHits("strategy", current, levelItemsOfOfferingPayload(FIX.Spectrum.offering), "Spectrum");
+  const level = levelWithheldKeys(hits, current);
+  const upgrade = "Offer Anytime Upgrade, allowing customers to upgrade their phones whenever they want.";
+  assert(current.some((l) => l.field === "cascade_source.must_have_capabilities[1]" && l.text === upgrade), "the fixture carries the mirror");
+  assert(level.has(`cascade_source.must_have_capabilities[1]\u0000${upgrade}`), "the mirror key is withheld");
+  assert(level.has(`must_have_capabilities[1]\u0000${upgrade}`), "the top-level key is withheld");
+  const refs = [...new Set(current.flatMap((l) => l.refs))];
+  const textByRef = Object.fromEntries(refs.map((r) => [r, current.filter((l) => l.refs.includes(r)).map((l) => l.text).join(" ")]));
+  const classByRef = Object.fromEntries(refs.map((r) => [r, "you"]));
+  const split = classifyContinuity({ currentLines: current, stagedLines: staged, newLedgerIds: new Set(refs), textByRef, classByRef, sourcingIds: new Set(refs), withheld: unionWithheld(new Set(), level) });
+  assert(!split.dropped.some((d) => JSON.stringify(d).includes("Offer Anytime Upgrade")), `the mirror is demanded: ${JSON.stringify(split.dropped)}`);
+  // a mirror is matched by field suffix AND text: an unflagged line is never withheld through a suffix
+  assert(!level.has(`cascade_source.must_have_capabilities[2]\u0000Maintain 24/7/365 100% U.S.-based phone support for all customers.`) ||
+    hits.some((h) => h.field === "must_have_capabilities[2]"), "only flagged lines' mirrors are withheld");
+});
+
 Deno.test("L5 wiring — GUARD 5b after S1, before the judge; one shared re-ask budget; promote re-checks", async () => {
   const pk = await read("./publicReadPerKind.ts");
   const s1 = pk.indexOf("const s1 = deps.s1Refusal?.(kind, payload)"), lv = pk.indexOf("const lvl = deps.levelRefusal?.(kind, payload)"), jd = pk.indexOf("verdict = await deps.judge(kind, payload);");
@@ -78,7 +101,7 @@ Deno.test("L5 wiring — GUARD 5b after S1, before the judge; one shared re-ask 
   const ps1 = pr.indexOf("const s1 = await promoteS1Refusal("), plv = pr.indexOf("const lvl = await promoteLevelRefusal("), flip = pr.indexOf('update({ is_current: true })');
   assert(ps1 > 0 && plv > ps1 && flip > plv, "promote: S1 → level → flip");
   const g = await read("../generate-public-read/index.ts");
-  assert(g.includes("withheld: unionWithheld(g.withheld, levelWithheldKeys(level))"), "the withheld set unions the level keys");
+  assert(g.includes("withheld: unionWithheld(g.withheld, levelWithheldKeys(level, linesOfStoredPayload(row?.payload ?? null)))"), "the withheld set unions the level keys, mirrors included (ruling 27)");
   assert(g.includes("const current = (await currentLinesFor(kind)).filter((l) => !carryWithheld.has(predecessorLineKey(l)));"), "carries skip withheld lines");
   assert(g.includes('const extra = kind === "strategy" ? positioningContextOf() : "";'), "the strategy feed is the level-filtered one");
   assert(/levelRefusal: \(kind, _payload\) => \{[\s\S]*?levelHits\(kind as LevelKind, lines, levelItems, companyName\)/.test(g), "the stage gate reads the stamp against the current offering");
