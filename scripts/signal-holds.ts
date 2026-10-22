@@ -7,6 +7,7 @@
 // excerpt: the row stays in the record and off the client surface.
 //
 //   deno run --allow-all scripts/signal-holds.ts --plan   --company=<uuid> --source-id=<run id> --source-type=<raw_payload.source_type> --expect=<n>
+//                                                          (or --ids=<uuid,uuid,…> in place of --source-id/--source-type)
 //   deno run --allow-all scripts/signal-holds.ts --write  --company=… --source-id=… --source-type=… --expect=<n> --reason=<text> --actor=<name> --run-ref=<ref>
 //   deno run --allow-all scripts/signal-holds.ts --revert --company=… --run-ref=<ref> --actor=<name> [--prove]   (--prove: revert, verify, ROLL BACK)
 // The mode is named or refused (classifyBodyMode); unknown keys refused. --plan is one read-only transaction (no xid).
@@ -17,7 +18,7 @@ import { lit, PsqlSession } from "./lib/psqlBlankingStore.ts";
 
 const out = (o: unknown) => console.log(JSON.stringify(o, null, 1));
 const body = argvBody(Deno.args);
-const v = classifyBodyMode(body, ["plan", "write", "revert"] as const, ["plan", "write", "revert", "company", "source_id", "source_type", "expect", "reason", "actor", "run_ref", "prove"]);
+const v = classifyBodyMode(body, ["plan", "write", "revert"] as const, ["plan", "write", "revert", "company", "source_id", "source_type", "ids", "expect", "reason", "actor", "run_ref", "prove"]);
 if (!v.ok) { out({ ok: false, refused: true, code: "mode_unnamed", error: v.detail }); Deno.exit(3); }
 const str = (k: string) => (typeof body[k] === "string" ? String(body[k]).trim() : "");
 const company = str("company");
@@ -25,12 +26,18 @@ if (!/^[0-9a-f-]{36}$/.test(company)) { out({ ok: false, refused: true, code: "a
 
 type Row = { id: string; company_id: string; voice_class: string | null; held_at: string | null; held_reason: string | null; superseded_at: string | null; source_url: string | null };
 const s = new PsqlSession();
-const select = () => s.query<Row>(`select id, company_id, voice_class, held_at::text, held_reason, superseded_at::text, source_url from signals
-  where company_id=${lit(company)}::uuid and source_id=${lit(str("source_id"))} and raw_payload->>'source_type'=${lit(str("source_type"))} order by id`);
+// selection: --ids=<uuid,uuid,…> (explicit rows of this company) OR --source-id + --source-type
+const idList = str("ids") ? str("ids").split(",").map((x) => x.trim()).filter(Boolean) : [];
+if (idList.some((x) => !/^[0-9a-f-]{36}$/.test(x))) { out({ ok: false, refused: true, code: "args", error: "--ids must be full uuids" }); Deno.exit(3); }
+const select = () => idList.length
+  ? s.query<Row>(`select id, company_id, voice_class, held_at::text, held_reason, superseded_at::text, source_url from signals
+      where company_id=${lit(company)}::uuid and id in (${idList.map((x) => `${lit(x)}::uuid`).join(",")}) order by id`)
+  : s.query<Row>(`select id, company_id, voice_class, held_at::text, held_reason, superseded_at::text, source_url from signals
+      where company_id=${lit(company)}::uuid and source_id=${lit(str("source_id"))} and raw_payload->>'source_type'=${lit(str("source_type"))} order by id`);
 try {
   if (v.mode === "plan" || v.mode === "write") {
     const expect = Number(str("expect"));
-    if (!str("source_id") || !str("source_type") || !Number.isInteger(expect) || expect < 1) { out({ ok: false, refused: true, code: "args", error: "--source-id, --source-type and --expect=<n> are required" }); Deno.exit(3); }
+    if ((!idList.length && (!str("source_id") || !str("source_type"))) || !Number.isInteger(expect) || expect < 1) { out({ ok: false, refused: true, code: "args", error: "--ids (or --source-id + --source-type) and --expect=<n> are required" }); Deno.exit(3); }
     if (v.mode === "write" && (!str("reason") || !str("actor") || !str("run_ref"))) { out({ ok: false, refused: true, code: "args", error: "--write needs --reason, --actor and --run-ref" }); Deno.exit(3); }
     await s.exec(v.mode === "plan" ? "begin transaction read only;" : "begin;");
     const rows = await select();

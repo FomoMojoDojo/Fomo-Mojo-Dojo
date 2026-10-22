@@ -10,6 +10,8 @@
 //   O  own_words_candidates with an ACTIVE own_words claim, one per identity
 //   F  findings: register public_inferred ∧ status open ∧ recurrence-backed (opts.excludeFindingKinds drops e.g. 'frontier')
 //   D  claim_deltas public_vs_public echoed|divergent ∧ isPairAdmissible ∧ every claim active
+import { loadConfirmedRelatedEntities, ownHostsFor } from "./ownHosts.ts";
+import type { OwnWordsHostOrder } from "./publicReadSelection.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isPublicSignalSourceType } from "./clientMaterial.ts";
 import { declaredEligibleFor, parseOwnWordsKind } from "./ownWordsKinds.ts";
@@ -145,6 +147,17 @@ export const PREDECESSOR_NAMED_REASON = "predecessor_named" as const;
 // preview's own authorities (publicReadSelection.ts). The ledger records the selection version.
 export type Gathered = { inputs: InputRow[]; dropped: Dropped[] };
 
+/** Ruling 1 (2026-10-22): the own-words host order — the company's seed host, then its confirmed related hosts in effect
+ *  today; null when it has none (the original selection, byte-identical). */
+async function ownWordsHostOrderFor(supabase: SupabaseClient, companyId: string): Promise<OwnWordsHostOrder | null> {
+  const related = await loadConfirmedRelatedEntities(supabase as unknown as { from: (t: string) => any }, companyId);
+  if (related.length === 0) return null;
+  const { data: co } = await supabase.from("companies").select("website").eq("id", companyId).maybeSingle();
+  const set = ownHostsFor({ website: (co as { website?: string | null } | null)?.website ?? null }, related, new Date());
+  const rel = set.hosts.filter((h) => h.entity).map((h) => h.host);
+  return rel.length ? { seed: set.seed, related: rel } : null;
+}
+
 export async function selectPublicInputs(supabase: SupabaseClient, companyId: string, opts: { excludeFindingKinds?: readonly string[]; predecessorKind?: string } = {}): Promise<Gathered> {
   const rows: InputRow[] = [];
   const dropped: Dropped[] = [];
@@ -273,7 +286,10 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
     : { kept: [] as SelOwnWord[], dropped: [] as Dropped[] };
   for (const d of p1Ow.dropped) dropped.push(d.reason === "over_cap" ? { ...d, reason: "over_predecessor_cited_cap" } : d);
   p1Budget -= p1Ow.kept.length;
-  const owSel = selectOwnWords(owRest, READ_CAP.own_word, activeIdentities, owEligible);
+  // RULING 1 (2026-10-22): a company with confirmed related entities in effect takes its own-words round-robin by host —
+  // the seed host first, then each related host — within the same cap; none ⇒ null, the original selection unchanged.
+  const owHostOrder = await ownWordsHostOrderFor(supabase, companyId);
+  const owSel = selectOwnWords(owRest, READ_CAP.own_word, activeIdentities, owEligible, owHostOrder);
   dropped.push(...owSel.dropped);
   // source_url carried so the offering's own-host test can see WHERE the words were said (a registry-hosted
   // own_word is not the company's own site — rule 2026-09-18); the own_site flag is no longer trusted downstream.

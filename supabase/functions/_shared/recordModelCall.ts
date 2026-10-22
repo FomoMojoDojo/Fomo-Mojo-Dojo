@@ -46,6 +46,12 @@ export function openaiRecord(model: string, usage: OpenAIUsage | null | undefine
   };
 }
 
+/** Ruling 2 (2026-10-22): one record per model, each priced at that model's signed rate (openaiRecord → modelPricing,
+ *  the one price table) — never one aggregate priced as gpt-4.1-mini. */
+export function openaiRecordsByModel(usageByModel: ReadonlyMap<string, OpenAIUsage>): ModelCallRecord[] {
+  return [...usageByModel.entries()].map(([model, u]) => openaiRecord(model, u));
+}
+
 // deno-lint-ignore no-explicit-any
 type SupabaseLike = { from: (t: string) => any };
 

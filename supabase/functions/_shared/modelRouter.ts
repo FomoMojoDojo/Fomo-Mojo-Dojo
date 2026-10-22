@@ -39,13 +39,14 @@ export type RoutedJudge = (args: {
 export function makeRoutedJudge(opts: {
   callLocal: (model: string, system: string, user: string) => Promise<string>;
   openaiKey?: string;
-  onUsage?: (u: OpenAIUsage) => void;
+  /** Ruling 2 (2026-10-22): the model is passed too, so a caller can price each model at its own signed rate. */
+  onUsage?: (u: OpenAIUsage, model?: string) => void;
 }): RoutedJudge {
   return async ({ provenances, system, user }) => {
     const choice = _resolveModel({ role: "judge", inputs: provenances.map((p) => ({ provenance: p })) });
     if (choice.provider === "external_openai") {
       const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, apiKey: opts.openaiKey }));
-      opts.onUsage?.(r.usage);
+      opts.onUsage?.(r.usage, choice.model);
       return { content: r.content, provider: choice.provider, model: choice.model };
     }
     const content = await opts.callLocal(choice.model, system, user);
@@ -69,7 +70,8 @@ export function makeRoutedModel(opts: {
   callLocalGenerator: (model: string, system: string, user: string) => Promise<string>;
   callLocalJudge: (model: string, system: string, user: string) => Promise<string>;
   openaiKey?: string;
-  onUsage?: (u: OpenAIUsage) => void;
+  /** Ruling 2 (2026-10-22): the model is passed too, so a caller can price each model at its own signed rate. */
+  onUsage?: (u: OpenAIUsage, model?: string) => void;
   // Optional external-branch temperature. Omitted ⇒ callOpenAIJson's default (0.2). The relevance
   // backstop passes 0 so its verdicts are deterministic (the dry-run review and the stamp match).
   externalTemperature?: number;
@@ -84,7 +86,7 @@ export function makeRoutedModel(opts: {
     if (choice.provider === "external_openai") {
       if (opts.beforeExternal) await opts.beforeExternal({ model: choice.model, system, user });
       const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, apiKey: opts.openaiKey, temperature: opts.externalTemperature, seed: opts.externalSeed }));
-      opts.onUsage?.(r.usage);
+      opts.onUsage?.(r.usage, choice.model);
       return { content: r.content, provider: choice.provider, model: choice.model };
     }
     const callLocal = role === "judge" ? opts.callLocalJudge : opts.callLocalGenerator;

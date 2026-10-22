@@ -463,6 +463,8 @@ Deno.serve(async (req) => {
     }
 
     const usage: OpenAIUsage = { prompt_tokens: 0, completion_tokens: 0 };
+    // ruling 2 (2026-10-22): the response's cost summary is the sum of the ledgered rows (each at its model's signed price)
+    let ledgeredUsd = 0;
     const callLocal = async (model: string, system: string, user: string, temperature: number): Promise<Record<string, unknown>> => {
       const res = await fetch(`${OLLAMA_BASE_URL}/chat/completions`, {
         method: "POST", headers: { Authorization: "Bearer ollama", "Content-Type": "application/json" },
@@ -494,6 +496,7 @@ Deno.serve(async (req) => {
       const sha = await sha256Hex(`${system}\n\n${user}`);
       if (meta?.kind && meta.role !== "judge") promptSha[meta.kind] = sha;
       const ledgerRow = async (rec: ModelCallRecord) => {
+        ledgeredUsd += rec.usd ?? 0;
         await recordModelCall(supabase, {
           companyId: company_id, runId: null,
           callSite: `generate-public-read${meta?.kind ? `:${meta.kind}` : ""}${meta?.role ? `:${meta.role}` : ""}`,
@@ -1754,7 +1757,7 @@ Respond with ONLY JSON:
       public: require_public(ledger.provenances[id]), liveness: ledger.liveness[id] ?? null,
     }));
     const cascadeGapsPreview = cascadeItems.map((it) => ({ kind: it.kind, rung: it.rung, question: it.question_text }));
-    const cost = { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) };
+    const cost = { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: ledgeredUsd };
     // GATE 3 — PERSIST THE COST. L1 (2026-10-15): the run-level row is GONE. `run` writes one row
     // per model call, each with its own usage, its attempt and its prompt sha, so this aggregate
     // would double-count every call it summarises. The `cost` field above remains the run summary in

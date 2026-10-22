@@ -30,6 +30,10 @@
 //       above the ceiling is clamped to $2.25
 //   d18 ruling 3: the lane-only entry runs the lane alone — its block calls executeSeedLane and no main call, crawl, search
 //       or ingest, and it returns before the query plan is built
+//   d19 ruling 1 (2026-10-22): own-words selection takes the seed host first, then each related host, round-robin within
+//       the cap (a fixture of 30 older cox.com rows cannot crowd out 8 spectrum.com rows); no host order ⇒ identical;
+//       the read's input gathering passes the order
+//   d20 ruling 2: claim deltas ledger one row per model at its signed price (gpt-4.1 1M in + 100k out = $2.80, not $0.56)
 import { lit, PsqlSession } from "../lib/psqlBlankingStore.ts";
 import { crawlEntityFor, crawlHostFilter, discoveryHostsFor, domainPlanFallbackAdmits, entityPromptLine, entityQueryPasses, guessedProfileLinksOwnHost, relatedCrawlSeeds } from "../../supabase/functions/_shared/ownHostDiscovery.ts";
 import type { RelatedEntityRow } from "../../supabase/functions/_shared/ownHosts.ts";
@@ -44,6 +48,8 @@ import { assertSpendable, makeSpendCap, SpendCapRefused } from "../../supabase/f
 import { defaultBeatsRoutedModel } from "../../supabase/functions/_shared/findingBeats.ts";
 import { makeRoutedModel } from "../../supabase/functions/_shared/modelRouter.ts";
 import { projectOpenAIUsd } from "../../supabase/functions/_shared/spendCap.ts";
+import { selectOwnWords } from "../../supabase/functions/_shared/publicReadSelection.ts";
+import { openaiRecordsByModel } from "../../supabase/functions/_shared/recordModelCall.ts";
 import { capEvidenceLedger, citationEntries, isPlaceholderProfileSnippet, PROFILE_PLACEHOLDER_DEFAULT } from "../../supabase/functions/_shared/citationRows.ts";
 import { clampSpendCap, projectWebSearchUsd as projWS } from "../../supabase/functions/_shared/spendCap.ts";
 import { buildSeedLaneRows } from "../../supabase/functions/_shared/seedHostLane.ts";
@@ -243,4 +249,19 @@ const block = lo0 > 0 && lo1 > lo0 ? pbSrc.slice(lo0, lo1) : "";
 const d18 = { found: !!block, runs_lane: block.includes("await executeSeedLane({"), forbidden: ["callClaudeWebSearch(", "crawlWebsiteEvidence(", "searxSearch(", "runPass(", "ingestPublicBaselineSignals(", "mintSiteCrawlSignals("].filter((f) => block.includes(f)),
   before_plan: lo0 > 0 && lo0 < pbSrc.indexOf("const plan = buildBaselineQueryPlan({"), gate: block.includes("seed_pages_read !== 0"), cap_required: block.includes("if (spendCapUsd == null) return json(") };
 
-console.log(JSON.stringify({ d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13, d14, d15, d16, d17, d18, rolled_back: B0 === B1, before: B0, after: B1 }));
+// d19 — own-words host order
+const owRow = (i: number, host: string, day: string) => ({ id: `${host}-${String(i).padStart(2, "0")}`, quote: `q ${i}`, judge_kind: null, content_identity: `ci-${host}-${i}`, created_at: `2026-10-${day}T00:00:00Z`, source_url: `https://www.${host}/p${i}` });
+const owAll = [...Array.from({ length: 30 }, (_, i) => owRow(i, "zz-merged.test", "20")), ...Array.from({ length: 8 }, (_, i) => owRow(i, "zz-subject.test", "21"))];
+const owActive = new Set(owAll.map((r) => r.content_identity));
+const withOrder = selectOwnWords(owAll, 25, owActive, () => true, { seed: "zz-subject.test", related: ["zz-merged.test"] });
+const without = selectOwnWords(owAll, 25, owActive, () => true);
+const inputsSrc = await read("supabase/functions/_shared/publicReadInputs.ts");
+const d19 = { seed_kept_with_order: withOrder.kept.filter((w) => w.id.startsWith("zz-subject")).length, seed_kept_without: without.kept.filter((w) => w.id.startsWith("zz-subject")).length,
+  identical_without: JSON.stringify(without) === JSON.stringify(selectOwnWords(owAll, 25, owActive, () => true, null)),
+  wired: inputsSrc.includes("const owSel = selectOwnWords(owRest, READ_CAP.own_word, activeIdentities, owEligible, owHostOrder);") };
+// d20 — per-model pricing on the claim-deltas ledger path
+const deltasSrc = await read("supabase/functions/generate-claim-deltas/index.ts");
+const r20 = openaiRecordsByModel(new Map([["gpt-4.1", { prompt_tokens: 1_000_000, completion_tokens: 100_000 }]]));
+const d20 = { gpt41_usd: Math.round((r20[0]?.usd ?? 0) * 1e6) / 1e6, wired: deltasSrc.includes("openaiRecordsByModel(usageByModel)") && deltasSrc.includes("usageByModel.set(k,") && !/usage: openaiRecord\(billedModel, usage\),\n\s*\}\);/.test(deltasSrc) };
+
+console.log(JSON.stringify({ d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13, d14, d15, d16, d17, d18, d19, d20, rolled_back: B0 === B1, before: B0, after: B1 }));

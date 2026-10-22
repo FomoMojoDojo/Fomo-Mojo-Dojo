@@ -31,6 +31,8 @@
 #   d16 ruling 2: a placeholder profile snippet is refused, never appended
 #   d17 ruling 4: 40k/search projection covers run 83's $1.4597 call; its lane is refused after it under $1.50; ceiling $2.25
 #   d18 ruling 3: the lane-only entry runs the lane alone (no main call, crawl, search, ingest), before the query plan
+#   d19 2026-10-22 ruling 1: own-words selection takes the seed host first, then each related host, round-robin in the cap
+#   d20 ruling 2: claim deltas ledger each model at its own signed price (gpt-4.1 never at the mini rate)
 #
 # Plants (each injected live, the guard RED with the measured value moved, restored md5-identical, GREEN):
 #   Q1  crawlHostFilter always null (the set filter → single host)      => d2 filter_set true → false
@@ -52,6 +54,8 @@
 #   S2  isPlaceholderProfileSnippet admits the default line              => d16 default_refused true → false
 #   S3  WEB_SEARCH_INPUT_TOKENS_PER_SEARCH back to 10k                   => d17 projection_covers_actual true → false
 #   S4  the lane-only block makes the main web_search call               => d18 forbidden [] → [callClaudeWebSearch(]
+#   T1  selectOwnWords ignores the host order                            => d19 seed_kept_with_order 8 → 0
+#   T2  openaiRecord prices gpt-4.1 at the mini rate                     => d20 gpt41_usd 2.8 → 0.56
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -100,6 +104,10 @@ echo "d16. placeholder profile snippets refused, page words kept; wired before t
 echo "d17. 40k/search projection covers run 83's \$1.4597 call; the lane after it refused under \$1.50; caps clamp to \$2.25"
 [ "$(q "d['d18']==dict(found=True,runs_lane=True,forbidden=[],before_plan=True,gate=True,cap_required=True)")" = True ] || fail d18 "lane-only: $(q "d['d18']")"
 echo "d18. the lane-only entry runs the lane alone (no main call, crawl, search or ingest), gated on 0 seed pages, cap required"
+[ "$(q "d['d19']==dict(seed_kept_with_order=8,seed_kept_without=0,identical_without=True,wired=True)")" = True ] || fail d19 "own-words host order: $(q "d['d19']")"
+echo "d19. own-words: seed host first, then related, round-robin in the cap (8 seed rows kept against 30 older related rows; 0 without an order); no order ⇒ identical; wired"
+[ "$(q "d['d20']==dict(gpt41_usd=2.8,wired=True)")" = True ] || fail d20 "per-model pricing: $(q "d['d20']")"
+echo "d20. claim deltas ledger each model at its signed price (gpt-4.1: 1M in + 100k out = \$2.80); wired"
 [ "$(q "d['rolled_back']")" = True ] && [ "$(counts)" = "$C0" ] || fail end "model_calls or signals changed across the guard"
 echo "end. model_calls / signals unchanged ($C0)"
 echo "GUARD OK"

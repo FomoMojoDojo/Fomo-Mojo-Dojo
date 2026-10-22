@@ -119,8 +119,16 @@ export function selectSignals(rows: SelSignal[], cap: number, recurrenceConfirme
 
 export type SelOwnWord = { id: string; quote: string | null; judge_kind?: string | null; content_identity: string | null; created_at: string | null };
 
-/** O: one candidate per content identity that has an ACTIVE own_words claim; ORDER BY created_at, id; cap. */
-export function selectOwnWords(rows: SelOwnWord[], cap: number, activeIdentities: ReadonlySet<string>, eligible: (w: SelOwnWord) => boolean): { kept: SelOwnWord[]; dropped: Dropped[] } {
+/** Ruling 1 (2026-10-22): the own-host order for own-words selection — the seed host first, then each confirmed related
+ *  host in effect. Absent ⇒ the original single-host selection, byte-identical. */
+export type OwnWordsHostOrder = { seed: string | null; related: readonly string[] };
+
+/** O: one candidate per content identity that has an ACTIVE own_words claim; ORDER BY created_at, id; cap.
+ *  With a host order (a company with confirmed related entities in effect), the admitted rows are taken round-robin
+ *  within the same cap: one from the seed host, then one from each related host in order, then one from any other host,
+ *  repeating — so the company's own site is never crowded out by a related entity's. */
+export function selectOwnWords(rows: SelOwnWord[], cap: number, activeIdentities: ReadonlySet<string>, eligible: (w: SelOwnWord) => boolean, hostOrder?: OwnWordsHostOrder | null): { kept: SelOwnWord[]; dropped: Dropped[] } {
+  if (hostOrder && hostOrder.related.length > 0) return selectOwnWordsByHost(rows, cap, activeIdentities, eligible, hostOrder);
   const dropped: Dropped[] = [];
   const ordered = [...rows].sort((a, b) => `${a.created_at ?? ""}|${a.id}`.localeCompare(`${b.created_at ?? ""}|${b.id}`));
   const seen = new Set<string>();
@@ -134,6 +142,38 @@ export function selectOwnWords(rows: SelOwnWord[], cap: number, activeIdentities
     if (kept.length >= cap) { dropped.push({ id: w.id, kind: "own_word", reason: "over_cap" }); continue; }
     kept.push(w);
   }
+  return { kept, dropped };
+}
+
+function selectOwnWordsByHost(rows: SelOwnWord[], cap: number, activeIdentities: ReadonlySet<string>, eligible: (w: SelOwnWord) => boolean, order: OwnWordsHostOrder): { kept: SelOwnWord[]; dropped: Dropped[] } {
+  const dropped: Dropped[] = [];
+  const ordered = [...rows].sort((a, b) => `${a.created_at ?? ""}|${a.id}`.localeCompare(`${b.created_at ?? ""}|${b.id}`));
+  const seen = new Set<string>();
+  const admitted: SelOwnWord[] = [];
+  for (const w of ordered) {
+    if (!(w.quote ?? "").trim()) { dropped.push({ id: w.id, kind: "own_word", reason: "empty_quote" }); continue; }
+    if (!eligible(w)) { dropped.push({ id: w.id, kind: "own_word", reason: "kind_ineligible" }); continue; }
+    if (!w.content_identity || !activeIdentities.has(w.content_identity)) { dropped.push({ id: w.id, kind: "own_word", reason: "no_active_claim" }); continue; }
+    if (seen.has(w.content_identity)) { dropped.push({ id: w.id, kind: "own_word", reason: "duplicate_identity" }); continue; }
+    seen.add(w.content_identity);
+    admitted.push(w);
+  }
+  const onHost = (h: string, d: string) => !!d && (h === d || h.endsWith(`.${d}`));
+  const hosts = [order.seed ?? "", ...order.related].map((h) => h.toLowerCase().replace(/^www\./, ""));
+  const bucketOf = (w: SelOwnWord) => { const h = hostOf((w as { source_url?: string | null }).source_url); const i = hosts.findIndex((d) => onHost(h, d)); return i < 0 ? hosts.length : i; };
+  const buckets: SelOwnWord[][] = Array.from({ length: hosts.length + 1 }, () => []);
+  for (const w of admitted) buckets[bucketOf(w)].push(w);
+  const kept: SelOwnWord[] = [];
+  for (let round = 0; kept.length < cap; round++) {
+    let took = false;
+    for (const b of buckets) {
+      if (kept.length >= cap) break;
+      if (round < b.length) { kept.push(b[round]); took = true; }
+    }
+    if (!took) break;
+  }
+  const keptIds = new Set(kept.map((w) => w.id));
+  for (const w of admitted) if (!keptIds.has(w.id)) dropped.push({ id: w.id, kind: "own_word", reason: "over_cap" });
   return { kept, dropped };
 }
 

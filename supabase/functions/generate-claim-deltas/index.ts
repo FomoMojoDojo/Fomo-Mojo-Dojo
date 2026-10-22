@@ -31,7 +31,7 @@ import {
   JUDGE_DETERMINISM,
 } from "../_shared/claimDeltaSynthesis.ts";
 import { makeRoutedModel, usdCost } from "../_shared/modelRouter.ts";
-import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
+import { openaiRecord, openaiRecordsByModel, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -104,11 +104,17 @@ serve(async (req) => {
     // public claims → external gpt-4.1-mini (proposer + judge); any internal_declared/client_attested
     // declared side → local (internal_vs_public NEVER leaves the machine). Local path byte-identical.
     const usage = { prompt_tokens: 0, completion_tokens: 0 };
-    let billedModel = "gpt-4.1-mini"; // Gate 3 — the model the cost is attributable to
+    let billedModel = "gpt-4.1-mini"; // Gate 3 — the model the cost is attributable to when no external call was made
+    const usageByModel = new Map<string, { prompt_tokens: number; completion_tokens: number }>();
     const routedCall = makeRoutedModel({
       callLocalGenerator: (m: string, s: string, u: string) => callOllamaJson(ollamaUrl, m, s, u, GEN_TIMEOUT_MS),
       callLocalJudge: (m: string, s: string, u: string) => callOllamaJson(ollamaUrl, m, s, u, JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM),
-      onUsage: (uu) => { usage.prompt_tokens += uu.prompt_tokens; usage.completion_tokens += uu.completion_tokens; },
+      onUsage: (uu, m) => {
+        usage.prompt_tokens += uu.prompt_tokens; usage.completion_tokens += uu.completion_tokens;
+        // ruling 2 (2026-10-22): usage per model, so each model is ledgered at its own signed rate
+        const k = m ?? billedModel; const prev = usageByModel.get(k) ?? { prompt_tokens: 0, completion_tokens: 0 };
+        usageByModel.set(k, { prompt_tokens: prev.prompt_tokens + uu.prompt_tokens, completion_tokens: prev.completion_tokens + uu.completion_tokens });
+      },
     });
     const baseArgs = {
       supabase,
@@ -134,12 +140,10 @@ serve(async (req) => {
       // caller parsed. recordModelCall never throws: accounting must not take down the work it measures.
       // (Gate 6c: this block sat INSIDE the response literal below from b9fbb81, 2026-09-09 — a syntax
       // error the worker could not boot past; every deltas call answered 503 for two days.)
-      await recordModelCall(supabase, {
-        companyId: company_id,
-        runId: null,
-        callSite: "generate-claim-deltas",
-        usage: openaiRecord(billedModel, usage),
-      });
+      // RULING 2 (2026-10-22): one row per model, each at its own signed price; no external call ⇒ the one zero row as before
+      for (const rec of usageByModel.size ? openaiRecordsByModel(usageByModel) : [openaiRecord(billedModel, usage)]) {
+        await recordModelCall(supabase, { companyId: company_id, runId: null, callSite: "generate-claim-deltas", usage: rec });
+      }
       // PROOF GUARD: the exclusion ledger (count in totals + ids here) rides every
       // run result — a silent guard would be an invisible decision.
       return json({
