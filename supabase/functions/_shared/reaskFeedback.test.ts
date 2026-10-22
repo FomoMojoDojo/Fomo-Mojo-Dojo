@@ -167,7 +167,7 @@ Deno.test("NP. the N1 re-ask carries CONTINUITY lines, not just names", async ()
 
 Deno.test("NP. the FIRST attempt is told the name rows too — not only a re-ask", async () => {
   const gpr = await read("../generate-public-read/index.ts");
-  assert(gpr.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive())"),
+  assert(gpr.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive(), predecessorWithheld)"),
     "the generation prompt's still-sourced block gets the pool and the company name");
 });
 
@@ -345,7 +345,7 @@ function describe_u1() {
 
   Deno.test("U1. the STILL-SOURCED block carries the map on the FIRST attempt", async () => {
     const gpr = await read("../generate-public-read/index.ts");
-    assert(gpr.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive())"),
+    assert(gpr.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive(), predecessorWithheld)"),
       "the generation call passes refByUuid — it was the one prompt site that did not");
     // and the signature accepts it, so the block can honour it
     const cont = await read("./stageContinuity.ts");

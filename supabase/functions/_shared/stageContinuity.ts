@@ -23,6 +23,7 @@ import { decideFieldClass, extractSpecifics } from "./classFactCheck.ts";
 import { reaskFeedbackBlock, type SourceRow, unsupportedByPool } from "./reaskFeedback.ts";
 import { verbatimProvable } from "./ownWordsExtract.ts";
 import { normalizeForHash } from "./contentIdentity.ts";
+import { predecessorLineKey } from "./predecessorSourcing.ts";
 
 /** The refusal strings, in the `guard` shape generate-public-read already uses. */
 export const CONTINUITY_GUARD = "continuity_line_dropped" as const;
@@ -202,6 +203,16 @@ export function isStillSourced(line: Pick<CitedLine, "refs">, sourcingIds: Reado
   return line.refs.some((r) => sourcingIds.has(r));
 }
 
+/** R5-P (operator ruling, 2026-10-22): the current lines the prompt may show — still-sourced AND not
+ *  withheld. A line whose specifics do not pass R5 against its own cited rows is withheld
+ *  (predecessorSourcing.ts): showing it asks the model to restate what the stage gate will refuse. The
+ *  prompt block and the stored still_sourced_lines both read THIS, so they cannot disagree. */
+export function promptablePredecessorLines(
+  currentLines: readonly CitedLine[], sourcingIds: ReadonlySet<string>, withheld: ReadonlySet<string> = new Set(),
+): CitedLine[] {
+  return currentLines.filter((l) => l.text.trim() && isStillSourced(l, sourcingIds) && !withheld.has(predecessorLineKey(l)));
+}
+
 /** C1-S: the prompt block. TEXT AND CITATION IDS ONLY — no class, no reason, no specifics, no
  *  instruction about what to do with them beyond the heading. The model is being shown what the
  *  current read says and which rows say it, nothing more: anything else here is the enforcer's
@@ -219,8 +230,10 @@ export function stillSourcedPromptBlock(
   // U1 (2026-10-15): the uuid -> ref map, so this block names rows as [S4] — the only form
   // CITE_RULE lets the model cite. Built without it, it printed raw uuids at generation time.
   refByUuid?: ReadonlyMap<string, string>,
+  // R5-P: the predecessor lines whose specifics do not source (predecessorSourcing.ts) — never shown.
+  withheld: ReadonlySet<string> = new Set(),
 ): string {
-  const keep = currentLines.filter((l) => l.text.trim() && isStillSourced(l, sourcingIds));
+  const keep = promptablePredecessorLines(currentLines, sourcingIds, withheld);
   if (keep.length === 0) return "";
   const body = reaskFeedbackBlock({
     lines: keep.map((l) => ({
@@ -279,6 +292,10 @@ export function classifyContinuity(args: {
   /** C1-U: needed only because unsupportedByPool excludes the company's own name from the names it
    *  asks the pool to state (N1's own exclusion). */
   companyName?: string;
+  /** R5-P (2026-10-22): the predecessor lines withheld from the prompt because their specifics do not
+   *  pass R5 against their own cited rows. Continuity does not demand them: they are LICENSED. Omitted
+   *  ⇒ nothing is withheld, which is the pre-R5-P behaviour. */
+  withheld?: ReadonlySet<string>;
 }): ContinuitySplit {
   const sourcing = args.sourcingIds ?? new Set<string>();
   // ── C1-U (operator ruling, 2026-10-15): C1 NEVER REQUIRES A WORD THE POOL CANNOT SOURCE ───────
@@ -315,6 +332,12 @@ export function classifyContinuity(args: {
       // it from. P1 exists to make this rare: it admits the predecessor's citations ahead of the
       // ordinary selection ceiling, so a line loses its sources only when they truly left the record.
       licensed.push({ ...base, specifics: [], reason: "licensed: none of its citations is in the new ledger — its sources left the pool" });
+      continue;
+    }
+    if (args.withheld?.has(predecessorLineKey(old))) {
+      // LICENSED, cause R5-P: the line was withheld from the prompt — its specifics do not pass R5
+      // against its own cited rows — so demanding it would demand a sentence the gate refuses.
+      licensed.push({ ...base, specifics: [], reason: "licensed: withheld from the prompt — its specifics do not source against its cited rows (R5-P)" });
       continue;
     }
     const cited = present
@@ -396,6 +419,9 @@ export type ContinuityBlock = {
    *  enforced on any rules — and which they were. */
   still_sourced_count?: number;
   still_sourced_lines?: Array<{ field: string; text: string; citations: string[] }>;
+  /** R5-P (2026-10-22): the predecessor lines withheld from the prompt and licensed, each with the
+   *  specifics that did not source. */
+  predecessor_withheld?: Array<{ field: string; text: string; unsourced: string[] }>;
   /** C1-P (operator ruling, 2026-10-14): which mode C1 ran in for this kind. `enforced` refuses on a
    *  drop; `report_only` computes and records every drop but does not refuse, because the predecessor
    *  predates rules 2026-10-13.1 and a drop against it is not a comparable fact. Absent on blocks

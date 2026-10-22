@@ -108,7 +108,7 @@ Deno.test("C1-S. an empty still-sourced set yields an empty block, not a stray h
 Deno.test("C1-S. the generator puts the block in the USER prompt, before the carry notice", async () => {
   const src = await read("../generate-public-read/index.ts");
   // NP: the call gained the pool and the company name, because the block now carries name rows.
-  assert(src.includes("const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive());"),
+  assert(src.includes("const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive(), predecessorWithheld);"),
     "the block is built from this run's pool");
   // RP (2026-10-15): the generation prompt became buildGenUser, the ONE prompt every generator call
   // sends. The ORDER this pins is unchanged — ledger, context, still-sourced block, carry notice —
@@ -176,7 +176,7 @@ Deno.test("C1-S. the split and the block are fed the SAME sourcing set", async (
   const src = await read("../generate-public-read/index.ts");
   assert(src.includes("const sourcingIds = sourcingIdsOf(inputs as Array<{ id: string; kind: string; source_class: string }>);"),
     "one set, built from the pool the ledger was built from");
-  assert(src.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive())"), "the prompt uses it");
+  assert(src.includes("stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive(), predecessorWithheld)"), "the prompt uses it");
   assert(src.includes("sourcingIds,                                       // C1-S: which drops refuse on any rules"),
     "and so does the classifier — a second set is how the two would disagree about what was shown");
 });

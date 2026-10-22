@@ -36,6 +36,7 @@ import { liveRecordCandidates, reReadRowTexts, searchLiveRecordForSpecifics, spe
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { StageRefusal, detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
 import { PromoteRefused, promoteStagedReads, recordPromoteIntegrity, recordPromoteRefusal, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
+import { predecessorGate, type PredecessorVerdict } from "../_shared/predecessorSourcing.ts";
 import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type OfferingSeenOn, type OwnSiteHosts } from "../_shared/publicReadStorage.ts";
 import { loadConfirmedRelatedEntities, ownHostsFor } from "../_shared/ownHosts.ts";
 import { loadOwnSiteRecord } from "../_shared/offeringNamedOnSite.ts";
@@ -43,7 +44,7 @@ import { SELECTION_VERSION } from "../_shared/publicReadSelection.ts";
 import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
 import {
   CONTINUITY_GUARD, SOFTENING_GUARD, classifyContinuity, continuityBlock, continuityDetail,
-  isStillSourced, sourcingIdsOf, stillSourcedDrops, stillSourcedPromptBlock,
+  promptablePredecessorLines, sourcingIdsOf, stillSourcedDrops, stillSourcedPromptBlock,
   softenedSpecifics, softeningDetail, type CitedLine, type ContinuityBlock,
 } from "../_shared/stageContinuity.ts";
 import {
@@ -848,6 +849,21 @@ Respond with ONLY JSON:
       return lines;
     };
 
+    // ── R5-P (operator ruling, 2026-10-22): WHICH PREDECESSOR LINES MAY REACH THE PROMPT ───────────
+    // A current line is shown to the model (still-sourced block) and demanded by continuity only if
+    // every specific in it passes R5 against its own cited rows. Computed once per kind, from the
+    // current read's own ledger and a live R5 re-read (predecessorSourcing.ts), and read by BOTH the
+    // prompt site and the continuity check so the two cannot disagree about a line.
+    const predecessorGateCache: Partial<Record<Kind, { verdicts: PredecessorVerdict[]; withheld: Set<string> }>> = {};
+    const predecessorGateFor = async (kind: Kind): Promise<{ verdicts: PredecessorVerdict[]; withheld: Set<string> }> => {
+      if (predecessorGateCache[kind]) return predecessorGateCache[kind]!;
+      const { data } = await supabase.from("public_reads")
+        .select("payload, input_ledger").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
+      const g = await predecessorGate(supabase, data as { payload?: Record<string, unknown> | null; input_ledger?: Record<string, unknown> | null } | null, companyName);
+      predecessorGateCache[kind] = g;
+      return g;
+    };
+
     /** Every usable span in THIS run's pool. Computed once per kind. */
     const poolSpans = async (): Promise<CarriedSpan[]> => {
       const out: CarriedSpan[] = [];
@@ -1176,6 +1192,8 @@ Respond with ONLY JSON:
         // model to remove are exactly the words C1 stops requiring. Two implementations of
         // "what the pool cannot support" is how the deadlock would come back.
         pool: feedbackPool(), companyName,
+        // R5-P: a line withheld from the prompt is licensed, never demanded.
+        withheld: (await predecessorGateFor(kind)).withheld,
       });
       // ── C1-P (operator ruling, 2026-10-14): C1 is REPORT-ONLY against a pre-rules predecessor ──
       // Wasabi's stage was refused by C1 for dropping 5 of 6 lines of a read generated 2026-08-22:
@@ -1201,6 +1219,9 @@ Respond with ONLY JSON:
         still_sourced_count: stillSourcedByKind[kind]?.length ?? 0,
         still_sourced_lines: stillSourcedByKind[kind] ?? [],
         predecessor_gen_rules_version: predecessorRules || null,
+        // R5-P: what was withheld from the prompt, and why
+        predecessor_withheld: (await predecessorGateFor(kind)).verdicts.filter((v) => v.unsourced.length > 0)
+          .map((v) => ({ field: v.field, text: v.text, unsourced: v.unsourced.map((u) => u.token) })),
       } as ContinuityBlock;
       continuityBlocks[kind] = block;
       // V3: ONE refusal, ONE row. The check does NOT record its own integrity row — it throws a
@@ -1436,9 +1457,10 @@ Respond with ONLY JSON:
         const currentForPrompt = await currentLinesFor(kind as Kind);
         // NP: the generation prompt's still-sourced block carries the name rows too, from the same
         // builder the re-asks use — so the FIRST attempt already knows which row states each name.
-        const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive());
-        stillSourcedByKind[kind as Kind] = currentForPrompt
-          .filter((l) => l.text.trim() && isStillSourced(l, sourcingIds))
+        // R5-P: a predecessor line whose specifics do not source against its own cited rows is withheld.
+        const { withheld: predecessorWithheld } = await predecessorGateFor(kind as Kind);
+        const ssBlock = stillSourcedPromptBlock(currentForPrompt, sourcingIds, feedbackPool(), companyName, refByUuidLive(), predecessorWithheld);
+        stillSourcedByKind[kind as Kind] = promptablePredecessorLines(currentForPrompt, sourcingIds, predecessorWithheld)
           .map((l) => ({ field: String(l.field ?? ""), text: l.text, citations: l.refs.filter((r) => sourcingIds.has(r)) }));
         // RP: the parts are kept so every later re-ask sends the SAME prompt, not a shorter one.
         genUserParts[kind as Kind] = { extra, ssBlock, takenBlock };
