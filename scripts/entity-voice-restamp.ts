@@ -111,7 +111,7 @@ async function apply(s: PsqlSession, p: PlanFile, runRef: string) {
   const audits: Array<{ signal_id: string; audit_id: string }> = [];
   for (const r of p.restamps) {
     const [a] = await s.mutate<{ id: string }>(`insert into signal_voice_restamps (company_id, signal_id, run_ref, ledger_run_id, old_voice_class, new_voice_class, judge_verdict, judge_entity, judge_reason, judge_model, source_url)
-      values (${lit(p.company_id)}::uuid, ${lit(r.signal_id)}::uuid, ${lit(runRef)}, null, ${lit(r.before.voice_class)}, ${lit(String(r.after.voice_class))}, ${lit(r.kind === "filing" ? "own_filing_related" : "page_undated")}, ${lit(r.after.entity.name)}, ${lit(r.reason)}, 'deterministic (no model)', ${lit(r.source_url)}) returning id`);
+      values (${lit(p.company_id)}::uuid, ${lit(r.signal_id)}::uuid, ${lit(runRef)}, null, ${lit(r.before.voice_class)}, ${lit(String(r.after.voice_class))}, ${lit(r.kind === "filing" ? "own_filing_related" : "page_undated")}, ${lit(r.after.entity.name)}, ${lit(r.reason)}, 'deterministic', ${lit(r.source_url)}) returning id`);
     const stamp = { entity: r.after.entity, ...(r.after.voice_authority ? { voice_authority: r.after.voice_authority } : {}), entity_restamp: { run_ref: runRef, audit_id: a.id, ruling: 17, kind: r.kind, before: r.before, at: new Date().toISOString() } };
     const w = await s.mutate(`update signals set voice_class=${lit(String(r.after.voice_class))}, raw_payload=coalesce(raw_payload,'{}'::jsonb) || ${jlit(stamp)}
       where id=${lit(r.signal_id)}::uuid and company_id=${lit(p.company_id)}::uuid
@@ -134,7 +134,7 @@ async function revert(s: PsqlSession, companyId: string, runRef: string) {
     const er = r.raw_payload.entity_restamp as { audit_id: string; before: { voice_class: string | null; entity: unknown; voice_authority: unknown }; kind: string };
     const b = er.before;
     await s.mutate(`insert into signal_voice_restamps (company_id, signal_id, run_ref, ledger_run_id, old_voice_class, new_voice_class, judge_verdict, judge_entity, judge_reason, judge_model, source_url)
-      select company_id, signal_id, run_ref, null, new_voice_class, ${lit(String(b.voice_class))}, ${lit(REVERT_VERDICT)}, ${lit(`apply_audit:${er.audit_id}`)}, 'ruling 17 revert: the before-state recorded on the row restored', 'deterministic (no model)', source_url
+      select company_id, signal_id, run_ref, null, new_voice_class, ${lit(String(b.voice_class))}, ${lit(REVERT_VERDICT)}, ${lit(`apply_audit:${er.audit_id}`)}, 'ruling 17 revert: the before-state recorded on the row restored', 'deterministic', source_url
       from signal_voice_restamps where id=${lit(er.audit_id)}::uuid returning id`);
     const restore = `(coalesce(raw_payload,'{}'::jsonb) - 'entity' - 'voice_authority' - 'entity_restamp')`
       + (b.entity ? ` || jsonb_build_object('entity', ${jlit(b.entity)})` : "")
