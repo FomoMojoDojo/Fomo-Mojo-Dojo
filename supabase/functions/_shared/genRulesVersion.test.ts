@@ -40,13 +40,13 @@ Deno.test("P3-c. the two stamps are independent — a prompt change never moves 
   // rowTextOf's assembly with the source title carried beside it instead of appended. That is a
   // change to what the selection hands the model, so stamping it is correct — the case P3 forbids
   // is a bump with NO selection change, which pinning the literal still catches.
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-22.2",   // 2026-10-22 ruling 4: the own-words host order; ruling 9: rule refusals
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-22.3",   // 2026-10-22 ruling 4: the own-words host order; ruling 9: rule refusals
     "pinned so a bump is always deliberate; R1 changed the pool's text, so this one is");
   assert(GEN_RULES_VERSION !== SELECTION_VERSION as string, "two different stamps, two different facts");
 });
 
 Deno.test("P3-d. the version lives in ONE module and is a dated string", () => {
-  assertEquals(GEN_RULES_VERSION, "2026-10-22.2");   // Q1/Q2/Q3, C1-S, NP2, U1, C1-U, the model trial, R5-P, then LEVEL + ALTERNATIVES
+  assertEquals(GEN_RULES_VERSION, "2026-10-22.3");   // Q1/Q2/Q3, C1-S, NP2, U1, C1-U, the model trial, R5-P, then LEVEL + ALTERNATIVES
   assert(/^\d{4}-\d{2}-\d{2}\.\d+$/.test(GEN_RULES_VERSION),
     "dated like PARSER_RULES_VERSION, so a reader sees WHEN the rules changed");
 });

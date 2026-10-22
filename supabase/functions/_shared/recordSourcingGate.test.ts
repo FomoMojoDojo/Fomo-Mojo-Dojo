@@ -231,8 +231,10 @@ Deno.test("S2. ONE render function feeds both the generator and the judge catalo
   // every catalogue line in the file goes through it
   const rawLines = [...src.matchAll(/`\[\$\{ref\}\] \(/g)];
   assertEquals(rawLines.length, 1, "the only raw catalogue template is the one INSIDE catalogueLine");
-  assert(src.includes("lines.push(catalogueLine("), "the base catalogue uses it");
-  assert(src.includes("CAT_LIVE += `\\n${catalogueLine("), "and so does the live-admission catalogue");
+  // ruling 34 (2026-10-22): both catalogues are rendered by renderCatalogue, grouped by class, which calls catalogueLine
+  assert(src.includes(".map((r) => catalogueLine(r.ref, r.kind, r.cls, r.text, r.title, r.filing))"), "the grouped renderer uses it");
+  assert(src.includes("return { text: renderCatalogue(rows), rows,"), "the base catalogue is the grouped render");
+  assert(src.includes("CAT_LIVE = renderCatalogue(catRows);"), "and so is the live-admission catalogue");
 });
 
 // ── C1-P ─────────────────────────────────────────────────────────────────────────────────────────

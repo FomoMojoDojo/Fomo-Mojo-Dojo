@@ -66,4 +66,9 @@
 // only in the offering), positioning gains the cited `alternatives` field, level-flagged predecessor lines are withheld
 // from the prompt and the strategy feed, and the judge is asked (g) LEVEL (reported).
 //   2026-10-22.2  LEVEL + ALTERNATIVES.
-export const GEN_RULES_VERSION = "2026-10-22.2" as const;
+// LEDGER BY CLASS + SOURCES BY FIELD (operator ruling 34, 2026-10-22): bumped because what the generator READS changed —
+// the ledger is grouped under class headers (the record, your filings, you, our read) with filings tagged, positioning
+// and strategy name which class each field is drawn from, and the continue block asks for a record or filing citation
+// to be ADDED beside a carried line's own (keeping it, so C1 still counts the line as continued).
+//   2026-10-22.3  LEDGER BY CLASS + SOURCES BY FIELD.
+export const GEN_RULES_VERSION = "2026-10-22.3" as const;

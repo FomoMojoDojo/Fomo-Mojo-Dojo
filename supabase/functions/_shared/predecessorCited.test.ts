@@ -110,7 +110,7 @@ Deno.test("P1. with no predecessor kind, behaviour is exactly today's", async ()
   assert(fn.includes("if (opts.predecessorKind) {"), "the predecessor is read only when a kind is named");
   assert(fn.includes("let p1Budget = predecessorCited.size > 0 ? PREDECESSOR_CITED_CAP : 0;"),
     "no cited ids ⇒ zero budget ⇒ both p1 lanes are skipped and the ordinary lanes see every row");
-  assertEquals(READ_CAP.signal, 20, "the ordinary cap is unchanged");
+  assertEquals(READ_CAP.signal, 30, "the ordinary cap (ruling 33, 2026-10-22: 20 → 30)");
   assertEquals(READ_CAP.own_word, 25);
 });
 

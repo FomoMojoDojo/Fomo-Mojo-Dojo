@@ -250,7 +250,9 @@ export function stillSourcedPromptBlock(
   });
   // The heading is the ruling's own phrase. The entries carry text, sourcing ids and name rows —
   // and no gate vocabulary: no class, no field path, no reason.
-  return `\n\nCURRENT LINES TO CONTINUE OR IMPROVE — the read you are replacing states these, and the rows they cite are in the ledger above:\n` + body;
+  // Ruling 34 (2026-10-22): keep the citation (C1 matches a continued line by a shared citation) and ADD a record or
+  // filing row beside it — so the block no longer steers every carried line toward own words alone.
+  return `\n\nCURRENT LINES TO CONTINUE OR IMPROVE — the read you are replacing states these, and the rows they cite are in the ledger above. Keep each line's facts and its citation. Where a row under THE RECORD or YOU — FILINGS states the same fact, add that row to the line's citations (at most 3 in all). Write every other field from the whole ledger, not from these lines alone:\n` + body;
 }
 
 // ── P2 (operator ruling, 2026-10-14): THREE COUNTS, NEVER ARITHMETIC ────────────────────────────

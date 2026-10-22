@@ -86,7 +86,7 @@ Deno.test("R1. the catalogue renders the title AFTER the text, not inside it", a
 Deno.test("R1. the selection version was bumped past the pre-fix value", async () => {
   const { SELECTION_VERSION } = await import("./publicReadSelection.ts");
   assert(SELECTION_VERSION !== "gpr-select-2026-10-07.1", "the pre-R1 version must not still be stamped");
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-22.2");   // P1 bumped it again; 2026-10-22 the own-words host order; ruling 9 rule refusals
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-22.3");   // P1 bumped it again; 2026-10-22 the own-words host order; ruling 9 rule refusals
 });
 
 // ── R3 ───────────────────────────────────────────────────────────────────────────────────────────

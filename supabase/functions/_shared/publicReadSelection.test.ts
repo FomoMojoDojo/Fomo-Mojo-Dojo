@@ -97,11 +97,15 @@ Deno.test("(e) breadth: 3 hosts, cap 3 → one row per host, even when one host 
     sig("Y1", "https://yelp.com/biz/e", "Yelp review one.", "2026-08-01T00:00:00Z"),
     sig("C1", "https://charitynavigator.org/ein/1", "4/4 stars for accountability.", "2026-07-01T00:00:00Z"),
   ];
+  // ruling 33 (2026-10-22): the evidence-tier selector. Glassdoor is an employer-review host (T4), yelp and the charity
+  // rating page are the record (T2); a round offers the record two slots before a review's one, so cap 3 takes both
+  // record hosts (freshest first) and ONE glassdoor row — breadth still holds within the review tier.
   const { kept, dropped } = selectSignals(rows, 3, NONE);
-  assertEquals(kept.map((s) => s.id), ["G1", "Y1", "C1"], "first pass takes one per host in fresh-first order");
-  assertEquals(dropped.map((d) => d.id).sort(), ["G2", "G3"]);
-  // with room for a second pass, the second-per-host rows come next
-  assertEquals(selectSignals(rows, 5, NONE).kept.map((s) => s.id), ["G1", "Y1", "C1", "G2", "G3"]);
+  assertEquals(kept.slice(0, 2).map((s) => s.id), ["Y1", "C1"], "the record's two slots, fresh-first");
+  assertEquals(kept.filter((s) => s.id.startsWith("G")).length, 1, "one row per host: a single glassdoor row");
+  assertEquals(dropped.length, 2);
+  // with room, the rest of the glassdoor rows come next (past the review share: nothing else can fill)
+  assertEquals(selectSignals(rows, 5, NONE).kept.map((s) => s.id).sort(), ["C1", "G1", "G2", "G3", "Y1"]);
 });
 
 Deno.test("(f) determinism: shuffled input gives the same selection in the same order", () => {
@@ -154,7 +158,7 @@ Deno.test("(g) the ledger carries selection_version; the generator selects throu
   // R1 (2026-10-14): it stepped again. A signal's pool text is now rowTextOf's assembly and the
   // source title travels as its own field, so a read stamped 2026-10-07.1 was built from text no
   // drift re-read could reproduce — which is exactly what refusal 10153 was.
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-22.2");   // P1 (2026-10-14); 2026-10-22 ruling 4: own-words host order; ruling 9: rule refusals
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-22.3");   // P1 (2026-10-14); 2026-10-22 ruling 4: own-words host order; ruling 9: rule refusals; ruling 33: evidence tiers, cap 30
   const gen = await read("../generate-public-read/index.ts");
   assert(gen.includes("selection_version: SELECTION_VERSION,"), "ledgerOf stamps the version");
   // P1 (2026-10-14): the call now names the kind whose citations are protected. Still the ONE helper.

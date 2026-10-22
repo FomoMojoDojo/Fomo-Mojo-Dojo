@@ -16,7 +16,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isPublicSignalSourceType } from "./clientMaterial.ts";
 import { declaredEligibleFor, parseOwnWordsKind } from "./ownWordsKinds.ts";
 import { isAnalysisRow } from "./voiceLabel.ts";
-import { selectDeltas, selectFindings, selectOwnWords, selectSignals, type Dropped, type SelClaim, type SelDelta, type SelFinding, type SelOwnWord, type SelSignal } from "./publicReadSelection.ts";
+import { evidenceTierOf, selectDeltas, selectFindings, selectOwnWords, selectSignals, type Dropped, type SelClaim, type SelDelta, type SelFinding, type SelOwnWord, type SelSignal } from "./publicReadSelection.ts";
 // R1: the ONE row-text assembly. Imported rather than re-stated so the pool and the drift re-read
 // cannot drift apart again — that divergence IS defect A.
 import { rowTextOf } from "./classSourcingScope.ts";
@@ -89,6 +89,8 @@ export type InputRow = {
    *  it, ahead of the cap; `predecessor_named` (N2) when it was admitted because it STATES a name a
    *  still-sourced current line uses. Absent for every row the ordinary selection admitted. */
   admitted_by?: string;
+  /** Ruling 34 (2026-10-22): a filing (evidence tier 1) — the catalogue groups it under YOU — FILINGS and tags it. */
+  filing?: boolean;
 };
 
 // Per-kind read caps. A 3-sentence public read needs a tractable, prioritized catalogue — a model
@@ -96,7 +98,9 @@ export type InputRow = {
 // records EXACTLY the capped set that was read (honest — "these ids, not the whole corpus"). Findings
 // (public synthesis) and own-words (the company's own voice) are the highest-signal, so they get the
 // widest caps; signals/deltas are sampled. Every capped row is still 100% public-provenance.
-export const READ_CAP: Record<string, number> = { finding: 25, own_word: 25, signal: 20, delta: 15 };
+// Ruling 33 (2026-10-22): signal 20 → 30. At 20 the cap ended inside the first round of hosts; at 30 the evidence-tier
+// selector admits 7 of Spectrum's 9 own-filing rows at about +550 prompt tokens (dry run, ruling 30).
+export const READ_CAP: Record<string, number> = { finding: 25, own_word: 25, signal: 30, delta: 15 };
 
 // ── P1 (operator ruling, 2026-10-14): THE PREDECESSOR'S CITATIONS ARE ADMITTED BEFORE THE CAP ────
 //
@@ -204,7 +208,21 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   //    rest on evidence that is terminally gone (fabricated / redesigned-away / source_gone) OR merely
   //    held/recrawl-pending (unverified). Generation is STRICTER than the render overlay by design: the
   //    render marks provisional citations, but the "Our read" seeds posits ONLY from live public evidence.
-  //    Ruling 5: then page-shaped ∧ not junk ∧ not listing; dedupe; the preview's beat-2 order; breadth per host.
+  //    Ruling 5: then page-shaped ∧ not junk ∧ not listing; dedupe. Ruling 33: the evidence-tier selector (verified first,
+  //    tiers, shares, sha256 tie-break) — no longer the preview's beat-2 order.
+  // Ruling 33 (2026-10-22): the rows the QUERY excludes — held or superseded — are recorded in selection_dropped too, so
+  // the ledger names every row of the company's public lanes that did not reach the pool, not only the ones the
+  // selectors refused.
+  const goneById = new Map<string, "superseded" | "hold">();
+  for (const col of ["superseded_at", "held_at"] as const) {
+    const { data: gone } = await supabase
+      .from("signals").select("id")
+      .eq("company_id", companyId).eq("signal_band", "outside").in("voice_class", PUBLIC_SIGNAL_VOICES)
+      .not(col, "is", null)
+      .order("id", { ascending: true });
+    for (const g of (gone ?? []) as Array<{ id: string }>) if (!goneById.has(g.id)) goneById.set(g.id, col === "superseded_at" ? "superseded" : "hold");
+  }
+  for (const [id, reason] of [...goneById].sort((a, b) => a[0].localeCompare(b[0]))) dropped.push({ id, kind: "signal", reason });
   const { data: sig } = await supabase
     .from("signals")
     .select("id, claim_text, evidence_excerpt, source_title, source_url, event_date, topic, created_at, confidence_to_use, evidence_class, voice_class, raw_payload, source_type")
@@ -265,7 +283,8 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   // the signal rows are pushed below, once N2 has run and the ordinary cap has seen what is left.
   const pushSignals = (list: readonly SelSignal[], reason: string | undefined) => {
     for (const s of list) {
-      rows.push({ id: s.id, kind: "signal", provenance: "public_observed", source_class: classOfSignal(s), text: rowTextOf("signal", s), source_title: s.source_title ?? null, source_url: s.source_url, event_date: s.event_date, admitted_by: reason });
+      rows.push({ id: s.id, kind: "signal", provenance: "public_observed", source_class: classOfSignal(s), text: rowTextOf("signal", s), source_title: s.source_title ?? null, source_url: s.source_url, event_date: s.event_date, admitted_by: reason,
+        filing: evidenceTierOf(s) === 1 });
     }
   };
   pushSignals(p1Sig.kept, PREDECESSOR_CITED_REASON);

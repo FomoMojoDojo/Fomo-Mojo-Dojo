@@ -40,7 +40,7 @@ import { predecessorGate, type PredecessorVerdict, predecessorLineKey } from "..
 import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type OfferingSeenOn, type OwnSiteHosts } from "../_shared/publicReadStorage.ts";
 import { loadConfirmedRelatedEntities, ownHostsFor } from "../_shared/ownHosts.ts";
 import { loadOwnSiteRecord } from "../_shared/offeringNamedOnSite.ts";
-import { SELECTION_VERSION } from "../_shared/publicReadSelection.ts";
+import { SELECTION_VERSION, selectionDroppedOf, type Dropped } from "../_shared/publicReadSelection.ts";
 import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
 import {
   CONTINUITY_GUARD, SOFTENING_GUARD, classifyContinuity, continuityBlock, continuityDetail,
@@ -90,7 +90,7 @@ function json(body: unknown, status = 200) {
 // stable content hash — "md5" per the gate's shorthand; the algorithm is sha256). liveness is 'live'
 // for every id by construction (the queries select live-only public rows), recorded explicitly so the
 // ledger states it rather than implying it.
-async function ledgerOf(inputs: InputRow[]) {
+async function ledgerOf(inputs: InputRow[], dropped: readonly Dropped[]) {
   const corpus_md5 = await sha256Hex(inputs.map((r) => r.text).sort().join("\n"));
   return {
     ids: inputs.map((r) => r.id),
@@ -104,6 +104,9 @@ async function ledgerOf(inputs: InputRow[]) {
     count: inputs.length,
     // ruling 5: which selection built this read (absent on rows written before 2026-09-18 = physical-order selection)
     selection_version: SELECTION_VERSION,
+    // Ruling 33 (2026-10-22): every row the selection did not admit — by kind, with its reason and family (cap, share,
+    // class, hold, duplicate, junk, refusal) — including the held / superseded rows the query itself excludes.
+    selection_dropped: selectionDroppedOf(dropped),
     // P1 (2026-10-14): the rows admitted because the CURRENT read cites them, ahead of the cap. The
     // ledger names them so a reader can tell "this row is here because the read before it rested on
     // it" from "this row won the cap", which is exactly the distinction audit 10228 could not make.
@@ -161,16 +164,41 @@ export function collapseHalves(text: string): string {
   }
   return t.slice(0, mid) === t.slice(mid) ? t.slice(0, mid) : t;
 }
-/** THE catalogue line, for the generator AND the judge. */
-export function catalogueLine(ref: string, kind: string, cls: SourceClass, text: string, title: string | null): string {
+/** THE catalogue line, for the generator AND the judge. Ruling 34 (2026-10-22): a filing row carries " · filing" after
+ *  its class, so the model can tell what the company told its regulators from what its site says. */
+export function catalogueLine(ref: string, kind: string, cls: SourceClass, text: string, title: string | null, filing = false): string {
   // R1 (2026-10-14): the source title is an ATTRIBUTE of the line, after the text, never inside it.
   // It used to be appended to r.text upstream, which put a span's offsets over words the source
   // never asserted and made the drift re-read impossible (defect A). The model still sees where the
   // row was found; a span is only ever cut from the text before this suffix.
-  return `[${ref}] (${kind} · ${CLASS_LABEL[cls]}) ${collapseHalves(text).slice(0, 400)}${title ? ` — source: ${title}` : ""}`;
+  return `[${ref}] (${kind} · ${CLASS_LABEL[cls]}${filing ? " · filing" : ""}) ${collapseHalves(text).slice(0, 400)}${title ? ` — source: ${title}` : ""}`;
 }
 
-function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<string, string>; classByRef: Map<string, SourceClass>; textByRef: Map<string, string>; kindByRef: Map<string, string>; tokenSummary: string } {
+// ── THE LEDGER, GROUPED BY CLASS (operator ruling 34, 2026-10-22) ────────────────────────────────────────────────────
+// The catalogue used to list rows in pool order — P1 signals, then every own word, then the rest — so the company's own
+// words sat at the top of the ledger and the record below them. It is now grouped under one header per class, in this
+// order; filings (class `you`) are their own group. DISPLAY ONLY: a row's text, its ref, its class and every span cut
+// from it are unchanged (V1 offsets sit on rowTextOf's text, never on the rendered line — catalogue.test.ts C34-V1).
+export const CATALOGUE_HEADERS = {
+  record: "THE RECORD — what others say: press, analysts, customers, registries.",
+  filing: "YOU — FILINGS — what the company stated in its own regulatory filings.",
+  you: "YOU — the company's own site and own words.",
+  our_read: "OUR READ — our analysis of the record; cite it as our reading, never as fact.",
+} as const;
+const CATALOGUE_GROUP_ORDER = ["record", "filing", "you", "our_read"] as const;
+export type CatalogueRow = { ref: string; kind: string; cls: SourceClass; text: string; title: string | null; filing: boolean };
+/** Render catalogue rows under their class headers; a group with no rows prints no header. */
+export function renderCatalogue(rows: readonly CatalogueRow[]): string {
+  const groupOf = (r: CatalogueRow) => (r.cls === "you" && r.filing ? "filing" : r.cls);
+  const out: string[] = [];
+  for (const g of CATALOGUE_GROUP_ORDER) {
+    const lines = rows.filter((r) => groupOf(r) === g).map((r) => catalogueLine(r.ref, r.kind, r.cls, r.text, r.title, r.filing));
+    if (lines.length) out.push(CATALOGUE_HEADERS[g], ...lines);
+  }
+  return out.join("\n");
+}
+
+export function buildCatalogue(inputs: InputRow[]): { text: string; rows: CatalogueRow[]; uuidByRef: Map<string, string>; classByRef: Map<string, SourceClass>; textByRef: Map<string, string>; kindByRef: Map<string, string>; tokenSummary: string } {
   const uuidByRef = new Map<string, string>();
   const classByRef = new Map<string, SourceClass>();
   const textByRef = new Map<string, string>();
@@ -178,8 +206,11 @@ function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<stri
   // already encodes it, but parsing a prefix back into a kind is a second statement of the mapping.
   const kindByRef = new Map<string, string>();
   const counters: Record<string, number> = {};
-  const lines: string[] = [];
-  for (const r of inputs) {
+  const rows: CatalogueRow[] = [];
+  // Ruling 34: refs are numbered in the order the model READS them — group by group — so S1 is the first signal shown.
+  const groupRank = (r: InputRow) => ({ record: 0, you: r.filing ? 1 : 2, our_read: 3 } as Record<SourceClass, number>)[r.source_class];
+  const ordered = inputs.map((r, i) => ({ r, i })).sort((a, b) => groupRank(a.r) - groupRank(b.r) || a.i - b.i).map((x) => x.r);
+  for (const r of ordered) {
     const px = REF_PREFIX[r.kind] ?? "X";
     counters[px] = (counters[px] ?? 0) + 1;
     const ref = `${px}${counters[px]}`;
@@ -188,11 +219,11 @@ function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<stri
     textByRef.set(ref, r.text);        // the FULL row text, for the class fact-check (not the 400-char catalogue slice)
     kindByRef.set(ref, r.kind);        // R3: what kind of row this is, for the span-source law
     // 1a-4: the class rides WITH the line, so the model sees what each row licenses as it cites it.
-    lines.push(catalogueLine(ref, r.kind, r.source_class, r.text, r.source_title ?? null));
+    rows.push({ ref, kind: r.kind, cls: r.source_class, text: r.text, title: r.source_title ?? null, filing: r.filing === true });
   }
   // The exact valid token ranges, e.g. "S1–S20, O1–O25, F1–F13, D1–D15" — the model may cite ONLY these.
   const tokenSummary = Object.entries(counters).map(([px, n]) => (n === 1 ? `${px}1` : `${px}1–${px}${n}`)).join(", ");
-  return { text: lines.join("\n"), uuidByRef, classByRef, textByRef, kindByRef, tokenSummary };
+  return { text: renderCatalogue(rows), rows, uuidByRef, classByRef, textByRef, kindByRef, tokenSummary };
 }
 
 // Collect every ref token a payload cites (from any "citations"/"cite" array).
@@ -393,7 +424,7 @@ Deno.serve(async (req) => {
     // the per-kind pool is what each kind is actually generated from.
     const predecessorKind = activeKinds.length === 1 ? activeKinds[0] : undefined;
     const { inputs, dropped } = await selectPublicInputs(supabase, company_id, { predecessorKind });
-    const ledger = await ledgerOf(inputs);
+    const ledger = await ledgerOf(inputs, dropped);
     const ledgerIds = new Set(ledger.ids);
 
     // ── VACUOUS PROOF hook: prove a planted internal id is absent from every query's output + ledger.
@@ -523,7 +554,7 @@ Deno.serve(async (req) => {
       return callLocal(choice.model, system, user, temperature);
     };
 
-    const { text: CAT, uuidByRef, classByRef, textByRef, kindByRef, tokenSummary } = buildCatalogue(inputs);
+    const { text: CAT, rows: catRows, uuidByRef, classByRef, textByRef, kindByRef, tokenSummary } = buildCatalogue(inputs);
     // ── NP (operator ruling, 2026-10-15): THE POOL, as the ONE re-ask feedback builder sees it ────
     // Built from the live ref maps, so a row admitted mid-run (PASS 2, N2) is in it: the name a
     // re-ask needs may well be on a row the original selection never put in front of the model.
@@ -612,11 +643,17 @@ EXAMPLE. A row of class 'the record' says 'the only level 14 residential facilit
     // programs, the promise's subject was a product. The gate (readLevel.ts) now refuses the deterministic cases; the
     // prompt states the rule the gate cannot read, and the judge is asked it as (g).
     const LEVEL_RULE = `LEVEL. Each read speaks at its own level, above the offering. A value line states the OUTCOME a customer gets, not a product or a feature. A differentiator is RELATIVE TO AN ALTERNATIVE — what the customer gets here that the alternative does not give them. The promise names a CUSTOMER OUTCOME; its subject is the customer or the company, never a product. Strategy speaks at the level of the BUSINESS — where it competes and how it wins — not the products it sells. Product names, features and programs belong ONLY in the offering read: do not restate them here.`;
+    // ── SOURCES BY FIELD (operator ruling 34, 2026-10-22) ───────────────────────────────────────
+    // Every Spectrum citation was the company's own words: nothing told the model which class each field is drawn from,
+    // and the ledger listed own words first. These name it, per field, in the headers' own words. No gate reads them.
+    const SOURCES_BY_FIELD_POSITIONING = `SOURCES BY FIELD. best_fit_customers and alternatives come from THE RECORD — what customers, press and analysts say about who buys and what they would otherwise choose. A row under YOU may support them, but when THE RECORD speaks to them, cite THE RECORD. value_for_customer comes from THE RECORD where a row there states an outcome a customer got; use YOU only when no record row states one. market_category and unique_attributes may rest on YOU; a differentiator is stronger when THE RECORD confirms it, so cite both when both state it.`;
+    const SOURCES_BY_FIELD_STRATEGY = `SOURCES BY FIELD. where_to_play, how_to_win and must_have_capabilities come first from YOU — FILINGS and THE RECORD: what the company told its regulators about its markets, competition, risks and plans, and what press and analysts report. Use the company's own site (YOU) to name the arena only where filings and the record are silent. winning_aspiration may rest on filings, the record or the company's own words.`;
     // ── GENERATE each kind ───────────────────────────────────────────────────────────────────────
     const GEN_POSITIONING = `You read a company's PUBLIC record and state its positioning as a hypothesis for the room to test. ${CITE_RULE}
 ${SPECIFICS_RULE}
 ${LEVEL_RULE}
 ALTERNATIVES (ruling 15). "alternatives" names what a customer would otherwise choose — a competitor, a substitute, or doing nothing — ONLY as a cited row NAMES it: the name must appear in a row you cite, and that row must be the record or the company, not our read. If no row names an alternative, return "alternatives":[] — that is the correct answer, and it becomes a question for the room. Never infer, guess or invent an alternative.
+${SOURCES_BY_FIELD_POSITIONING}
 Return ONLY JSON:
 {"market_category":"<a plain-language category this business ACTUALLY IS — e.g. 'neighborhood cafe & roaster', not a fancy or aspirational label>","market_category_citations":["<id>"],
  "value_for_customer":"<the outcome a customer gets, in plain words>","value_citations":["<id>"],
@@ -632,6 +669,7 @@ ${US_ENGLISH_RULE}`;
 ${SPECIFICS_RULE}
 ${LEVEL_RULE}
 CRITICAL — cited-or-omitted: if the public record does not GROUND a rung, return it EMPTY ("" for a text rung, [] for a list rung) with empty citations. Do NOT invent capabilities or management systems that the record doesn't show. It is EXPECTED and correct for a rung to be empty.
+${SOURCES_BY_FIELD_STRATEGY}
 Return ONLY JSON:
 {"winning_aspiration":"<what winning looks like for this business, plainly>","winning_aspiration_citations":["<id>"],
  "where_to_play":"<the arena the record implies — who / where / which segment>","where_to_play_citations":["<id>"],
@@ -868,7 +906,9 @@ Respond with ONLY JSON:
       (ledger.liveness as Record<string, string>)[row.id] = "live";
       (ledger.classes as Record<string, string>)[row.id] = row.cls;
       ledger.count = ledger.ids.length;
-      CAT_LIVE += `\n${catalogueLine(ref, row.kind, row.cls, row.text, null)}`;   // S2: one renderer
+      // Ruling 34: the admitted row joins ITS class group — re-rendered, never appended under whichever header is last
+      catRows.push({ ref, kind: row.kind, cls: row.cls as SourceClass, text: row.text, title: null, filing: false });
+      CAT_LIVE = renderCatalogue(catRows);   // S2: one renderer
       return ref;
     };
 

@@ -179,7 +179,7 @@ Deno.test("source guard: (b) searches the pool FIRST and the live record on a mi
   assert(gpr.includes("await searchLiveRecordForSpecifics(supabase, company_id, specifics, alreadyCited)"), "the search runs over the company's live rows");
   // a hit is ADMITTED: ledger + citations + the judge's catalogue, not a silent justification
   assert(gpr.includes("const admitSourcingRow = (row: SourcingRow): string =>"), "admission is one function");
-  for (const part of ["ledger.ids.push(row.id)", "(ledger.provenances as Record<string, string>)[row.id]", "(ledger.liveness as Record<string, string>)[row.id]", "(ledger.classes as Record<string, string>)[row.id] = row.cls", "validRefs.add(ref)", "CAT_LIVE +="]) {
+  for (const part of ["ledger.ids.push(row.id)", "(ledger.provenances as Record<string, string>)[row.id]", "(ledger.liveness as Record<string, string>)[row.id]", "(ledger.classes as Record<string, string>)[row.id] = row.cls", "validRefs.add(ref)", "CAT_LIVE = renderCatalogue(catRows);"]) {
     assert(gpr.includes(part), `admission writes ${part}`);
   }
   assert(gpr.includes("f.obj[f.citeKey] = [...cites, ref];"), "and the row joins the FIELD's own citations");
