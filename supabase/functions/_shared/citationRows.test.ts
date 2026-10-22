@@ -2,7 +2,7 @@
 // citation's cited_text VERBATIM, uncited sentences mint nothing, excluded hosts mint nothing, duplicates (in run, or by
 // content identity against existing excerpts) are not re-minted; end to end the stored excerpt is byte-equal to the tool's.
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { citationEntries, citedSentences, rawCitationSnapshot } from "./citationRows.ts";
+import { capEvidenceLedger, citationEntries, citedSentences, isPlaceholderProfileSnippet, PROFILE_PLACEHOLDER_DEFAULT, rawCitationSnapshot } from "./citationRows.ts";
 import { mapPublicBaselineOutputToSignals } from "../../../src/lib/evidenceMappers.ts";
 import { applyMintExcerptGuard } from "./evidencePhase1.ts";
 import { extractCitedSpans } from "../../../src/lib/firstRead/citationSource.ts";
@@ -43,4 +43,17 @@ Deno.test("end to end: entry → mapper → mint guard ⇒ the stored excerpt is
   assert(d.evidence_excerpt === CT, `excerpt not byte-equal: ${JSON.stringify(d.evidence_excerpt)}`);
   assertEquals([d.claim_text, d.source_title], ["Spectrum offers a $30 low-income plan.", "Spectrum review"]);
   assertEquals(rawCitationSnapshot(RESP).text_blocks.length, 5);
+});
+
+Deno.test("ruling 1 (re-run 2): citation entries are never capped; the rest keep 24; no citations ⇒ exactly slice(0, 24)", () => {
+  const cited = Array.from({ length: 42 }, (_, i) => ({ citation: true as const, i }));
+  const other = Array.from({ length: 30 }, (_, i) => ({ i }));
+  const kept = capEvidenceLedger([...cited, ...other]);
+  assertEquals([kept.filter((e) => (e as { citation?: boolean }).citation).length, kept.length], [42, 66]);
+  assertEquals(capEvidenceLedger(other), other.slice(0, 24));
+});
+
+Deno.test("ruling 2: a placeholder profile snippet is refused; page words are not", () => {
+  for (const p of ["", "  ", PROFILE_PLACEHOLDER_DEFAULT, "Linked from company website (/about)", "Declared in page metadata (/)", "Referenced in script asset from company site", "Fallback social link discovered from https://x.test/", "Added manually from Public Source Controls.", "Generated from company name/domain because search engines can miss", "Site crawl (/)"]) assert(isPlaceholderProfileSnippet(p), p);
+  assert(!isPlaceholderProfileSnippet("Spectrum Internet plans start at $30/mo."));
 });

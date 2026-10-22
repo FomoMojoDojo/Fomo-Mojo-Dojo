@@ -81,3 +81,33 @@ export function rawCitationSnapshot(responseData: unknown): { model: unknown; st
     searches: blocks.filter((b) => (b as { type?: unknown })?.type === "server_tool_use").map((b) => (b as { input?: unknown }).input ?? null),
   };
 }
+
+// ── RULINGS 1 + 2 (re-run 2 brief, 2026-10-21) — the evidence ledger's cap and placeholder profile entries ───────────────
+/** The evidence ledger's cap applies to NON-citation entries only (ruling 1): a citation entry was paid for and carries
+ *  page words, so every one is kept; the rest keep the historical cap (EVIDENCE_LEDGER_CAP, 24). Order: citations, then
+ *  the rest. With no citation entries the result is exactly entries.slice(0, cap). */
+export const EVIDENCE_LEDGER_CAP = 24;
+export function capEvidenceLedger<T>(entries: readonly T[], cap = EVIDENCE_LEDGER_CAP): T[] {
+  const isCitation = (e: T) => (e as { citation?: unknown } | null)?.citation === true;
+  const cited = entries.filter(isCitation);
+  if (cited.length === 0) return entries.slice(0, cap);
+  return [...cited, ...entries.filter((e) => !isCitation(e)).slice(0, cap)];
+}
+
+/** Ruling 2: a discovered profile entry whose snippet is OUR placeholder — empty, the default line, or one of the crawl's
+ *  generated labels — has no page words and is refused, never minted. */
+export const PROFILE_PLACEHOLDER_DEFAULT = "Discovered public profile/source. Direct content extraction may be restricted by platform controls.";
+const PLACEHOLDER_PATTERNS: readonly RegExp[] = [
+  /^Discovered public profile\/source\b/i,
+  /^Linked from company website \(/i,
+  /^Declared in page metadata \(/i,
+  /^Referenced in script asset from company site/i,
+  /^Fallback social link discovered from /i,
+  /^Added manually from Public Source Controls\.?$/i,
+  /^Generated from company name\/domain/i,
+  /^(Fallback )?site crawl \(/i,
+];
+export function isPlaceholderProfileSnippet(snippet: string | null | undefined): boolean {
+  const s = String(snippet ?? "").trim();
+  return s.length === 0 || PLACEHOLDER_PATTERNS.some((re) => re.test(s));
+}

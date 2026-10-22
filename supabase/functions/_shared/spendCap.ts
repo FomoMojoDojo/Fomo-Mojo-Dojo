@@ -14,7 +14,16 @@
 //               searches. OpenAI: input = prompt chars / 4; output = max output tokens.
 import { anthropicPriceFor, openaiPriceFor } from "./modelPricing.ts";
 
-export const WEB_SEARCH_INPUT_TOKENS_PER_SEARCH = 10_000;
+/** Ruling 4 (2026-10-21): 40k input tokens per search — run 83 measured ~38k (414,908 input over 11 searches); the old
+ *  10k let a $1.46 call through on a $0.96 projection. */
+export const WEB_SEARCH_INPUT_TOKENS_PER_SEARCH = 40_000;
+/** Ruling 4 + the operator's answer (2026-10-21): a requested spend_cap_usd is clamped to this ceiling. A run called with
+ *  no spend_cap_usd stays uncapped (filed: ledger the OpenAI synthesis path, then cap every run). */
+export const SPEND_CAP_CEILING_USD = 2.25;
+export function clampSpendCap(requested: unknown): number | null {
+  const n = typeof requested === "number" && Number.isFinite(requested) && requested > 0 ? requested : null;
+  return n == null ? null : Math.min(n, SPEND_CAP_CEILING_USD);
+}
 
 export type SpendCap = {
   capUsd: number;

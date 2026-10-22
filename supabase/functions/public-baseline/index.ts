@@ -1,10 +1,10 @@
 // supabase/functions/public-baseline/index.ts
-import { loadConfirmedRelatedEntities, loadEntityExcludeHosts, type OwnHostSet } from "../_shared/ownHosts.ts";
-import { citationEntries, rawCitationSnapshot, type CitationStats } from "../_shared/citationRows.ts";
+import { loadConfirmedRelatedEntities, loadEntityExcludeHosts, seedHostOf, type OwnHostSet } from "../_shared/ownHosts.ts";
+import { capEvidenceLedger, citationEntries, isPlaceholderProfileSnippet, rawCitationSnapshot, type CitationStats } from "../_shared/citationRows.ts";
 import { normalizeForHash } from "../_shared/contentIdentity.ts";
 import { countsAtEarlyAmbiguousCheck, crawlEntityFor, crawlHostFilter, discoveryHostsFor, domainPlanFallbackAdmits, entityQueryPasses, guessedProfileLinksOwnHost, isRelatedOwnHost, relatedCrawlSeeds, relatedDomainBonus, type DiscoveryHosts } from "../_shared/ownHostDiscovery.ts";
 import { promptShaOf, requireWebSearchLedger, ledgerOrRefuse, webSearchLedgerFor, type WebSearchLedger } from "../_shared/webSearchLedger.ts";
-import { assertSpendable, makeSpendCap, projectWebSearchUsd, SpendCapRefused, type SpendCap } from "../_shared/spendCap.ts";
+import { assertSpendable, clampSpendCap, makeSpendCap, projectWebSearchUsd, SpendCapRefused, type SpendCap } from "../_shared/spendCap.ts";
 import { buildSeedLaneRows, SEED_LANE_CALL_SITE, SEED_LANE_MAX_TOKENS, SEED_LANE_MAX_USES, seedLanePrompt, seedLaneShouldRun, seedLaneTool, seedPagesRead } from "../_shared/seedHostLane.ts";
 import { ANALYSIS_VOICE, isAnalysisLabelled } from "../_shared/voiceLabel.ts";
 import { decideVoiceClassBeforeJudge } from "../_shared/voiceClassAtMint.ts";
@@ -1950,6 +1950,43 @@ async function callSeedHostLane(opts: {
   return { response: d };
 }
 
+// The seed-host lane, end to end (2026-10-21): the call, the rows from its citations, the insert. Shared by the full run
+// (its own-site crawl read 0 seed pages) and the lane-only entry point (ruling 3). Never throws: the outcome is returned.
+async function executeSeedLane(a: {
+  // deno-lint-ignore no-explicit-any
+  supabase: any; companyId: string; companyName: string; seedHost: string; sourceRunId: string | number | null; ledgerRunId: string | null;
+  apiKey: string; model: string; spendCap: SpendCap | null; excludeDomains: string[];
+}): Promise<{ seedLane: Record<string, unknown>; seedLaneRaw: Record<string, unknown> | null }> {
+  let seedLaneRaw: Record<string, unknown> | null = null;
+  try {
+    const lane = await callSeedHostLane({
+      apiKey: a.apiKey, model: a.model, companyName: a.companyName, seedHost: a.seedHost,
+      ledger: webSearchLedgerFor(a.supabase, { companyId: a.companyId, runId: a.ledgerRunId, callSite: SEED_LANE_CALL_SITE }),
+      spendCap: a.spendCap,
+    });
+    const { data: laneExcerptRows } = await a.supabase.from("signals").select("evidence_excerpt").eq("company_id", a.companyId).is("superseded_at", null).neq("evidence_excerpt", "");
+    const laneExisting = new Set<string>(((laneExcerptRows ?? []) as Array<{ evidence_excerpt: string | null }>).map((r) => normalizeForHash(String(r.evidence_excerpt ?? ""))).filter(Boolean));
+    const laneExcludes = [...a.excludeDomains, ...(await loadEntityExcludeHosts(a.supabase, a.companyId))];
+    seedLaneRaw = rawCitationSnapshot(lane.response);
+    const { rows, stats } = buildSeedLaneRows({
+      companyId: a.companyId, runId: a.sourceRunId, seedHost: a.seedHost, response: lane.response, excludeHosts: laneExcludes, existingExcerpts: laneExisting,
+      decide: (url) => decideVoiceClassBeforeJudge({ url, item: null, labeledClass: "client_voice", pageText: null, judgedText: null, company: { name: "", host: a.seedHost }, registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" }) as never,
+      captureDay: new Date().toISOString().slice(0, 10),
+    });
+    if (rows.length > 0) {
+      const { error: laneInsErr } = await a.supabase.from("signals").insert(rows);
+      if (laneInsErr) throw new Error(`seed-lane insert failed: ${laneInsErr.message}`);
+    }
+    const out = { ran: true, ...stats };
+    console.log("[seed-lane]", out);
+    return { seedLane: out, seedLaneRaw };
+  } catch (laneErr) {
+    const out = { ran: true, error: String((laneErr as Error)?.message ?? laneErr).slice(0, 300), refused_by_cap: laneErr instanceof SpendCapRefused };
+    console.log("[seed-lane]", out);
+    return { seedLane: out, seedLaneRaw };
+  }
+}
+
 const QUALITY_PROMPTS: Record<"no_results" | "thin" | "ambiguous" | "search_unavailable", string> = {
   no_results: "No public data found for this company. Upload internal documents to establish a starting baseline — strategy, positioning, or customer research.",
   thin: "Public evidence is too thin to infer a complete baseline. Upload internal documents to improve signal quality.",
@@ -2122,14 +2159,14 @@ function mergeDiscoveredEvidenceIntoLedger(args: {
   for (const source of args.discoveredEvidence) {
     const url = normalizeUrlForMatch(source?.url);
     if (!url || existingUrls.has(url)) continue;
+    // RULING 2 (2026-10-21): a profile entry whose snippet is our placeholder has no page words — refused, never minted
+    if (isPlaceholderProfileSnippet(source?.snippet)) continue;
     existingUrls.add(url);
     existingLedger.push({
       url,
       source_type: String(source?.source_type || "public_web"),
       date: new Date().toISOString().slice(0, 10),
-      snippet:
-        String(source?.snippet || "").trim() ||
-        "Discovered public profile/source. Direct content extraction may be restricted by platform controls.",
+      snippet: String(source?.snippet || "").trim(),
       bucket: "outside_voice_signal",
       signal_strength: "weak",
       confidence: 35,
@@ -2137,7 +2174,8 @@ function mergeDiscoveredEvidenceIntoLedger(args: {
     appended++;
   }
 
-  result.evidence_ledger = existingLedger.slice(0, 24);
+  // RULING 1 (2026-10-21): citation entries are not capped (paid for, page words); the rest keep the cap of 24
+  result.evidence_ledger = capEvidenceLedger(existingLedger);
   const openQuestions = Array.isArray(result.open_questions) ? [...result.open_questions] : [];
   if (appended > 0) {
     openQuestions.unshift(
@@ -2290,7 +2328,8 @@ Deno.serve(async (req) => {
     const chain = body?.chain === true;
     // SPEND CAP (2026-10-21): spend_cap_usd > 0 ⇒ every paid call of this run is projected and checked against the run's
     // ledgered spend before it is sent (_shared/spendCap.ts); absent ⇒ uncapped, exactly as before.
-    const spendCapUsd = typeof body?.spend_cap_usd === "number" && Number.isFinite(body.spend_cap_usd) && body.spend_cap_usd > 0 ? Number(body.spend_cap_usd) : null;
+    // ruling 4: a requested cap is clamped to the per-run ceiling (SPEND_CAP_CEILING_USD, $2.25); no cap ⇒ uncapped
+    const spendCapUsd = clampSpendCap(body?.spend_cap_usd);
     // The parent full_refresh row is LEDGER — machine truth, written server-side (service-role),
     // NEVER by a browser (long_runner_runs is SELECT-only under RLS for authenticated). A scheduled
     // trigger may PASS an existing parent id; a client passes only {chain:true} and public-baseline
@@ -2328,6 +2367,32 @@ Deno.serve(async (req) => {
     const sourceFilters = normalizePublicSourceFilters(
       body?.public_source_filters_json ?? companyRow?.public_source_filters_json ?? null,
     );
+
+    // ── SEED-HOST LANE ONLY (ruling 3, 2026-10-21) ─────────────────────────────────────────────────────────────────
+    // seed_lane_only:true runs the seed-host cited-text lane ALONE — no search, no crawl, no main web_search call, no
+    // ingest — under its own cap (spend_cap_usd required). Gate: the company's LATEST run must have read 0 seed pages
+    // (run_ledger.seed_lane.seed_pages_read === 0); its rows attach to that run (source_id), whose lane it completes, and
+    // the lane's outcome + raw citation blocks are recorded on it (run_ledger.seed_lane_rerun, web_search_raw.seed_lane_rerun).
+    if (body?.seed_lane_only === true) {
+      const laneSeedHost = (companyRow as { no_public_site?: unknown } | null)?.no_public_site === true ? null : seedHostOf(website);
+      if (!laneSeedHost) return json({ error: "seed_lane_only: the company has no public site / seed host", status: "seed_lane_refused" }, 400);
+      if (!anthropicKey) return json({ error: "seed_lane_only: ANTHROPIC_API_KEY missing", status: "seed_lane_refused" }, 500);
+      if (spendCapUsd == null) return json({ error: "seed_lane_only requires spend_cap_usd", status: "seed_lane_refused" }, 400);
+      const { data: laneLastRun } = await supabase.from("public_baseline_runs").select("id, result_json").eq("company_id", company_id).order("id", { ascending: false }).limit(1).maybeSingle();
+      const laneLastRj = ((laneLastRun as { result_json?: Record<string, any> } | null)?.result_json ?? {}) as Record<string, any>;
+      if (!laneLastRun || laneLastRj?.run_ledger?.seed_lane?.seed_pages_read !== 0) {
+        return json({ error: "seed_lane_only: the latest run did not read 0 seed pages — the lane runs only for a site the crawl could not read", status: "seed_lane_gate_refused", run_id: (laneLastRun as { id?: unknown } | null)?.id ?? null }, 409);
+      }
+      const { data: laneRunRow } = await supabase.from("long_runner_runs").insert({ run_kind: "seed_host_lane", company_id, status: "running" }).select("id").single();
+      const laneRunId = (laneRunRow as { id?: string } | null)?.id ?? null;
+      const laneCap = makeSpendCap({ capUsd: spendCapUsd, companyId: String(company_id), since: spendCapStartedAt, supabase });
+      const laneOut = await executeSeedLane({ supabase, companyId: String(company_id), companyName: company_name, seedHost: laneSeedHost, sourceRunId: (laneLastRun as { id: number }).id,
+        ledgerRunId: laneRunId, apiKey: anthropicKey, model: anthropicModel, spendCap: laneCap, excludeDomains: sourceFilters.exclude_domains });
+      const laneRecord = { ...laneOut.seedLane, lane_run_id: laneRunId, at: new Date().toISOString(), spend_cap: { cap_usd: laneCap.capUsd, since: laneCap.since, refusals: laneCap.refusals } };
+      await supabase.from("public_baseline_runs").update({ result_json: { ...laneLastRj, run_ledger: { ...(laneLastRj.run_ledger ?? {}), seed_lane_rerun: laneRecord }, web_search_raw: { ...(laneLastRj.web_search_raw ?? {}), seed_lane_rerun: laneOut.seedLaneRaw } } }).eq("id", (laneLastRun as { id: number }).id);
+      if (laneRunId) await supabase.from("long_runner_runs").update({ status: laneOut.seedLane.error ? "failed" : "completed", done_count: laneOut.seedLane.error ? 0 : 1, error_text: (laneOut.seedLane.error as string | undefined) ?? null, finished_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", laneRunId);
+      return json({ status: "seed_lane_only", run_id: (laneLastRun as { id: number }).id, lane_run_id: laneRunId, seed_lane: laneRecord });
+    }
 
     if (sourceFilters.exclude_domains.length > 0) {
       const scrubbedCount = await scrubHistoricalBlacklistedReferences({
@@ -3644,30 +3709,10 @@ Deno.serve(async (req) => {
     let seedLane: Record<string, unknown> = { ran: false, seed_pages_read: seedRead };
     let seedLaneRaw: Record<string, unknown> | null = null;
     if (synthesis_engine === "claude_websearch" && seedLaneShouldRun({ noPublicSite, seedHost: seedHostForLane, seedPagesRead: seedRead })) {
-      try {
-        const lane = await callSeedHostLane({
-          apiKey: anthropicKey ?? "", model: anthropicModel, companyName: company_name, seedHost: seedHostForLane!,
-          ledger: webSearchLedgerFor(supabase, { companyId: String(company_id), runId: ledgerRowId, callSite: SEED_LANE_CALL_SITE }),
-          spendCap,
-        });
-        const { data: laneExcerptRows } = await supabase.from("signals").select("evidence_excerpt").eq("company_id", company_id).is("superseded_at", null).neq("evidence_excerpt", "");
-        const laneExisting = new Set<string>(((laneExcerptRows ?? []) as Array<{ evidence_excerpt: string | null }>).map((r) => normalizeForHash(String(r.evidence_excerpt ?? ""))).filter(Boolean));
-        const laneExcludes = [...sourceFilters.exclude_domains, ...(await loadEntityExcludeHosts(supabase, String(company_id)))];
-        seedLaneRaw = rawCitationSnapshot(lane.response);
-        const { rows, stats } = buildSeedLaneRows({
-          companyId: String(company_id), runId: inserted?.id ?? null, seedHost: seedHostForLane!, response: lane.response, excludeHosts: laneExcludes, existingExcerpts: laneExisting,
-          decide: (url) => decideVoiceClassBeforeJudge({ url, item: null, labeledClass: "client_voice", pageText: null, judgedText: null, company: { name: "", host: seedHostForLane! }, registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" }) as never,
-          captureDay: new Date().toISOString().slice(0, 10),
-        });
-        if (rows.length > 0) {
-          const { error: laneInsErr } = await supabase.from("signals").insert(rows);
-          if (laneInsErr) throw new Error(`seed-lane insert failed: ${laneInsErr.message}`);
-        }
-        seedLane = { ran: true, seed_pages_read: seedRead, ...stats };
-      } catch (laneErr) {
-        seedLane = { ran: true, seed_pages_read: seedRead, error: String((laneErr as Error)?.message ?? laneErr).slice(0, 300), refused_by_cap: laneErr instanceof SpendCapRefused };
-      }
-      console.log("[seed-lane]", seedLane);
+      const lane = await executeSeedLane({ supabase, companyId: String(company_id), companyName: company_name, seedHost: seedHostForLane!, sourceRunId: inserted?.id ?? null,
+        ledgerRunId: ledgerRowId, apiKey: anthropicKey ?? "", model: anthropicModel, spendCap, excludeDomains: sourceFilters.exclude_domains });
+      seedLane = { seed_pages_read: seedRead, ...lane.seedLane };
+      seedLaneRaw = lane.seedLaneRaw;
     }
     {
       const siteReadPatch = siteRead ?? { pages_read: 0, kept: 0, added: 0, superseded: 0, changes: [], failed: true };

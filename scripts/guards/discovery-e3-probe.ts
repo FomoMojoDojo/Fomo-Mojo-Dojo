@@ -23,6 +23,13 @@
 //   d14 ruling 1: citations become the rows — an uncited sentence mints nothing, the excerpt is the citation's cited_text
 //       byte-for-byte (end to end through mapper + mint guard), a citation on an excluded host mints nothing; both web_search
 //       lanes are wired to it
+//   d15 re-run 2 ruling 1: citation entries are never capped (42 kept with 30 others, which keep 24); public-baseline caps
+//       through capEvidenceLedger
+//   d16 ruling 2: a placeholder profile snippet is refused (helper), and public-baseline refuses it before appending
+//   d17 ruling 4: the projection covers run 83's actual call ($1.4597) and refuses its seed lane after it under $1.50; a cap
+//       above the ceiling is clamped to $2.25
+//   d18 ruling 3: the lane-only entry runs the lane alone — its block calls executeSeedLane and no main call, crawl, search
+//       or ingest, and it returns before the query plan is built
 import { lit, PsqlSession } from "../lib/psqlBlankingStore.ts";
 import { crawlEntityFor, crawlHostFilter, discoveryHostsFor, domainPlanFallbackAdmits, entityPromptLine, entityQueryPasses, guessedProfileLinksOwnHost, relatedCrawlSeeds } from "../../supabase/functions/_shared/ownHostDiscovery.ts";
 import type { RelatedEntityRow } from "../../supabase/functions/_shared/ownHosts.ts";
@@ -37,7 +44,8 @@ import { assertSpendable, makeSpendCap, SpendCapRefused } from "../../supabase/f
 import { defaultBeatsRoutedModel } from "../../supabase/functions/_shared/findingBeats.ts";
 import { makeRoutedModel } from "../../supabase/functions/_shared/modelRouter.ts";
 import { projectOpenAIUsd } from "../../supabase/functions/_shared/spendCap.ts";
-import { citationEntries } from "../../supabase/functions/_shared/citationRows.ts";
+import { capEvidenceLedger, citationEntries, isPlaceholderProfileSnippet, PROFILE_PLACEHOLDER_DEFAULT } from "../../supabase/functions/_shared/citationRows.ts";
+import { clampSpendCap, projectWebSearchUsd as projWS } from "../../supabase/functions/_shared/spendCap.ts";
 import { buildSeedLaneRows } from "../../supabase/functions/_shared/seedHostLane.ts";
 import { mapPublicBaselineOutputToSignals } from "../../src/lib/evidenceMappers.ts";
 import { decideVoiceClassBeforeJudge } from "../../supabase/functions/_shared/voiceClassAtMint.ts";
@@ -214,4 +222,25 @@ const d14 = {
   wired_lane: pbSrc.includes("response: lane.response, excludeHosts: laneExcludes, existingExcerpts: laneExisting,"),
 };
 
-console.log(JSON.stringify({ d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13, d14, rolled_back: B0 === B1, before: B0, after: B1 }));
+// d15 — citation entries uncapped
+const c15 = capEvidenceLedger([...Array.from({ length: 42 }, (_, i) => ({ citation: true, i })), ...Array.from({ length: 30 }, (_, i) => ({ i }))]);
+const d15 = { cited_kept: c15.filter((e: any) => e.citation).length, others_kept: c15.filter((e: any) => !e.citation).length, wired: pbSrc.includes("result.evidence_ledger = capEvidenceLedger(existingLedger);") && !pbSrc.includes("result.evidence_ledger = existingLedger.slice(0, 24);") };
+// d16 — placeholder profile entries refused
+const d16 = { default_refused: isPlaceholderProfileSnippet(PROFILE_PLACEHOLDER_DEFAULT), empty_refused: isPlaceholderProfileSnippet(""), linked_refused: isPlaceholderProfileSnippet("Linked from company website (/)"), page_words_kept: !isPlaceholderProfileSnippet("Plans start at $30/mo."),
+  wired: pbSrc.includes("if (isPlaceholderProfileSnippet(source?.snippet)) continue;") && !pbSrc.includes(`"Discovered public profile/source. Direct content extraction may be restricted by platform controls.",`) };
+// d17 — projection covers the measured call; the lane after it is refused under $1.50; ceiling clamp
+const main83 = projWS("claude-sonnet-4-6", { promptChars: 6000, maxUses: 12, maxTokens: 32000 })!;
+const lane83 = projWS("claude-sonnet-4-6", { promptChars: 700, maxUses: 5, maxTokens: 8000 })!;
+let laneRefused = false;
+try { await assertSpendable(makeSpendCap({ capUsd: 1.5, companyId: "zz", since: "x", supabase: ledgerOf([{ provider: "anthropic", usd: 1.4597 }]) }), { site: "lane", model: "claude-sonnet-4-6", projectedUsd: lane83 }); } catch (e) { laneRefused = e instanceof SpendCapRefused; }
+let mainAllowedAt83 = false;
+try { await assertSpendable(makeSpendCap({ capUsd: 1.5, companyId: "zz", since: "x", supabase: ledgerOf([]) }), { site: "main", model: "claude-sonnet-4-6", projectedUsd: main83 }); mainAllowedAt83 = true; } catch { mainAllowedAt83 = false; }
+const d17 = { projection_covers_actual: main83 >= 1.4597, main_refused_under_1_50: !mainAllowedAt83, lane_refused_after_main: laneRefused, clamp: [clampSpendCap(5), clampSpendCap(0.5)] };
+// d18 — the lane-only entry point runs the lane alone
+const lo0 = pbSrc.indexOf("if (body?.seed_lane_only === true) {");
+const lo1 = pbSrc.indexOf(`return json({ status: "seed_lane_only"`, lo0);
+const block = lo0 > 0 && lo1 > lo0 ? pbSrc.slice(lo0, lo1) : "";
+const d18 = { found: !!block, runs_lane: block.includes("await executeSeedLane({"), forbidden: ["callClaudeWebSearch(", "crawlWebsiteEvidence(", "searxSearch(", "runPass(", "ingestPublicBaselineSignals(", "mintSiteCrawlSignals("].filter((f) => block.includes(f)),
+  before_plan: lo0 > 0 && lo0 < pbSrc.indexOf("const plan = buildBaselineQueryPlan({"), gate: block.includes("seed_pages_read !== 0"), cap_required: block.includes("if (spendCapUsd == null) return json(") };
+
+console.log(JSON.stringify({ d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13, d14, d15, d16, d17, d18, rolled_back: B0 === B1, before: B0, after: B1 }));

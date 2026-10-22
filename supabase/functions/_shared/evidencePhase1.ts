@@ -92,7 +92,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function normalizeSignalInsert(signal: SignalDraft) {
+export function normalizeSignalInsert(signal: SignalDraft) {
   // CV-2e — verbatim quote is a SEPARATE write path from claim_text/evidence_excerpt.
   // It is admitted ONLY when the draft's candidate quote is a byte-exact substring of
   // the retained fetched source (liftVerbatimQuote); otherwise NULL (honest absence).

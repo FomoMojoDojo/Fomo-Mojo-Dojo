@@ -27,6 +27,10 @@
 #   d13 ruling 3: gpt-4.1 priced — the routed beats call is sent under a cap when it fits (stubbed fetch: 1 call)
 #   d14 ruling 1: citations become the rows — uncited sentences and excluded hosts mint nothing; the stored excerpt is the
 #       citation's cited_text byte-for-byte end to end (mapper + mint guard), and on the seed lane; both lanes wired
+#   d15 re-run 2 ruling 1: citation entries are never capped (the rest keep 24); public-baseline caps through capEvidenceLedger
+#   d16 ruling 2: a placeholder profile snippet is refused, never appended
+#   d17 ruling 4: 40k/search projection covers run 83's $1.4597 call; its lane is refused after it under $1.50; ceiling $2.25
+#   d18 ruling 3: the lane-only entry runs the lane alone (no main call, crawl, search, ingest), before the query plan
 #
 # Plants (each injected live, the guard RED with the measured value moved, restored md5-identical, GREEN):
 #   Q1  crawlHostFilter always null (the set filter → single host)      => d2 filter_set true → false
@@ -44,6 +48,10 @@
 #   R2  citationEntries mints an uncited sentence                        => d14 uncited_rows 0 → >0
 #   R3  the entry's cited_text replaced by the model's sentence           => d14 byte_equal true → false
 #   R4  citationEntries' excluded-host check removed                     => d14 excluded_rows 0 → 1
+#   S1  capEvidenceLedger caps citation entries                          => d15 cited_kept 42 → 24
+#   S2  isPlaceholderProfileSnippet admits the default line              => d16 default_refused true → false
+#   S3  WEB_SEARCH_INPUT_TOKENS_PER_SEARCH back to 10k                   => d17 projection_covers_actual true → false
+#   S4  the lane-only block makes the main web_search call               => d18 forbidden [] → [callClaudeWebSearch(]
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -84,6 +92,14 @@ echo "d12. the seed-host lane runs only on 0 seed pages read (a related host's p
 echo "d13. gpt-4.1 priced (ruling 3): the routed beats call is sent under the cap when it fits"
 [ "$(q "d['d14']==dict(rows=1,uncited_rows=0,excluded_rows=0,byte_equal=True,lane_rows=1,lane_byte_equal=True,wired_main=True,wired_lane=True)")" = True ] || fail d14 "citation rows: $(q "d['d14']")"
 echo "d14. ruling 1: citations become the rows — uncited and excluded mint nothing; cited_text byte-equal end to end and on the lane; both lanes wired"
+[ "$(q "d['d15']==dict(cited_kept=42,others_kept=24,wired=True)")" = True ] || fail d15 "citation cap: $(q "d['d15']")"
+echo "d15. citation entries never capped (42 kept; the other 30 keep 24); wired"
+[ "$(q "d['d16']==dict(default_refused=True,empty_refused=True,linked_refused=True,page_words_kept=True,wired=True)")" = True ] || fail d16 "placeholder: $(q "d['d16']")"
+echo "d16. placeholder profile snippets refused, page words kept; wired before the append"
+[ "$(q "d['d17']['projection_covers_actual'] and d['d17']['main_refused_under_1_50'] and d['d17']['lane_refused_after_main'] and d['d17']['clamp']==[2.25,0.5]")" = True ] || fail d17 "projection: $(q "d['d17']")"
+echo "d17. 40k/search projection covers run 83's \$1.4597 call; the lane after it refused under \$1.50; caps clamp to \$2.25"
+[ "$(q "d['d18']==dict(found=True,runs_lane=True,forbidden=[],before_plan=True,gate=True,cap_required=True)")" = True ] || fail d18 "lane-only: $(q "d['d18']")"
+echo "d18. the lane-only entry runs the lane alone (no main call, crawl, search or ingest), gated on 0 seed pages, cap required"
 [ "$(q "d['rolled_back']")" = True ] && [ "$(counts)" = "$C0" ] || fail end "model_calls or signals changed across the guard"
 echo "end. model_calls / signals unchanged ($C0)"
 echo "GUARD OK"
