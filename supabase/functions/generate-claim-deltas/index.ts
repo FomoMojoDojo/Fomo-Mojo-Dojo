@@ -32,6 +32,11 @@ import {
 } from "../_shared/claimDeltaSynthesis.ts";
 import { makeRoutedModel, usdCost } from "../_shared/modelRouter.ts";
 import { openaiRecord, openaiRecordsByModel, recordModelCall } from "../_shared/recordModelCall.ts";
+import { clampSpendCap, makeLedgeredCapGuard, makeSpendCap } from "../_shared/spendCap.ts";
+
+// SPEND CAP (operator brief 2026-10-22): the output bound a capped deltas call sends (max_tokens) and projects with. The
+// proposer and judge answer one short JSON object (verdict, span, one clause) — measured well under this.
+export const DELTA_MAX_OUTPUT_TOKENS = 500;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -57,7 +62,7 @@ serve(async (req) => {
 
   let integrityCtx: { supabase: { from: (t: string) => any }; companyId: string; nowIso: string } | null = null;
   try {
-    const { company_id, write, declared_ids, plan, pairing_kind, run_id } = await req.json();
+    const { company_id, write, declared_ids, plan, pairing_kind, run_id, page_words_only, spend_cap_usd, spend_cap_since } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
     const doWrite = write !== false;
     const doPlan = plan === true;
@@ -103,6 +108,16 @@ serve(async (req) => {
     // ROUTER: each pair's [declared, observed] provenances pick the model. public_vs_public pairs of
     // public claims → external gpt-4.1-mini (proposer + judge); any internal_declared/client_attested
     // declared side → local (internal_vs_public NEVER leaves the machine). Local path byte-identical.
+    // SPEND CAP (operator brief 2026-10-22): a requested spend_cap_usd (clamped to SPEND_CAP_CEILING_USD) caps the paid
+    // external calls of this run. spend_cap_since (ISO) names when the RUN started, so the chunks and the finalize of one
+    // run share one window; absent ⇒ this request's start. On a capped run every external call is ledgered THE MOMENT it
+    // returns (not once at the end), because the cap reads the ledger: before each call the pending ledger writes are
+    // flushed, a failed ledger write refuses further calls (the cumulative cannot be computed), and the call is projected
+    // at signed prices with DELTA_MAX_OUTPUT_TOKENS as its output bound — refused when ledgered + projected > cap.
+    const spendCapUsd = clampSpendCap(spend_cap_usd);
+    const capSince = typeof spend_cap_since === "string" && !Number.isNaN(Date.parse(spend_cap_since)) ? new Date(spend_cap_since).toISOString() : nowIso;
+    const spendCap = spendCapUsd != null ? makeSpendCap({ capUsd: spendCapUsd, companyId: company_id, since: capSince, supabase }) : null;
+    const pendingLedger: Array<Promise<boolean>> = [];
     const usage = { prompt_tokens: 0, completion_tokens: 0 };
     let billedModel = "gpt-4.1-mini"; // Gate 3 — the model the cost is attributable to when no external call was made
     const usageByModel = new Map<string, { prompt_tokens: number; completion_tokens: number }>();
@@ -114,7 +129,13 @@ serve(async (req) => {
         // ruling 2 (2026-10-22): usage per model, so each model is ledgered at its own signed rate
         const k = m ?? billedModel; const prev = usageByModel.get(k) ?? { prompt_tokens: 0, completion_tokens: 0 };
         usageByModel.set(k, { prompt_tokens: prev.prompt_tokens + uu.prompt_tokens, completion_tokens: prev.completion_tokens + uu.completion_tokens });
+        // capped: ledger this call now, at its own model's signed rate
+        if (spendCap) pendingLedger.push(recordModelCall(supabase, { companyId: company_id, runId: null, callSite: "generate-claim-deltas", usage: openaiRecord(k, uu) }));
       },
+      ...(spendCap ? {
+        externalMaxTokens: DELTA_MAX_OUTPUT_TOKENS,
+        beforeExternal: makeLedgeredCapGuard(spendCap, pendingLedger, { site: "generate-claim-deltas", maxOutputTokens: DELTA_MAX_OUTPUT_TOKENS }),
+      } : {}),
     });
     const baseArgs = {
       supabase,
@@ -129,6 +150,7 @@ serve(async (req) => {
       routedCall,
       // Gate 9a — the stepper's child ledger id, provenance on look rows + the looks integrity record.
       runId: run_id != null ? String(run_id) : undefined,
+      pageWordsOnly: page_words_only === true,
     };
     const result = doPlan
       ? await computeDeltasForCompany({ ...baseArgs, plan: true })
@@ -141,8 +163,13 @@ serve(async (req) => {
       // (Gate 6c: this block sat INSIDE the response literal below from b9fbb81, 2026-09-09 — a syntax
       // error the worker could not boot past; every deltas call answered 503 for two days.)
       // RULING 2 (2026-10-22): one row per model, each at its own signed price; no external call ⇒ the one zero row as before
-      for (const rec of usageByModel.size ? openaiRecordsByModel(usageByModel) : [openaiRecord(billedModel, usage)]) {
-        await recordModelCall(supabase, { companyId: company_id, runId: null, callSite: "generate-claim-deltas", usage: rec });
+      if (spendCap) {
+        // capped: every call was ledgered as it returned — flush the last writes, add no aggregate row
+        await Promise.all(pendingLedger.splice(0));
+      } else {
+        for (const rec of usageByModel.size ? openaiRecordsByModel(usageByModel) : [openaiRecord(billedModel, usage)]) {
+          await recordModelCall(supabase, { companyId: company_id, runId: null, callSite: "generate-claim-deltas", usage: rec });
+        }
       }
       // PROOF GUARD: the exclusion ledger (count in totals + ids here) rides every
       // run result — a silent guard would be an invisible decision.
@@ -154,6 +181,7 @@ serve(async (req) => {
         proof_guard_excluded_ids: result.proof_guard_excluded_ids,
         deltas: result.deltas,
         cost: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) },
+        spend_cap: spendCap ? { cap_usd: spendCap.capUsd, since: spendCap.since, refusals: spendCap.refusals } : null,
       });
     }
     if ("skipped" in result) {

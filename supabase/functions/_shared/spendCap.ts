@@ -82,3 +82,20 @@ export async function assertSpendable(cap: SpendCap | null | undefined, call: { 
   if (spent.unpriced > 0) refuse(`${spent.unpriced} paid call(s) already ledgered without usd — the cumulative cannot be computed`, spent.usd);
   if (spent.usd + call.projectedUsd! > cap.capUsd) refuse(`ledgered $${spent.usd.toFixed(4)} + projected $${call.projectedUsd!.toFixed(4)} > cap $${cap.capUsd.toFixed(2)}`, spent.usd);
 }
+
+/** The capped-run hook for a path that LEDGERS EACH CALL AS IT RETURNS (claim deltas, 2026-10-22): before every paid
+ *  call, flush the pending ledger writes — one that failed refuses (the cumulative cannot be computed) — then project
+ *  the call at signed prices with `maxOutputTokens` as its output bound (the caller sends it as max_tokens) and refuse
+ *  when ledgered + projected > cap. Wired as makeRoutedModel's beforeExternal. */
+export function makeLedgeredCapGuard(
+  cap: SpendCap, pending: Array<Promise<boolean>>, opts: { site: string; maxOutputTokens: number },
+): (c: { model: string; system: string; user: string }) => Promise<void> {
+  return async (c) => {
+    const written = await Promise.all(pending.splice(0));
+    if (written.some((ok) => !ok)) {
+      cap.refusals.push({ site: opts.site, model: c.model, reason: "a paid call could not be ledgered — the cumulative cannot be computed", projected_usd: null, spent_usd: null });
+      throw new SpendCapRefused(`spend cap $${cap.capUsd.toFixed(2)}: ${opts.site} (${c.model}) refused — a paid call could not be ledgered`);
+    }
+    await assertSpendable(cap, { site: opts.site, model: c.model, projectedUsd: projectOpenAIUsd(c.model, { promptChars: c.system.length + c.user.length, maxOutputTokens: opts.maxOutputTokens }) });
+  };
+}

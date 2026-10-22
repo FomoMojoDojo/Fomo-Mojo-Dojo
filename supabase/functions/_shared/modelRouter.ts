@@ -80,12 +80,15 @@ export function makeRoutedModel(opts: {
   /** Spend cap (2026-10-21): awaited BEFORE an external (paid) call is sent; throwing refuses the call. Local calls are
    *  never passed to it. Absent ⇒ unchanged. */
   beforeExternal?: (c: { model: string; system: string; user: string }) => Promise<void>;
+  /** Spend cap (2026-10-22, claim deltas): an output bound sent as max_tokens on the external branch, so a capped run's
+   *  projection uses a ceiling the call actually honours. Absent ⇒ unchanged (no max_tokens sent). */
+  externalMaxTokens?: number;
 }): RoutedModel {
   return async ({ role, provenances, system, user }) => {
     const choice = _resolveModel({ role, inputs: provenances.map((p) => ({ provenance: p })) });
     if (choice.provider === "external_openai") {
       if (opts.beforeExternal) await opts.beforeExternal({ model: choice.model, system, user });
-      const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, apiKey: opts.openaiKey, temperature: opts.externalTemperature, seed: opts.externalSeed }));
+      const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, apiKey: opts.openaiKey, temperature: opts.externalTemperature, seed: opts.externalSeed, maxTokens: opts.externalMaxTokens }));
       opts.onUsage?.(r.usage, choice.model);
       return { content: r.content, provider: choice.provider, model: choice.model };
     }
@@ -104,6 +107,8 @@ export async function callOpenAIJson(opts: {
   timeoutMs?: number;
   apiKey?: string;
   seed?: number;
+  /** optional output bound (max_tokens); absent ⇒ none sent, as before */
+  maxTokens?: number;
 }): Promise<{ content: string; usage: OpenAIUsage }> {
   const apiKey = opts.apiKey ?? Deno.env.get("OPENAI_API_KEY") ?? "";
   if (!apiKey) throw new Error("model router: external chosen but OPENAI_API_KEY is missing");
@@ -118,6 +123,7 @@ export async function callOpenAIJson(opts: {
         temperature: opts.temperature ?? 0.2,
         // Best-effort determinism (OpenAI honors seed when set); the relevance backstop passes 42.
         ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
+        ...(opts.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: opts.system },

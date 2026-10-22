@@ -67,6 +67,7 @@ import { listingIdentityInput, type Listing } from "./listingDetect.ts";
 import { isOwnDomainUrl, normalizeHost } from "./firstReadProvenance.ts";
 import { loadConfirmedRelatedEntities, ownHostsFor, type OwnHostSet } from "./ownHosts.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
+import { loadPageWordsDecision } from "./deltaPageWords.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
 const DEFAULT_JUDGE_MODEL = "llama3:70b";
@@ -162,6 +163,11 @@ export type DeltaRunResult =
         // guard is an invisible decision: the count lives here and the claim ids
         // in proof_guard_excluded_ids on the result.
         proof_guard_excluded: number;
+        // PAGE-WORDS PAIRING (2026-10-22): claims refused from either side because they carry no page words.
+        page_words?: { declared_admitted: number; declared_refused: Record<string, number>; observed_admitted: number; observed_refused: Record<string, number> } | null;
+        // SPEND CAP (2026-10-22): candidate pairs left UNJUDGED because a paid call would exceed the cap. No row of any
+        // kind is written for them, and their claims get no silence row — "not compared", never "silent".
+        pairs_refused_by_cap?: number;
       };
       proof_guard_excluded_ids: string[];
     }
@@ -199,6 +205,8 @@ export type DeltaPlanResult =
       // must never pack them); their exclusion is ledgered here.
       proof_guard_excluded: number;
       proof_guard_excluded_ids: string[];
+      /** PAGE-WORDS PAIRING: the admission ledger when page_words_only ran (null otherwise). */
+      page_words?: { declared_admitted: number; declared_refused: Record<string, number>; observed_admitted: number; observed_refused: Record<string, number> } | null;
     }
   | { ok: false; skipped: "frozen_company" | "no_declared_claims" }
   | { ok: false; error: string };
@@ -232,6 +240,9 @@ export type DeltaComputeArgs = {
   /** Gate 9a — the ledger row this scoped call runs under (the stepper's child id); provenance on a
    *  look row and the run_ref of the integrity record. Absent on a manual call: looks still bank. */
   runId?: string;
+  /** PAGE-WORDS PAIRING (operator brief 2026-10-22, public kind only): both sides admitted on page words alone
+   *  (deltaPageWords.ts). Opt-in; absent ⇒ unchanged. */
+  pageWordsOnly?: boolean;
   // ROUTER (2026-08-22): injected model caller resolved by input provenance (this file forbids
   // external imports — the edge fn builds it). Structural type, no import from modelRouter. When
   // present, the pair's [declared, observed] provenances pick the model (all-public → external;
@@ -558,6 +569,9 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       ...c,
       source_type: String(c.raw_payload?.sample_signal?.source_type ?? "") || null,
       page_url: typeof c.raw_payload?.page_url === "string" ? c.raw_payload.page_url : null,
+      // PAGE-WORDS PAIRING: the own-words claim's crawl-slice identity and fidelity (raw_payload), for the admission.
+      content_identity: typeof (c.raw_payload as { content_identity?: unknown } | null)?.content_identity === "string" ? String((c.raw_payload as { content_identity?: unknown }).content_identity) : null,
+      fidelity: typeof (c.raw_payload as { fidelity?: unknown } | null)?.fidelity === "string" ? String((c.raw_payload as { fidelity?: unknown }).fidelity) : null,
       // LISTING PAIRS: the listing block travels (structured fields only), raw_payload itself does not.
       listing: ((c.raw_payload as { listing?: Listing | null } | null | undefined)?.listing ?? null),
       raw_payload: undefined,
@@ -724,7 +738,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     return listingMayCorroborate(d).ok ? p.listing : "refused";
   };
   const voiceOrDeclared = (c: { id: string }) => selfVoiceClaimIds.has(c.id) || (publicVoiceDeclaredIds?.has(c.id) ?? false);
-  const publics = observedPool.filter(
+  let publics = observedPool.filter(
     (c) => !voiceOrDeclared(c) && !ownHostClaimIds.has(c.id) && !unbackedClaimIds.has(c.id),
   );
   // Ledger each admission rule separately (a claim is counted under the FIRST rule that refused it; the claim-keyed
@@ -732,6 +746,17 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   const selfVoiceExcluded = observedPool.filter((c) => voiceOrDeclared(c)).length;
   const ownHostExcluded = observedPool.filter((c) => !voiceOrDeclared(c) && ownHostClaimIds.has(c.id)).length;
   const unbackedExcluded = observedPool.filter((c) => !voiceOrDeclared(c) && !ownHostClaimIds.has(c.id) && unbackedClaimIds.has(c.id)).length;
+
+  // PAGE-WORDS PAIRING (operator brief 2026-10-22): on the public kind, and only when asked, both sides are narrowed to
+  // claims that carry page words (deltaPageWords.ts) — BEFORE plan and write alike, so plan/write parity holds and the
+  // silence rails see only page-word claims.
+  let pageWordsCounts: { declared_admitted: number; declared_refused: Record<string, number>; observed_admitted: number; observed_refused: Record<string, number> } | null = null;
+  if (args.pageWordsOnly && pairingKind === "public_vs_public") {
+    const pw = await loadPageWordsDecision(args.supabase, { companyId: args.companyId, declared, observed: publics, refs: allRefs, ownHosts });
+    declared = declared.filter((c) => pw.declaredOk.has(c.id));
+    publics = publics.filter((c) => pw.observedOk.has(c.id));
+    pageWordsCounts = pw.counts;
+  }
 
   // Existing rows: identity → row. Tombstones ('rejected_pairing') are never
   // re-proposed; all other existing identities are kept verbatim (no re-roll).
@@ -881,6 +906,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       looked_total: lookedTotal,
       proof_guard_excluded: proofGuardExcludedIds.length,
       proof_guard_excluded_ids: proofGuardExcludedIds,
+      page_words: pageWordsCounts,
     };
   }
 
@@ -901,7 +927,17 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     proof_guard_excluded: proofGuardExcludedIds.length,
     listing_corroboration_refused: 0,
     pairs_listing: 0,
+    page_words: pageWordsCounts,
+    pairs_refused_by_cap: 0,
   };
+  // SPEND CAP (2026-10-22): the router's beforeExternal hook throws an error carrying code 'spend_cap_refused' when a
+  // paid call would exceed the run's cap. It is caught HERE, per pair: the pair is counted refused, nothing is written for
+  // it, and once the cap has refused one call no further paid call is attempted this run (every later fresh pair is
+  // counted refused without a call). Its claims are kept off the silence rails below.
+  const isCapRefusal = (e: unknown): boolean => (e as { code?: unknown } | null)?.code === "spend_cap_refused";
+  let capStopped = false;
+  const capRefusedDeclared = new Set<string>();
+  const capRefusedPublic = new Set<string>();
 
   // NEG-CACHE: every identity that survives the prefilter THIS run — the
   // finalize's orphan-prune keeps exactly these and deletes the rest. Only a
@@ -1081,9 +1117,17 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       // Stage 2a: proposer — ROUTER picks qwen14b (local) or gpt-4.1-mini (external) by the pair's
       // provenances. internal_declared declared side → local (never leaves the machine).
       const pairProv = [d.provenance, p.provenance];
-      const propRes = args.routedCall
-        ? await args.routedCall({ role: "generator", provenances: pairProv, system: PROPOSE_SYSTEM, user: buildPairUser(d, p) })
-        : { content: await callOllamaJson(args.ollamaUrl, genModel, PROPOSE_SYSTEM, buildPairUser(d, p), GEN_TIMEOUT_MS), provider: "local_ollama", model: genModel };
+      const capRefuse = () => { totals.pairs_refused_by_cap = (totals.pairs_refused_by_cap ?? 0) + 1; capRefusedDeclared.add(d.id); capRefusedPublic.add(p.id); };
+      if (capStopped) { capRefuse(); continue; }
+      let propRes: { content: string; provider: string; model: string };
+      try {
+        propRes = args.routedCall
+          ? await args.routedCall({ role: "generator", provenances: pairProv, system: PROPOSE_SYSTEM, user: buildPairUser(d, p) })
+          : { content: await callOllamaJson(args.ollamaUrl, genModel, PROPOSE_SYSTEM, buildPairUser(d, p), GEN_TIMEOUT_MS), provider: "local_ollama", model: genModel };
+      } catch (e) {
+        if (!isCapRefusal(e)) throw e;
+        capStopped = true; capRefuse(); continue;
+      }
       const proposed = parseVerdict(propRes.content, "proposer");
       if (!proposed.same_subject || !proposed.relation) {
         totals.pairs_rejected++;
@@ -1092,9 +1136,16 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       }
 
       // Stage 2b: judge — llama70b (local) or gpt-4.1-mini (external). Deterministic locally.
-      const judgeRes = args.routedCall
-        ? await args.routedCall({ role: "judge", provenances: pairProv, system: JUDGE_SYSTEM, user: buildPairUser(d, p) })
-        : { content: await callOllamaJson(args.ollamaUrl, judgeModel, JUDGE_SYSTEM, buildPairUser(d, p), JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM), provider: "local_ollama", model: judgeModel };
+      let judgeRes: { content: string; provider: string; model: string };
+      try {
+        judgeRes = args.routedCall
+          ? await args.routedCall({ role: "judge", provenances: pairProv, system: JUDGE_SYSTEM, user: buildPairUser(d, p) })
+          : { content: await callOllamaJson(args.ollamaUrl, judgeModel, JUDGE_SYSTEM, buildPairUser(d, p), JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM), provider: "local_ollama", model: judgeModel };
+      } catch (e) {
+        // the proposer's call was paid and ledgered; the pair is left unjudged — no rejection, no row
+        if (!isCapRefusal(e)) throw e;
+        capStopped = true; capRefuse(); continue;
+      }
       const judged = parseVerdict(judgeRes.content, "judge");
       if (!judged.same_subject || !judged.relation) {
         totals.pairs_rejected++;
@@ -1194,6 +1245,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     // Silences — absence ≠ contradiction: publicly_silent renders as OPEN QUESTION.
     for (const d of declared) {
       if (pairedDeclared.has(d.id)) continue;
+      if (capRefusedDeclared.has(d.id)) continue;   // SPEND CAP: not compared — never "silent"
       totals.publicly_silent++;
       deltas.push({
         delta_type: "publicly_silent",
@@ -1207,6 +1259,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     }
     for (const p of publics) {
       if (pairedPublic.has(p.id)) continue;
+      if (capRefusedPublic.has(p.id)) continue;   // SPEND CAP: not compared — never "silent"
       totals.internally_silent++;
       deltas.push({
         delta_type: "internally_silent",
@@ -1312,7 +1365,17 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
           // SIBLING-SAFE BANKING: rows this run inserted vs found already banked by a concurrent sibling.
           rows_new: totals.rows_new,
           banked_by_sibling: totals.banked_by_sibling,
-        },
+          // SPEND CAP + PAGE-WORDS PAIRING (2026-10-22): what was judged, what the cap left unjudged, what was refused
+          // pairs_judged counts EVERY candidate that holds a verdict or a look — judged by this call, or banked by an earlier
+          // call of the run (a kept pair row, a cached rejection, a cached look). A chunked run judges everything in its
+          // chunks, so a this-call-only count reads 0 on the finalize (as `admitted` does); this one does not.
+          pairs_judged: totals.pairs_confirmed + totals.pairs_inferred + totals.pairs_rejected + totals.spans_unjudged
+            + keptPairIdentities.size + totals.rejections_cached + totals.looks_cached,
+          pairs_judged_this_call: totals.pairs_confirmed + totals.pairs_inferred + totals.pairs_rejected + totals.spans_unjudged,
+          pair_rows: keptPairIdentities.size + totals.pairs_confirmed + totals.pairs_inferred,
+          pairs_refused_by_cap: totals.pairs_refused_by_cap ?? 0,
+          ...(totals.page_words ? { page_words: totals.page_words } : {}),
+        } as Record<string, unknown> as Record<string, number>,
       });
     }
   }
