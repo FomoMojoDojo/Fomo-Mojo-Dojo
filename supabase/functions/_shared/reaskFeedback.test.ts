@@ -254,8 +254,8 @@ Deno.test("L1. the attempt number advances at the attempt boundary, and the re-a
   assert(body.includes("attemptNo[kind as Kind] = (attemptNo[kind as Kind] ?? 0) + 1;"), "inside the stamp dep");
   // generate is attempt 1; both re-asks produce the NEXT attempt
   assert(gpr.includes('{ kind: kind as Kind, attempt: 1, role: "generator" }'), "the first answer is attempt 1");
-  assertEquals([...gpr.matchAll(/attempt: \(attemptNo\[kind as Kind\] \?\? 1\) \+ 1/g)].length, 3,
-    "the C1-S re-ask, the N1 re-ask and the class fix each produce the next attempt");
+  assertEquals([...gpr.matchAll(/attempt: \(attemptNo\[kind as Kind\] \?\? 1\) \+ 1/g)].length, 4,
+    "the level re-ask (ruling 14), the C1-S re-ask, the N1 re-ask and the class fix each produce the next attempt");
   assert(gpr.includes('attempt: attemptNo[kind as Kind] ?? 1, role: "judge"'),
     "and the judge is ledgered against the attempt it is judging");
 });

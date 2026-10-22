@@ -53,7 +53,12 @@ export type PerKindGuard =
   | "specific_softened"
   // V1 (2026-10-13): a carried span's source text moved under it. Fail closed — the line is no
   // longer a carry, and must not be persisted on offsets into text that no longer says that.
-  | "carried_span_drift";
+  | "carried_span_drift"
+  // Ruling 14 (2026-10-22): a line refused at LEVEL (L2–L4, readLevel.ts) — the offering restated where a positioning,
+  // promise or strategy line belongs. Deterministic, before the judge; ONE re-ask, from the shared budget.
+  | "read_level"
+  // Ruling 15 (2026-10-22): a positioning alternative not sourced from a row that names it (positioningAlternative.ts).
+  | "alternative_unsourced";
 
 /** V3 — a REFUSAL from inside `commit`, as opposed to a write that failed.
  *
@@ -134,8 +139,15 @@ export type PerKindDeps = {
     /** C1-R (2026-10-15): WHICH refusal is being answered. `sourcing` is the S1/N1 gate before the
      *  judge; `continuity` is the C1-S drop raised inside commit. One re-ask serves both, because
      *  the budget is one per stage however the first attempt was refused. */
-    because: "sourcing" | "continuity",
+    because: "sourcing" | "continuity" | "level",
   ) => Promise<Record<string, unknown> | null>;
+  /** Ruling 14: the LEVEL gate (readLevel.ts L2–L4), over the stamp of the payload about to be judged — after S1, before
+   *  the judge. Returns the refusal detail, or null to pass. A refusal is re-asked ONCE, through reaskOnSourcingRefusal
+   *  with because "level", from the same single budget. */
+  levelRefusal?: (kind: string, payload: Record<string, unknown>) => { detail: string } | null;
+  /** Ruling 15: the positioning ALTERNATIVE gate (A1–A3), after the level gate. Refused, never re-asked: an alternative no
+   *  row names is a guess, and the correct answer is an empty field. */
+  alternativeRefusal?: (kind: string, payload: Record<string, unknown>) => { detail: string } | null;
   /** V4 (2026-10-14): one integrity_runs row per kind, carrying the full refused payload and its
    *  citations. Component first_read_public_read_<kind>. Never throws. */
   recordIntegrity?: (kind: string, row: {
@@ -215,7 +227,9 @@ export async function runKindsIsolated(
   type GateResult =
     | { outcome: "rejected"; guard: PerKindGuard; detail: unknown; payload: Record<string, unknown>; verdict: Record<string, unknown> | null;
         /** N1c: set only by the S1/N1 gate, so the loop knows this refusal is the re-askable one. */
-        sourcingDetail?: string }
+        sourcingDetail?: string;
+        /** Ruling 14: set only by the level gate — re-askable from the same budget, with because "level". */
+        levelDetail?: string }
     | { outcome: "not_accepted"; verdict: Record<string, unknown> }
     | { outcome: "accepted"; verdict: Record<string, unknown> };
 
@@ -265,6 +279,16 @@ export async function runKindsIsolated(
     const s1 = deps.s1Refusal?.(kind, payload) ?? null;
     if (s1) return { outcome: "rejected", guard: "record_specific_unsourced", detail: s1.detail, payload, verdict: null, sourcingDetail: s1.detail };
 
+    // ── GUARD 5b (ruling 14, 2026-10-22): LEVEL — positioning, promise and strategy speak above the offering ─────────
+    // After S1 (a line must first be sourced before its level is worth asking) and before the judge (deterministic and
+    // free; a judge cannot clear what it was never asked). L1 never refuses here — it is logged by the caller.
+    const lvl = deps.levelRefusal?.(kind, payload) ?? null;
+    if (lvl) return { outcome: "rejected", guard: "read_level", detail: lvl.detail, payload, verdict: null, levelDetail: lvl.detail };
+
+    // ── GUARD 5c (ruling 15): the positioning ALTERNATIVE is sourced from a row that names it, or it is not there ────
+    const alt = deps.alternativeRefusal?.(kind, payload) ?? null;
+    if (alt) return { outcome: "rejected", guard: "alternative_unsourced", detail: alt.detail, payload, verdict: null };
+
     // ── JUDGE (this kind alone) ────────────────────────────────────────────────────────────────
     let verdict: Record<string, unknown>;
     try {
@@ -304,6 +328,13 @@ export async function runKindsIsolated(
           await deps.recordIntegrity?.(kind, { status: "rejected", guard: g.guard, detail: `${g.sourcingDetail} (attempt 1 of 2; re-asked)`, payload: g.payload });
           deps.onReject?.(kind, g.guard, detailOf(g.sourcingDetail));
           const next = await deps.reaskOnSourcingRefusal(kind, g.payload, g.sourcingDetail, "sourcing");
+          if (next) { payload = next; reasked = true; continue; }
+        }
+        // ── Ruling 14: ONE re-ask on a LEVEL refusal — the same `reasked` flag, never a second budget ────────────────
+        if (g.levelDetail !== undefined && !reasked && deps.reaskOnSourcingRefusal) {
+          await deps.recordIntegrity?.(kind, { status: "rejected", guard: g.guard, detail: `${g.levelDetail} (attempt 1 of 2; re-asked)`, payload: g.payload });
+          deps.onReject?.(kind, g.guard, detailOf(g.levelDetail));
+          const next = await deps.reaskOnSourcingRefusal(kind, g.payload, g.levelDetail, "level");
           if (next) { payload = next; reasked = true; continue; }
         }
         await reject(kind, g.guard, g.detail, g.payload, g.verdict);

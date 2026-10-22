@@ -36,7 +36,7 @@ import { liveRecordCandidates, reReadRowTexts, searchLiveRecordForSpecifics, spe
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { StageRefusal, detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
 import { PromoteRefused, promoteStagedReads, recordPromoteIntegrity, recordPromoteRefusal, writeCascadeGaps } from "../_shared/publicReadPromote.ts";
-import { predecessorGate, type PredecessorVerdict } from "../_shared/predecessorSourcing.ts";
+import { predecessorGate, type PredecessorVerdict, predecessorLineKey } from "../_shared/predecessorSourcing.ts";
 import { buildRefMeta, buildStoredPayloads, hostOf, translateCitations, type OfferingSeenOn, type OwnSiteHosts } from "../_shared/publicReadStorage.ts";
 import { loadConfirmedRelatedEntities, ownHostsFor } from "../_shared/ownHosts.ts";
 import { loadOwnSiteRecord } from "../_shared/offeringNamedOnSite.ts";
@@ -58,6 +58,8 @@ import { type ModelCallRecord, openaiRecord, recordModelCall } from "../_shared/
 import { insertIntegrityRun, IntegrityWriteRefused } from "../_shared/integrityWrite.ts";
 import { BODY_MODE_GUARD, classifyBodyMode, KNOWN_BODY_KEYS, MODE_FLAGS } from "../_shared/bodyMode.ts";
 import { reaskFeedbackBlock, type SourceRow } from "../_shared/reaskFeedback.ts";
+import { levelHits, levelItemsOfOfferingPayload, levelRefusalDetail, levelWithheldKeys, unionWithheld, WITHHELD_LEVEL_CHECKS, type LevelHit, type LevelItem, type LevelKind } from "../_shared/readLevel.ts";
+import { ALTERNATIVE_GAP_KEY, alternativeGapOf, alternativeRefusalDetail, alternativeRefusals } from "../_shared/positioningAlternative.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -605,14 +607,22 @@ Deno.serve(async (req) => {
 (6) Keep the scope the row states. Do not end a claim on a bare number — 'serving youth under 12 in the Bay Area' carries the row's scope, 'serving youth under 12' drops it.
 (7) Besides the lines listed as ALREADY WRITTEN, keep every differentiator you can source from the ledger; dropping a sourceable one is a loss, not a simplification.
 EXAMPLE. A row of class 'the record' says 'the only level 14 residential facility in northern California'. Write: 'the only Level 14 residential facility in Northern California' and cite that row. Do NOT write 'sole' and do NOT write 'a high-acuity residential facility'. If NO row carries the under-12 CSU claim, leave it out.`;
+    // ── LEVEL (operator ruling 14, 2026-10-22) ──────────────────────────────────────────────────
+    // Spectrum's reads restated its offering in every rung: the value line was a product, the differentiators were
+    // programs, the promise's subject was a product. The gate (readLevel.ts) now refuses the deterministic cases; the
+    // prompt states the rule the gate cannot read, and the judge is asked it as (g).
+    const LEVEL_RULE = `LEVEL. Each read speaks at its own level, above the offering. A value line states the OUTCOME a customer gets, not a product or a feature. A differentiator is RELATIVE TO AN ALTERNATIVE — what the customer gets here that the alternative does not give them. The promise names a CUSTOMER OUTCOME; its subject is the customer or the company, never a product. Strategy speaks at the level of the BUSINESS — where it competes and how it wins — not the products it sells. Product names, features and programs belong ONLY in the offering read: do not restate them here.`;
     // ── GENERATE each kind ───────────────────────────────────────────────────────────────────────
     const GEN_POSITIONING = `You read a company's PUBLIC record and state its positioning as a hypothesis for the room to test. ${CITE_RULE}
 ${SPECIFICS_RULE}
+${LEVEL_RULE}
+ALTERNATIVES (ruling 15). "alternatives" names what a customer would otherwise choose — a competitor, a substitute, or doing nothing — ONLY as a cited row NAMES it: the name must appear in a row you cite, and that row must be the record or the company, not our read. If no row names an alternative, return "alternatives":[] — that is the correct answer, and it becomes a question for the room. Never infer, guess or invent an alternative.
 Return ONLY JSON:
 {"market_category":"<a plain-language category this business ACTUALLY IS — e.g. 'neighborhood cafe & roaster', not a fancy or aspirational label>","market_category_citations":["<id>"],
- "value_for_customer":"<what a customer gets, in plain words>","value_citations":["<id>"],
- "best_fit_customers":"<who it's for>","best_fit_citations":["<id>"],
- "unique_attributes":[{"text":"<one differentiator>","citations":["<id>"]}]}
+ "value_for_customer":"<the outcome a customer gets, in plain words>","value_citations":["<id>"],
+ "best_fit_customers":"<who it's for, and the need that brings them>","best_fit_citations":["<id>"],
+ "unique_attributes":[{"text":"<one differentiator, relative to the alternative>","citations":["<id>"]}],
+ "alternatives":[{"name":"<the alternative, exactly as a cited row names it>","text":"<how the company stands against it, as the cited rows state it>","citations":["<id>"]}]}
 ${US_ENGLISH_RULE}`;
     // Stage B — the FULL Playing-to-Win cascade (5 rungs), read as THE STRATEGY THE PUBLIC RECORD
     // IMPLIES (a reading, never a go-forward proposal). Each rung is cited-or-OMITTED: a rung the
@@ -620,6 +630,7 @@ ${US_ENGLISH_RULE}`;
     // omitted rung is routed to the Questions beat downstream (cascade_gap), never fabricated here.
     const GEN_STRATEGY = `You read a company's PUBLIC record and state, as a hypothesis, THE STRATEGY ITS PUBLIC RECORD IMPLIES — using Roger Martin's Playing-to-Win cascade (five linked choices). This is a READING of what the record points to, never a recommendation or a go-forward plan. ${CITE_RULE}
 ${SPECIFICS_RULE}
+${LEVEL_RULE}
 CRITICAL — cited-or-omitted: if the public record does not GROUND a rung, return it EMPTY ("" for a text rung, [] for a list rung) with empty citations. Do NOT invent capabilities or management systems that the record doesn't show. It is EXPECTED and correct for a rung to be empty.
 Return ONLY JSON:
 {"winning_aspiration":"<what winning looks like for this business, plainly>","winning_aspiration_citations":["<id>"],
@@ -630,6 +641,7 @@ Return ONLY JSON:
 ${US_ENGLISH_RULE}`;
     const GEN_PROMISE = `You read a company's PUBLIC record and state, in ONE sentence, what the customer is promised — stated ONLY as far as the record backs it. ${CITE_RULE}
 ${SPECIFICS_RULE}
+${LEVEL_RULE}
 Return ONLY JSON: {"promise":"<one sentence>","citations":["<id>"]}
 ${US_ENGLISH_RULE}`;
     // OFFERING (2026-09-01) — ENUMERATE what the public record shows THIS COMPANY currently puts in
@@ -659,11 +671,27 @@ ${US_ENGLISH_RULE}`;
     const { data: posCurrent } = await supabase.from("public_reads")
       .select("payload").eq("company_id", company_id).eq("kind", "positioning").eq("is_current", true).maybeSingle();
     const posCtx = (posCurrent as { payload?: Record<string, unknown> } | null)?.payload ?? null;
-    const positioningContext = posCtx
-      ? `\n\nThe company's PUBLIC positioning read (already public-derived — use ONLY to frame how_to_win; do NOT restate it, do NOT cite it):\n` +
-        `category: ${String(posCtx.market_category ?? "")}\nvalue: ${String(posCtx.value_for_customer ?? "")}\n` +
-        `differentiators: ${Array.isArray(posCtx.unique_attributes) ? (posCtx.unique_attributes as Array<{ text?: string }>).map((a) => a?.text).filter(Boolean).join("; ") : ""}`
-      : "";
+    // ── LEVEL (ruling 14): the CURRENT offering read is the level rule's term source ─────────────────────────────────
+    const { data: offCurrent } = await supabase.from("public_reads")
+      .select("payload").eq("company_id", company_id).eq("kind", "offering").eq("is_current", true).maybeSingle();
+    const levelItems: LevelItem[] = levelItemsOfOfferingPayload((offCurrent as { payload?: Record<string, unknown> } | null)?.payload ?? null);
+    const LEVEL_KINDS: ReadonlySet<string> = new Set(["positioning", "promise", "strategy"]);
+    /** Ruling 14: the level hits on a STORED read's lines (UUID citations), against the current offering. */
+    const levelHitsOfStored = (kind: string, payload: Record<string, unknown> | null): LevelHit[] =>
+      LEVEL_KINDS.has(kind) && payload ? levelHits(kind as LevelKind, linesOfStoredPayload(payload), levelItems, companyName) : [];
+    // Ruling 14: the positioning fed to strategy drops every line flagged at level — a feature-level value line or
+    // differentiator fed as "how to frame how_to_win" is how the offering reached the strategy read.
+    const positioningContextOf = (): string => {
+      if (!posCtx) return "";
+      const flagged = new Set(levelHitsOfStored("positioning", posCtx).filter((h) => WITHHELD_LEVEL_CHECKS.has(h.check)).map((h) => h.field));
+      const value = flagged.has("value") ? "" : String(posCtx.value_for_customer ?? "");
+      const diffs = Array.isArray(posCtx.unique_attributes)
+        ? (posCtx.unique_attributes as Array<{ text?: string }>).map((a, i) => (flagged.has(`unique_attributes[${i}]`) ? "" : a?.text)).filter(Boolean)
+        : [];
+      return `\n\nThe company's PUBLIC positioning read (already public-derived — use ONLY to frame how_to_win; do NOT restate it, do NOT cite it):\n` +
+        `category: ${String(posCtx.market_category ?? "")}\nvalue: ${value}\n` +
+        `differentiators: ${diffs.join("; ")}`;
+    };
 
     // ── PER-KIND ISOLATION (2026-09-09) ─────────────────────────────────────────────────────────
     //  Each kind is generated, guarded, judged and written ON ITS OWN. A reject records that kind's
@@ -731,6 +759,16 @@ ${US_ENGLISH_RULE}`;
       const DISTINCTNESS_VERDICT_FIELD = distinctActive
         ? '\n "distinctness":{"distinct_ok":true|false,"reason":"<ok, or which two lines make the same claim and what that claim is>"},'
         : "";
+      // ── (g) LEVEL (ruling 14): asked of positioning, promise and strategy; REPORTED, like (d) — it does not affect
+      // accept. The deterministic cases refuse at GUARD 5b; this asks what code cannot read (an outcome, an alternative,
+      // the business level) and records the answer beside the gate's hits.
+      const levelActive = kind === "positioning" || kind === "promise" || kind === "strategy";
+      const LEVEL_JUDGE_CLAUSE = levelActive
+        ? "\n(g) LEVEL (reported, does NOT affect accept) — does each line speak at its own level, above the offering? A value line states a customer OUTCOME, not a product or feature; a differentiator is relative to an ALTERNATIVE; the promise names a customer outcome and its subject is not a product; strategy speaks at the level of the business, not its products. Name each line that restates a product, feature or program."
+        : "";
+      const LEVEL_VERDICT_FIELD = levelActive
+        ? '\n "level":{"level_ok":true|false,"lines":[{"field":"<field>","reason":"<the product, feature or program it restates>"}]},'
+        : "";
       const OFFERING_JUDGE_CLAUSE = offeringActive
         // 1a-4: CLASS takes (e) by signature, so the offering clause moved from (e)–(h) to (f)–(i).
       // Its four CHECKS and its four verdict flags are unchanged — only the letters shift.
@@ -747,14 +785,14 @@ ${US_ENGLISH_RULE}`;
 (a) GROUNDING — every claim is supported by the cited inputs (the cited excerpts back it; nothing invented);
 (b) PLAIN-SANITY — market_category names what this business ACTUALLY IS per its own words and outside signals (a coffee roaster is NOT "SaaS"; a clinic is NOT "marketplace"). Reject an absurd or aspirational category. If positioning is not in this read, set sanity_ok:true;
 (c) CONSISTENCY — the read describes the SAME business throughout and does not contradict itself. If only one kind is in this read, judge its internal consistency and set consistency_ok:true when coherent;
-(d) CASCADE COHERENCE (strategy only, does NOT affect accept) — does how_to_win plausibly SERVE the stated where_to_play AND winning_aspiration? Does each must_have_capability plausibly SERVE how_to_win? A rung left empty is neither coherent nor incoherent — mark empty rungs coherent:true. Judge only NON-empty rungs on the merits.\n(e) CLASS — each field names its source class. A field of class 'our_read' must read as an openly-held reading, never as an established fact. A field of class 'record' may say what the record shows. A field of class 'you' may say what the company says. Set class_ok:false on any field that asserts more than its class allows, naming the words that do it. A sentence that states a superlative, figure or exclusivity as fact is NOT an openly-held reading, whatever its citations say.${DISTINCTNESS_JUDGE_CLAUSE}${OFFERING_JUDGE_CLAUSE}
+(d) CASCADE COHERENCE (strategy only, does NOT affect accept) — does how_to_win plausibly SERVE the stated where_to_play AND winning_aspiration? Does each must_have_capability plausibly SERVE how_to_win? A rung left empty is neither coherent nor incoherent — mark empty rungs coherent:true. Judge only NON-empty rungs on the merits.\n(e) CLASS — each field names its source class. A field of class 'our_read' must read as an openly-held reading, never as an established fact. A field of class 'record' may say what the record shows. A field of class 'you' may say what the company says. Set class_ok:false on any field that asserts more than its class allows, naming the words that do it. A sentence that states a superlative, figure or exclusivity as fact is NOT an openly-held reading, whatever its citations say.${DISTINCTNESS_JUDGE_CLAUSE}${LEVEL_JUDGE_CLAUSE}${OFFERING_JUDGE_CLAUSE}
 Respond with ONLY JSON:
 {"grounding_ok":true|false,"sanity_ok":true|false,"consistency_ok":true|false,
  "per_kind":{"positioning":{"ok":true|false,"reason":"..."},"strategy":{"ok":true|false,"reason":"..."},"promise":{"ok":true|false,"reason":"..."}},
  "cascade_coherence":{"how_to_win":{"coherent":true|false,"reason":"<one line: does it serve where-to-play + aspiration?>"},
    "capabilities":[{"text":"<echo the capability text>","coherent":true|false,"reason":"<one line: does it serve how-to-win?>"}]}${OFFERING_VERDICT_FIELD},
  ,
- "class":{"class_ok":true|false,"fields":[{"field":"<the field name as given in FIELD CLASSES>","class":"record|you|our_read","class_ok":true|false,"reason":"<ok, or the words that assert more than the class allows>"}]},${DISTINCTNESS_VERDICT_FIELD}
+ "class":{"class_ok":true|false,"fields":[{"field":"<the field name as given in FIELD CLASSES>","class":"record|you|our_read","class_ok":true|false,"reason":"<ok, or the words that assert more than the class allows>"}]},${DISTINCTNESS_VERDICT_FIELD}${LEVEL_VERDICT_FIELD}
  "accept":true|false,"reason":"<one line>"}`;
     };
 
@@ -854,14 +892,19 @@ Respond with ONLY JSON:
     // every specific in it passes R5 against its own cited rows. Computed once per kind, from the
     // current read's own ledger and a live R5 re-read (predecessorSourcing.ts), and read by BOTH the
     // prompt site and the continuity check so the two cannot disagree about a line.
-    const predecessorGateCache: Partial<Record<Kind, { verdicts: PredecessorVerdict[]; withheld: Set<string> }>> = {};
-    const predecessorGateFor = async (kind: Kind): Promise<{ verdicts: PredecessorVerdict[]; withheld: Set<string> }> => {
+    const predecessorGateCache: Partial<Record<Kind, { verdicts: PredecessorVerdict[]; withheld: Set<string>; level: LevelHit[] }>> = {};
+    const predecessorGateFor = async (kind: Kind): Promise<{ verdicts: PredecessorVerdict[]; withheld: Set<string>; level: LevelHit[] }> => {
       if (predecessorGateCache[kind]) return predecessorGateCache[kind]!;
       const { data } = await supabase.from("public_reads")
         .select("payload, input_ledger").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
-      const g = await predecessorGate(supabase, data as { payload?: Record<string, unknown> | null; input_ledger?: Record<string, unknown> | null } | null, companyName);
-      predecessorGateCache[kind] = g;
-      return g;
+      const row = data as { payload?: Record<string, unknown> | null; input_ledger?: Record<string, unknown> | null } | null;
+      const g = await predecessorGate(supabase, row, companyName);
+      // ── Ruling 14: a CURRENT line flagged at level joins the withheld set — never shown as still-sourced, never
+      // demanded by continuity, never carried. The model may drop it; continuity licenses the drop.
+      const level = levelHitsOfStored(kind, row?.payload ?? null);
+      const out = { verdicts: g.verdicts, withheld: unionWithheld(g.withheld, levelWithheldKeys(level)), level };
+      predecessorGateCache[kind] = out;
+      return out;
     };
 
     /** Every usable span in THIS run's pool. Computed once per kind. */
@@ -881,7 +924,9 @@ Respond with ONLY JSON:
     };
 
     const selectCarries = async (kind: Kind): Promise<FieldCarry[]> => {
-      const current = await currentLinesFor(kind);
+      // Ruling 14: a current line withheld (R5-P or level) is never carried — carrying it would restate it byte-exact
+      const { withheld: carryWithheld } = await predecessorGateFor(kind);
+      const current = (await currentLinesFor(kind)).filter((l) => !carryWithheld.has(predecessorLineKey(l)));
       if (current.length === 0) return [];               // nothing to anchor relevance on
 
       // ── V1-R4: the PRE-GENERATION admission, narrow ─────────────────────────────────────────
@@ -1022,6 +1067,10 @@ Respond with ONLY JSON:
     const modelCitations: Partial<Record<Kind, Array<{ field: string; refs: string[] }>>> = {};
     /** CR: which fields cited too many rows, for the feedback block, the report and the audit row. */
     const crResults: Partial<Record<Kind, OverCitedField[]>> = {};
+    /** Ruling 14: every level hit on the payload in front of the gates (refusing and logged), per kind. */
+    const levelResults: Partial<Record<Kind, LevelHit[]>> = {};
+    /** Ruling 15: the alternative gate's refusals, per kind (positioning only). */
+    const alternativeResults: Partial<Record<Kind, ReturnType<typeof alternativeRefusals>>> = {};
     /** Which kinds used their one re-ask, for the report. */
     const reasked: Partial<Record<Kind, { specifics: string[]; fields: string[] }>> = {};
     const storagePayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
@@ -1100,6 +1149,11 @@ Respond with ONLY JSON:
           // hits (what only logs), so the two can be compared as the fleet regenerates.
           distinctness: (verdicts[kind as Kind]?.distinctness as unknown) ?? null,
           distinctness_prefilter: distinctnessLog[kind as Kind] ?? null,
+          // Ruling 14: every level hit (L1 logs, L2–L4 refuse) on the payload this row is about, and the judge's (g)
+          level: levelResults[kind as Kind] ?? null,
+          level_judge: (verdicts[kind as Kind]?.level as unknown) ?? null,
+          // Ruling 15: the alternative gate's refusals
+          alternatives: alternativeResults[kind as Kind] ?? null,
         },
         error: row.guard ? `guard=${row.guard} detail=${detailOf(row.detail ?? "")}` : null,
         run_ref: ledger.corpus_md5 ?? null,
@@ -1222,6 +1276,9 @@ Respond with ONLY JSON:
         // R5-P: what was withheld from the prompt, and why
         predecessor_withheld: (await predecessorGateFor(kind)).verdicts.filter((v) => v.unsourced.length > 0)
           .map((v) => ({ field: v.field, text: v.text, unsourced: v.unsourced.map((u) => u.token) })),
+        // Ruling 14: the predecessor lines withheld at LEVEL, and which check flagged each
+        predecessor_withheld_level: (await predecessorGateFor(kind)).level.filter((h) => WITHHELD_LEVEL_CHECKS.has(h.check))
+          .map((h) => ({ field: h.field, text: h.text, check: h.check, items: h.items })),
       } as ContinuityBlock;
       continuityBlocks[kind] = block;
       // V3: ONE refusal, ONE row. The check does NOT record its own integrity row — it throws a
@@ -1238,6 +1295,12 @@ Respond with ONLY JSON:
       if (ssDropped.length > 0) throw new StageRefusal(CONTINUITY_GUARD, continuityDetail(ssDropped));
       if (split.dropped.length > 0 && c1Enforced) throw new StageRefusal(CONTINUITY_GUARD, continuityDetail(split.dropped));
 
+      // Ruling 15: a positioning that names no alternative RECORDS the gap on the read (never a guess). Routing it to the
+      // Questions beat awaits a signed string and a widened source_kind — proposed, not wired (positioningAlternative.ts).
+      if (kind === "positioning") {
+        const gap = alternativeGapOf(payload);
+        if (gap) payload[ALTERNATIVE_GAP_KEY] = gap; else delete payload[ALTERNATIVE_GAP_KEY];
+      }
       const built = prepareStorage(kind, payload, verdict);
       const storage = built.storage;
       storagePayloads[kind] = storage;
@@ -1396,12 +1459,34 @@ Respond with ONLY JSON:
         const failing = results.filter((r) => r.unsourced.length > 0);
         return failing.length > 0 ? { detail: s1Detail(results) } : null;
       },
+      // ── LEVEL (ruling 14): GUARD 5b — over the STAMP (F1), the payload's own lines with their cited rows as UUIDs ──
+      levelRefusal: (kind, _payload) => {
+        if (!LEVEL_KINDS.has(kind)) return null;
+        const lines = (fieldClasses[kind as Kind] ?? []).map((f) => ({ field: f.field, text: f.text, refs: f.refs.map((r) => uuidByRef.get(r) ?? r) }));
+        const hits = levelHits(kind as LevelKind, lines, levelItems, companyName);
+        levelResults[kind as Kind] = hits;
+        if (hits.length > 0) console.log(`[read-level] ${company_id} ${kind} ${JSON.stringify(hits.map((h) => ({ field: h.field, check: h.check, refuses: h.refuses, items: h.items })))}`);
+        const detail = levelRefusalDetail(hits);
+        return detail ? { detail } : null;
+      },
+      // ── ALTERNATIVES (ruling 15): GUARD 5c — sourced from a row that names it, or empty ─────────────────────────────
+      alternativeRefusal: (kind, payload) => {
+        if (kind !== "positioning") return null;
+        const refusals = alternativeRefusals(payload, (ref) => ({
+          cls: classByRef.get(ref) ?? null,
+          finding: kindByRef.get(ref) === "finding",
+          pageWords: textByRef.get(ref) ?? "",
+        }));
+        alternativeResults[kind as Kind] = refusals;
+        const detail = alternativeRefusalDetail(refusals);
+        return detail ? { detail } : null;
+      },
       validRefs,
       uuidByRef,
       provenances: ledger.provenances,
       liveness: ledger.liveness,
       generate: async (kind) => {
-        const extra = kind === "strategy" ? positioningContext : "";
+        const extra = kind === "strategy" ? positioningContextOf() : "";
 
         // ── V1 (rulings 2026-10-13, R1-R3): CARRY BEFORE GENERATE ───────────────────────────────
         // For a line whose pool holds a relevant, usable record/you span, the read CARRIES that
@@ -1538,6 +1623,27 @@ Respond with ONLY JSON:
       // differently, or drop the claim. CODE NEVER REWRITES THE LINE: the model answers, and the
       // answer faces every gate from the top.
       reaskOnSourcingRefusal: async (kind, payload, detail, because) => {
+        // ── Ruling 14: the LEVEL branch of the one re-ask — each refused line, the offering item it echoed, the rule ──
+        if (because === "level") {
+          const refused = (levelResults[kind as Kind] ?? []).filter((h) => h.refuses);
+          if (refused.length === 0) return null;
+          const lines = refused.map((h) => `  ${h.field || "promise"} [${h.check}]: "${h.text}"\n    — ${h.detail}${h.items.length ? `\n    — the offering item it restates: ${h.items.join("; ")}` : ""}`).join("\n");
+          const user = buildGenUser(kind as Kind, {
+            feedback: `\n\nYOUR PREVIOUS ANSWER WAS REFUSED AT LEVEL. These lines restate the company's offering where a ${kind} line ` +
+              `belongs:\n${lines}\n\nTHE RULE: ${kind === "strategy" ? "strategy speaks at the level of the business — where it competes and how it wins — and names no offering item" : kind === "promise" ? "the promise names a customer outcome, and its subject is the customer or the company, never a product" : "best fit names who the customer is AND the need that brings them, not only who and where"}. ` +
+              `Product names, features and programs belong only in the offering read. Rewrite each refused line at its level from the ` +
+              `rows the ledger gives you, or leave the field empty if the record does not support it.`,
+            ask: `Produce the ${kind} JSON again, in full.`,
+          });
+          try {
+            const again = await run(genChoice, genSys[kind as Kind], user, 0.2,
+              { kind: kind as Kind, attempt: (attemptNo[kind as Kind] ?? 1) + 1, role: "generator" });
+            reasked[kind as Kind] = { specifics: refused.map((h) => h.check), fields: refused.map((h) => h.field) };
+            return again;
+          } catch {
+            return null;                                    // a failed re-ask leaves the refusal standing
+          }
+        }
         // ── C1-R (operator ruling, 2026-10-15): the CONTINUITY branch of the one re-ask ─────────
         // A C1-S drop is a different fault from an unsourced specific, so it gets a different
         // prompt: the dropped line's own text, the ids of the rows that still source it, and the

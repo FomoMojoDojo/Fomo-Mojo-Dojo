@@ -1,0 +1,1329 @@
+{
+ "_note": "Copied text of the CURRENT public reads (positioning, promise, strategy, offering) of 8 companies as stored on 2026-10-22, for the level-rule fixtures (ruling 14). Not live: a guard checks invariants on fixed text.",
+ "companies": {
+  "Edgewood": {
+   "positioning": {
+    "value_class": "you",
+    "best_fit_class": "our_read",
+    "market_category": "nonprofit youth mental healthcare provider",
+    "value_citations": [
+     "7e3bdf25-bf4e-40b7-a4a0-97e1cb396ca9",
+     "26ddcf41-efbc-40eb-af5d-3b3723b32bf6",
+     "b80439fd-a64b-4e73-8c2e-963866271940"
+    ],
+    "unique_attributes": [
+     {
+      "text": "CSU 'one of only a few CSUs designed to serve youth 5-17 in all of California and the only one serving youth under 12 in the Bay Area'",
+      "class": "you",
+      "citations": [
+       "ba7ee838-1af8-4c33-95fc-8286dd18f9d8"
+      ]
+     },
+     {
+      "text": "in 1993 Edgewood established the first kinship program in the country",
+      "class": "record",
+      "citations": [
+       "dfb6da68-7d4e-46a2-8b58-7c039cbf5cf1"
+      ]
+     },
+     {
+      "text": "4-star Charity Navigator rating indicating solid performance in accountability, finance, and leadership",
+      "class": "our_read",
+      "citations": [
+       "c57ba124-1a6c-49df-b333-1cd7837be9f6",
+       "f0fff520-6a63-4a86-ae6b-62276eda5685"
+      ]
+     }
+    ],
+    "best_fit_citations": [
+     "992df4b1-2597-40be-a0ba-4bc8e8a5e29f",
+     "7e3bdf25-bf4e-40b7-a4a0-97e1cb396ca9",
+     "ea0eca1e-cff8-4625-b244-a6994dfeac07",
+     "958c9bec-7265-4471-a1b6-cfcd8de711ee"
+    ],
+    "best_fit_customers": "children, youth, and families in the San Francisco Bay Area needing specialized mental health services, especially those covered by Medi-Cal and government programs",
+    "value_for_customer": "expert mental healthcare and comprehensive support services for youth and families facing mental health challenges, trauma, and crises, including crisis stabilization, residential care, outpatient therapy, and family-focused interventions",
+    "market_category_class": "our_read",
+    "market_category_citations": [
+     "da4bb597-c9a5-469b-9dfb-b79cb203ce16",
+     "5b2b29d8-5c27-4969-92db-8aaca5cbd2a9",
+     "93989558-7118-4cf0-8897-7f4cb396a90c"
+    ]
+   },
+   "strategy": {
+    "how_to_win": "By leveraging its long institutional history and strong government payer relationships to provide a comprehensive continuum of mental healthcare services including crisis stabilization, residential treatment, outpatient therapy, and family-focused kinship support, while emphasizing its nationally recognized kinship program and its role as a key provider in the Bay Area youth mental health ecosystem.",
+    "where_to_play": "Youth and families in San Francisco and San Mateo counties, including children and youth served by multiple programs such as the Therapeutic Behavioral Services program for ages 3-21 with Medi-Cal/Medicare, and youth referred to crisis stabilization and outpatient services through partnerships with school districts and county agencies.",
+    "how_to_win_class": "our_read",
+    "management_systems": [],
+    "winning_aspiration": "To provide expert, comprehensive mental healthcare and supportive services that transform the lives of youth and families facing mental health challenges, trauma, and crises in the San Francisco Bay Area.",
+    "where_to_play_class": "record",
+    "how_to_win_citations": [
+     "838ead35-19c1-4571-9d0a-658e695f061b",
+     "dfb6da68-7d4e-46a2-8b58-7c039cbf5cf1",
+     "e8a668ef-b698-402f-a80d-e8c9ed743448"
+    ],
+    "must_have_capabilities": [
+     {
+      "text": "Strong government contract and payer relationship management to sustain funding and program delivery.",
+      "class": "our_read",
+      "citations": [
+       "a997fd40-b965-49c0-8f7b-0cb0e9b29b96",
+       "4690898f-1bbb-420e-8f60-6c2cdb3b2fb1"
+      ]
+     },
+     {
+      "text": "Integrated clinical and community-based service delivery across prevention, crisis care, residential, outpatient, and family support programs.",
+      "class": "our_read",
+      "citations": [
+       "c8fd6ab6-950d-4177-8adc-55ca747b86a2",
+       "26ddcf41-efbc-40eb-af5d-3b3723b32bf6"
+      ]
+     },
+     {
+      "text": "Specialized program expertise in kinship support and crisis stabilization for youth under 12.",
+      "class": "our_read",
+      "citations": [
+       "a02ce9da-4b74-4f60-98f7-43f110cdeb6d",
+       "cc224d8e-911e-479d-93fe-76d94b57e9ed",
+       "e20cdbc4-fe5e-4a6f-af98-d6a4cb112c46",
+       "34405b08-8ecc-4edd-b932-6a1b956fe18a"
+      ]
+     }
+    ],
+    "where_to_play_citations": [
+     "f48f99f0-abb6-4647-ada7-b4a8d9b910ad"
+    ],
+    "winning_aspiration_class": "our_read",
+    "winning_aspiration_citations": [
+     "da4bb597-c9a5-469b-9dfb-b79cb203ce16",
+     "7e3bdf25-bf4e-40b7-a4a0-97e1cb396ca9",
+     "5b2b29d8-5c27-4969-92db-8aaca5cbd2a9"
+    ]
+   },
+   "promise": {
+    "promise": "Edgewood Center for Children and Families promises expert, trauma-informed mental healthcare and support services for youth and families in the San Francisco Bay Area, including 24-hour crisis stabilization, intensive residential care, outpatient programs, and a continuum of care designed to promote healing, safety, and long-term well-being.",
+    "citations": [
+     "596f0937-45c1-4b62-86c6-3950aa53b520",
+     "7e3bdf25-bf4e-40b7-a4a0-97e1cb396ca9",
+     "9fc890b4-762f-409c-87ca-25b857927bf8"
+    ]
+   },
+   "offering": {
+    "items": [
+     {
+      "label": "24-hour crisis stabilization",
+      "statement": "Edgewood offers 24-hour crisis stabilization services to youth and families.",
+      "kind_hint": "service",
+      "refs": [
+       "596f0937-45c1-4b62-86c6-3950aa53b520",
+       "0c5df2e7-8909-42d7-b584-d901fe2ed979"
+      ]
+     },
+     {
+      "label": "Intensive residential care",
+      "statement": "Edgewood provides intensive residential care for youth with serious mental health needs.",
+      "kind_hint": "service",
+      "refs": [
+       "596f0937-45c1-4b62-86c6-3950aa53b520",
+       "93989558-7118-4cf0-8897-7f4cb396a90c"
+      ]
+     },
+     {
+      "label": "Behavioral Health Outpatient Program",
+      "statement": "The Behavioral Health Outpatient Program delivers comprehensive, community-based mental health services to children, adolescents, young adults, and their families throughout San Francisco.",
+      "kind_hint": "program",
+      "refs": [
+       "90deca12-d744-4c1d-aa45-5b0064cd73c0",
+       "992df4b1-2597-40be-a0ba-4bc8e8a5e29f"
+      ]
+     },
+     {
+      "label": "Enhanced Care Management (ECM) Team",
+      "statement": "The Edgewood Enhanced Care Management Team provides person-centered support to Medi-Cal recipients enrolled in the San Francisco Health Plan, serving youth up to age 21 and current or former foster youth up to age 25.",
+      "kind_hint": "program",
+      "refs": [
+       "026725aa-e4b8-4bd6-8043-77d145ab962d",
+       "0528ca7b-fdc7-408b-82c0-1555318b4a66"
+      ]
+     },
+     {
+      "label": "Therapeutic Behavioral Services (TBS) program",
+      "statement": "Edgewood operates a Therapeutic Behavioral Services program serving ages 3-21 with Medi-Cal/Medicare.",
+      "kind_hint": "program",
+      "refs": [
+       "f48f99f0-abb6-4647-ada7-b4a8d9b910ad"
+      ]
+     },
+     {
+      "label": "Non-Public School (NPS) program",
+      "statement": "Edgewood runs a Non-Public School program for youth with IEP referrals from partner school districts, serving grades 5-12 with a student-teacher ratio of 9:1.",
+      "kind_hint": "program",
+      "refs": [
+       "f48f99f0-abb6-4647-ada7-b4a8d9b910ad",
+       "12b4bc2a-d24d-422b-b830-e2f3d1ff0e63"
+      ]
+     },
+     {
+      "label": "Crisis Stabilization Unit (CSU)",
+      "statement": "Edgewood operates a Crisis Stabilization Unit created in conjunction with San Francisco Department of Public Health, providing a safe, structured, child-friendly, and family supportive environment for youth under 12 and up to age 17.",
+      "kind_hint": "program",
+      "refs": [
+       "f48f99f0-abb6-4647-ada7-b4a8d9b910ad",
+       "a94f1427-a8f0-471f-8b6b-ff813e045d3a",
+       "36b94031-fb83-411f-915e-958211eb2955",
+       "93989558-7118-4cf0-8897-7f4cb396a90c",
+       "93989558-7118-4cf0-8897-7f4cb396a90c",
+       "7bf79206-4a5c-4aaa-afd9-972ee46922e5",
+       "24bad748-c216-471b-89dd-95d38a4c08f0"
+      ]
+     },
+     {
+      "label": "Partial Hospitalization Program (PHP)",
+      "statement": "Edgewood offers a Partial Hospitalization Program as part of its levels of care for youth and adolescents.",
+      "kind_hint": "program",
+      "refs": [
+       "8f0e09db-9b45-42f4-84f2-1f94f04ccbfa",
+       "cc224d8e-911e-479d-93fe-76d94b57e9ed",
+       "783dcb6f-4589-4403-8f31-ba59a01a7288"
+      ]
+     },
+     {
+      "label": "Intensive Outpatient Program (IOP)",
+      "statement": "Edgewood provides an Intensive Outpatient Program relaunched in 2023, serving youth with behavioral health needs.",
+      "kind_hint": "program",
+      "refs": [
+       "8f0e09db-9b45-42f4-84f2-1f94f04ccbfa",
+       "783dcb6f-4589-4403-8f31-ba59a01a7288"
+      ]
+     },
+     {
+      "label": "Kinship program",
+      "statement": "Edgewood offers a nationally pioneering Kinship program with a 90%+ family-placement retention rate over three decades.",
+      "kind_hint": "program",
+      "refs": [
+       "99037383-3e52-43d8-bfba-6d941b246b79",
+       "a02ce9da-4b74-4f60-98f7-43f110cdeb6d",
+       "e20cdbc4-fe5e-4a6f-af98-d6a4cb112c46"
+      ]
+     },
+     {
+      "label": "Drop-in Centers",
+      "statement": "Edgewood operates Drop-in Centers in San Bruno and Redwood City serving youth ages 18-25.",
+      "kind_hint": "program",
+      "refs": [
+       "a94f1427-a8f0-471f-8b6b-ff813e045d3a",
+       "38e60681-c0de-4de8-aea2-9b12030a11dd"
+      ]
+     },
+     {
+      "label": "Affiliated Residential Treatment and Mental Health Services",
+      "statement": "Edgewood provides affiliated residential treatment and mental health services, with Kaiser Permanente listing Edgewood as a provider.",
+      "kind_hint": "service",
+      "refs": [
+       "de47a1d4-3a70-4fff-8c37-8c3a66fecdbb",
+       "0c5df2e7-8909-42d7-b584-d901fe2ed979"
+      ]
+     }
+    ]
+   }
+  },
+  "Spectrum": {
+   "promise": {
+    "class": "you",
+    "promise": "Spectrum WiFi Extenders deliver expansive coverage and instant connectivity with the latest WiFi 7 technology, and Spectrum is the only provider that offers 24/7/365 100% U.S.-based phone support for all our customers.",
+    "citations": [
+     "0cb18200-2821-459d-aaff-4656f328c7ad",
+     "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+    ]
+   },
+   "positioning": {
+    "value_class": "you",
+    "best_fit_class": "you",
+    "market_category": "internet, mobile, and TV service provider",
+    "value_citations": [
+     "0cb18200-2821-459d-aaff-4656f328c7ad"
+    ],
+    "unique_attributes": [
+     {
+      "text": "the nation\u2019s fastest-growing mobile provider",
+      "class": "you",
+      "citations": [
+       "8b6975a1-5b3a-4a3b-a84b-85da55c06e14"
+      ]
+     },
+     {
+      "text": "Anytime Upgrade allows customers to upgrade their phones whenever they want, eliminating the traditional wait times and fees associated with device upgrades",
+      "class": "you",
+      "citations": [
+       "950e6c89-0035-4151-932e-832de6efe95f"
+      ]
+     },
+     {
+      "text": "unique coverage model for broken screens, loss and theft at the most affordable rate in the industry",
+      "class": "you",
+      "citations": [
+       "ca5367cd-3864-42ea-a04a-1d9e0470ebdc"
+      ]
+     },
+     {
+      "text": "the only provider that offers 24/7/365 100% U.S.-based phone support for all our customers",
+      "class": "you",
+      "citations": [
+       "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+      ]
+     }
+    ],
+    "best_fit_citations": [
+     "1149c6be-ae4b-4cac-a1ac-d0c239001171"
+    ],
+    "best_fit_customers": "customers in 41 states seeking internet, mobile, or TV services",
+    "value_for_customer": "expansive coverage and instant connectivity with the latest WiFi 7 technology",
+    "market_category_class": "you",
+    "market_category_citations": [
+     "1149c6be-ae4b-4cac-a1ac-d0c239001171"
+    ]
+   },
+   "offering": {
+    "items": [
+     {
+      "label": "internet service",
+      "statement": "Spectrum sells internet service across 45 U.S. states.",
+      "kind_hint": "service",
+      "refs": [
+       "f8a2d3c1-98c1-45e3-81b6-8e1ccc2382a9",
+       "8e10a110-5c98-4d8b-a0da-74d9373fd7c0",
+       "492bda10-2ff5-462e-a2c9-ca1aa2a8fcfa"
+      ]
+     },
+     {
+      "label": "TV service",
+      "statement": "Spectrum sells TV service across 45 U.S. states.",
+      "kind_hint": "service",
+      "refs": [
+       "f8a2d3c1-98c1-45e3-81b6-8e1ccc2382a9",
+       "8e10a110-5c98-4d8b-a0da-74d9373fd7c0",
+       "492bda10-2ff5-462e-a2c9-ca1aa2a8fcfa"
+      ]
+     },
+     {
+      "label": "mobile service",
+      "statement": "Spectrum sells mobile service across 45 U.S. states.",
+      "kind_hint": "service",
+      "refs": [
+       "f8a2d3c1-98c1-45e3-81b6-8e1ccc2382a9",
+       "8e10a110-5c98-4d8b-a0da-74d9373fd7c0",
+       "492bda10-2ff5-462e-a2c9-ca1aa2a8fcfa"
+      ]
+     },
+     {
+      "label": "home phone service",
+      "statement": "Spectrum sells home phone service across 45 U.S. states.",
+      "kind_hint": "service",
+      "refs": [
+       "f8a2d3c1-98c1-45e3-81b6-8e1ccc2382a9",
+       "8e10a110-5c98-4d8b-a0da-74d9373fd7c0",
+       "492bda10-2ff5-462e-a2c9-ca1aa2a8fcfa"
+      ]
+     },
+     {
+      "label": "WiFi extenders",
+      "statement": "Spectrum WiFi Extenders deliver expansive coverage and instant connectivity with the latest WiFi 7 technology.",
+      "kind_hint": "product",
+      "refs": [
+       "0cb18200-2821-459d-aaff-4656f328c7ad"
+      ]
+     },
+     {
+      "label": "mobile device lineup",
+      "statement": "Spectrum Mobile has added six new Samsung devices to its lineup.",
+      "kind_hint": "product",
+      "refs": [
+       "8b6975a1-5b3a-4a3b-a84b-85da55c06e14"
+      ]
+     },
+     {
+      "label": "SmartHelp support",
+      "statement": "SmartHelp can identify outages, walk you through device fixes and more.",
+      "kind_hint": "service",
+      "refs": [
+       "0a6e1e22-5c9d-4215-854b-13f7dce522a8"
+      ]
+     },
+     {
+      "label": "Anytime Upgrade",
+      "statement": "Anytime Upgrade allows customers to upgrade their phones whenever they want, eliminating the traditional wait times and fees associated with device upgrades.",
+      "kind_hint": "program",
+      "refs": [
+       "950e6c89-0035-4151-932e-832de6efe95f"
+      ]
+     },
+     {
+      "label": "Repair and Replacement Plan",
+      "statement": "Repair and Replacement Plan provides a unique coverage model for broken screens, loss and theft at the most affordable rate in the industry.",
+      "kind_hint": "program",
+      "refs": [
+       "ca5367cd-3864-42ea-a04a-1d9e0470ebdc"
+      ]
+     },
+     {
+      "label": "Advanced WiFi protection",
+      "statement": "Safeguard your network with Advanced WiFi protection.",
+      "kind_hint": "service",
+      "refs": [
+       "18a5b4e8-3dc2-4303-8aa4-e87110372b79"
+      ]
+     },
+     {
+      "label": "Spectrum Advanced WiFi",
+      "statement": "Spectrum Advanced WiFi delivers breakthrough home network security \u2013 with thousands of online threats blocked each day.",
+      "kind_hint": "service",
+      "refs": [
+       "1d4118e5-5c29-48ec-afc4-ccee4afafd1e"
+      ]
+     },
+     {
+      "label": "Speed Boost",
+      "statement": "Speed Boost delivers seamless, secure and fast connectivity with speeds up to 1 Gbps for Spectrum Mobile devices when customers are connected to their home\u2019s Spectrum Advanced WiFi network.",
+      "kind_hint": "program",
+      "refs": [
+       "f60e8ae8-71de-4e8f-b3ec-ab034a55d5db"
+      ]
+     },
+     {
+      "label": "Homelife equipment support",
+      "statement": "Our experts are here to help with your Homelife equipment and tech support covered by Complete Care.",
+      "kind_hint": "service",
+      "refs": [
+       "890200fa-4416-4031-9069-e844401dc09b"
+      ]
+     },
+     {
+      "label": "24/7/365 U.S.-based phone support",
+      "statement": "Spectrum is the only provider that offers 24/7/365 100% U.S.-based phone support for all our customers.",
+      "kind_hint": "service",
+      "refs": [
+       "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+      ]
+     },
+     {
+      "label": "in-store device and plan exploration",
+      "statement": "Visit any Spectrum store location to explore the latest phones, plans and accessories.",
+      "kind_hint": "channel",
+      "refs": [
+       "7be93491-5980-493c-baa6-6d7cb48d92b1"
+      ]
+     },
+     {
+      "label": "streaming apps with TV plans",
+      "statement": "Spectrum TV plans include streaming apps at no extra cost along with plenty of live TV channels.",
+      "kind_hint": "format",
+      "refs": [
+       "34925c22-9922-4c16-986a-d63cc72964c8"
+      ]
+     },
+     {
+      "label": "fiber-powered internet up to 2 Gig",
+      "statement": "Spectrum offers up to 2 Gig (2000 Mbps) Internet download speeds, powered by Fiber.",
+      "kind_hint": "service",
+      "refs": [
+       "2c504944-9829-4ab2-9769-eed8f71735b2",
+       "80f84237-2b6a-49dc-9402-4f5a1a262b91"
+      ]
+     },
+     {
+      "label": "nationwide 5G access",
+      "statement": "Enjoy nationwide 5G access at no extra fee with Spectrum Mobile.",
+      "kind_hint": "service",
+      "refs": [
+       "20760841-e60b-418e-9b7e-ac71ec7635b9"
+      ]
+     },
+     {
+      "label": "WiFi hotspot access",
+      "statement": "Pair the latest devices with reliable 5G coverage and 45 million WiFi hotspots.",
+      "kind_hint": "service",
+      "refs": [
+       "d7ca4ec8-26b8-4ce1-b2cb-e59156da963a"
+      ]
+     },
+     {
+      "label": "bundled internet, TV, and mobile plans",
+      "statement": "Bundle Spectrum Internet with TV or Mobile for an incredible value \u2013 with no contracts and a two- or three-year price guarantee.",
+      "kind_hint": "program",
+      "refs": [
+       "309a1328-15e9-4062-9366-2de3734bdf52"
+      ]
+     },
+     {
+      "label": "flexible plans",
+      "statement": "Simplify your life with flexible plans built with you in mind.",
+      "kind_hint": "program",
+      "refs": [
+       "44b66160-1622-486a-8cab-1aeb39418c61"
+      ]
+     }
+    ]
+   },
+   "strategy": {
+    "how_to_win": "Provide expansive coverage, instant connectivity with the latest WiFi 7 technology, and unique customer benefits such as Anytime Upgrade and 24/7/365 100% U.S.-based phone support.",
+    "where_to_play": "Serve over 57 million customers in 41 states with internet, mobile, and TV services, including the nation\u2019s fastest-growing mobile provider.",
+    "how_to_win_class": "you",
+    "management_systems": [],
+    "winning_aspiration": "Deliver expansive coverage and instant connectivity with the latest WiFi 7 technology, offer the nation\u2019s fastest-growing mobile service, and differentiate with features like Anytime Upgrade and 24/7/365 100% U.S.-based phone support.",
+    "where_to_play_class": "you",
+    "how_to_win_citations": [
+     "0cb18200-2821-459d-aaff-4656f328c7ad",
+     "950e6c89-0035-4151-932e-832de6efe95f",
+     "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+    ],
+    "must_have_capabilities": [
+     {
+      "text": "Ability to deliver expansive WiFi coverage and instant connectivity with the latest WiFi 7 technology.",
+      "class": "you",
+      "citations": [
+       "0cb18200-2821-459d-aaff-4656f328c7ad"
+      ]
+     },
+     {
+      "text": "Offer Anytime Upgrade, allowing customers to upgrade their phones whenever they want.",
+      "class": "you",
+      "citations": [
+       "950e6c89-0035-4151-932e-832de6efe95f"
+      ]
+     },
+     {
+      "text": "Maintain 24/7/365 100% U.S.-based phone support for all customers.",
+      "class": "you",
+      "citations": [
+       "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+      ]
+     }
+    ],
+    "where_to_play_citations": [
+     "1149c6be-ae4b-4cac-a1ac-d0c239001171",
+     "8b6975a1-5b3a-4a3b-a84b-85da55c06e14",
+     "35b30486-0369-4ab2-934a-fa37d3b3fc4a"
+    ],
+    "winning_aspiration_class": "you",
+    "winning_aspiration_citations": [
+     "0cb18200-2821-459d-aaff-4656f328c7ad",
+     "950e6c89-0035-4151-932e-832de6efe95f",
+     "2aa4efe6-ee43-4865-b8ce-29debc53fd16"
+    ]
+   }
+  },
+  "SIAA": {
+   "strategy": {
+    "how_to_win": "Leverage a powerful network flywheel by combining scale (over $18 billion in written premium and 13% market share) with strategic partnerships with top-tier carriers, offering member agencies immediate access to competitive markets, high commissions, profit sharing, and growth programs, while maintaining a unique two-tier Master Agency model that balances national strength with local support and coaching.",
+    "where_to_play": "Independent insurance agencies across the United States, especially newer and smaller agencies seeking carrier access and business growth resources, served through 49 regional Master Agencies providing local execution within a national network.",
+    "winning_aspiration": "To be the largest and most influential national alliance of independent insurance agencies, enabling member agencies to grow income, improve profitability, and build lasting agency value through access to top-tier carriers, commissions, incentives, and specialized training.",
+    "how_to_win_citations": [
+     "205995c1-34a6-4a95-98f8-89c0f85752d4",
+     "2cbcaff7-7948-49c0-b100-ce59a03f0f4c",
+     "534e52bb-498c-4987-8275-00aedd294acd"
+    ],
+    "where_to_play_citations": [
+     "1633314c-2a09-4832-8ee2-57640488670c",
+     "191d7756-fa23-4dd3-ad22-c3ab38944ed6",
+     "f0ec6bf5-88bd-435b-9abb-350584a005bd"
+    ],
+    "winning_aspiration_citations": [
+     "24d32e1e-2067-4512-aef7-f6d7a082ba38",
+     "ed08b1ae-2ae4-4974-8d1f-d730bbf0ea80",
+     "ce2d3d30-f3cb-46d1-8593-24799635b2fb"
+    ]
+   },
+   "promise": {
+    "promise": "Agencies that join an SIAA master agency gain immediate access to top national and regional carriers, strategic partner companies paying top-level commissions, national and local incentives, profit sharing without minimums, and specialized training programs designed for growth.",
+    "citations": [
+     "540c41df-0274-4409-be1a-892c7251de0b",
+     "97f13f07-3ec1-43b3-ba33-442f6ba14615",
+     "4e5bddd8-d73c-4b8f-99b5-20500e0a88dc"
+    ]
+   },
+   "positioning": {
+    "market_category": "national network of independent insurance agencies",
+    "value_citations": [
+     "540c41df-0274-4409-be1a-892c7251de0b",
+     "97f13f07-3ec1-43b3-ba33-442f6ba14615",
+     "4db16202-e49d-4cba-9c04-6465e8e27430"
+    ],
+    "unique_attributes": [
+     {
+      "text": "largest independent insurance agency alliance in the US with over $18 billion in written premium and 49 regional master agencies providing local execution with national scale",
+      "citations": [
+       "f0ec6bf5-88bd-435b-9abb-350584a005bd",
+       "0c97b9ad-5f0c-4994-822e-5e76f63309de",
+       "1633314c-2a09-4832-8ee2-57640488670c"
+      ]
+     },
+     {
+      "text": "long-term contracts with substantial exit fees create high switching costs, locking in members despite mixed satisfaction",
+      "citations": [
+       "166dd07d-34c1-4cbf-af68-ab6db4f92541",
+       "292342ef-6ddf-40cb-9528-badb2e6a2e90",
+       "3ec861cd-b2cc-43a9-9ff9-d8a1d217c699"
+      ]
+     },
+     {
+      "text": "strategic partnerships with 40 top-tier insurance companies provide broad market access and competitive commission structures",
+      "citations": [
+       "2cbcaff7-7948-49c0-b100-ce59a03f0f4c",
+       "fb2ac69f-91d5-48ca-9efd-b6c3ace166ba",
+       "c3d46b51-4a35-4459-89a8-8ba8ea2cfc05"
+      ]
+     }
+    ],
+    "best_fit_citations": [
+     "96feca59-28f9-48eb-9c42-c8cd7b1ae3b1",
+     "4e5bddd8-d73c-4b8f-99b5-20500e0a88dc",
+     "8b258082-649b-432a-9e6c-d194a0d107e1"
+    ],
+    "best_fit_customers": "newer and smaller independent insurance agencies seeking carrier access, training, and support to grow their business",
+    "value_for_customer": "independent insurance agencies gain access to top national and regional insurance carriers, competitive commissions, bonuses, training programs, profit sharing, and business growth resources to grow income and build agency value",
+    "market_category_citations": [
+     "ce2d3d30-f3cb-46d1-8593-24799635b2fb",
+     "b5683bfe-4670-4359-8bba-3243a65181f3",
+     "5219e2d8-5251-4c67-bf0b-8dc5e054cf44"
+    ]
+   },
+   "offering": {
+    "items": [
+     {
+      "label": "Independent insurance agency membership",
+      "statement": "SIAA is a national network of independent insurance agents providing membership to independent insurance agencies.",
+      "kind_hint": "program",
+      "refs": [
+       "528ca46b-73e1-4112-b938-bbe0be728d34",
+       "b5683bfe-4670-4359-8bba-3243a65181f3",
+       "148bb7d6-88b5-4db8-9ef5-da4f22c47ddb"
+      ]
+     },
+     {
+      "label": "Top tier commissions and bonuses",
+      "statement": "Members receive top tier commissions, bonuses and specialized training programs designed for growth.",
+      "kind_hint": "program",
+      "refs": [
+       "540c41df-0274-4409-be1a-892c7251de0b"
+      ]
+     },
+     {
+      "label": "Agency FOUNDATION program",
+      "statement": "The Agency FOUNDATION program provides guidance to new agencies about operating a business and the tools to attract and build a client base.",
+      "kind_hint": "program",
+      "refs": [
+       "191d7756-fa23-4dd3-ad22-c3ab38944ed6"
+      ]
+     },
+     {
+      "label": "Access to services, markets, profit-sharing and incentives",
+      "statement": "Members have immediate access to all the services, markets, profit-sharing and incentives of both their Master Agency and SIAA.",
+      "kind_hint": "service",
+      "refs": [
+       "e52c888e-0c0c-4970-ada4-c61f3c7b2945"
+      ]
+     },
+     {
+      "label": "Access to top national and regional carriers",
+      "statement": "Agencies that join an SIAA master agency gain immediate access to top national and regional carriers with strategic partner companies paying top-level commissions, national and local incentives and profit sharing without minimums.",
+      "kind_hint": "service",
+      "refs": [
+       "97f13f07-3ec1-43b3-ba33-442f6ba14615"
+      ]
+     },
+     {
+      "label": "40 strategic partnerships with top-tier insurance companies",
+      "statement": "SIAA has 40 strategic partnerships with top-tier insurance companies, providing direct access to markets for virtually any risk.",
+      "kind_hint": "service",
+      "refs": [
+       "2cbcaff7-7948-49c0-b100-ce59a03f0f4c"
+      ]
+     },
+     {
+      "label": "Local agency growth coaches",
+      "statement": "Master Agencies deploy local staff \u2013 agency growth coaches \u2013 to partner with agencies, from start-up to large retail shops, to maximize their growth and income opportunities.",
+      "kind_hint": "service",
+      "refs": [
+       "534e52bb-498c-4987-8275-00aedd294acd"
+      ]
+     }
+    ]
+   }
+  },
+  "BlueSkyAI": {
+   "positioning": {
+    "value_class": "you",
+    "best_fit_class": "you",
+    "market_category": "AI consulting and software development for business automation",
+    "value_citations": [
+     "2b0ad86b-1ca2-473d-abf3-6a09eb14bafb",
+     "5926ef64-b851-4579-9ba6-3a0bbc4a2e6a",
+     "bdabd3aa-224c-49cc-aab9-bc75f99c74aa"
+    ],
+    "unique_attributes": [
+     {
+      "text": "10% of profits donated to environmental causes",
+      "class": "record",
+      "citations": [
+       "9d78dff7-8e36-4958-b94f-43fac69ef40c",
+       "9fd7cd98-e1d8-41f3-84de-8fd840e0cfad"
+      ]
+     }
+    ],
+    "best_fit_citations": [
+     "17ca1821-0915-42cb-a7ef-41fffaa4f7e5",
+     "11e4396f-d9e6-4b6b-bd00-018a234aacd2",
+     "b3e29d3e-1149-4316-818d-d10f02df705a"
+    ],
+    "best_fit_customers": "Small and medium-sized businesses and startups seeking AI-powered automation and growth support",
+    "value_for_customer": "Automate and improve business operations in simple ways with AI solutions that are user-friendly, ethically designed, and supported by human expertise",
+    "market_category_class": "record",
+    "market_category_citations": [
+     "9d78dff7-8e36-4958-b94f-43fac69ef40c"
+    ]
+   },
+   "strategy": {
+    "how_to_win": "Deliver AI-first software solutions that transform and automate business operations with a human touch and ethical design",
+    "where_to_play": "Small and medium-sized businesses seeking AI-driven automation and business operation solutions",
+    "how_to_win_class": "you",
+    "management_systems": [],
+    "winning_aspiration": "Automate and improve lives in simple ways while contributing 10% of profits to environmental causes",
+    "where_to_play_class": "you",
+    "how_to_win_citations": [
+     "9d78dff7-8e36-4958-b94f-43fac69ef40c",
+     "bdabd3aa-224c-49cc-aab9-bc75f99c74aa",
+     "5926ef64-b851-4579-9ba6-3a0bbc4a2e6a"
+    ],
+    "must_have_capabilities": [
+     {
+      "text": "Ability to create user-friendly, ethically designed AI business solutions",
+      "class": "you",
+      "citations": [
+       "5675ce76-3c82-401f-ab29-789f0c4925d9",
+       "f39e7a14-85ec-48e3-bbf6-2b5663ae1969"
+      ]
+     },
+     {
+      "text": "Expertise in AI-driven automation of business operations",
+      "class": "record",
+      "citations": [
+       "9d78dff7-8e36-4958-b94f-43fac69ef40c",
+       "5926ef64-b851-4579-9ba6-3a0bbc4a2e6a"
+      ]
+     }
+    ],
+    "where_to_play_citations": [
+     "8a26e3df-3c01-4cdc-8c0c-dec2deed1933",
+     "d8926a60-455e-4ad0-828c-6a12bea04cef",
+     "b3322934-7280-4b59-a888-6acb0a27c9af"
+    ],
+    "winning_aspiration_class": "record",
+    "winning_aspiration_citations": [
+     "9d78dff7-8e36-4958-b94f-43fac69ef40c",
+     "9fd7cd98-e1d8-41f3-84de-8fd840e0cfad"
+    ]
+   },
+   "promise": {
+    "class": "record",
+    "promise": "BlueSkyAI promises AI solutions to transform and automate business operations to automate and improve lives in simple ways.",
+    "citations": [
+     "9d78dff7-8e36-4958-b94f-43fac69ef40c",
+     "5926ef64-b851-4579-9ba6-3a0bbc4a2e6a"
+    ]
+   },
+   "offering": {
+    "items": [
+     {
+      "label": "AI consulting services",
+      "statement": "BlueSkyAI offers AI consulting services to businesses, unlocking AI\u2019s power for them.",
+      "kind_hint": "service",
+      "refs": [
+       "148cf439-40f8-485c-96a4-72d9b5452e94",
+       "17022420-9830-4279-aae1-4a9c5b6b28a8",
+       "5926ef64-b851-4579-9ba6-3a0bbc4a2e6a"
+      ]
+     },
+     {
+      "label": "Business AI solutions",
+      "statement": "BlueSkyAI creates user-friendly, ethically designed business AI solutions to solve real problems.",
+      "kind_hint": "service",
+      "refs": [
+       "5675ce76-3c82-401f-ab29-789f0c4925d9",
+       "9d9bbbe5-29fe-4316-bff7-604e0b1ffdf0",
+       "5926ef64-b851-4579-9ba6-3a0bbc4a2e6a"
+      ]
+     },
+     {
+      "label": "Business automation solutions",
+      "statement": "BlueSkyAI builds AI-first software development solutions to automate business operations.",
+      "kind_hint": "service",
+      "refs": [
+       "9d78dff7-8e36-4958-b94f-43fac69ef40c",
+       "2b0ad86b-1ca2-473d-abf3-6a09eb14bafb",
+       "5926ef64-b851-4579-9ba6-3a0bbc4a2e6a"
+      ]
+     },
+     {
+      "label": "SunRise continuous support",
+      "statement": "SunRise delivers continuous support across software, AI, and marketing for e-commerce startups and scaling brands.",
+      "kind_hint": "service",
+      "refs": [
+       "17ca1821-0915-42cb-a7ef-41fffaa4f7e5"
+      ]
+     },
+     {
+      "label": "BlueSkySquads AI support",
+      "statement": "BlueSkyAI provides BlueSkySquads to help clients launch AI-powered concepts.",
+      "kind_hint": "service",
+      "refs": [
+       "a154c32a-f8a6-4cc2-a384-90df003260fb"
+      ]
+     },
+     {
+      "label": "JRVS AI insights platform",
+      "statement": "JRVS turns company knowledge into action by combining proprietary data with AI to deliver tailored insights and humanized conversations.",
+      "kind_hint": "platform",
+      "refs": [
+       "2f21ace1-0872-4d95-abc5-c08ea21fa6ad"
+      ]
+     },
+     {
+      "label": "Fractional AI consulting services",
+      "statement": "BlueSkyAI offers fractional consulting services pairing AI-fueled insights with real-world experience to help businesses scale and harness AI.",
+      "kind_hint": "service",
+      "refs": [
+       "b3e29d3e-1149-4316-818d-d10f02df705a"
+      ]
+     },
+     {
+      "label": "Aurora AI retail solutions",
+      "statement": "Aurora is an AI partner helping retailers unlock AI-driven growth, boosting loyalty, transforming returns into revenue, and streamlining operations.",
+      "kind_hint": "service",
+      "refs": [
+       "a69f740a-df10-4b81-8c3f-837a004010ab",
+       "b7fe0456-ef71-4321-843b-7fd8fa7dd108"
+      ]
+     },
+     {
+      "label": "AI product design and deployment",
+      "statement": "BlueSkyAI helps design, develop, and deploy AI solutions that are faster, sharper, and ready to scale.",
+      "kind_hint": "service",
+      "refs": [
+       "b89d46c6-b4f6-440e-b4f2-71f6876c2c92"
+      ]
+     },
+     {
+      "label": "AI-powered marketing services",
+      "statement": "BlueSkyAI combines human creativity with AI precision for content strategy, branding, CRM optimization, e-commerce management, consumer insights, and lead generation.",
+      "kind_hint": "service",
+      "refs": [
+       "e7a20d1a-fa20-4969-8612-c817629e460b"
+      ]
+     },
+     {
+      "label": "AI-savvy startup and SMB support",
+      "statement": "BlueSkyAI provides AI-savvy support from software maintenance to marketing execution for startups and SMBs.",
+      "kind_hint": "service",
+      "refs": [
+       "11e4396f-d9e6-4b6b-bd00-018a234aacd2"
+      ]
+     },
+     {
+      "label": "Dedicated AI specialist access",
+      "statement": "Clients enjoy dedicated access to BlueSkyAI\u2019s AI specialists to accelerate growth.",
+      "kind_hint": "service",
+      "refs": [
+       "2eb90d4e-7851-4ffc-83e3-3e677624372e"
+      ]
+     },
+     {
+      "label": "Customizable hourly AI support packages",
+      "statement": "BlueSkyAI offers customizable hourly support packages tailored to client needs and budgets.",
+      "kind_hint": "service",
+      "refs": [
+       "4cedb652-6a47-466c-bcb5-217a25cd75e9"
+      ]
+     },
+     {
+      "label": "AI-powered content creation and strategy",
+      "statement": "BlueSkyAI handles AI-powered content creation and strategic guidance for clients.",
+      "kind_hint": "service",
+      "refs": [
+       "878507e1-b9cb-461a-b085-e11bbbe9f9da"
+      ]
+     },
+     {
+      "label": "High-impact AI-powered media production",
+      "statement": "BlueSkyAI crafts high-impact copy, video, and podcasts powered by AI efficiencies with a human core.",
+      "kind_hint": "service",
+      "refs": [
+       "297a6314-3ebf-4775-97d4-077ef32ef795"
+      ]
+     }
+    ]
+   }
+  },
+  "Lumio": {
+   "positioning": {
+    "market_category": "strategic management consultancy with AI for legal business",
+    "value_citations": [
+     "567adc5e-2d82-43cd-aca7-9dcb8238451f",
+     "0b953129-9544-4af3-8ed8-41d39296bb12",
+     "6a2c4ca7-dacc-49db-8dab-7a97b675d40d"
+    ],
+    "unique_attributes": [
+     {
+      "text": "combines strategic management consulting with advanced AI to provide proprietary industry-leading expertise for legal market strategy and commercial growth",
+      "citations": [
+       "e3456750-ac16-4fac-96cd-1f641cbfe169",
+       "567adc5e-2d82-43cd-aca7-9dcb8238451f",
+       "b6b3e2b9-6ceb-4f0e-9149-89d19c7ecf88"
+      ]
+     }
+    ],
+    "best_fit_citations": [
+     "0b953129-9544-4af3-8ed8-41d39296bb12",
+     "372cb333-8960-4670-b4d6-08817ecd4a67",
+     "6a2c4ca7-dacc-49db-8dab-7a97b675d40d"
+    ],
+    "best_fit_customers": "law firm partners, leaders, and high-performing legal professionals seeking to navigate commercial and strategic challenges with AI-enhanced support",
+    "value_for_customer": "helps law firm partners and leaders translate market signals, client dynamics, and relationship intelligence into clear revenue opportunities using AI-powered insights and expertise",
+    "market_category_citations": [
+     "e3456750-ac16-4fac-96cd-1f641cbfe169",
+     "0b953129-9544-4af3-8ed8-41d39296bb12",
+     "960b77a1-8da2-474b-8b4a-0569bebd932d"
+    ]
+   },
+   "strategy": {
+    "how_to_win": "By combining proprietary industry-leading expertise with advanced AI to translate market signals, client dynamics, and relationship intelligence into actionable revenue opportunities, supported by strategic partnerships with leading AI firms.",
+    "where_to_play": "Law firms and legal business leaders seeking advanced AI-driven strategic management consultancy services to enhance market strategy, pricing, and commercial growth.",
+    "management_systems": [],
+    "winning_aspiration": "To transform how professional services firms and elite legal practitioners navigate commercial and strategic challenges by pioneering AI-powered bionic teaming that elevates legal professionals and drives clear revenue opportunities.",
+    "how_to_win_citations": [
+     "567adc5e-2d82-43cd-aca7-9dcb8238451f",
+     "063e2231-f1fe-4033-9ff2-5caf59da6f73",
+     "b6b3e2b9-6ceb-4f0e-9149-89d19c7ecf88"
+    ],
+    "must_have_capabilities": [
+     {
+      "text": "Expertise in legal market strategy, pricing, and commercial growth integrated with advanced AI technology to deliver insights and creativity for law firm partners.",
+      "citations": [
+       "2298924a-78ed-4936-bed8-c5576a8fb691",
+       "0b953129-9544-4af3-8ed8-41d39296bb12",
+       "567adc5e-2d82-43cd-aca7-9dcb8238451f"
+      ]
+     }
+    ],
+    "where_to_play_citations": [
+     "e3456750-ac16-4fac-96cd-1f641cbfe169",
+     "0b953129-9544-4af3-8ed8-41d39296bb12",
+     "567adc5e-2d82-43cd-aca7-9dcb8238451f"
+    ],
+    "winning_aspiration_citations": [
+     "372cb333-8960-4670-b4d6-08817ecd4a67",
+     "2298924a-78ed-4936-bed8-c5576a8fb691",
+     "567adc5e-2d82-43cd-aca7-9dcb8238451f"
+    ]
+   },
+   "promise": {
+    "promise": "Lumio promises to help law firm partners and leaders translate market signals, client dynamics, and relationship intelligence into clear revenue opportunities using advanced AI and proprietary expertise.",
+    "citations": [
+     "0b953129-9544-4af3-8ed8-41d39296bb12",
+     "567adc5e-2d82-43cd-aca7-9dcb8238451f",
+     "6a2c4ca7-dacc-49db-8dab-7a97b675d40d"
+    ]
+   },
+   "offering": {
+    "items": [
+     {
+      "label": "AI-powered bionic teaming for legal professionals",
+      "statement": "Lumio provides AI-powered bionic teaming to elevate legal professionals in navigating commercial and strategic challenges.",
+      "kind_hint": "service",
+      "refs": [
+       "372cb333-8960-4670-b4d6-08817ecd4a67",
+       "2298924a-78ed-4936-bed8-c5576a8fb691"
+      ]
+     },
+     {
+      "label": "Strategic management consultancy with AI",
+      "statement": "Lumio offers strategic management consultancy services with insights, creativity, and know-how for law firm partners and leaders, delivered with advanced AI.",
+      "kind_hint": "service",
+      "refs": [
+       "e3456750-ac16-4fac-96cd-1f641cbfe169",
+       "0b953129-9544-4af3-8ed8-41d39296bb12"
+      ]
+     },
+     {
+      "label": "Rainmaker Companion AI product",
+      "statement": "Lumio's first AI product, Rainmaker Companion, helps partners translate market signals, client dynamics, and relationship intelligence into clear revenue opportunities.",
+      "kind_hint": "product",
+      "refs": [
+       "567adc5e-2d82-43cd-aca7-9dcb8238451f"
+      ]
+     }
+    ]
+   }
+  },
+  "Corestar Partners": {
+   "positioning": {
+    "market_category": "leadership performance measurement and culture impact analysis",
+    "value_citations": [
+     "2363dcfb-7fc9-47b5-aa83-4c1fdfd362f3",
+     "dbb94c51-e738-490f-9068-263dde733b0e",
+     "cf72398c-29d6-48c7-82e5-1e91e6ba38ff"
+    ],
+    "unique_attributes": [
+     {
+      "text": "uses the Corestar CEO Index and Stabilisation Efficiency scores to quantify leadership impact on business performance and culture",
+      "citations": [
+       "dbb94c51-e738-490f-9068-263dde733b0e",
+       "cf72398c-29d6-48c7-82e5-1e91e6ba38ff",
+       "26cbb1ec-f4fe-497a-9887-76773fb1965e"
+      ]
+     }
+    ],
+    "best_fit_citations": [
+     "e9192f0e-1e27-460e-b9c4-365f20f7d60c",
+     "2363dcfb-7fc9-47b5-aa83-4c1fdfd362f3",
+     "e19303eb-607b-42ac-ad7b-a05a22022e84"
+    ],
+    "best_fit_customers": "boards, executive search firms, investors, private equity, and business leaders seeking to understand and improve leadership impact and company culture",
+    "value_for_customer": "provides an independent, data-driven measure of how CEOs and leadership affect business performance and culture, helping boards, search firms, investors, and business leaders make evidence-based decisions",
+    "market_category_citations": [
+     "dbb94c51-e738-490f-9068-263dde733b0e",
+     "cf72398c-29d6-48c7-82e5-1e91e6ba38ff",
+     "26cbb1ec-f4fe-497a-9887-76773fb1965e"
+    ]
+   },
+   "strategy": {
+    "how_to_win": "Provide an independent, data-driven CEO Index and Stabilisation Efficiency scores that reveal leadership impact on business performance and culture, enabling better decision-making",
+    "where_to_play": "Boards, executive search firms, and investors evaluating CEO leadership and company culture in UK and broader markets",
+    "management_systems": [],
+    "winning_aspiration": "Enable boards, search firms, and investors to act on evidence about CEO leadership impact, making businesses easier to run and improving transformation success rates",
+    "how_to_win_citations": [
+     "2363dcfb-7fc9-47b5-aa83-4c1fdfd362f3",
+     "dbb94c51-e738-490f-9068-263dde733b0e",
+     "26cbb1ec-f4fe-497a-9887-76773fb1965e"
+    ],
+    "must_have_capabilities": [
+     {
+      "text": "Ability to independently derive leadership impact scores from public signals and contextual data",
+      "citations": [
+       "2363dcfb-7fc9-47b5-aa83-4c1fdfd362f3",
+       "dbb94c51-e738-490f-9068-263dde733b0e"
+      ]
+     }
+    ],
+    "where_to_play_citations": [
+     "2363dcfb-7fc9-47b5-aa83-4c1fdfd362f3",
+     "cf72398c-29d6-48c7-82e5-1e91e6ba38ff",
+     "dbb94c51-e738-490f-9068-263dde733b0e"
+    ],
+    "winning_aspiration_citations": [
+     "2363dcfb-7fc9-47b5-aa83-4c1fdfd362f3",
+     "dbb94c51-e738-490f-9068-263dde733b0e",
+     "a355813d-a8eb-4d95-9882-092971a3c23e"
+    ]
+   },
+   "promise": {
+    "promise": "Corestar Partners promises to measure the difference a leader actually makes, so boards, search firms and investors can act on evidence rather than reputation.",
+    "citations": [
+     "2363dcfb-7fc9-47b5-aa83-4c1fdfd362f3",
+     "dbb94c51-e738-490f-9068-263dde733b0e"
+    ]
+   },
+   "offering": {
+    "items": [
+     {
+      "label": "Corestar CEO Index",
+      "statement": "Corestar CEO Index is a leadership risk assessment for PE due diligence, providing a discreet, environment-adjusted signal on whether a company's culture adds to or subtracts from its value.",
+      "kind_hint": "product",
+      "refs": [
+       "cf72398c-29d6-48c7-82e5-1e91e6ba38ff",
+       "26cbb1ec-f4fe-497a-9887-76773fb1965e"
+      ]
+     },
+     {
+      "label": "Stabilisation Efficiency scores",
+      "statement": "Stabilisation Efficiency scores reveal whether a leader enhances business performance or actively generates friction.",
+      "kind_hint": "product",
+      "refs": [
+       "10987d49-806e-4517-9e0a-4b2ab2f35888",
+       "26cbb1ec-f4fe-497a-9887-76773fb1965e"
+      ]
+     },
+     {
+      "label": "Commentary on culture and leadership",
+      "statement": "Corestar Partners provides occasional writing on culture, leadership and what the data shows, including the Stabilisation Efficiency and CORE/DUAL white papers.",
+      "kind_hint": "format",
+      "refs": [
+       "5b94af15-6cac-4f61-b6e8-e0a195a52cce"
+      ]
+     },
+     {
+      "label": "Services for Executive Search",
+      "statement": "Corestar helps executive search by separating context and performance with one number, independently derived from public signals, to help win the mandate.",
+      "kind_hint": "service",
+      "refs": [
+       "2363dcfb-7fc9-47b5-aa83-4c1fdfd362f3"
+      ]
+     },
+     {
+      "label": "Services for Business Leaders",
+      "statement": "Corestar reveals the behavioural forces shaping business performance to help business leaders harness their company's true strength.",
+      "kind_hint": "service",
+      "refs": [
+       "e19303eb-607b-42ac-ad7b-a05a22022e84"
+      ]
+     }
+    ]
+   }
+  },
+  "Riverlane": {
+   "positioning": {
+    "market_category": "quantum error correction technology provider",
+    "value_citations": [
+     "db643731-4ba3-46d9-bfab-a8eae83a87ef",
+     "2c6b8944-f18a-47a3-a7f8-59aef32f8dea",
+     "df571bbc-6a26-4ffd-8334-1e1c6a4fdeda"
+    ],
+    "unique_attributes": [
+     {
+      "text": "hardware-agnostic middleware layer for quantum error correction, supporting multiple qubit modalities and QEC schemes",
+      "citations": [
+       "3a4bc10d-6e1e-435e-bf17-828449b321cd",
+       "85b768c7-42c5-4ff4-a266-5bef3745e292",
+       "d194ad39-2880-4f49-a697-aecc8a72e1f2"
+      ]
+     }
+    ],
+    "best_fit_citations": [
+     "b514f330-1131-429e-afd3-5015d8b1e223",
+     "0285f4a0-ecd9-492f-ad18-fd8a0b7e871a",
+     "cb8ee7ff-835d-4735-a3c7-54310c40ee64"
+    ],
+    "best_fit_customers": "quantum computer manufacturers, government bodies, national labs, and high-performance computing centres",
+    "value_for_customer": "technology that corrects quantum errors quickly and reliably, enabling scalable and reliable quantum computing",
+    "market_category_citations": [
+     "e3c0cb68-9cf6-4627-8277-7069bbf32d03",
+     "def1f3e8-a0e7-4ef3-8f11-288f669ad590",
+     "3a4bc10d-6e1e-435e-bf17-828449b321cd"
+    ]
+   },
+   "strategy": {
+    "how_to_win": "By providing a hardware-agnostic, middleware QEC stack that becomes the de-facto standard through broad partner adoption and superior real-time error correction technology.",
+    "where_to_play": "The global quantum computing ecosystem, partnering with over 60% of quantum computer companies, government bodies, national labs, and high-performance computing centres.",
+    "management_systems": [],
+    "winning_aspiration": "To be the world leader in quantum error correction technology, enabling reliable and scalable quantum computing and unlocking a new age of human progress.",
+    "how_to_win_citations": [
+     "3a4bc10d-6e1e-435e-bf17-828449b321cd",
+     "356547dc-9b1a-4e6f-a097-c022a7c17b98",
+     "85b768c7-42c5-4ff4-a266-5bef3745e292"
+    ],
+    "must_have_capabilities": [
+     {
+      "text": "Developing sophisticated QEC codes and decoders implemented on proprietary QEC chips that correct errors millions to billions of times per second.",
+      "citations": [
+       "db643731-4ba3-46d9-bfab-a8eae83a87ef"
+      ]
+     },
+     {
+      "text": "Configurable QEC solutions adaptable across qubit modalities and evolving hardware roadmaps.",
+      "citations": [
+       "85b768c7-42c5-4ff4-a266-5bef3745e292"
+      ]
+     },
+     {
+      "text": "Strong partnerships with leading quantum hardware manufacturers and HPC centres to accelerate ecosystem adoption.",
+      "citations": [
+       "b514f330-1131-429e-afd3-5015d8b1e223",
+       "0285f4a0-ecd9-492f-ad18-fd8a0b7e871a"
+      ]
+     }
+    ],
+    "where_to_play_citations": [
+     "b514f330-1131-429e-afd3-5015d8b1e223",
+     "0285f4a0-ecd9-492f-ad18-fd8a0b7e871a",
+     "356547dc-9b1a-4e6f-a097-c022a7c17b98"
+    ],
+    "winning_aspiration_citations": [
+     "def1f3e8-a0e7-4ef3-8f11-288f669ad590",
+     "2c6b8944-f18a-47a3-a7f8-59aef32f8dea",
+     "db643731-4ba3-46d9-bfab-a8eae83a87ef"
+    ]
+   },
+   "promise": {
+    "promise": "Riverlane promises to accelerate your journey to quantum utility with their suite of QEC hardware, software and service solutions that correct quantum errors as quickly as they occur.",
+    "citations": [
+     "db643731-4ba3-46d9-bfab-a8eae83a87ef",
+     "df571bbc-6a26-4ffd-8334-1e1c6a4fdeda"
+    ]
+   },
+   "offering": {
+    "items": [
+     {
+      "label": "Deltaflow QEC system",
+      "statement": "Deltaflow is the world's leading QEC system, turning noisy and unscalable physical qubits into reliable and scalable logical qubits.",
+      "kind_hint": "product",
+      "refs": [
+       "4751cc87-2512-477b-bdcd-cb2e5f754178",
+       "2c6b8944-f18a-47a3-a7f8-59aef32f8dea"
+      ]
+     },
+     {
+      "label": "Deltaflow 2 QEC system",
+      "statement": "Deltaflow 2 is the latest version of Riverlane's QEC system, configurable across qubit modalities and QEC schemes, supporting evolving hardware roadmaps.",
+      "kind_hint": "product",
+      "refs": [
+       "7cd15772-030a-446e-a5e9-5efb8341f0e1",
+       "85b768c7-42c5-4ff4-a266-5bef3745e292"
+      ]
+     },
+     {
+      "label": "QECi Quantum Error Correction interface",
+      "statement": "QECi is the Quantum Error Correction interface developed by Riverlane.",
+      "kind_hint": "product",
+      "refs": [
+       "6e811ec7-ee19-4ef4-95ed-ce0e1d020917"
+      ]
+     },
+     {
+      "label": "QEC hardware, software and service solutions",
+      "statement": "Riverlane offers a suite of QEC hardware, software and service solutions to accelerate the journey to quantum utility.",
+      "kind_hint": "service",
+      "refs": [
+       "df571bbc-6a26-4ffd-8334-1e1c6a4fdeda"
+      ]
+     }
+    ]
+   }
+  },
+  "Gotham Sports": {
+   "positioning": {
+    "market_category": "local sports streaming app for New York teams",
+    "value_citations": [
+     "8111841e-8549-462b-9480-89ed297322e3",
+     "3a157e35-843c-4050-94d8-f51c50486cdf",
+     "99d0bedd-5add-4586-a203-5816ed37fba7"
+    ],
+    "unique_attributes": [
+     {
+      "text": "exclusive direct-to-consumer streaming home of MSG Networks and the YES Network",
+      "citations": [
+       "d50273ea-32b5-476c-a7ed-44de80de286a",
+       "99d0bedd-5add-4586-a203-5816ed37fba7",
+       "17a782b6-a8c0-4624-8597-9e7f58445b0b"
+      ]
+     }
+    ],
+    "best_fit_citations": [
+     "3a157e35-843c-4050-94d8-f51c50486cdf",
+     "8111841e-8549-462b-9480-89ed297322e3",
+     "99d0bedd-5add-4586-a203-5816ed37fba7"
+    ],
+    "best_fit_customers": "fans of New York sports teams who want to stream local games and related content",
+    "value_for_customer": "access to live games and programming for New York sports teams including Yankees, Knicks, Rangers, Devils, Islanders, Sabres, and Nets",
+    "market_category_citations": [
+     "3a157e35-843c-4050-94d8-f51c50486cdf",
+     "99d0bedd-5add-4586-a203-5816ed37fba7",
+     "17a782b6-a8c0-4624-8597-9e7f58445b0b"
+    ]
+   },
+   "strategy": {
+    "how_to_win": "By offering exclusive live games and programming from MSG Networks and the YES Network with broad device distribution and bundled subscription options",
+    "where_to_play": "New York sports fans seeking streaming access to local teams including the Yankees, Knicks, Rangers, Devils, Islanders, Sabres, and Nets across multiple digital platforms",
+    "management_systems": [],
+    "winning_aspiration": "To be the exclusive direct-to-consumer streaming home providing New York sports fans with access to their favorite programming and teams all in one location",
+    "how_to_win_citations": [
+     "44a0c197-25a1-435d-ae3d-32da5090eda4",
+     "279db5ec-3c2a-4ed5-8a38-f534fe1b3405",
+     "99d0bedd-5add-4586-a203-5816ed37fba7"
+    ],
+    "must_have_capabilities": [
+     {
+      "text": "Technology infrastructure capable of delivering live sports streaming across multiple platforms and devices",
+      "citations": [
+       "279db5ec-3c2a-4ed5-8a38-f534fe1b3405",
+       "9ec77afe-c541-439d-94ce-e88a0579d847"
+      ]
+     }
+    ],
+    "where_to_play_citations": [
+     "8111841e-8549-462b-9480-89ed297322e3",
+     "279db5ec-3c2a-4ed5-8a38-f534fe1b3405",
+     "3a157e35-843c-4050-94d8-f51c50486cdf"
+    ],
+    "winning_aspiration_citations": [
+     "3a157e35-843c-4050-94d8-f51c50486cdf",
+     "99d0bedd-5add-4586-a203-5816ed37fba7",
+     "17a782b6-a8c0-4624-8597-9e7f58445b0b"
+    ]
+   },
+   "promise": {
+    "promise": "The Gotham Sports App provides New York sports fans with access to their favorite programming and teams all in one location.",
+    "citations": [
+     "99d0bedd-5add-4586-a203-5816ed37fba7",
+     "17a782b6-a8c0-4624-8597-9e7f58445b0b",
+     "a9487c44-f5ec-4e4e-baed-1febc367f2ba"
+    ]
+   },
+   "offering": {
+    "items": [
+     {
+      "label": "Gotham Sports App streaming service",
+      "statement": "The Gotham Sports App is the exclusive direct-to-consumer streaming home of MSG Networks and the YES Network, providing New York sports fans with access to their favorite programming and teams all in one location.",
+      "kind_hint": "service",
+      "refs": [
+       "3a157e35-843c-4050-94d8-f51c50486cdf",
+       "99d0bedd-5add-4586-a203-5816ed37fba7",
+       "17a782b6-a8c0-4624-8597-9e7f58445b0b"
+      ]
+     },
+     {
+      "label": "New York Yankees Season Pass",
+      "statement": "The Gotham Sports App is launching a New York Yankees \u201cSeason Pass\u201d enabling Yankees fans to access all YES Network programming, including Yankees Spring Training games, Regular Season games, pregame and postgame shows and Yankees Batting Practice Today.",
+      "kind_hint": "program",
+      "refs": [
+       "44a0c197-25a1-435d-ae3d-32da5090eda4",
+       "cbbcb06b-48a2-4acd-8de0-285a2dd3a4e2"
+      ]
+     },
+     {
+      "label": "Live games from multiple New York teams",
+      "statement": "Fans can receive more than 500 live games featuring the New York Knicks, New York Rangers, New Jersey Devils, New York Islanders and Buffalo Sabres, and the New York Yankees and Brooklyn Nets.",
+      "kind_hint": "program",
+      "refs": [
+       "8111841e-8549-462b-9480-89ed297322e3"
+      ]
+     },
+     {
+      "label": "Free app access for authenticated cable subscribers",
+      "statement": "The Gotham Sports App is also available free of charge to authenticated YES Network and MSG Networks subscribers.",
+      "kind_hint": "service",
+      "refs": [
+       "45aa102f-b969-428d-a940-fba6b8e8c3ef",
+       "e27b45e9-e980-4916-8ccb-a880ad10707a"
+      ]
+     },
+     {
+      "label": "Multi-platform app distribution",
+      "statement": "The Gotham Sports App is distributed on the Web, Amazon Fire TV, Apple iOS (mobile and tablet), Google Android (mobile and tablet), Apple TV, Android TV, Roku, Samsung Smart TV, LG Smart TV and Vizio Smart TV.",
+      "kind_hint": "platform",
+      "refs": [
+       "279db5ec-3c2a-4ed5-8a38-f534fe1b3405",
+       "4dcaf8f1-ac35-4185-8f0c-6fbb0dfa6a1d"
+      ]
+     },
+     {
+      "label": "Subscription bundles and pricing options",
+      "statement": "Users can subscribe to either YES or MSG+ in the app for $24.99 or $29.99 per month respectively, or subscribe to both through the 'Gotham Package' for $41.99 per month.",
+      "kind_hint": "program",
+      "refs": [
+       "9f118a8b-e0bc-4935-87eb-f5eae2523d75"
+      ]
+     }
+    ]
+   }
+  }
+ }
+}

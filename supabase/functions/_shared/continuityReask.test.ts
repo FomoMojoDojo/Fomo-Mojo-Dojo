@@ -41,9 +41,10 @@ Deno.test("C1-R. ONE re-ask per stage in total — the two triggers share the fl
   // trigger C1-R adds, and the pre-existing class trigger. That sharing IS the budget: a stage
   // refused by N1 and then by C1-S gets one attempt in total, not one per fault.
   const gates = [...fn.matchAll(/!reasked && deps\.reask/g)].length;
-  assertEquals(gates, 3, "sourcing, continuity and class triggers, all gated on the one flag");
+  // ruling 14 (2026-10-22) added a FOURTH trigger — the level refusal — on the same flag, never a second budget
+  assertEquals(gates, 4, "sourcing, level, continuity and class triggers, all gated on the one flag");
   const sets = [...fn.matchAll(/reasked = true;/g)].length;
-  assertEquals(sets, 3, "sourcing, continuity, and the pre-existing class re-ask all set it");
+  assertEquals(sets, 4, "sourcing, level, continuity, and the pre-existing class re-ask all set it");
   // and there is exactly one flag, declared once per kind
   const decls = [...fn.matchAll(/let reasked = false;/g)].length;
   const outer = [...src.matchAll(/let reasked = false;/g)].length;
@@ -170,6 +171,6 @@ Deno.test("C1-R. V4: one audit row per ATTEMPT, and every one carries the payloa
   const src = await read("./publicReadPerKind.ts");
   const fn = src.slice(src.indexOf("export async function runKindsIsolated("));
   const calls = [...fn.matchAll(/recordIntegrity\?\.\(kind, \{ status: "rejected"[\s\S]*?\}\);/g)].map((m) => m[0]);
-  assertEquals(calls.length, 3, "reject()'s funnel, N1c's attempt-1 record, and C1-R's attempt-1 record");
+  assertEquals(calls.length, 4, "reject()'s funnel, N1c's, the level re-ask's (ruling 14) and C1-R's attempt-1 records");
   for (const c of calls) assert(c.includes("payload"), `every rejected-status audit carries the payload: ${c.slice(0, 60)}`);
 });

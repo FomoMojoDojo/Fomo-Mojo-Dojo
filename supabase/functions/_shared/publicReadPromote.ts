@@ -19,6 +19,7 @@
 //     kind is refused with an error naming the read id; nothing is flipped, nothing is routed.
 //
 // Pure over a client shape ({ from }) so a fake client can exercise the whole promote path.
+import { levelHits, levelItemsOfOfferingPayload, levelRefusalDetail, type LevelKind } from "./readLevel.ts";
 import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, type StrategyPayload } from "./cascadeRouting.ts";
 // S1 (operator ruling, 2026-10-14): the stage gate runs AGAIN at promote. Same predicate, same
 // module — a read that passed S1 when it was staged can fail it later, because the rows it cites are
@@ -164,6 +165,23 @@ export async function promoteS1Refusal(
   return results.some((r) => r.unsourced.length > 0) ? s1Detail(results) : null;
 }
 
+/** Ruling 14 (2026-10-22): the LEVEL gate again at promote — the staged row's lines against the company's CURRENT
+ *  offering read (re-read now: the catalogue may have moved since stage). Returns the refusal detail (L2–L4), or null. */
+export async function promoteLevelRefusal(
+  supabase: AnySupabase,
+  companyId: string,
+  kind: string,
+  row: { payload?: Record<string, unknown> | null },
+): Promise<string | null> {
+  if (kind !== "positioning" && kind !== "promise" && kind !== "strategy") return null;
+  if (!row.payload) return null;
+  const { data: off } = await supabase.from("public_reads").select("payload").eq("company_id", companyId).eq("kind", "offering").eq("is_current", true).maybeSingle();
+  const items = levelItemsOfOfferingPayload((off as { payload?: Record<string, unknown> } | null)?.payload ?? null);
+  const { data: co } = await supabase.from("companies").select("name").eq("id", companyId).maybeSingle();
+  const hits = levelHits(kind as LevelKind, linesOfStoredPayload(row.payload), items, String((co as { name?: string } | null)?.name ?? ""));
+  return levelRefusalDetail(hits);
+}
+
 export async function promoteStagedReads(
   supabase: AnySupabase,
   companyId: string,
@@ -188,6 +206,9 @@ export async function promoteStagedReads(
     // live through rowTextOf, because a stage-time pass is no promise about now.
     const s1 = await promoteS1Refusal(supabase, { ...stagedRow!, company_id: companyId });
     if (s1) throw new PromoteRefused(stagedId, kind, `S1: a record/you line asserts what its cited rows do not say — ${s1}`);
+    // ── LEVEL AT PROMOTE (ruling 14) — decided before any write, like S1 ────────────────────────────────────────────
+    const lvl = await promoteLevelRefusal(supabase, companyId, kind, stagedRow!);
+    if (lvl) throw new PromoteRefused(stagedId, kind, `LEVEL: a line restates the offering where a ${kind} line belongs — ${lvl}`);
 
     const { data: prior } = await supabase.from("public_reads")
       .select("id").eq("company_id", companyId).eq("kind", kind).eq("is_current", true).maybeSingle();

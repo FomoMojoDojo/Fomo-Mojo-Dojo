@@ -32,8 +32,8 @@ Deno.test("RP. ONE prompt builder, and it is the only generator prompt template"
   // and every generator/class_fix call goes through it
   const gen = [...src.matchAll(/await run\(genChoice,/g)].length;
   const built = [...src.matchAll(/buildGenUser\(kind as Kind/g)].length;
-  assertEquals(gen, 4, "the first answer, the two full re-asks, and the class fix");
-  assertEquals(built, 4, "all four built by the one builder");
+  assertEquals(gen, 5, "the first answer, the three full re-asks (sourcing, continuity, level — ruling 14), and the class fix");
+  assertEquals(built, 5, "all five built by the one builder");
 });
 
 Deno.test("RP. the builder sends the WHOLE prompt — carried lines and the differentiator count included", async () => {

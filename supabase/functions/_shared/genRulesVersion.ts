@@ -60,4 +60,10 @@
 // (13246–13249) because those lines were shown to the model while no row carried page words for them.
 //   2026-10-15.4  MODEL TRIAL — generator gpt-4.1-mini -> gpt-4.1 (the previous value of this stamp).
 //   2026-10-22.1  R5-P — R5-failing predecessor lines are withheld from the prompt.
-export const GEN_RULES_VERSION = "2026-10-22.1" as const;
+// LEVEL + ALTERNATIVES (operator rulings 14 + 15, 2026-10-22): bumped because the GENERATION PROMPTS changed — the LEVEL
+// rule joins the positioning, promise and strategy prompts (a value line states an outcome, a differentiator is relative
+// to an alternative, the promise names a customer outcome, strategy speaks at the business level, product features belong
+// only in the offering), positioning gains the cited `alternatives` field, level-flagged predecessor lines are withheld
+// from the prompt and the strategy feed, and the judge is asked (g) LEVEL (reported).
+//   2026-10-22.2  LEVEL + ALTERNATIVES.
+export const GEN_RULES_VERSION = "2026-10-22.2" as const;
