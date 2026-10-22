@@ -18,7 +18,13 @@ export type CitedTextVerdict =
   | { kind: "cited"; evidence_excerpt: string }
   | { kind: "blanked"; evidence_excerpt: ""; unverified_excerpt: string; reason: "no_cited_text_for_url" | "not_in_cited_text" };
 
-export function citedTextExcerpt(excerpt: string | null | undefined, url: string | null | undefined, spans: ReadonlyMap<string, readonly string[]>): CitedTextVerdict {
+export function citedTextExcerpt(excerpt: string | null | undefined, url: string | null | undefined, spans: ReadonlyMap<string, readonly string[]>, exactCitedText?: string | null): CitedTextVerdict {
+  // ruling 1 (2026-10-21): a citation row carries its citation's cited_text — byte-equal membership in the URL's spans wins
+  // (the mapper's whitespace/dash normalization of the excerpt must not cost a row its page words)
+  if (typeof exactCitedText === "string" && exactCitedText.trim()) {
+    const own = spans.get(normalizeUrlKey(String(url ?? ""))) ?? [];
+    if (own.includes(exactCitedText)) return { kind: "cited", evidence_excerpt: exactCitedText };
+  }
   const raw = String(excerpt ?? "");
   const nx = normalizeForHash(raw);
   if (!nx) return { kind: "no_excerpt" };

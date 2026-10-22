@@ -14,16 +14,18 @@ Deno.test("gate: 0 seed pages ⇒ runs; any seed page ⇒ never; a related host'
   assertEquals(seedLaneTool("spectrum.com").allowed_domains, ["spectrum.com"]);
 });
 
-Deno.test("rows: own-domain client voice; excerpt = the whole cited passage or blank; off-host items refused", () => {
-  const spans = new Map([["spectrum.com/internet", ["Spectrum Internet® plans start at $30/mo with no data caps and no contracts."]]]);
+Deno.test("rows (ruling 1): one per citation on the seed host; excerpt = the citation's cited_text verbatim; uncited sentences and off-host citations mint nothing", () => {
   const decide = (url: string) => decideVoiceClassBeforeJudge({ url, item: null, labeledClass: "client_voice", pageText: null, judgedText: null, company: { name: "", host: "spectrum.com" }, registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" } as never) as never;
-  const { rows, stats } = buildSeedLaneRows({ companyId: "co", runId: 7, seedHost: "spectrum.com", captureDay: "2026-10-21", citedSpans: spans, decide, parsed: { items: [
-    { url: "https://www.spectrum.com/internet", statement: "Internet plans start at $30 a month.", quote: "plans start at $30/mo with no data caps" },
-    { url: "https://www.spectrum.com/mobile", statement: "Spectrum Mobile is included for a year.", quote: "Mobile is included" },
-    { url: "https://www.forbes.com/spectrum", statement: "x", quote: "x" },
-  ] } });
-  assertEquals(stats, { items: 3, off_host: 1, not_own: 0, minted: 2, cited: 1, blanked: 1 });
-  const [a, b] = rows as Array<Record<string, any>>;
-  assertEquals([a.voice_class, a.raw_payload.voice_authority.authority, a.raw_payload.source_type, a.raw_payload.excerpt_guard.basis, a.evidence_excerpt], ["client_voice", "own_domain", "seed_host_cited_text", "websearch_cited_text", "Spectrum Internet® plans start at $30/mo with no data caps and no contracts."]);
-  assertEquals([b.evidence_excerpt, b.claim_text, b.raw_payload.excerpt_guard.reason], ["", "Spectrum Mobile is included for a year.", "no_cited_text_for_url"]);
+  const CT = "Spectrum Internet® plans start at $30/mo — with no data caps\nand no contracts.";
+  const response = { content: [
+    { type: "text", text: "Spectrum's internet plans start at $30 a month.", citations: [{ type: "web_search_result_location", url: "https://www.spectrum.com/internet", title: "Spectrum Internet", cited_text: CT }] },
+    { type: "text", text: "Spectrum is the best provider in America." },
+    { type: "text", text: "Forbes covers it.", citations: [{ type: "web_search_result_location", url: "https://www.forbes.com/spectrum", title: "F", cited_text: "Forbes text about Spectrum." }] },
+  ] };
+  const { rows, stats } = buildSeedLaneRows({ companyId: "co", runId: 7, seedHost: "spectrum.com", captureDay: "2026-10-21", response, excludeHosts: [], existingExcerpts: new Set(), decide });
+  assertEquals([stats.citations, stats.cited_blocks, stats.uncited_blocks, stats.off_host, stats.minted], [2, 2, 1, 1, 1]);
+  const [a] = rows as Array<Record<string, any>>;
+  assertEquals([a.voice_class, a.raw_payload.voice_authority.authority, a.raw_payload.source_type, a.raw_payload.excerpt_guard.basis, a.source_title], ["client_voice", "own_domain", "seed_host_cited_text", "websearch_cited_text", "Spectrum Internet"]);
+  assert(a.evidence_excerpt === CT, "byte-equal to the tool's cited_text (dash and newline kept)");
+  assertEquals(a.claim_text, "Spectrum's internet plans start at $30 a month.");
 });

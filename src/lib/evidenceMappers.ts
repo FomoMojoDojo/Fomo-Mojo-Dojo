@@ -781,12 +781,15 @@ export function mapPublicBaselineOutputToSignals(args: {
   for (const item of asArray(result.evidence_ledger)) {
     const record = asRecord(item);
     if (!record) continue;
-    const claimText = asString(record.snippet) || asString(record.bucket);
+    // RULING 1 (2026-10-21): a web_search CITATION entry — claim_text = the cited sentence (our summary), excerpt = its
+    // snippet, which IS the citation's cited_text (page words; the mint guard restores it byte-for-byte), title from the citation
+    const citedText = record.citation === true ? asString(record.cited_text) : "";
+    const claimText = citedText ? (asString(record.sentence) || asString(record.snippet)) : (asString(record.snippet) || asString(record.bucket));
     pushSignal(signals, {
       company_id: args.companyId,
       source_id: sourceId,
       source_type: "public_baseline_run",
-      source_title: sourceTitle,
+      source_title: citedText && asString(record.title) ? asString(record.title) : sourceTitle,
       source_url: asString(record.url) || sourceUrl || null,
       signal_band: "outside",
       voice_class: asString(record.voice_class) || null,
@@ -794,7 +797,7 @@ export function mapPublicBaselineOutputToSignals(args: {
       evidence_type: "market_signal",
       claim_text: claimText,
       // EXCERPT LAW (2026-09-14): the document's words or absent — a bucket label is never a quote.
-      evidence_excerpt: asString(record.snippet),
+      evidence_excerpt: asString(record.snippet), // a citation entry's snippet IS its cited_text (citationRows.ts)
       topic: asString(record.bucket).toLowerCase() || "market",
       framework: "public_baseline",
       directness: asString(record.url) ? "direct" : "inferred",

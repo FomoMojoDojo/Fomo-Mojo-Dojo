@@ -8,7 +8,7 @@
 // table, a revoked policy must all degrade to a log line and let the model call's own result stand.
 // The alternative — an accounting failure taking down a public read — is strictly worse than a gap
 // in the ledger, and the coverage label already tells an operator the ledger is partial.
-import { OPENAI_PRICE_PER_MTOK, type OpenAIUsage } from "./modelPricing.ts";
+import { OPENAI_PRICE_PER_MTOK, openaiPriceFor, type OpenAIUsage } from "./modelPricing.ts";
 
 export type ModelCallRecord = {
   provider: string;
@@ -30,14 +30,19 @@ export function usdFromUsage(usage: OpenAIUsage | null | undefined): number | nu
   return (p / 1e6) * OPENAI_PRICE_PER_MTOK.input + (cmp / 1e6) * OPENAI_PRICE_PER_MTOK.output;
 }
 
-/** Build the persistable record from a raw OpenAI usage object. */
+/** Build the persistable record from a raw OpenAI usage object. A model with a signed per-model price (gpt-4.1, ruling
+ *  2026-10-21) is priced at it; any other model keeps the Gate 3 table, exactly as before. */
 export function openaiRecord(model: string, usage: OpenAIUsage | null | undefined): ModelCallRecord {
+  const p = model === "gpt-4.1-mini" ? null : openaiPriceFor(model);
+  const usd = p && usage && Number.isFinite(Number(usage.prompt_tokens)) && Number.isFinite(Number(usage.completion_tokens))
+    ? (Number(usage.prompt_tokens) / 1e6) * p.input + (Number(usage.completion_tokens) / 1e6) * p.output
+    : usdFromUsage(usage);
   return {
     provider: "openai",
     model,
     prompt_tokens: usage ? Number(usage.prompt_tokens) : null,
     completion_tokens: usage ? Number(usage.completion_tokens) : null,
-    usd: usdFromUsage(usage),
+    usd,
   };
 }
 

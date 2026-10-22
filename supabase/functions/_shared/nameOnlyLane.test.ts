@@ -88,15 +88,20 @@ Deno.test("brief: the six name-only passes joined as search intents — the name
   assert(!/site:|\.org|\.com/.test(brief.replace(/mithun/gi, "")), "no domain terms on a name-only brief");
 });
 
-Deno.test("domain plan: the prompt is byte-identical to HEAD bd764f2c (snapshot, with and without a category)", async () => {
+Deno.test("domain plan: the prompt is the ruling-1 citations snapshot (2026-10-21), and differs from HEAD bd764f2c only by the four citation lines", async () => {
   const src = await read("../public-baseline/index.ts");
   const schemaHint = src.slice(src.indexOf("  const schemaHint =\n") + "  const schemaHint =\n".length, src.indexOf("`}`;", src.indexOf("  const schemaHint =\n")) + 3);
   // eslint-disable-next-line no-new-func
   const hint = new Function("return " + schemaHint.trim().replace(/;$/, ""))() as string;
   const withCat = claudeWebSearchPrompt({ companyName: "Edgewood", website: "https://edgewood.org", domain: "edgewood.org", resolvedCategory: "youth mental health nonprofit", schemaHint: hint });
-  assertEquals(withCat + "\n", await read("./fixtures/lane/domain_prompt_HEAD_bd764f2c.txt"));
+  assertEquals(withCat + "\n", await read("./fixtures/lane/domain_prompt_citations_20261021.txt"));
+  // RULING 1 (2026-10-21): against bd764f2c, only the citation lines changed — every other line is byte-identical
+  const before = (await read("./fixtures/lane/domain_prompt_HEAD_bd764f2c.txt")).split("\n"), after = (withCat + "\n").split("\n");
+  const removed = before.filter((l) => !after.includes(l)), added = after.filter((l) => !before.includes(l));
+  assertEquals(removed.length, 4);
+  assert(added.some((l) => l.startsWith("CITED FINDINGS (required, FIRST)")) && added.includes(`- Leave "outside_voice_signals" and "evidence_ledger" as EMPTY arrays [] — the cited sentences above ARE the evidence.`));
   const noCat = claudeWebSearchPrompt({ companyName: "Edgewood", website: "https://edgewood.org", domain: "edgewood.org", schemaHint: hint });
-  assertEquals(noCat + "\n", await read("./fixtures/lane/domain_prompt_nocategory_HEAD_bd764f2c.txt"));
+  assertEquals(noCat + "\n", await read("./fixtures/lane/domain_prompt_nocategory_citations_20261021.txt"));
   // the name-only form differs ONLY where the ruling says: the two domain-anchored sentences
   const nameOnly = claudeWebSearchPrompt({ companyName: "Mithun", website: "", domain: "", schemaHint: hint, nameOnlyBrief: "1. \"Mithun\" (about OR company)" });
   assertStringIncludes(nameOnly, "It has NO public website of its own — read it BY NAME.");

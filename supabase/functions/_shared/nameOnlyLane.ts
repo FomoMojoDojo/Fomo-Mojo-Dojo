@@ -151,14 +151,19 @@ export function claudeWebSearchPrompt(opts: {
     `DISAMBIGUATION LAW (precision over coverage):\n` +
     anchor +
     `- If you cannot be confident a result refers to THIS company, EXCLUDE it. Same-named or similarly-named organizations elsewhere are contamination, not coverage.\n\n` +
-    `Then output a SINGLE JSON object — and NOTHING else — matching exactly this shape:\n${opts.schemaHint}\n\n` +
+    // RULING 1 (2026-10-21): rows are built from the tool's citations, which attach only to prose — so the findings come
+    // first as cited sentences, and the JSON below carries the analysis only (its two evidence arrays stay empty).
+    `CITED FINDINGS (required, FIRST): write each finding about this company as its own short sentence of prose, ` +
+    `citing the search result it comes from. Every fact you state must carry a citation; a sentence you cannot cite, do not write. ` +
+    `Cover the footprint classes above — reviews, employees, press, social, listings, partners, registries.\n\n` +
+    `Then output a SINGLE JSON object matching exactly this shape:\n${opts.schemaHint}\n\n` +
     `Rules:\n` +
     `- Use ONLY facts found via your web searches. Do NOT fabricate reviews, quotes, ratings, or URLs.\n` +
-    `- Every outside_voice_signals[].url and evidence_ledger[].url MUST be a real URL returned by a search.\n` +
+    `- Leave "outside_voice_signals" and "evidence_ledger" as EMPTY arrays [] — the cited sentences above ARE the evidence.\n` +
     `- source_type ∈ {employee_review, customer_review, community_discussion, third_party_profile, profile_or_company_page, news_signal, review_signal, public_web}.\n` +
     `- voice_class ∈ {client_voice, outside_voice_about_client, market_context}: client_voice = the company speaking about itself (its site, its profiles, its posts); outside_voice_about_client = a genuine third party speaking ABOUT this company (reviews, press about them, partner/customer mentions, registries attesting them); market_context = category/market information not about this company specifically (industry stats, category coverage). When unsure between outside_voice_about_client and market_context, ask: does this source attest something about THIS company? If not, it is market_context.\n` +
     `- For genuine third-party voices set bucket="outside_voice_signal".\n` +
-    `- Include ≥1 employee_review, ≥1 customer_review, and ≥1 community_discussion IF such public sources exist; ` +
+    `- In the cited sentences, include ≥1 employee review, ≥1 customer review, and ≥1 community discussion IF such public sources exist; ` +
     `if a type genuinely has no public source, omit it rather than inventing one.\n` +
-    `- confidence is 0-100. Emit the JSON object only — no markdown fences, no prose before or after.`;
+    `- confidence is 0-100. After the cited sentences, emit the JSON object last — no markdown fences, no prose after it.`;
 }

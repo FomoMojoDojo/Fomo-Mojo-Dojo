@@ -9,6 +9,20 @@ export type OpenAIUsage = { prompt_tokens: number; completion_tokens: number };
 /** GPT-4.1-mini pricing, USD per 1M tokens. */
 export const OPENAI_PRICE_PER_MTOK = { input: 0.40, output: 1.60 } as const;
 
+// ── OPENAI BY MODEL (re-run brief ruling 3, 2026-10-21) ─────────────────────────────────────────────────────────────────
+// Source: OpenAI's model page for gpt-4.1, read 2026-10-21 — $2.00/MTok input, $0.50/MTok cached input, $8.00/MTok output.
+// gpt-4.1-mini is the Gate 3 table above (OPENAI_PRICE_PER_MTOK). Keyed by EXACT model id; a model not named has no
+// price here (a capped run refuses it before the call). Cached input is not separated in the usage we read, so a call is
+// priced at the full input rate — an over-estimate, never an under-estimate.
+export type OpenAIPrice = { input: number; cached_input: number | null; output: number };
+export const OPENAI_PRICE_BY_MODEL: Readonly<Record<string, OpenAIPrice>> = {
+  "gpt-4.1": { input: 2.00, cached_input: 0.50, output: 8.00 },
+  "gpt-4.1-mini": { input: OPENAI_PRICE_PER_MTOK.input, cached_input: null, output: OPENAI_PRICE_PER_MTOK.output },
+};
+export function openaiPriceFor(model: string): OpenAIPrice | null {
+  return Object.prototype.hasOwnProperty.call(OPENAI_PRICE_BY_MODEL, model) ? OPENAI_PRICE_BY_MODEL[model] : null;
+}
+
 export function usdCost(usage: OpenAIUsage): number {
   return (usage.prompt_tokens / 1e6) * OPENAI_PRICE_PER_MTOK.input
     + (usage.completion_tokens / 1e6) * OPENAI_PRICE_PER_MTOK.output;

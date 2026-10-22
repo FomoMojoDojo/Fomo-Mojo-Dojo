@@ -3,13 +3,15 @@
 // When a domain plan's own-site crawl read ZERO pages on the company's seed host (spectrum.com resets the crawler's
 // connection — bot protection), one Claude web_search call restricted to that host (allowed_domains = [seed]) reads the
 // company's own site through the search tool instead. Its rows are the subject's own voice by the one own-domain rule
-// (decideVoiceClassBeforeJudge → own_domain), and each row's evidence_excerpt is a cited_text passage the tool returned for
-// that URL, or blank (citedTextExcerpt) — basis websearch_cited_text, never our fetch, never the model's summary. The call
+// (decideVoiceClassBeforeJudge → own_domain). Rows come from the tool's CITATIONS only (ruling 1, 2026-10-21): each row's
+// evidence_excerpt is a citation's cited_text, verbatim — basis websearch_cited_text, never our fetch, never the model's
+// summary; an uncited sentence mints nothing. The call
 // is ledgered (public-baseline-seed-lane) and, on a capped run, checked against the cap before it is sent.
 //
 // Receipts-only like the crawl's own rows (raw_payload.source_type "seed_host_cited_text"; isSiteCrawlReceiptRow): own-site
 // words are evidence, not claim candidates. A crawl that read ANY seed page never runs the lane.
-import { citedTextExcerpt, WEBSEARCH_CITED_TEXT } from "./citedTextExcerpt.ts";
+import { WEBSEARCH_CITED_TEXT } from "./citedTextExcerpt.ts";
+import { citationEntries } from "./citationRows.ts";
 import { isOwnDomainUrl } from "./firstReadProvenance.ts";
 
 export const SEED_LANE_SOURCE_TYPE = "seed_host_cited_text" as const;
@@ -33,54 +35,49 @@ export function seedLaneTool(seedHost: string): Record<string, unknown> {
 }
 
 export function seedLanePrompt(companyName: string, seedHost: string): string {
+  // RULING 1 (2026-10-21): rows are built from the tool's citations, which attach only to prose — so the lane asks for
+  // cited sentences, not JSON.
   return `Read the company "${companyName}" from its OWN website, ${seedHost}, using web search (results are limited to that site).\n` +
     `Find what the company itself says on its own pages: what it offers, who it serves, plans and prices, where it operates, and how it describes itself.\n` +
-    `Then output a SINGLE JSON object — and NOTHING else — of this shape:\n` +
-    `{ "items": [ { "url": "<a page on ${seedHost} returned by a search>", "statement": "<one short neutral sentence: what the page says>", "quote": "<the page's own words, copied exactly from the search result>" } ] }\n` +
-    `Rules:\n- Use ONLY pages on ${seedHost} returned by your searches. Do NOT invent URLs or words.\n- At most 12 items. Emit the JSON object only — no markdown fences, no prose.`;
+    `Write each thing the site says as its own short sentence of prose, citing the page it comes from. Every sentence must carry a citation; ` +
+    `a sentence you cannot cite, do not write. At most 15 sentences. No headings, no lists, no JSON.`;
 }
 
-export type SeedLaneRowStats = { items: number; off_host: number; not_own: number; minted: number; cited: number; blanked: number };
+export type SeedLaneRowStats = { citations: number; cited_blocks: number; uncited_blocks: number; excluded: number; duplicate_in_run: number; duplicate_existing: number; off_host: number; not_own: number; minted: number };
 
-/** The rows to insert, from the lane's parsed answer and the tool's cited passages. `decide` is the one voice authority
- *  (the caller passes decideVoiceClassBeforeJudge bound to the company's seed host). */
+/** The rows to insert, from the lane's raw response: one per citation of a cited sentence on the seed host (citationEntries
+ *  — uncited sentences, excluded hosts and duplicates mint nothing). claim_text = the sentence, evidence_excerpt = the
+ *  citation's cited_text verbatim, url/title from the citation. `decide` is the one voice authority (the caller binds
+ *  decideVoiceClassBeforeJudge to the company's seed host). */
 export function buildSeedLaneRows(args: {
   companyId: string;
   runId: string | number | null;
   seedHost: string;
-  parsed: unknown;
-  citedSpans: ReadonlyMap<string, readonly string[]>;
+  response: unknown;
+  excludeHosts: readonly string[];
+  existingExcerpts: ReadonlySet<string>;
   decide: (url: string) => { ok: boolean; voice_class?: string; authority?: string } | Record<string, unknown>;
   captureDay: string;
 }): { rows: Array<Record<string, unknown>>; stats: SeedLaneRowStats } {
-  const items = Array.isArray((args.parsed as { items?: unknown })?.items) ? (args.parsed as { items: unknown[] }).items : [];
-  const stats: SeedLaneRowStats = { items: items.length, off_host: 0, not_own: 0, minted: 0, cited: 0, blanked: 0 };
+  const { entries, stats: c } = citationEntries(args.response, { excludeHosts: args.excludeHosts, existingExcerpts: args.existingExcerpts });
+  const stats: SeedLaneRowStats = { citations: c.citations, cited_blocks: c.cited_blocks, uncited_blocks: c.uncited_blocks, excluded: c.excluded, duplicate_in_run: c.duplicate_in_run, duplicate_existing: c.duplicate_existing, off_host: 0, not_own: 0, minted: 0 };
   const rows: Array<Record<string, unknown>> = [];
-  const seen = new Set<string>();
-  for (const it of items as Array<{ url?: unknown; statement?: unknown; quote?: unknown }>) {
-    const url = String(it?.url ?? "").trim();
-    if (!url || !isOwnDomainUrl(url, args.seedHost)) { stats.off_host++; continue; }
-    const d = args.decide(url) as { ok?: boolean; voice_class?: string; authority?: string };
+  for (const e of entries) {
+    if (!isOwnDomainUrl(e.url, args.seedHost)) { stats.off_host++; continue; }
+    const d = args.decide(e.url) as { ok?: boolean; voice_class?: string; authority?: string };
     if (!d?.ok || d.voice_class !== "client_voice") { stats.not_own++; continue; }
-    const statement = String(it?.statement ?? "").trim();
-    const quote = String(it?.quote ?? "").trim();
-    const v = citedTextExcerpt(quote || statement, url, args.citedSpans);
-    const excerpt = v.kind === "cited" ? v.evidence_excerpt : "";
-    const key = `${url}\n${excerpt || statement}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
     let path = "/";
-    try { path = new URL(url).pathname || "/"; } catch { /* kept "/" */ }
+    try { path = new URL(e.url).pathname || "/"; } catch { /* kept "/" */ }
     rows.push({
       company_id: args.companyId,
       source_id: args.runId == null ? null : String(args.runId),
       source_type: "public_baseline_run",
-      source_title: `Own site via web search (${path})`,
-      source_url: url,
+      source_title: e.title || `Own site via web search (${path})`,
+      source_url: e.url,
       signal_band: "outside",
       evidence_type: "market_signal",
-      claim_text: (statement || excerpt).slice(0, 600) || `Own site page ${path}`,
-      evidence_excerpt: excerpt,
+      claim_text: e.sentence.slice(0, 600),
+      evidence_excerpt: e.cited_text,
       event_date: args.captureDay,
       event_date_precision: "day",
       topic: "company_own_site",
@@ -96,15 +93,16 @@ export function buildSeedLaneRows(args: {
         source_type: SEED_LANE_SOURCE_TYPE,
         receipts_only: true,
         path,
-        url,
+        url: e.url,
+        title: e.title,
+        sentence: e.sentence,
+        cited_text: e.cited_text,
+        citation: true,
         voice_authority: { authority: d.authority ?? "own_domain" },
-        excerpt_guard: v.kind === "cited"
-          ? { basis: WEBSEARCH_CITED_TEXT, traced: true }
-          : { basis: WEBSEARCH_CITED_TEXT, traced: false, reason: v.kind === "blanked" ? v.reason : "no_excerpt", ...(v.kind === "blanked" ? { unverified_excerpt: v.unverified_excerpt } : {}) },
+        excerpt_guard: { basis: WEBSEARCH_CITED_TEXT, traced: true },
       },
     });
     stats.minted++;
-    if (excerpt) stats.cited++; else stats.blanked++;
   }
   return { rows, stats };
 }

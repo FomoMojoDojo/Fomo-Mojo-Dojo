@@ -1,5 +1,7 @@
 // supabase/functions/public-baseline/index.ts
-import { loadConfirmedRelatedEntities, type OwnHostSet } from "../_shared/ownHosts.ts";
+import { loadConfirmedRelatedEntities, loadEntityExcludeHosts, type OwnHostSet } from "../_shared/ownHosts.ts";
+import { citationEntries, rawCitationSnapshot, type CitationStats } from "../_shared/citationRows.ts";
+import { normalizeForHash } from "../_shared/contentIdentity.ts";
 import { countsAtEarlyAmbiguousCheck, crawlEntityFor, crawlHostFilter, discoveryHostsFor, domainPlanFallbackAdmits, entityQueryPasses, guessedProfileLinksOwnHost, isRelatedOwnHost, relatedCrawlSeeds, relatedDomainBonus, type DiscoveryHosts } from "../_shared/ownHostDiscovery.ts";
 import { promptShaOf, requireWebSearchLedger, ledgerOrRefuse, webSearchLedgerFor, type WebSearchLedger } from "../_shared/webSearchLedger.ts";
 import { assertSpendable, makeSpendCap, projectWebSearchUsd, SpendCapRefused, type SpendCap } from "../_shared/spendCap.ts";
@@ -1752,7 +1754,7 @@ async function callClaudeWebSearch(opts: {
   spendCap?: SpendCap | null;
   /** E3: confirmed related entities in effect (domain plan) — named in the prompt as the same business; absent ⇒ unchanged */
   relatedEntities?: Array<{ name: string; host: string; relation: "parent" | "subsidiary" | "acquired" | "brand" | "merged_into"; effective_from: string | null }> | null;
-}): Promise<{ parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string>; citationUrlByKey: Map<string, string>; citedSpans: Map<string, string[]> }> {
+}): Promise<{ parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string>; citationUrlByKey: Map<string, string>; citedSpans: Map<string, string[]>; citationStats: CitationStats & { model_items_dropped: number }; rawSnapshot: ReturnType<typeof rawCitationSnapshot> }> {
   const schemaHint =
     `{\n` +
     `  "category_archetype": "<string>",\n` +
@@ -1776,8 +1778,11 @@ async function callClaudeWebSearch(opts: {
   // Honor the company's exclude_domains: tell web_search not to search those hosts.
   // OE-2: 12 = one search per footprint class plus disambiguation/follow-up headroom.
   const webSearchTool: Record<string, unknown> = { type: "web_search_20250305", name: "web_search", max_uses: 12 };
-  if (Array.isArray(opts.excludeDomains) && opts.excludeDomains.length > 0) {
-    webSearchTool.blocked_domains = opts.excludeDomains;
+  // RULING 1 (2026-10-21): a confirmed entity's exclude list (same-named hosts that are NOT it) is blocked too; none ⇒ unchanged
+  const entityExcludeHosts = await loadEntityExcludeHosts(opts.supabase, opts.companyId);
+  const blockedHosts = [...(Array.isArray(opts.excludeDomains) ? opts.excludeDomains : []), ...entityExcludeHosts.filter((h) => !(opts.excludeDomains ?? []).includes(h))];
+  if (blockedHosts.length > 0) {
+    webSearchTool.blocked_domains = blockedHosts;
   }
   console.log(`[baseline] claude web_search tool config: ${JSON.stringify(webSearchTool)}`);
 
@@ -1862,6 +1867,17 @@ async function callClaudeWebSearch(opts: {
   })();
   // E2: confirmed related entities in effect are the company's own too (none ⇒ the single host, as before)
   const relatedForGuard = await loadConfirmedRelatedEntities(opts.supabase, opts.companyId);
+  // RULING 1 (2026-10-21): CITATIONS BECOME THE ROWS. The model's JSON evidence arrays are discarded; every citation of a
+  // cited sentence becomes one evidence_ledger entry (claim = the sentence, excerpt = the citation's cited_text verbatim),
+  // uncited sentences and excluded hosts mint nothing, and a cited_text already standing as one of this company's
+  // excerpts is not re-minted (_shared/citationRows.ts). The overlay below then decides each entry's voice as before.
+  const { data: excerptRows } = await opts.supabase.from("signals").select("evidence_excerpt").eq("company_id", opts.companyId).is("superseded_at", null).neq("evidence_excerpt", "");
+  const existingExcerpts = new Set<string>(((excerptRows ?? []) as Array<{ evidence_excerpt: string | null }>).map((r) => normalizeForHash(String(r.evidence_excerpt ?? ""))).filter(Boolean));
+  const cit = citationEntries(data, { excludeHosts: blockedHosts, existingExcerpts });
+  const modelItemsDropped = (Array.isArray((parsed as any).outside_voice_signals) ? (parsed as any).outside_voice_signals.length : 0) + (Array.isArray((parsed as any).evidence_ledger) ? (parsed as any).evidence_ledger.length : 0);
+  (parsed as any).outside_voice_signals = [];
+  (parsed as any).evidence_ledger = cit.entries;
+  console.log("[baseline] citation rows", { ...cit.stats, model_items_dropped: modelItemsDropped });
   const reclassify = (arr: unknown) =>
     (Array.isArray(arr) ? arr : []).map((e: any) => {
       const url = String(e?.url || "").trim();
@@ -1900,14 +1916,14 @@ async function callClaudeWebSearch(opts: {
   // RULING 4 (2026-10-21): every cited_text span per URL — a minted row's excerpt must be one of them, or blank
   const citedSpans = extractCitedSpans(data);
   // parsed is guaranteed non-null here: the loop above either broke with parsed set or threw.
-  return { parsed: parsed as Record<string, unknown>, citationSourceTextByUrl, citationUrlByKey, citedSpans };
+  return { parsed: parsed as Record<string, unknown>, citationSourceTextByUrl, citationUrlByKey, citedSpans, citationStats: { ...cit.stats, model_items_dropped: modelItemsDropped }, rawSnapshot: rawCitationSnapshot(data) };
 }
 
 // SEED-HOST LANE call (2026-10-21) — one Claude web_search call with allowed_domains = [the seed host]. Ledgered before
 // parse (unledgered ⇒ refused), spend-capped before it is sent. Returns the parsed answer and every cited passage per URL.
 async function callSeedHostLane(opts: {
   apiKey: string; model: string; companyName: string; seedHost: string; ledger: WebSearchLedger; spendCap: SpendCap | null;
-}): Promise<{ parsed: Record<string, unknown> | null; citedSpans: Map<string, string[]> }> {
+}): Promise<{ response: unknown }> {
   const prompt = seedLanePrompt(opts.companyName, opts.seedHost);
   requireWebSearchLedger(opts.ledger, SEED_LANE_CALL_SITE);
   const promptSha = await promptShaOf(prompt);
@@ -1930,9 +1946,8 @@ async function callSeedHostLane(opts: {
   }
   const d = await res.json();
   await ledgerOrRefuse(opts.ledger, { model: opts.model, usage: (d as any)?.usage ?? null, attempt: 1, promptSha }, SEED_LANE_CALL_SITE);
-  if (String((d as any)?.stop_reason ?? "") === "max_tokens") throw new Error("seed-host lane: output hit max_tokens — answer truncated, nothing minted");
-  const blocks = Array.isArray((d as any)?.content) ? (d as any).content : [];
-  return { parsed: parseJsonObjectDefensive(selectFinalText(blocks)), citedSpans: extractCitedSpans(d) };
+  // max_tokens: the prose stops mid-sentence, but every citation already returned is whole — rows come from citations only
+  return { response: d };
 }
 
 const QUALITY_PROMPTS: Record<"no_results" | "thin" | "ambiguous" | "search_unavailable", string> = {
@@ -2518,7 +2533,7 @@ Deno.serve(async (req) => {
     // results, the fallback crawl runs over their hosts, and the gate is taken afterwards (resolveNameOnlyOutcome).
     // The lane's parsed result is REUSED as the synthesis (one call, not two). Domain plans: byte-identical path.
     const searxOutageForLedger = isUnambiguousSearchOutage(searchDiag);
-    let nameOnlyLaneOut: { parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string>; citationUrlByKey: Map<string, string>; citedSpans: Map<string, string[]> } | null = null;
+    let nameOnlyLaneOut: Awaited<ReturnType<typeof callClaudeWebSearch>> | null = null;
     let nameOnlyLane: LaneStatus | null = null;
     let laneSources: ReturnType<typeof laneSourcesFromResult> = [];
     if (planKind === "name_only" && synthesis_engine === "claude_websearch") {
@@ -3366,6 +3381,9 @@ Deno.serve(async (req) => {
     let claudeCitationUrlByKey = new Map<string, string>();
     // RULING 4: the web_search call's cited_text spans per URL (null on the OpenAI path — the rule does not apply there)
     let claudeCitedSpans: Map<string, string[]> | null = null;
+    // RULING 1: the web_search call's citation tally and its raw text/citation blocks (the byte-compare snapshot)
+    let webSearchCitations: Record<string, unknown> | null = null;
+    let webSearchRaw: Record<string, unknown> | null = null;
     let result: unknown;
     if (synthesis_engine === "claude_websearch" && nameOnlyLaneOut) {
       // NAME-ONLY: the lane already ran (before the gate) — reuse its result; never a second web_search.
@@ -3373,6 +3391,7 @@ Deno.serve(async (req) => {
       claudeCitationSourceText = nameOnlyLaneOut.citationSourceTextByUrl;
       claudeCitationUrlByKey = nameOnlyLaneOut.citationUrlByKey;
       claudeCitedSpans = nameOnlyLaneOut.citedSpans;
+      webSearchCitations = nameOnlyLaneOut.citationStats; webSearchRaw = nameOnlyLaneOut.rawSnapshot;
       // past the gate ⇒ the run completes; which discovery carried it is the ledgered search_status
       runLedger.search_status = searchLedger.searx === "ok" ? "searx_and_lane" : "lane_only";
     } else if (synthesis_engine === "claude_websearch") {
@@ -3399,6 +3418,7 @@ Deno.serve(async (req) => {
       claudeCitationSourceText = claudeOut.citationSourceTextByUrl;
       claudeCitationUrlByKey = claudeOut.citationUrlByKey;
       claudeCitedSpans = claudeOut.citedSpans;
+      webSearchCitations = claudeOut.citationStats; webSearchRaw = claudeOut.rawSnapshot;
     } else {
       // SPEND CAP: the OpenAI synthesis writes no model_calls row (modelCallSites: public-baseline-synthesis, not captured),
       // so its cost cannot be computed — under a cap it is refused before it is sent.
@@ -3622,6 +3642,7 @@ Deno.serve(async (req) => {
     const seedHostForLane = disc.set.seed;
     const seedRead = seedPagesRead(crawledSiteEvidence, seedHostForLane);
     let seedLane: Record<string, unknown> = { ran: false, seed_pages_read: seedRead };
+    let seedLaneRaw: Record<string, unknown> | null = null;
     if (synthesis_engine === "claude_websearch" && seedLaneShouldRun({ noPublicSite, seedHost: seedHostForLane, seedPagesRead: seedRead })) {
       try {
         const lane = await callSeedHostLane({
@@ -3629,8 +3650,12 @@ Deno.serve(async (req) => {
           ledger: webSearchLedgerFor(supabase, { companyId: String(company_id), runId: ledgerRowId, callSite: SEED_LANE_CALL_SITE }),
           spendCap,
         });
+        const { data: laneExcerptRows } = await supabase.from("signals").select("evidence_excerpt").eq("company_id", company_id).is("superseded_at", null).neq("evidence_excerpt", "");
+        const laneExisting = new Set<string>(((laneExcerptRows ?? []) as Array<{ evidence_excerpt: string | null }>).map((r) => normalizeForHash(String(r.evidence_excerpt ?? ""))).filter(Boolean));
+        const laneExcludes = [...sourceFilters.exclude_domains, ...(await loadEntityExcludeHosts(supabase, String(company_id)))];
+        seedLaneRaw = rawCitationSnapshot(lane.response);
         const { rows, stats } = buildSeedLaneRows({
-          companyId: String(company_id), runId: inserted?.id ?? null, seedHost: seedHostForLane!, parsed: lane.parsed, citedSpans: lane.citedSpans,
+          companyId: String(company_id), runId: inserted?.id ?? null, seedHost: seedHostForLane!, response: lane.response, excludeHosts: laneExcludes, existingExcerpts: laneExisting,
           decide: (url) => decideVoiceClassBeforeJudge({ url, item: null, labeledClass: "client_voice", pageText: null, judgedText: null, company: { name: "", host: seedHostForLane! }, registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" }) as never,
           captureDay: new Date().toISOString().slice(0, 10),
         });
@@ -3649,7 +3674,12 @@ Deno.serve(async (req) => {
       const capLedger = spendCap ? { cap_usd: spendCap.capUsd, since: spendCap.since, refusals: spendCap.refusals } : null;
       const { error: siteReadErr } = await supabase
         .from("public_baseline_runs")
-        .update({ result_json: { ...withRunLedger(resultWithDiscoveredSources, { ...runLedger, seed_lane: seedLane, ...(capLedger ? { spend_cap: capLedger } : {}) }), site_read: siteReadPatch } })
+        .update({ result_json: {
+          ...withRunLedger(resultWithDiscoveredSources, { ...runLedger, seed_lane: seedLane, ...(capLedger ? { spend_cap: capLedger } : {}), ...(webSearchCitations ? { citation_rows: webSearchCitations } : {}) }),
+          site_read: siteReadPatch,
+          // RULING 1: the raw text + citation blocks of each web_search response — every minted cited_text is byte-compared to these
+          ...(webSearchRaw || seedLaneRaw ? { web_search_raw: { main: webSearchRaw, seed_lane: seedLaneRaw } } : {}),
+        } })
         .eq("id", inserted?.id);
       if (siteReadErr) console.warn("[site-mint] site_read ledger write failed:", siteReadErr.message);
     }

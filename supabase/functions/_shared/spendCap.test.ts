@@ -12,7 +12,9 @@ Deno.test("projection: web_search = prompt/4 + uses×10k input, max_tokens outpu
   assertAlmostEquals(projectWebSearchUsd("claude-sonnet-4-6", { promptChars: 4000, maxUses: 12, maxTokens: 32000 })!, 0.963, 1e-9);
   assertEquals(projectWebSearchUsd("claude-unknown", { promptChars: 1, maxUses: 1, maxTokens: 1 }), null);
   assert(projectOpenAIUsd("gpt-4.1-mini", { promptChars: 4000, maxOutputTokens: 4096 })! > 0);
-  assertEquals(projectOpenAIUsd("gpt-4.1", { promptChars: 4000, maxOutputTokens: 4096 }), null, "no signed gpt-4.1 price");
+  // gpt-4.1 signed 2026-10-21: 1000 in × $2 + 4096 out × $8 = 0.002 + 0.032768
+  assertAlmostEquals(projectOpenAIUsd("gpt-4.1", { promptChars: 4000, maxOutputTokens: 4096 })!, 0.034768, 1e-9);
+  assertEquals(projectOpenAIUsd("gpt-5-unpriced", { promptChars: 4000, maxOutputTokens: 4096 }), null, "a model with no signed price");
 });
 
 Deno.test("refusals: unpriced, an unpriced paid row in the window, over the cap; fits ⇒ passes; local rows never count", async () => {
@@ -25,15 +27,16 @@ Deno.test("refusals: unpriced, an unpriced paid row in the window, over the cap;
   assertEquals(c1.refusals.length, 1);
 });
 
-Deno.test("the routed external branch: under a cap an unpriced model (gpt-4.1) is refused BEFORE the request — no fetch", async () => {
+Deno.test("the routed external branch: under a cap gpt-4.1 (priced) is sent when it fits, refused BEFORE the request when it does not", async () => {
   const orig = globalThis.fetch; let calls = 0;
   globalThis.fetch = (() => { calls++; return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }))); }) as typeof fetch;
   try {
-    const routed = defaultBeatsRoutedModel("sk-test", undefined, cap([]));
-    await assertRejects(() => routed({ role: "generator", provenances: ["public_observed"], system: "s", user: "u" }), SpendCapRefused);
-    assertEquals(calls, 0);
-    const uncapped = defaultBeatsRoutedModel("sk-test");
-    await uncapped({ role: "generator", provenances: ["public_observed"], system: "s", user: "u" });
-    assertEquals(calls, 1, "uncapped ⇒ unchanged");
+    const full = defaultBeatsRoutedModel("sk-test", undefined, cap([{ provider: "anthropic", usd: 1.49 }]));
+    await assertRejects(() => full({ role: "generator", provenances: ["public_observed"], system: "s", user: "u" }), SpendCapRefused);
+    assertEquals(calls, 0, "over the cap ⇒ no request");
+    await defaultBeatsRoutedModel("sk-test", undefined, cap([]))({ role: "generator", provenances: ["public_observed"], system: "s", user: "u" });
+    assertEquals(calls, 1, "priced and within the cap ⇒ sent");
+    await defaultBeatsRoutedModel("sk-test")({ role: "generator", provenances: ["public_observed"], system: "s", user: "u" });
+    assertEquals(calls, 2, "uncapped ⇒ unchanged");
   } finally { globalThis.fetch = orig; }
 });

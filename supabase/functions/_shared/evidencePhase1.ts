@@ -786,7 +786,7 @@ export async function applyMintExcerptGuard(args: {
     // RULING 4: a web_search row's excerpt is the tool's cited_text for its URL, or blank — never the model's summary.
     // Analysis rows keep the carve-out (our reading, labelled as such, never asserted as the page's words).
     if (args.webSearchCitedSpans && draft.voice_class !== "analysis") {
-      const v = citedTextExcerpt(draft.evidence_excerpt, draft.source_url, args.webSearchCitedSpans);
+      const v = citedTextExcerpt(draft.evidence_excerpt, draft.source_url, args.webSearchCitedSpans, typeof rp.cited_text === "string" ? rp.cited_text : null);
       if (v.kind === "no_excerpt") continue;
       if (v.kind === "cited") {
         draft.evidence_excerpt = v.evidence_excerpt;

@@ -2,7 +2,7 @@
 // fallback rule and the cited_text excerpt rule. A SEEDED subject only (a guard checks invariants, never a live company's
 // rows); every database step inside ONE rolled-back transaction; no network, no model. One JSON line out.
 //   d1 parity: the seed alone ⇒ every E3 helper returns its no-change value; the domain prompt with no entity is the HEAD
-//      bd764f2c fixture byte-for-byte; the query plan is A–H only
+//      ruling-1 citations fixture (2026-10-21) byte-for-byte; the query plan is A–H only
 //   d2 the crawl's set filter admits the related hosts (and only them) when entities are in effect
 //   d3 the site mint stamps raw_payload.entity + voice_authority own_domain_related on a related page; a seed page's row is
 //      byte-identical to the mint with no entity resolver
@@ -19,6 +19,10 @@
 //       stubbed fetch counts 0); an affordable priced call passes; public-baseline checks the cap before each web_search
 //       attempt, the seed lane and the OpenAI synthesis
 //   d12 the seed-host lane runs only when the own-site crawl read 0 seed pages (public-baseline gates on that count)
+//   d13 ruling 3: gpt-4.1 is priced — under a cap the routed beats call is SENT when it fits (stubbed fetch: 1 call)
+//   d14 ruling 1: citations become the rows — an uncited sentence mints nothing, the excerpt is the citation's cited_text
+//       byte-for-byte (end to end through mapper + mint guard), a citation on an excluded host mints nothing; both web_search
+//       lanes are wired to it
 import { lit, PsqlSession } from "../lib/psqlBlankingStore.ts";
 import { crawlEntityFor, crawlHostFilter, discoveryHostsFor, domainPlanFallbackAdmits, entityPromptLine, entityQueryPasses, guessedProfileLinksOwnHost, relatedCrawlSeeds } from "../../supabase/functions/_shared/ownHostDiscovery.ts";
 import type { RelatedEntityRow } from "../../supabase/functions/_shared/ownHosts.ts";
@@ -31,6 +35,12 @@ import { extractCitedSpans } from "../../src/lib/firstRead/citationSource.ts";
 import { countsAtEarlyAmbiguousCheck } from "../../supabase/functions/_shared/ownHostDiscovery.ts";
 import { assertSpendable, makeSpendCap, SpendCapRefused } from "../../supabase/functions/_shared/spendCap.ts";
 import { defaultBeatsRoutedModel } from "../../supabase/functions/_shared/findingBeats.ts";
+import { makeRoutedModel } from "../../supabase/functions/_shared/modelRouter.ts";
+import { projectOpenAIUsd } from "../../supabase/functions/_shared/spendCap.ts";
+import { citationEntries } from "../../supabase/functions/_shared/citationRows.ts";
+import { buildSeedLaneRows } from "../../supabase/functions/_shared/seedHostLane.ts";
+import { mapPublicBaselineOutputToSignals } from "../../src/lib/evidenceMappers.ts";
+import { decideVoiceClassBeforeJudge } from "../../supabase/functions/_shared/voiceClassAtMint.ts";
 import { seedLaneShouldRun, seedPagesRead } from "../../supabase/functions/_shared/seedHostLane.ts";
 
 const ROOT = new URL("../../", import.meta.url);
@@ -47,7 +57,7 @@ const pbSrc = await read("supabase/functions/public-baseline/index.ts");
 const hintSrc = pbSrc.slice(pbSrc.indexOf("  const schemaHint =\n") + "  const schemaHint =\n".length, pbSrc.indexOf("`}`;", pbSrc.indexOf("  const schemaHint =\n")) + 3);
 // eslint-disable-next-line no-new-func
 const hint = new Function("return " + hintSrc.trim().replace(/;$/, ""))() as string;
-const fixture = await read("supabase/functions/_shared/fixtures/lane/domain_prompt_HEAD_bd764f2c.txt");
+const fixture = await read("supabase/functions/_shared/fixtures/lane/domain_prompt_citations_20261021.txt"); // ruling 1 (2026-10-21) snapshot
 const baseOpts = { companyName: "Edgewood", website: "https://edgewood.org", domain: "edgewood.org", resolvedCategory: "youth mental health nonprofit", schemaHint: hint };
 const promptNoEntity = claudeWebSearchPrompt({ ...baseOpts, ...(off ? { relatedEntities: off.related.map((r) => r.entity) } : {}) });
 const planArgs = { planKind: "domain" as const, companyName: "ZZ Subject", domain: "zz-subject.test", stem: "zz-subject", variants: ["ZZ Subject"], spaced: "ZZ Subject" };
@@ -149,13 +159,21 @@ const ledgerOf = (rows: Array<{ provider: string; usd: number | null }>) => ({ f
 const origFetch = globalThis.fetch; let fetches = 0;
 globalThis.fetch = (() => { fetches++; return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }))); }) as typeof fetch;
 let unpricedRefused = false;
-try { await defaultBeatsRoutedModel("sk-probe", undefined, makeSpendCap({ capUsd: 1.5, companyId: "zz", since: "2026-10-21T00:00:00Z", supabase: ledgerOf([]) }))({ role: "generator", provenances: ["public_observed"], system: "s", user: "u" }); }
+// an UNPRICED model on the routed external branch (a model the price table does not name), checked by the same hook
+const capZ = makeSpendCap({ capUsd: 1.5, companyId: "zz", since: "2026-10-21T00:00:00Z", supabase: ledgerOf([]) });
+const unpricedRouted = makeRoutedModel({ callLocalGenerator: async () => "{}", callLocalJudge: async () => "{}", openaiKey: "sk-probe",
+  beforeExternal: (c) => assertSpendable(capZ, { site: "finding-beats", model: "gpt-5-unpriced", projectedUsd: projectOpenAIUsd("gpt-5-unpriced", { promptChars: c.system.length + c.user.length, maxOutputTokens: 4096 }) }) });
+try { await unpricedRouted({ role: "generator", provenances: ["public_observed"], system: "s", user: "u" }); }
 catch (e) { unpricedRefused = e instanceof SpendCapRefused; }
+const fetchesUnpriced = fetches;
+// d13 — gpt-4.1 priced (ruling 3): the real beats routed caller is sent under the cap when it fits
+await defaultBeatsRoutedModel("sk-probe", undefined, makeSpendCap({ capUsd: 1.5, companyId: "zz", since: "2026-10-21T00:00:00Z", supabase: ledgerOf([]) }))({ role: "generator", provenances: ["public_observed"], system: "s", user: "u" }).catch(() => null);
+const fetchesPriced = fetches - fetchesUnpriced;
 globalThis.fetch = origFetch;
 let affordable = true, over = false;
 try { await assertSpendable(makeSpendCap({ capUsd: 1.5, companyId: "zz", since: "x", supabase: ledgerOf([{ provider: "anthropic", usd: 0.4 }]) }), { site: "s", model: "claude-sonnet-4-6", projectedUsd: 0.96 }); } catch { affordable = false; }
 try { await assertSpendable(makeSpendCap({ capUsd: 1.5, companyId: "zz", since: "x", supabase: ledgerOf([{ provider: "anthropic", usd: 0.6 }]) }), { site: "s", model: "claude-sonnet-4-6", projectedUsd: 0.96 }); } catch (e) { over = e instanceof SpendCapRefused; }
-const d11 = { unpriced_refused: unpricedRefused, fetches_made: fetches, affordable_passes: affordable, over_refused: over,
+const d11 = { unpriced_refused: unpricedRefused, fetches_made: fetchesUnpriced, affordable_passes: affordable, over_refused: over,
   wired_search: pbSrc.includes(`await assertSpendable(opts.spendCap, { site: "public-baseline-search", model: opts.model, projectedUsd: projectWebSearchUsd(`),
   wired_lane: pbSrc.includes(`await assertSpendable(opts.spendCap, { site: SEED_LANE_CALL_SITE, model: opts.model, projectedUsd: projectWebSearchUsd(`),
   wired_openai: pbSrc.includes(`await assertSpendable(spendCap, { site: "public-baseline-synthesis", model: openaiModel, projectedUsd: null });`) };
@@ -166,4 +184,34 @@ const d12 = { zero_seed_pages: seedLaneShouldRun({ noPublicSite: false, seedHost
   no_public_site: seedLaneShouldRun({ noPublicSite: true, seedHost: "zz-subject.test", seedPagesRead: 0 }),
   wired: pbSrc.includes("const seedRead = seedPagesRead(crawledSiteEvidence, seedHostForLane);") && pbSrc.includes(`if (synthesis_engine === "claude_websearch" && seedLaneShouldRun({ noPublicSite, seedHost: seedHostForLane, seedPagesRead: seedRead })) {`) };
 
-console.log(JSON.stringify({ d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, rolled_back: B0 === B1, before: B0, after: B1 }));
+const d13 = { gpt41_sent_under_cap: fetchesPriced };
+
+// d14 — citations become the rows
+const CT = "ZZ Subject’s plans start at $30/mo — no  contracts,\nno caps.";
+const RESP14 = { content: [
+  { type: "text", text: "ZZ Subject's plans start at $30 a month.", citations: [{ type: "web_search_result_location", url: "https://www.zz-review.test/a", title: "ZZ review", cited_text: CT }] },
+  { type: "text", text: "ZZ Subject is beloved by every customer." },
+  { type: "text", text: "ZZ Cousin Holdings shares the name.", citations: [{ type: "web_search_result_location", url: "https://www.zz-cousin.test/about", title: "ZZ Cousin", cited_text: "ZZ Cousin Holdings is a different company." }] },
+] };
+const ce = citationEntries(RESP14, { excludeHosts: ["zz-cousin.test"], existingExcerpts: new Set() });
+const drafts14 = mapPublicBaselineOutputToSignals({ companyId: "zz", sourceId: 1, resultJson: { evidence_ledger: ce.entries, outside_voice_signals: [] } });
+const quiet14 = console.log; console.log = () => {};
+await applyMintExcerptGuard({ supabase: { from: () => ({}) }, companyId: "zz", runId: "r", signals: drafts14, sourceTextByUrl: new Map(), webSearchCitedSpans: extractCitedSpans(RESP14) });
+console.log = quiet14;
+const SEEDRESP = { content: [
+  { type: "text", text: "ZZ Subject sells broadband.", citations: [{ type: "web_search_result_location", url: "https://www.zz-subject.test/internet", title: "Internet", cited_text: "ZZ Subject — broadband for every home." }] },
+  { type: "text", text: "ZZ Subject is the best." },
+] };
+const lane14 = buildSeedLaneRows({ companyId: "zz", runId: 1, seedHost: "zz-subject.test", captureDay: "2026-10-21", response: SEEDRESP, excludeHosts: [], existingExcerpts: new Set(),
+  decide: (url) => decideVoiceClassBeforeJudge({ url, item: null, labeledClass: "client_voice", pageText: null, judgedText: null, company: { name: "", host: "zz-subject.test" }, registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" } as never) as never });
+const d14 = {
+  rows: drafts14.length,
+  uncited_rows: drafts14.filter((d) => /beloved/.test(String(d.claim_text))).length + lane14.rows.filter((r: any) => /the best/.test(String(r.claim_text))).length,
+  excluded_rows: drafts14.filter((d) => String(d.source_url).includes("zz-cousin")).length,
+  byte_equal: drafts14.length === 1 && drafts14[0].evidence_excerpt === CT,
+  lane_rows: lane14.rows.length, lane_byte_equal: lane14.rows.length === 1 && (lane14.rows[0] as any).evidence_excerpt === "ZZ Subject — broadband for every home.",
+  wired_main: pbSrc.includes("const cit = citationEntries(data, { excludeHosts: blockedHosts, existingExcerpts });") && pbSrc.includes("(parsed as any).evidence_ledger = cit.entries;") && pbSrc.includes("(parsed as any).outside_voice_signals = [];"),
+  wired_lane: pbSrc.includes("response: lane.response, excludeHosts: laneExcludes, existingExcerpts: laneExisting,"),
+};
+
+console.log(JSON.stringify({ d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13, d14, rolled_back: B0 === B1, before: B0, after: B1 }));

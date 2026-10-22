@@ -6,7 +6,7 @@
 # network, no model. The guard ends by proving model_calls and signals are what they were.
 #
 #   d1  parity: the seed alone ⇒ no crawl filter, no extra crawl, no entity pass, no prompt line; the domain prompt is the
-#       HEAD bd764f2c fixture byte-for-byte; the query plan is A–H
+#       ruling-1 citations fixture (2026-10-21) byte-for-byte; the query plan is A–H
 #   d2  the crawl's set filter admits the related hosts (subdomains included) and nothing else
 #   d3  the site mint stamps raw_payload.entity + voice_authority own_domain_related on a related page; a seed page's row is
 #       byte-identical to the mint without an entity resolver
@@ -24,6 +24,9 @@
 #   d11 the spend cap: an unpriced model under a cap is refused before any request (stubbed fetch: 0 calls); an affordable
 #       call passes, an over-cap one refuses; public-baseline checks before each web_search attempt, the lane, the OpenAI path
 #   d12 the seed-host lane runs only when the own-site crawl read 0 seed pages; wired on that count
+#   d13 ruling 3: gpt-4.1 priced — the routed beats call is sent under a cap when it fits (stubbed fetch: 1 call)
+#   d14 ruling 1: citations become the rows — uncited sentences and excluded hosts mint nothing; the stored excerpt is the
+#       citation's cited_text byte-for-byte end to end (mapper + mint guard), and on the seed lane; both lanes wired
 #
 # Plants (each injected live, the guard RED with the measured value moved, restored md5-identical, GREEN):
 #   Q1  crawlHostFilter always null (the set filter → single host)      => d2 filter_set true → false
@@ -37,6 +40,10 @@
 #   F1  countsAtEarlyAmbiguousCheck counts a guess                       => d10 guess_domain false → true
 #   F2  assertSpendable's unpriced refusal removed                       => d11 fetches_made 0 → 1
 #   F3  seedLaneShouldRun ignores the seed page count                    => d12 seed_page_read false → true
+#   R1  the gpt-4.1 price removed                                        => d13 gpt41_sent_under_cap 1 → 0 (refused)
+#   R2  citationEntries mints an uncited sentence                        => d14 uncited_rows 0 → >0
+#   R3  the entry's cited_text replaced by the model's sentence           => d14 byte_equal true → false
+#   R4  citationEntries' excluded-host check removed                     => d14 excluded_rows 0 → 1
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -50,7 +57,7 @@ q() { echo "$J" | python3 -c "import json,sys; d=json.load(sys.stdin); print($1)
 [ -n "$J" ] || fail probe "no output"
 
 [ "$(q "d['d1']==dict(has_related=False,crawl_filter_null=True,related_seeds=0,entity_passes=0,prompt_line_empty=True,prompt_is_fixture=True,plan_keys=8)")" = True ] || fail d1 "parity: $(q "d['d1']")"
-echo "d1. seed alone: no crawl filter, no extra crawl, 0 entity passes, no prompt line; domain prompt = HEAD bd764f2c fixture; plan A–H"
+echo "d1. seed alone: no crawl filter, no extra crawl, 0 entity passes, no prompt line; domain prompt = the ruling-1 citations fixture; plan A–H"
 [ "$(q "d['d2']['filter_set'] and d['d2']['admits']==[True,True,True] and d['d2']['refuses']==[False,False,False]")" = True ] || fail d2 "set filter: $(q "d['d2']")"
 echo "d2. the crawl's set filter admits www.zz-parent.test, news.zz-merged.test, the seed; refuses zz-subject.dev, evil.test, zz-parent.test.evil.test"
 [ "$(q "d['d3']['minted']==2 and d['d3']['related_entity']=='ZZ Parent Holdings' and d['d3']['related_authority']=='own_domain_related' and d['d3']['seed_row_identical']")" = True ] || fail d3 "mint stamp: $(q "d['d3']")"
@@ -70,9 +77,13 @@ echo "d9. ruling 4: a summary excerpt blanked (claim kept), an excerpt inside a 
 [ "$(q "d['d10']==dict(guess_domain=False,guess_name_only=True,searx_domain=True,wired=True)")" = True ] || fail d10 "early check: $(q "d['d10']")"
 echo "d10. a guessed profile counts zero at the early ambiguous check on a domain plan (name-only unchanged); wired"
 [ "$(q "d['d11']==dict(unpriced_refused=True,fetches_made=0,affordable_passes=True,over_refused=True,wired_search=True,wired_lane=True,wired_openai=True)")" = True ] || fail d11 "spend cap: $(q "d['d11']")"
-echo "d11. spend cap: unpriced gpt-4.1 refused before any request (0 fetches); \$0.40 + \$0.96 ≤ \$1.50 passes, \$0.60 + \$0.96 refused; wired at web_search, lane, OpenAI"
+echo "d11. spend cap: an unpriced model refused before any request (0 fetches); \$0.40 + \$0.96 ≤ \$1.50 passes, \$0.60 + \$0.96 refused; wired at web_search, lane, OpenAI"
 [ "$(q "d['d12']==dict(zero_seed_pages=True,seed_page_read=False,no_public_site=False,wired=True)")" = True ] || fail d12 "seed lane gate: $(q "d['d12']")"
 echo "d12. the seed-host lane runs only on 0 seed pages read (a related host's pages are not seed pages); wired"
+[ "$(q "d['d13']==dict(gpt41_sent_under_cap=1)")" = True ] || fail d13 "gpt-4.1 price: $(q "d['d13']")"
+echo "d13. gpt-4.1 priced (ruling 3): the routed beats call is sent under the cap when it fits"
+[ "$(q "d['d14']==dict(rows=1,uncited_rows=0,excluded_rows=0,byte_equal=True,lane_rows=1,lane_byte_equal=True,wired_main=True,wired_lane=True)")" = True ] || fail d14 "citation rows: $(q "d['d14']")"
+echo "d14. ruling 1: citations become the rows — uncited and excluded mint nothing; cited_text byte-equal end to end and on the lane; both lanes wired"
 [ "$(q "d['rolled_back']")" = True ] && [ "$(counts)" = "$C0" ] || fail end "model_calls or signals changed across the guard"
 echo "end. model_calls / signals unchanged ($C0)"
 echo "GUARD OK"

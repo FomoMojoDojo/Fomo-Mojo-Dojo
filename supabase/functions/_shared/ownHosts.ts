@@ -12,6 +12,13 @@
 export type RelatedRelation = "parent" | "subsidiary" | "acquired" | "brand" | "merged_into";
 export type EffectiveBasis = "cited" | "crawl_date_provisional";
 /** A company_related_entities row as the resolver reads it (status is filtered here, never assumed). */
+/** Ruling 1 (2026-10-21): every confirmed entity's per-entity exclude list (hosts that share its name but are NOT it) —
+ *  a web_search citation on one of them mints nothing. Separate from the loader so the loader's shape is unchanged. */
+export async function loadEntityExcludeHosts(supabase: { from: (t: string) => any }, companyId: string): Promise<string[]> {
+  const { data, error } = await supabase.from("company_related_entities").select("exclude_hosts").eq("company_id", companyId).eq("status", "confirmed");
+  if (error) throw new Error(`company_related_entities exclude_hosts read failed for ${companyId}: ${String(error.message ?? error)}`);
+  return [...new Set(((data ?? []) as Array<{ exclude_hosts?: string[] | null }>).flatMap((r) => r.exclude_hosts ?? []))];
+}
 export type RelatedEntityRow = {
   id: string; name: string; host: string; relation: RelatedRelation;
   effective_from: string | null; effective_basis: EffectiveBasis; status: string;

@@ -12,11 +12,9 @@
 // PROJECTION (an upper estimate, not a guarantee — the actual is ledgered and re-read before the next call):
 //   web_search: input = prompt chars / 4 + max_uses × WEB_SEARCH_INPUT_TOKENS_PER_SEARCH; output = max_tokens; + max_uses
 //               searches. OpenAI: input = prompt chars / 4; output = max output tokens.
-import { anthropicPriceFor } from "./modelPricing.ts";
+import { anthropicPriceFor, openaiPriceFor } from "./modelPricing.ts";
 
 export const WEB_SEARCH_INPUT_TOKENS_PER_SEARCH = 10_000;
-/** OpenAI prices with a signed source: only the table modelPricing labels (gpt-4.1-mini). gpt-4.1 has none ⇒ unpriced. */
-const OPENAI_PRICED: Readonly<Record<string, { input: number; output: number }>> = { "gpt-4.1-mini": { input: 0.40, output: 1.60 } };
 
 export type SpendCap = {
   capUsd: number;
@@ -43,7 +41,7 @@ export function projectWebSearchUsd(model: string, o: { promptChars: number; max
 }
 
 export function projectOpenAIUsd(model: string, o: { promptChars: number; maxOutputTokens: number }): number | null {
-  const p = Object.prototype.hasOwnProperty.call(OPENAI_PRICED, model) ? OPENAI_PRICED[model] : null;
+  const p = openaiPriceFor(model); // signed prices only (modelPricing.ts): gpt-4.1, gpt-4.1-mini
   if (!p) return null;
   return (Math.ceil(o.promptChars / 4) * p.input + o.maxOutputTokens * p.output) / 1e6;
 }
