@@ -43,7 +43,7 @@ import { isProvablyVerbatim } from "@/lib/firstRead/provableVerbatim";
 import { QUOTE_GUARD_VERSION, sourceKeyForSignal, warrantKey, warrantKeySet } from "@/lib/firstRead/quoteWarrant";
 import { isPairAdmissible } from "@/lib/firstRead/relevanceActive";
 import { ownWordsClientVisible, parseOwnWordsKind } from "../../../../supabase/functions/_shared/ownWordsKinds";
-import { bareHost, coldOpenLadder, facetForTopic, foldIdenticalSignals, groupGapStatements, hoistStrongestNegative, orderBeat2Signals, orderGapPairs, refreshStatusConflictLiveness, strengthForSignal, verdictForDeltaType, type Beat2Sortable, type CitationLiveness, type RawStatusSource } from "./mapping";
+import { bareHost, coldOpenLadder, facetForTopic, foldIdenticalSignals, groupGapStatements, hoistStrongestNegative, orderBeat2Signals, orderGapPairs, refreshStatusConflictLiveness, strengthForSignal, verdictForDeltaType, type Beat2Sortable, type CitationLiveness, type RawStatusSource, gapIntegrityState } from "./mapping";
 import type {
   FRListing,
   FirstReadPreviewData,
@@ -904,7 +904,20 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           .order("ran_at", { ascending: false })
           .limit(1);
         const intRow = ((intRows ?? []) as Array<{ status: string }>)[0] ?? null;
-        if (intRow) gapIntegrity = intRow.status === "failed" ? "couldnt_check" : "looked_none";
+        // Ruling 2026-10-22: looked-none only when a COMPLETED comparison ran after the latest own-words claim
+        const { data: gapDone } = await loose()
+          .from("integrity_runs").select("ran_at")
+          .eq("company_id", companyId).eq("component", "first_read_gap_pairs").eq("status", "completed")
+          .order("ran_at", { ascending: false }).limit(1);
+        const { data: owNewest } = await loose()
+          .from("claims").select("created_at")
+          .eq("company_id", companyId).eq("claim_type", "own_words").eq("status", "active")
+          .order("created_at", { ascending: false }).limit(1);
+        gapIntegrity = gapIntegrityState({
+          latestStatus: intRow?.status ?? null,
+          latestOwnWordsAt: ((owNewest ?? []) as Array<{ created_at: string }>)[0]?.created_at ?? null,
+          latestCompletedAt: ((gapDone ?? []) as Array<{ ran_at: string }>)[0]?.ran_at ?? null,
+        });
 
         // ── Gate 9a — looks: pairs the delta judge answered with an unverifiable span. Read from the
         // 'claim_delta_looks' integrity records (one per worker call that banked ≥1 look; `examined`

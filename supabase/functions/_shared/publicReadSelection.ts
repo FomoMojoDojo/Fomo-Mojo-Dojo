@@ -41,7 +41,10 @@ import { compareBeat2, gapVerdictForDeltaType, orderGapPairs, strengthForSignal 
 // predecessor rested on (audit 10228: Wasabi's FedRAMP and AI-product rows, all live, all over_cap).
 // N2 (2026-10-14): bumped again — rows that STATE a name a still-sourced current line uses are now
 // admitted before the cap on P1's budget. WHICH rows enter the pool changed, so the stamp moves.
-export const SELECTION_VERSION = "gpr-select-2026-10-14.3" as const;
+// 2026-10-22 (operator ruling 4): bumped for the own-words host order — a company with confirmed related entities takes
+// its own-words seed host first, then each related host, round-robin within the cap. WHICH rows enter the pool changed
+// for those companies, so the stamp moves (for every company: the stamp names the rule, not the outcome).
+export const SELECTION_VERSION = "gpr-select-2026-10-22.1" as const;
 
 export type Dropped = { id: string; kind: "signal" | "own_word" | "finding" | "delta"; reason: string };
 

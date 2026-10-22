@@ -20,6 +20,7 @@ import { selectDeltas, selectFindings, selectOwnWords, selectSignals, type Dropp
 // R1: the ONE row-text assembly. Imported rather than re-stated so the pool and the drift re-read
 // cannot drift apart again — that divergence IS defect A.
 import { rowTextOf } from "./classSourcingScope.ts";
+import { annotateVerifiedExcerpts } from "./classSourcingScope.ts";   // R5 (2026-10-22): the back-verified excerpt mark
 // N2: the name extractor N1 uses — one definition, so the gate and the admission agree on what a name is.
 import { namesIn } from "./classFactCheck.ts";
 // P1 (2026-10-14): the predecessor's citations are read with the SAME walker C1 uses, so "what the
@@ -210,6 +211,8 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
     .eq("company_id", companyId).eq("signal_band", "outside")
     .in("voice_class", PUBLIC_SIGNAL_VOICES).is("superseded_at", null).is("held_at", null)
     .order("created_at", { ascending: true }).order("id", { ascending: true });
+  // R5 (2026-10-22): mark the back-verified excerpts before any row text is built (rowTextOf reads the mark)
+  await annotateVerifiedExcerpts(supabase as unknown as { from: (t: string) => any }, (sig ?? []) as Array<Record<string, unknown>>);
   // R4 strength — recurrence-confirmed signal ids, the SAME query the preview's beat 2 runs (accepted verdicts).
   const confirmed = new Set<string>();
   for (let from = 0;; from += 1000) {

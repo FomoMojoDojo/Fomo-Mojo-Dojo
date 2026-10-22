@@ -55,10 +55,12 @@ Deno.test("R1. rowTextOf is the only text assembly selectPublicInputs imports fo
 
 Deno.test("R1. a planted pool text that differs from rowTextOf is caught", () => {
   // The shape of the bug, as data: both columns populated and different, plus a title.
-  const row = { claim_text: "Wasabi charges no egress fees", evidence_excerpt: "Pricing is flat-rate", source_title: "Wasabi public baseline" };
+  // R5 (2026-10-22): a signal's text is its VERIFIED evidence_excerpt alone — claim_text (our sentence) is never joined.
+  const row = { claim_text: "Wasabi charges no egress fees", evidence_excerpt: "Pricing is flat-rate", source_title: "Wasabi public baseline", raw_payload: { excerpt_guard: { basis: "websearch_cited_text", traced: true } } };
   const correct = rowTextOf("signal", row);
   const planted = `${row.claim_text} (${row.source_title})`;           // the OLD assembly
-  assertEquals(correct, "Wasabi charges no egress fees Pricing is flat-rate");
+  assertEquals(correct, "Pricing is flat-rate");
+  assert(!correct.includes(row.claim_text), "R5: claim_text never reaches the row text");
   assert(planted !== correct, "the old assembly and rowTextOf disagree — this IS defect A");
   // and the drift check's question is exactly this equality, so a span cut from `planted`
   // could never re-verify against `correct`.
@@ -84,7 +86,7 @@ Deno.test("R1. the catalogue renders the title AFTER the text, not inside it", a
 Deno.test("R1. the selection version was bumped past the pre-fix value", async () => {
   const { SELECTION_VERSION } = await import("./publicReadSelection.ts");
   assert(SELECTION_VERSION !== "gpr-select-2026-10-07.1", "the pre-R1 version must not still be stamped");
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.3");   // P1 bumped it again
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-22.1");   // P1 bumped it again; 2026-10-22 the own-words host order
 });
 
 // ── R3 ───────────────────────────────────────────────────────────────────────────────────────────

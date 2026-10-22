@@ -144,9 +144,33 @@ export function extractSpecifics(text: string): Specific[] {
   return out.sort((a, b) => t.indexOf(a.token) - t.indexOf(b.token));
 }
 
+// ── R5 (operator ruling, 2026-10-22): MATCHING IGNORES CASE, POSSESSIVES AND PUNCTUATION-ONLY DIFFERENCES ─────────
+// The cited text is verified page words (rowTextOf); the line is ours. "Spectrum Mobile's" against the page's
+// "Spectrum Mobile ’s", "24/7" against "24 / 7", "Internet" against "internet": the same words, so the same fact.
+// Both sides are folded the same way — lowercase, curly quotes straightened, a possessive 's dropped, every run of
+// characters that is not a letter, digit, % or $ turned into one space. Probes and figures then match as they always
+// did, as a substring (a figure inside "5G" still counts); a NAME must appear on word boundaries, because names were
+// matched case-sensitively before and the fold must not let "Air" match inside "fair". Nothing else changes: probes,
+// the second chance and the row-at-a-time rule are as they were.
+export function sourcingFold(text: string): string {
+  return ` ${String(text ?? "").toLowerCase().replace(/[\u2018\u2019\u02bc`]/g, "'").replace(/'s\b/g, "").replace(/[^\p{L}\p{N}%$]+/gu, " ").trim()} `;
+}
+/** R5: is `needle` (a probe or a figure) stated in `text`, after the fold? A substring test, as before the fold. */
+export function sourcedIn(needle: string, text: string): boolean {
+  const n = sourcingFold(needle).trim();
+  if (!n) return false;
+  return sourcingFold(text).includes(n);
+}
+/** R5: is the NAME `needle` stated in `text`, after the fold, on word boundaries? */
+export function nameSourcedIn(needle: string, text: string): boolean {
+  const n = sourcingFold(needle);
+  if (!n.trim()) return false;
+  return sourcingFold(text).includes(n);
+}
+
 /** A specific is SOURCED when one of its probes appears verbatim in one of the cited texts. */
 export function specificIsSourced(s: Specific, citedTexts: readonly string[]): boolean {
-  return s.probes.some((p) => citedTexts.some((c) => verbatimProvable(p, c)));
+  return s.probes.some((p) => citedTexts.some((c) => sourcedIn(p, c)));
 }
 
 /** ── G2 (operator ruling, 2026-10-13): THE FIGURE-ONLY SECOND CHANCE ──────────────────────────
@@ -179,7 +203,7 @@ export function specificIsSourced(s: Specific, citedTexts: readonly string[]): b
 export function specificIsSourcedWithSecondChance(s: Specific, citedTexts: readonly string[]): boolean {
   if (specificIsSourced(s, citedTexts)) return true;
   if (s.kind !== "figure") return false;
-  return citedTexts.some((c) => verbatimProvable(s.token, c));
+  return citedTexts.some((c) => sourcedIn(s.token, c));
 }
 
 export type FieldClassInput = {
@@ -431,7 +455,7 @@ export function unsourcedNames(input: {
   const own = new Set(String(input.companyName ?? "").toLowerCase().split(/\s+/).filter(Boolean));
   return namesIn(input.text)
     .filter((n) => !(own.size > 0 && n.toLowerCase().split(/[\s\/]+/).every((w) => own.has(w))))
-    .filter((n) => !input.citedSourceTexts.some((srcText) => srcText.includes(n)));
+    .filter((n) => !input.citedSourceTexts.some((srcText) => nameSourcedIn(n, srcText)));   // R5: the fold, on word boundaries
 }
 
 // ── O1 (operator ruling, 2026-10-15): AN ITEM'S LABEL IS CHECKED LIKE ITS STATEMENT ────────────

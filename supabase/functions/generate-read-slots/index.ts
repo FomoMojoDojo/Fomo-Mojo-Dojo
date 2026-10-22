@@ -35,7 +35,7 @@ import {
 import { promoteStagedSlots, rejectStagedSlots, SlotPromoteRefused } from "../_shared/readSlotsPromote.ts";
 import { runKind, lengthsOf, getSlotAt, storedVerdictOf, type GenerateFn, type JudgeFn } from "../_shared/readSlotsRun.ts";
 import { decideFieldClass, fieldClassOk, type FieldClassDecision } from "../_shared/classFactCheck.ts";
-import { rowTextOf } from "../_shared/classSourcingScope.ts";
+import { annotateVerifiedExcerpts, rowTextOf, rowTextSelect } from "../_shared/classSourcingScope.ts";
 import { GEN_RULES_VERSION } from "../_shared/genRulesVersion.ts";
 import { SOFTENING_GUARD, softenedSpecifics, softeningDetail, type CitedLine } from "../_shared/stageContinuity.ts";
 import { StageRefusal } from "../_shared/publicReadPerKind.ts";
@@ -283,7 +283,7 @@ serve(async (req) => {
         for (let i = 0; i < wanted.length; i += 200) {
           const chunk = wanted.slice(i, i + 200);
           const [sg, ow, fd] = await Promise.all([
-            supabase.from("signals").select("id, claim_text, evidence_excerpt").in("id", chunk),
+            supabase.from("signals").select(rowTextSelect("signal")).in("id", chunk),   // R5: the builder's own columns
             supabase.from("own_words_candidates").select("id, quote").in("id", chunk),
             supabase.from("findings").select("id, body").in("id", chunk),
           ]);
@@ -292,7 +292,8 @@ serve(async (req) => {
           // used to join claim_text and evidence_excerpt itself, which on the 2269 rows where the two
           // columns are byte-identical handed the fact-check one sentence twice; the 10-16 ruling that
           // made rowTextOf drop a column already contained in an earlier one never reached here.
-          for (const r of ((sg.data ?? []) as Array<Record<string, unknown>>)) sourceRowTextById.set(String(r.id), rowTextOf("signal", r));
+          await annotateVerifiedExcerpts(supabase, (sg.data ?? []) as unknown as Array<Record<string, unknown>>);   // R5
+          for (const r of ((sg.data ?? []) as unknown as Array<Record<string, unknown>>)) sourceRowTextById.set(String(r.id), rowTextOf("signal", r));
           for (const r of ((ow.data ?? []) as Array<Record<string, unknown>>)) sourceRowTextById.set(String(r.id), rowTextOf("own_word", r));
           for (const r of ((fd.data ?? []) as Array<Record<string, unknown>>)) sourceRowTextById.set(String(r.id), rowTextOf("finding", r));
         }

@@ -21,6 +21,7 @@
 // G3 (operator ruling, 2026-10-13): PASS 2 asks the SAME question the gate asks, so it imports the
 // gate's own second-chance function rather than re-deriving the rule. Two authorities on one rule is
 // how a rule rots — the reason classOkFromVerdict was deleted from publicReadGuards.ts.
+import { excerptIdentity } from "./excerptVerification.ts";
 import { extractSpecifics, specificIsSourcedWithSecondChance, type Specific } from "./classFactCheck.ts";
 import { isPublicSignalSourceType } from "./clientMaterial.ts";
 import { isAnalysisRow } from "./voiceLabel.ts";
@@ -55,10 +56,24 @@ export type RowTextKind = "signal" | "own_word" | "finding";
 
 /** The columns a kind's text is built from, in join order. The re-read's SELECT is derived from this
  *  — never written out a second time. */
+// ── R5 (operator ruling, signed 2026-10-16, built 2026-10-22): ONLY VERIFIED PAGE WORDS SOURCE A SPECIFIC ───────
+// A signal's claim_text is OUR sentence about the row; its evidence_excerpt is the page's words (a snapshot slice or
+// the search tool's cited_text). Spectrum's re-stage carried "45 states" and "37 million" from the claim_text of a
+// cabletv.com row whose cited text the tool had cut off — every gate passed it, because every gate read the row
+// through this builder and the builder joined claim_text. So a signal's text is now its evidence_excerpt ALONE, and
+// only when that excerpt is verified page words (excerptIsVerifiedPageWords): the pool, PASS 2, the carry lane, the
+// drift re-read, S1/N1/S1b, continuity, the slot check and the promote re-check all read it here, so none of them can
+// see claim_text. A signal whose excerpt is blank or unverified has text "" and sources nothing.
 export const ROW_TEXT_COLUMNS: Readonly<Record<RowTextKind, readonly string[]>> = {
-  signal: ["claim_text", "evidence_excerpt"],
+  signal: ["evidence_excerpt"],
   own_word: ["quote"],
   finding: ["body"],
+} as const;
+/** R5: the columns a kind's text DEPENDS ON but does not join — read by the re-read's SELECT, never concatenated. */
+export const ROW_TEXT_GATE_COLUMNS: Readonly<Record<RowTextKind, readonly string[]>> = {
+  signal: ["raw_payload"],
+  own_word: [],
+  finding: [],
 } as const;
 
 /** The table each kind lives in. Used by the re-read, which is given ids and not kinds. */
@@ -71,6 +86,8 @@ export const ROW_TEXT_TABLES: ReadonlyArray<{ table: string; kind: RowTextKind }
 /** THE one assembly. Every caller — selection, PASS 2, the hedge question, the drift re-read —
  *  comes through here, so no two callers can disagree about what a row says. */
 export function rowTextOf(kind: RowTextKind, row: Readonly<Record<string, unknown>>): string {
+  // R5: a signal speaks only through verified page words
+  if (kind === "signal" && !excerptIsVerifiedPageWords(row)) return "";
   // ── (operator ruling, 2026-10-16): ONLY DISTINCT COLUMNS ARE JOINED ───────────────────────────
   //
   // A signal's text was `claim_text + " " + evidence_excerpt`, unconditionally. On 2269 of 3175
@@ -96,9 +113,45 @@ export function rowTextOf(kind: RowTextKind, row: Readonly<Record<string, unknow
   return kept.join(" ").trim();
 }
 
-/** The SELECT list the re-read needs for a kind: the id plus every column rowTextOf reads. */
+/** The SELECT list the re-read needs for a kind: the id plus every column rowTextOf reads (joined and gating). */
 export function rowTextSelect(kind: RowTextKind): string {
-  return ["id", ...ROW_TEXT_COLUMNS[kind]].join(", ");
+  return ["id", ...ROW_TEXT_COLUMNS[kind], ...ROW_TEXT_GATE_COLUMNS[kind]].join(", ");
+}
+
+/** R5: is this signal row's evidence_excerpt VERIFIED PAGE WORDS?
+ *    - the mint guard traced it to its basis (raw_payload.excerpt_guard.traced: a retained page or the tool's cited_text);
+ *    - or the row is an own-site page slice (raw_payload.source_type site_crawl / seed_host_cited_text — the excerpt
+ *      is cut from the fetched page or is the tool's cited passage by construction);
+ *    - or a loader found a PASSED excerpt_verifications record for this exact excerpt (annotateVerifiedExcerpts sets
+ *      the synthetic field excerpt_verified). A row nobody checked is not page words. */
+export function excerptIsVerifiedPageWords(row: Readonly<Record<string, unknown>>): boolean {
+  if (row.excerpt_verified === true) return true;
+  const rp = (row.raw_payload && typeof row.raw_payload === "object") ? row.raw_payload as Record<string, unknown> : {};
+  const eg = (rp.excerpt_guard && typeof rp.excerpt_guard === "object") ? rp.excerpt_guard as Record<string, unknown> : null;
+  if (eg && (eg.traced === true || eg.traced === "true")) return true;
+  const st = String(rp.source_type ?? "");
+  return st === "site_crawl" || st === "seed_host_cited_text";
+}
+
+/** R5: mark signal rows whose CURRENT excerpt has a passed verification record (excerpt_verifications, verdict
+ *  passed, same signal, same excerpt identity) — the back-verified rows that carry no mint-time stamp. Mutates the
+ *  rows' synthetic `excerpt_verified`; only reads the table. */
+export async function annotateVerifiedExcerpts(supabase: AnySupabase, rows: Array<Record<string, unknown>>): Promise<void> {
+  const col = ROW_TEXT_COLUMNS.signal[0];   // the one statement of which column a signal speaks through
+  const need = rows.filter((r) => String(r[col] ?? "").trim() && !excerptIsVerifiedPageWords(r));
+  if (need.length === 0) return;
+  const ids = need.map((r) => String(r.id));
+  const passed = new Map<string, Set<string>>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await supabase.from("excerpt_verifications").select("signal_id, excerpt_identity").in("signal_id", ids.slice(i, i + 200)).eq("verdict", "passed");
+    for (const v of ((data ?? []) as Array<{ signal_id: string; excerpt_identity: string }>)) {
+      const set = passed.get(v.signal_id) ?? new Set<string>(); set.add(v.excerpt_identity); passed.set(v.signal_id, set);
+    }
+  }
+  for (const r of need) {
+    const set = passed.get(String(r.id));
+    if (set && set.has(await excerptIdentity(String(r[col] ?? "")))) (r as Record<string, unknown>).excerpt_verified = true;
+  }
 }
 
 /**
@@ -116,7 +169,9 @@ export async function reReadRowTexts(
   if (rowIds.length === 0) return out;
   for (const { table, kind } of ROW_TEXT_TABLES) {
     const { data } = await supabase.from(table).select(rowTextSelect(kind)).in("id", rowIds);
-    for (const r of ((data ?? []) as Array<Record<string, unknown>>)) {
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    if (kind === "signal") await annotateVerifiedExcerpts(supabase, rows);   // R5
+    for (const r of rows) {
       out[String(r.id)] = rowTextOf(kind, r);
     }
   }
@@ -163,6 +218,7 @@ export async function liveRecordCandidates(
     .select("id, claim_text, evidence_excerpt, voice_class, raw_payload, source_type")
     .eq("company_id", companyId).eq("signal_band", "outside")
     .is("superseded_at", null).is("held_at", null);
+  await annotateVerifiedExcerpts(supabase, (sigRows ?? []) as Array<Record<string, unknown>>);   // R5
   for (const r of ((sigRows ?? []) as Array<{ id: string; claim_text: string | null; evidence_excerpt: string | null; voice_class: string | null; raw_payload?: unknown; source_type?: unknown }>)) {
     searched.signals++;
     // W1: the SAME predicate selectPublicInputs applies — a row the pool may not hold is a row this

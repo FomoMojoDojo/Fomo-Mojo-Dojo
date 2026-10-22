@@ -63,7 +63,7 @@ function fakeDb(seed: Record<string, Row[]>, opts: { failTable?: string } = {}) 
   return { tables, log, filters, from };
 }
 
-const PUBLIC_SIG = (id: string, url: string, text: string, extra: Row = {}): Row => ({ id, company_id: CO, signal_band: "outside", voice_class: "outside_voice_about_client", source_type: "public_baseline_run", claim_text: text, evidence_excerpt: text, source_title: "x", source_url: url, event_date: "2026-09-01", created_at: "2026-09-11T00:00:00Z", confidence_to_use: "medium", evidence_class: "prose", superseded_at: null, held_at: null, raw_payload: { url, snippet: text }, ...extra });
+const PUBLIC_SIG = (id: string, url: string, text: string, extra: Row = {}): Row => ({ id, company_id: CO, signal_band: "outside", voice_class: "outside_voice_about_client", source_type: "public_baseline_run", claim_text: text, evidence_excerpt: text, source_title: "x", source_url: url, event_date: "2026-09-01", created_at: "2026-09-11T00:00:00Z", confidence_to_use: "medium", evidence_class: "prose", superseded_at: null, held_at: null, raw_payload: { url, snippet: text, excerpt_guard: { basis: "retained_page", traced: true } }, ...extra });   // R5: verified page words
 const UPLOAD_SIG: Row = { id: "S-upload", company_id: CO, signal_band: "organization", voice_class: null, source_type: "uploaded_file", claim_text: "SECRET-UPLOAD-SENTENCE from the client's strategy deck", evidence_excerpt: "", source_url: null, created_at: "2026-06-05T00:00:00Z", superseded_at: null, held_at: null, raw_payload: {} };
 
 function world(opts: { hasUpload: boolean; defProvenance: string; frontierStatus?: string | null; withdrawnTwin?: boolean }) {

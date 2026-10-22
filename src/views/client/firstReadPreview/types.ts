@@ -445,7 +445,9 @@ export type FirstReadPreviewData = {
    * 'first_read_gap_pairs'): not-yet (no record), looked-and-none, couldn't-check.
    * Governs the empty-beat line — never derived from array emptiness alone.
    */
-  gapIntegrity: "not_yet" | "looked_none" | "couldnt_check";
+  /** not_compared (ruling 2026-10-22): the company has own-words claims newer than any COMPLETED gap comparison, so
+   *  the looked-none note would claim a comparison that never saw them. */
+  gapIntegrity: "not_yet" | "looked_none" | "couldnt_check" | "not_compared";
   /** Gate 9a — pairs the delta judge could not verify (claim_delta_looks), summed from the
    *  'claim_delta_looks' integrity records. Operator-only; never renders on a client surface. */
   looksPairsLooked: number;

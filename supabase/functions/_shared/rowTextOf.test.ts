@@ -11,7 +11,7 @@
 // drift verdicts correctly.
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  ROW_TEXT_COLUMNS, ROW_TEXT_TABLES, reReadRowTexts, rowTextOf, rowTextSelect,
+  annotateVerifiedExcerpts, ROW_TEXT_COLUMNS, ROW_TEXT_TABLES, reReadRowTexts, rowTextOf, rowTextSelect,
 } from "./classSourcingScope.ts";
 import { driftedSpans, type CarriedBlock } from "./carriedSpan.ts";
 import { sha256Hex } from "./contentIdentity.ts";
@@ -80,7 +80,7 @@ Deno.test("1a. and rowTextOf itself names NO column — it reads ROW_TEXT_COLUMN
 });
 
 Deno.test("1b. the re-read's SELECT is DERIVED from ROW_TEXT_COLUMNS, not written out again", () => {
-  assertEquals(rowTextSelect("signal"), "id, claim_text, evidence_excerpt");
+  assertEquals(rowTextSelect("signal"), "id, evidence_excerpt, raw_payload");   // R5: the excerpt, and the column that says whether it is verified
   assertEquals(rowTextSelect("own_word"), "id, quote");
   assertEquals(rowTextSelect("finding"), "id, body");
   // every column rowTextOf reads for a kind is in that kind's SELECT — the R6 ruling's second half
@@ -91,11 +91,14 @@ Deno.test("1b. the re-read's SELECT is DERIVED from ROW_TEXT_COLUMNS, not writte
   }
 });
 
-Deno.test("1c. rowTextOf is byte-identical to what selection built before R6", () => {
-  const r = { claim_text: "over 90% of kinship youth", evidence_excerpt: "remained in family settings" };
-  assertEquals(rowTextOf("signal", r), `${r.claim_text ?? ""} ${r.evidence_excerpt ?? ""}`.trim());
-  assertEquals(rowTextOf("signal", { claim_text: "a", evidence_excerpt: null }), "a");
-  assertEquals(rowTextOf("signal", { claim_text: null, evidence_excerpt: "b" }), "b");
+Deno.test("1c. R5 (2026-10-22): a signal's text is its VERIFIED evidence_excerpt alone — never claim_text", () => {
+  const r = { claim_text: "over 90% of kinship youth", evidence_excerpt: "remained in family settings", raw_payload: V };
+  assertEquals(rowTextOf("signal", r), "remained in family settings");
+  assertEquals(rowTextOf("signal", { claim_text: "a", evidence_excerpt: null, raw_payload: V }), "", "no excerpt ⇒ nothing, whatever the claim says");
+  assertEquals(rowTextOf("signal", { claim_text: null, evidence_excerpt: "b", raw_payload: V }), "b");
+  assertEquals(rowTextOf("signal", { claim_text: "x", evidence_excerpt: "an unchecked excerpt" }), "", "an excerpt nobody verified is not page words");
+  assertEquals(rowTextOf("signal", { evidence_excerpt: "crawled", raw_payload: { source_type: "site_crawl" } }), "crawled", "an own-site page slice is page words");
+  assertEquals(rowTextOf("signal", { evidence_excerpt: "back-verified", excerpt_verified: true }), "back-verified", "a passed verification record (annotateVerifiedExcerpts) is page words");
   assertEquals(rowTextOf("own_word", { quote: "  spoken  " }), "spoken");
   assertEquals(rowTextOf("finding", { body: "the finding" }), "the finding");
 });
@@ -125,8 +128,10 @@ function fakeDb(tables: Record<string, Array<Record<string, unknown>>>) {
 }
 
 const SIG = "dfb6da68-7d4e-46a2-8b58-7c039cbf5cf1";
+/** R5: the mint guard's stamp for an excerpt traced to its basis — what makes an excerpt page words. */
+const V = { excerpt_guard: { basis: "retained_page", traced: true } };
 const CLAIM = "in 1993 Edgewood established the first kinship program in the country; over 90% of kinship youth remained in family settings 18 months on";
-const ROW = { id: SIG, claim_text: CLAIM, evidence_excerpt: CLAIM };
+const ROW = { id: SIG, claim_text: CLAIM, evidence_excerpt: CLAIM, raw_payload: V };
 const FULL = rowTextOf("signal", ROW);
 
 /** The shape row 9830's block had: one carried line on a span of a signal row. */
@@ -149,8 +154,8 @@ Deno.test("2. the re-read of a known-good carry reports NO drift (the 9830 case,
   assertEquals(now[SIG], FULL, "the re-read must rebuild the SELECTION's text");
   assertEquals(now[SIG].length, FULL.length);
   assertEquals(await driftedSpans(block, now), [], "no drift — the row has not moved");
-  // and the re-read asked for both columns, which is the fix
-  assertEquals(db.selects.find((s) => s.table === "signals")?.cols, "id, claim_text, evidence_excerpt");
+  // and the re-read asked for the builder's own columns (R5: the excerpt and its verification)
+  assertEquals(db.selects.find((s) => s.table === "signals")?.cols, "id, evidence_excerpt, raw_payload");
 });
 
 // The 2026-10-16 ruling collapses a row whose two columns say the same thing, and the fixture above
@@ -159,41 +164,39 @@ Deno.test("2. the re-read of a known-good carry reports NO drift (the 9830 case,
 // FEWER COLUMNS than another. That still happens, on a row whose columns genuinely differ, and that
 // is the row this test now uses.
 const EVIDENCE = "the program placed 240 youth with relatives between 1993 and 2011";
-const ROW_DISTINCT = { id: SIG, claim_text: CLAIM, evidence_excerpt: EVIDENCE };
+const ROW_DISTINCT = { id: SIG, claim_text: CLAIM, evidence_excerpt: EVIDENCE, raw_payload: V };
 const FULL_DISTINCT = rowTextOf("signal", ROW_DISTINCT);
 
-Deno.test("2b. the PRE-R6 re-read (claim_text alone) is what refused row 9830", async () => {
-  const start = FULL_DISTINCT.indexOf("established"), end = start + 52;
-  const block = await blockOn(FULL_DISTINCT, start, end);
-  const pre = { [SIG]: CLAIM };                       // one column, as the old loop built it
-  const bad = await driftedSpans(block, pre);
-  assertEquals(bad.map((b) => b.why), ["sha_drift"], "the defect reproduces exactly");
-  assertEquals(CLAIM.length, 137);
-  assertEquals(FULL_DISTINCT.length, CLAIM.length + 1 + EVIDENCE.length,
-    "both columns are kept when they say different things");
-  assert(FULL_DISTINCT.length > CLAIM.length, "two different texts for one row");
+Deno.test("2b. R5: a span cut from the PRE-R5 text (claim + excerpt) drifts — the claim is no longer the row's words", async () => {
+  const preR5 = `${CLAIM} ${EVIDENCE}`;               // what the builder joined before R5
+  const start = preR5.indexOf("established"), end = start + 52;
+  const block = await blockOn(preR5, start, end);
+  const db = fakeDb({ signals: [ROW_DISTINCT], findings: [], own_words_candidates: [] });
+  const bad = await driftedSpans(block, await reReadRowTexts(db, [SIG]));
+  assertEquals(bad.map((b) => b.why), ["sha_drift"], "a carry cut from our claim cannot re-verify");
+  assertEquals(FULL_DISTINCT, EVIDENCE, "R5: the row says only its excerpt");
 });
 
-Deno.test("3. a MUTATED row reports sha_drift (the guard still bites after the fix)", async () => {
+Deno.test("3. a MUTATED excerpt reports sha_drift (the guard still bites after the fix)", async () => {
   const start = FULL.indexOf("established"), end = start + 52;
   const block = await blockOn(FULL, start, end);
-  const db = fakeDb({ signals: [{ ...ROW, claim_text: CLAIM.replace("1993", "1994") }], findings: [], own_words_candidates: [] });
+  const db = fakeDb({ signals: [{ ...ROW, evidence_excerpt: CLAIM.replace("1993", "1994") }], findings: [], own_words_candidates: [] });
   const bad = await driftedSpans(block, await reReadRowTexts(db, [SIG]));
   assertEquals(bad.map((b) => b.why), ["sha_drift"]);
 });
 
-Deno.test("3b. a mutation in the SECOND column alone still reports sha_drift (pre-R6 it was invisible)", async () => {
+Deno.test("3b. R5: a mutation in claim_text alone moves nothing — the claim is not the row's words", async () => {
   const start = FULL.indexOf("established"), end = start + 52;
   const block = await blockOn(FULL, start, end);
-  const db = fakeDb({ signals: [{ ...ROW, evidence_excerpt: CLAIM.replace("90%", "80%") }], findings: [], own_words_candidates: [] });
+  const db = fakeDb({ signals: [{ ...ROW, claim_text: CLAIM.replace("90%", "80%") }], findings: [], own_words_candidates: [] });
   const bad = await driftedSpans(block, await reReadRowTexts(db, [SIG]));
-  assertEquals(bad.map((b) => b.why), ["sha_drift"], "R6 widened what the re-read can SEE, not only what it accepts");
+  assertEquals(bad, [], "our sentence changed; the page's words did not");
 });
 
 Deno.test("4. a SHORTENED row reports sha_drift — shortening moves the text", async () => {
   const start = FULL.indexOf("established"), end = start + 52;
   const shortened = FULL.slice(0, start + 10);
-  const db = fakeDb({ signals: [{ id: SIG, claim_text: shortened, evidence_excerpt: null }], findings: [], own_words_candidates: [] });
+  const db = fakeDb({ signals: [{ id: SIG, claim_text: null, evidence_excerpt: shortened, raw_payload: V }], findings: [], own_words_candidates: [] });
   const now = await reReadRowTexts(db, [SIG]);
   assertEquals(now[SIG], shortened, "the re-read sees the row as it now is");
   assertEquals((await driftedSpans(await blockOn(FULL, start, end), now)).map((b) => b.why), ["sha_drift"]);
@@ -226,15 +229,15 @@ Deno.test("5. a DELETED row reports row_missing; an EMPTIED row reports sha_drif
 
 Deno.test("6. the re-read covers every table a carried row can come from, each with its own columns", async () => {
   const db = fakeDb({
-    signals: [{ id: "s1", claim_text: "sig", evidence_excerpt: "excerpt" }],
+    signals: [{ id: "s1", claim_text: "sig", evidence_excerpt: "excerpt", raw_payload: V }],
     findings: [{ id: "f1", body: "a finding body" }],
     own_words_candidates: [{ id: "o1", quote: "her own words" }],
   });
   assertEquals(await reReadRowTexts(db, ["s1", "f1", "o1"]), {
-    s1: "sig excerpt", f1: "a finding body", o1: "her own words",
+    s1: "excerpt", f1: "a finding body", o1: "her own words",   // R5: the claim is never joined
   });
   assertEquals(db.selects, [
-    { table: "signals", cols: "id, claim_text, evidence_excerpt" },
+    { table: "signals", cols: "id, evidence_excerpt, raw_payload" },
     { table: "findings", cols: "id, body" },
     { table: "own_words_candidates", cols: "id, quote" },
   ]);
@@ -267,37 +270,24 @@ const LIVE_SPANS = [
 ];
 
 Deno.test({
-  name: "8. LIVE: the re-read of row 9830's two carried rows reports NO drift",
+  name: "8. LIVE: selection and the re-read read ONE text for row 9830's two carried rows — under R5 both read nothing",
   ignore: !live,
   fn: async () => {
     const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.57.4");
     const db = createClient(URL_, KEY);
-
-    // what SELECTION sees: liveRecordCandidates' own query, built by rowTextOf
-    const { data: sel } = await db.from("signals")
-      .select("id, claim_text, evidence_excerpt")
-      .in("id", LIVE_SPANS.map((s) => s.row_id));
+    // what SELECTION sees: the builder's own columns and the back-verification mark, built by rowTextOf
+    const { data: sel } = await db.from("signals").select(rowTextSelect("signal")).in("id", LIVE_SPANS.map((s) => s.row_id));
+    await annotateVerifiedExcerpts(db as unknown as { from: (t: string) => any }, (sel ?? []) as Array<Record<string, unknown>>);   // R5
     const selectionText: Record<string, string> = {};
     for (const r of (sel ?? []) as Array<Record<string, unknown>>) selectionText[String(r.id)] = rowTextOf("signal", r);
-
     // what the RE-READ sees, through the real path
     const now = await reReadRowTexts(db as unknown as { from: (t: string) => unknown }, LIVE_SPANS.map((s) => s.row_id));
-
     for (const s of LIVE_SPANS) {
       assertEquals(now[s.row_id], selectionText[s.row_id], `${s.row_id.slice(0, 8)}: the two sides must read ONE text`);
-      assert(now[s.row_id].length > 0, `${s.row_id.slice(0, 8)} is present in the live record`);
+      // R5 (2026-10-22): dfb6da68 has no verification basis and ba7ee838's excerpt was blanked as not on its retained
+      // page — neither is verified page words, so neither can source a specific or back a carry any more.
+      assertEquals(now[s.row_id], "", `${s.row_id.slice(0, 8)}: no verified page words ⇒ no text`);
     }
-
-    // a block exactly as the carry built it, hashed from the live text, then re-read and compared
-    const block: Record<string, unknown> = {};
-    for (const [i, s] of LIVE_SPANS.entries()) {
-      const text = selectionText[s.row_id];
-      block[`unique_attributes[${i}]`] = {
-        primary: { row_id: s.row_id, row_sha: await sha256Hex(text), start: s.start, end: s.end, cls: "record", clause_index: 1, specifics: [] },
-        second: null, stored_text: text.slice(s.start, s.end), rejected: [],
-      };
-    }
-    assertEquals(await driftedSpans(block as unknown as CarriedBlock, now), [], "nothing has drifted — the stage may proceed");
   },
 });
 
@@ -310,27 +300,18 @@ Deno.test({
 // seam at 175 and rendered "...dry ice blasting, decontamination BBB accredited since September 7,
 // 2005". These two tests are the floor and the ceiling of the rule.
 
-Deno.test("DUP. a row whose columns say the same thing is read ONCE, and no clause spans a seam", () => {
+Deno.test("DUP / R5. a row whose columns say the same thing reads ONCE — as its excerpt; no seam can exist", () => {
   const one = "BBB accredited since September 7, 2005; services span mold removal, dry ice blasting, decontamination";
-  const text = rowTextOf("signal", { claim_text: one, evidence_excerpt: one });
-  assertEquals(text, one, "the duplicate column is dropped before the join");
-  assertEquals(text.length, one.length);
-  // the seam is what made the defect: with the duplicate gone there is no second copy to run into
-  assert(!text.includes("decontamination BBB"), "the clause splitter can no longer cross a seam");
+  const text = rowTextOf("signal", { claim_text: one, evidence_excerpt: one, raw_payload: V });
+  assertEquals(text, one);
+  assert(!text.includes("decontamination BBB"), "one column ⇒ no seam to cross");
   assertEquals((text.match(/BBB accredited/g) ?? []).length, 1, "stated once");
-  // containment, not equality: a column that merely repeats PART of an earlier one adds nothing
-  assertEquals(rowTextOf("signal", { claim_text: one, evidence_excerpt: "dry ice blasting" }), one);
 });
 
-Deno.test("DUP. a row whose columns say DIFFERENT things keeps both, in order", () => {
+Deno.test("DUP / R5. a row whose columns say DIFFERENT things reads as its excerpt alone", () => {
   const claim = "Edgewood established the first kinship program in the country";
   const evidence = "the program placed 240 youth with relatives";
-  assertEquals(rowTextOf("signal", { claim_text: claim, evidence_excerpt: evidence }),
-    `${claim} ${evidence}`, "nothing is dropped when the second column adds something");
-  // a column that CONTAINS an earlier one is still kept — the rule drops the contained, not the container
-  const long = `${claim} and ran it for three decades`;
-  assertEquals(rowTextOf("signal", { claim_text: claim, evidence_excerpt: long }), `${claim} ${long}`);
-  // and the single-column kinds are untouched by any of this
+  assertEquals(rowTextOf("signal", { claim_text: claim, evidence_excerpt: evidence, raw_payload: V }), evidence, "our claim never reaches the gates");
   assertEquals(rowTextOf("own_word", { quote: "  spoken  " }), "spoken");
   assertEquals(rowTextOf("finding", { body: "the finding" }), "the finding");
 });

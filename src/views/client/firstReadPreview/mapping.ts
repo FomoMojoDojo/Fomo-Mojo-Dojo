@@ -260,6 +260,21 @@ export function hoistStrongestNegative<T extends { id: string; text: string; str
  * follows the (already discussability-ordered) input's first appearance, so it is deterministic
  * and independent of within-group shuffling.
  */
+/** Ruling 2026-10-22 (fleet-wide): the gap beat's integrity state. The persisted row decides not_yet / couldnt_check /
+ *  looked_none as before — but a looked-none state is only true when a COMPLETED gap comparison ran after the company's
+ *  latest own-words claim. If none did (Spectrum: the only row is a 2026-10-13 skipped_empty_input that predates all
+ *  142 own-words claims), the comparison has not been made with those words, and the state is not_compared. */
+export function gapIntegrityState(args: {
+  latestStatus: string | null;
+  latestOwnWordsAt: string | null;
+  latestCompletedAt: string | null;
+}): "not_yet" | "looked_none" | "couldnt_check" | "not_compared" {
+  if (!args.latestStatus) return "not_yet";
+  if (args.latestStatus === "failed") return "couldnt_check";
+  if (args.latestOwnWordsAt && (!args.latestCompletedAt || Date.parse(args.latestCompletedAt) < Date.parse(args.latestOwnWordsAt))) return "not_compared";
+  return "looked_none";
+}
+
 export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
   const order: string[] = [];
   const byId = new Map<string, FRGapStatement>();

@@ -222,5 +222,5 @@ Deno.test("N2. the name harvest does NOT require a class on the predecessor's li
 Deno.test("N2. selection_version was bumped — which rows enter the pool changed", async () => {
   const { SELECTION_VERSION } = await import("./publicReadSelection.ts");
   assert(SELECTION_VERSION !== "gpr-select-2026-10-14.2", "the pre-N2 version must not still be stamped");
-  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-14.3");
+  assertEquals(SELECTION_VERSION, "gpr-select-2026-10-22.1");   // bumped again 2026-10-22 (own-words host order)
 });

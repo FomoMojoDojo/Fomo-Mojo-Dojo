@@ -201,6 +201,8 @@ const NO_PAIRS_NOTE = "No comparisons computed yet."; // signed
 // from array emptiness alone. Both SIGNED (string sheet).
 const GAP_LOOKED_NONE_NOTE =
   "We compared your public voice with the record — no disagreements stand right now."; // signed
+// Signed 2026-10-22: own-words claims exist that no completed comparison has seen (gapIntegrityState).
+const GAP_NOT_COMPARED_NOTE = "We haven't compared your own words with the record yet."; // signed
 const GAP_COULDNT_CHECK_NOTE =
   "This comparison didn't complete — it will run again on the next refresh."; // signed
 const NO_QUESTIONS_NOTE = "No open questions generated yet."; // signed (not-yet: no integrity row)
@@ -1946,6 +1948,8 @@ export function ActGap({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?
           <Absent>
             {read.gapIntegrity === "couldnt_check"
               ? GAP_COULDNT_CHECK_NOTE
+              : read.gapIntegrity === "not_compared"
+                ? GAP_NOT_COMPARED_NOTE
               : read.gapIntegrity === "looked_none"
                 ? GAP_LOOKED_NONE_NOTE
                 : NO_PAIRS_NOTE}
