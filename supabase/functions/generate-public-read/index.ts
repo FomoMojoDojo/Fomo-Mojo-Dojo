@@ -34,6 +34,8 @@ import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, s1Deta
 } from "../_shared/classFactCheck.ts";
 import { applyPageWordsRestamp, pageWordsVerdicts, pageWordsWithheldKeys, PAGE_WORDS_RULE_VERSION, type PageWordsVerdict } from "../_shared/pageWordsRule.ts";
 import { citedSlotsOfStoredPayload } from "../_shared/citedLines.ts";
+import { contradictionDetail, contradictionHits, CONTRADICTION_VERSION, type ContradictionHit } from "../_shared/contradiction.ts";
+import { ALTERNATIVES_STEP_PROMPT, ALTERNATIVES_STEP_VERSION, alternativesStepRows, entityTokensOf, gateAlternativesStep, type Alternative, type StepDrop } from "../_shared/positioningAlternative.ts";
 import { isAnalysisRow } from "../_shared/voiceLabel.ts";
 import { liveRecordCandidates, reReadRowTexts, searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
@@ -530,10 +532,10 @@ Deno.serve(async (req) => {
     const attemptNo: Partial<Record<Kind, number>> = {};
     const run = async (
       choice: typeof genChoice, system: string, user: string, temperature: number,
-      meta?: { kind?: Kind; attempt?: number; role?: "generator" | "judge" | "class_fix" },
+      meta?: { kind?: Kind; attempt?: number; role?: "generator" | "judge" | "class_fix" | "alternatives" },
     ): Promise<Record<string, unknown>> => {
       const sha = await sha256Hex(`${system}\n\n${user}`);
-      if (meta?.kind && meta.role !== "judge") promptSha[meta.kind] = sha;
+      if (meta?.kind && meta.role !== "judge" && meta.role !== "alternatives") promptSha[meta.kind] = sha;
       const ledgerRow = async (rec: ModelCallRecord) => {
         ledgeredUsd += rec.usd ?? 0;
         await recordModelCall(supabase, {
@@ -661,15 +663,13 @@ EXAMPLE. A row of class 'the record' says 'the only level 14 residential facilit
     const GEN_POSITIONING = `You read a company's PUBLIC record and state its positioning as a hypothesis for the room to test. ${CITE_RULE}
 ${SPECIFICS_RULE}
 ${LEVEL_RULE}
-ALTERNATIVES (ruling 15). "alternatives" names what a customer would otherwise choose — a competitor, a substitute, or doing nothing — ONLY as a cited row NAMES it: the name must appear in a row you cite, and that row must be the record or the company, not our read. If no row names an alternative, return "alternatives":[] — that is the correct answer, and it becomes a question for the room. Never infer, guess or invent an alternative.
 ${SOURCES_BY_FIELD_POSITIONING}
 ${CONFLICTING_FIGURES_RULE}
 Return ONLY JSON:
 {"market_category":"<a plain-language category this business ACTUALLY IS — e.g. 'neighborhood cafe & roaster', not a fancy or aspirational label>","market_category_citations":["<id>"],
  "value_for_customer":"<the outcome a customer gets, in plain words>","value_citations":["<id>"],
  "best_fit_customers":"<who it's for, and the need that brings them>","best_fit_citations":["<id>"],
- "unique_attributes":[{"text":"<one differentiator, relative to the alternative>","citations":["<id>"]}],
- "alternatives":[{"name":"<the alternative, exactly as a cited row names it>","text":"<how the company stands against it, as the cited rows state it>","citations":["<id>"]}]}
+ "unique_attributes":[{"text":"<one differentiator, relative to the alternative>","citations":["<id>"]}]}
 ${US_ENGLISH_RULE}`;
     // Stage B — the FULL Playing-to-Win cascade (5 rungs), read as THE STRATEGY THE PUBLIC RECORD
     // IMPLIES (a reading, never a go-forward proposal). Each rung is cited-or-OMITTED: a rung the
@@ -1140,6 +1140,24 @@ Respond with ONLY JSON:
     const alternativeResults: Partial<Record<Kind, ReturnType<typeof alternativeRefusals>>> = {};
     /** Ruling 39: every record/you line the page-words rule judged at commit, and which it re-stamped our_read. */
     const pageWordsResults: Partial<Record<Kind, PageWordsVerdict[]>> = {};
+    /** Ruling 49: the alternatives step — ONE call per run, cached, so a re-asked positioning carries the same alternatives. */
+    let alternativesStep: Promise<{ input_rows: number; kept: Alternative[]; dropped: StepDrop[]; raw: unknown; error: string | null }> | null = null;
+    const alternativesForRun = () => alternativesStep ??= (async () => {
+      const stepRows = alternativesStepRows(catRows.map((r) => ({ ...r, source_class: r.cls })));
+      const stepRefs = new Set(stepRows.map((r) => r.ref));
+      if (stepRows.length === 0) return { input_rows: 0, kept: [], dropped: [], raw: [], error: null };
+      const user = `ROWS (cite only the bracketed tokens on these lines):\n${stepRows.map((r) => catalogueLine(r.ref, r.kind, r.cls, r.text, r.title, r.filing)).join("\n")}`;
+      try {
+        const out = await run(genChoice, ALTERNATIVES_STEP_PROMPT, user, 0, { kind: "positioning", attempt: 1, role: "alternatives" });
+        const g = gateAlternativesStep((out as { alternatives?: unknown }).alternatives ?? [], (ref) => textByRef.get(ref) ?? "",
+          (ref) => stepRefs.has(ref), entityTokensOf([companyName, ...relatedRows.map((r) => r.name)]));
+        return { input_rows: stepRows.length, kept: g.kept, dropped: g.dropped, raw: (out as { alternatives?: unknown }).alternatives ?? null, error: null };
+      } catch (e) {
+        return { input_rows: stepRows.length, kept: [], dropped: [], raw: null, error: (e as Error).message };   // no re-ask; empty → gap
+      }
+    })();
+    /** Ruling 50: the contradiction hits on the payload this kind was last gated on. */
+    const contradictionResults: Partial<Record<Kind, ContradictionHit[]>> = {};
     /** Which kinds used their one re-ask, for the report. */
     const reasked: Partial<Record<Kind, { specifics: string[]; fields: string[] }>> = {};
     const storagePayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
@@ -1224,6 +1242,10 @@ Respond with ONLY JSON:
           // Ruling 15: the alternative gate's refusals
           alternatives: alternativeResults[kind as Kind] ?? null,
           // Ruling 39: the page-words rule at commit — each judged line, its unsupported words, and whether it flipped
+          // Ruling 49: the alternatives step — what it was shown, what it answered, what the gates kept and dropped
+          alternatives_step: kind === "positioning" && alternativesStep ? await alternativesStep.then((r) => ({ version: ALTERNATIVES_STEP_VERSION, ...r, kept: r.kept.map((a) => ({ ...a, citations: a.citations.map((c) => uuidByRef.get(c) ?? c) })) })) : null,
+          // Ruling 50: the contradiction check's hits on the last gated payload (empty array = checked, clean)
+          contradiction: contradictionResults[kind as Kind] ? { version: CONTRADICTION_VERSION, hits: contradictionResults[kind as Kind] } : null,
           page_words: pageWordsResults[kind as Kind]
             ? { version: PAGE_WORDS_RULE_VERSION, flipped: pageWordsResults[kind as Kind]!.filter((v) => v.flips).length, lines: pageWordsResults[kind as Kind] }
             : null,
@@ -1569,6 +1591,15 @@ Respond with ONLY JSON:
         const detail = alternativeRefusalDetail(refusals);
         return detail ? { detail } : null;
       },
+      // ── CONTRADICTION (ruling 50): GUARD 5d — no line, our read included, asserts a scope the pool's rows bound ─────────
+      contradictionRefusal: (kind, payload) => {
+        const lines = linesOfStoredPayload(payload);                              // every line, any class, ref tokens
+        const pool = [...textByRef].filter(([ref]) => classByRef.get(ref) !== "our_read").map(([ref, text]) => ({ ref, text }));
+        const hits = contradictionHits(lines, (ref) => textByRef.get(ref) ?? "", pool);
+        contradictionResults[kind as Kind] = hits.map((h) => ({ ...h, row: uuidByRef.get(h.row) ?? h.row }));
+        const detail = contradictionDetail(hits);
+        return detail ? { detail } : null;
+      },
       validRefs,
       uuidByRef,
       provenances: ledger.provenances,
@@ -1727,6 +1758,27 @@ Respond with ONLY JSON:
             const again = await run(genChoice, genSys[kind as Kind], user, 0.2,
               { kind: kind as Kind, attempt: (attemptNo[kind as Kind] ?? 1) + 1, role: "generator" });
             reasked[kind as Kind] = { specifics: refused.map((h) => h.check), fields: refused.map((h) => h.field) };
+            return again;
+          } catch {
+            return null;                                    // a failed re-ask leaves the refusal standing
+          }
+        }
+        // ── Ruling 50: the CONTRADICTION branch of the one re-ask — names each line, its scope word, and the row bounding it ──
+        if (because === "contradiction") {
+          const hits = contradictionResults[kind as Kind] ?? [];
+          if (hits.length === 0) return null;
+          const refOf = refByUuidLive();
+          const lines = hits.map((h) => `  ${h.field || kind}: "${h.text}"\n    — says "${h.scope}"; [${refOf.get(h.row) ?? h.row}] states "${h.bound}"`).join("\n");
+          const user = buildGenUser(kind as Kind, {
+            feedback: `\n\nYOUR PREVIOUS ANSWER WAS REFUSED: IT CONTRADICTS THE RECORD. These lines claim a scope the ledger's own rows ` +
+              `bound:\n${lines}\n\nState the scope the rows state — the bounded value with the row that states it — or leave the scope out. ` +
+              `A scope word is allowed only when a row you cite says it.`,
+            ask: `Produce the ${kind} JSON again, in full.`,
+          });
+          try {
+            const again = await run(genChoice, genSys[kind as Kind], user, 0.2,
+              { kind: kind as Kind, attempt: (attemptNo[kind as Kind] ?? 1) + 1, role: "generator" });
+            reasked[kind as Kind] = { specifics: hits.map((h) => h.scope), fields: hits.map((h) => h.field) };
             return again;
           } catch {
             return null;                                    // a failed re-ask leaves the refusal standing
@@ -1948,6 +2000,8 @@ Respond with ONLY JSON:
         delete verdicts[kind as Kind];
         // L1: the loop head IS the attempt boundary, so it is where the attempt number advances.
         attemptNo[kind as Kind] = (attemptNo[kind as Kind] ?? 0) + 1;
+        // Ruling 49: the positioning generator no longer writes alternatives — the step does, once, for every attempt
+        if (kind === "positioning") payload.alternatives = (await alternativesForRun()).kept.map((a) => ({ ...a, citations: [...a.citations] }));
         await stampAndDecide(kind as Kind, payload);
         payloads[kind as Kind] = payload;
       },

@@ -12,7 +12,7 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import { bestFitResidue, L1_COVERAGE, levelHits, levelItemsOfOfferingPayload, levelRefusalDetail, levelWithheldKeys, unionWithheld, type LevelHit, type LevelKind } from "./readLevel.ts";
 import { linesOfStoredPayload } from "./citedLines.ts";
 import { classifyContinuity } from "./stageContinuity.ts";
-import { alternativeGapOf, alternativeRefusals, ALTERNATIVE_GAP_QUESTION_PROPOSED, type CitedRowView } from "./positioningAlternative.ts";
+import { alternativeGapOf, alternativeRefusals, ALTERNATIVE_GAP_QUESTION, type CitedRowView } from "./positioningAlternative.ts";
 
 const FIX = JSON.parse(await Deno.readTextFile(new URL("./fixtures/readLevel/reads-20261022.json", import.meta.url))).companies as Record<string, Record<string, Record<string, unknown>>>;
 const hitsOf = (co: string, kind: LevelKind): LevelHit[] =>
@@ -132,7 +132,7 @@ Deno.test("A ok: an alternative a record or company row names, cited, passes", (
 Deno.test("G an empty field records an alternative gap (a question, never a guess); a named one records none", () => {
   const gap = alternativeGapOf(pos([]))!;
   assertEquals(gap.question_identity, "alternative_gap:positioning");
-  assertEquals(gap.question_proposed, ALTERNATIVE_GAP_QUESTION_PROPOSED);
+  assertEquals(gap.question, ALTERNATIVE_GAP_QUESTION);
   assertEquals(alternativeGapOf(pos([{ name: "T-Mobile Home Internet", text: "x", citations: ["S1"] }])), null);
   assertEquals(alternativeGapOf(FIX.Spectrum.positioning)?.reason, "no cited row names an alternative", "every current read has none — the field is new");
 });

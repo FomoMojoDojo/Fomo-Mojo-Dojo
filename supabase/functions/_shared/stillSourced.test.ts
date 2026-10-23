@@ -190,6 +190,6 @@ Deno.test("C1-S. the block and its counts are recorded, not only used", async ()
 
 Deno.test("C1-S. GEN_RULES_VERSION was bumped — the generation PROMPT changed", () => {
   assert(GEN_RULES_VERSION !== "2026-10-13.2", "the pre-C1-S stamp must not still be written");
-  assertEquals(GEN_RULES_VERSION, "2026-10-22.5");
+  assertEquals(GEN_RULES_VERSION, "2026-10-22.6");
   assert(/^\d{4}-\d{2}-\d{2}\.\d+$/.test(GEN_RULES_VERSION), "still a dated stamp");
 });

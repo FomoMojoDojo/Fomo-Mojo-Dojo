@@ -30,6 +30,7 @@ import {
 import { reReadRowTexts } from "./classSourcingScope.ts";
 import { citedSlotsOfStoredPayload, linesOfStoredPayload } from "./citedLines.ts";
 import { pageWordsRefusalDetail, pageWordsVerdicts } from "./pageWordsRule.ts";
+import { contradictionDetail, contradictionHits } from "./contradiction.ts";
 import { insertIntegrityRun } from "./integrityWrite.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -203,6 +204,26 @@ export async function promotePageWordsRefusal(
   }
 }
 
+/** Ruling 50 (2026-10-22): the CONTRADICTION check again at promote — every stored line against the staged read's own pool
+ *  (its ledger ids, our read excluded), RE-READ NOW. FAILS CLOSED — a re-read that cannot be made is a refusal. */
+export async function promoteContradictionRefusal(
+  supabase: AnySupabase,
+  row: { payload?: Record<string, unknown> | null; input_ledger?: Record<string, unknown> | null },
+): Promise<string | null> {
+  if (!row.payload) return null;
+  try {
+    const ledger = (row.input_ledger ?? {}) as { ids?: string[]; classes?: Record<string, string>; by_kind?: Record<string, string[]> };
+    const ourRead = new Set([...Object.entries(ledger.classes ?? {}).filter(([, c]) => c === "our_read").map(([id]) => id), ...(ledger.by_kind?.finding ?? [])]);
+    const lines = linesOfStoredPayload(row.payload);
+    const ids = [...new Set([...(ledger.ids ?? []), ...lines.flatMap((l) => l.refs)])];
+    const text = ids.length ? await reReadRowTexts(supabase, ids) : {};
+    const pool = (ledger.ids ?? []).filter((id) => !ourRead.has(id) && text[id]).map((id) => ({ ref: id, text: text[id] }));
+    return contradictionDetail(contradictionHits(lines, (r) => text[r] ?? "", pool));
+  } catch (e) {
+    return `the staged read's rows could not be re-read (${(e as Error).message})`;
+  }
+}
+
 export async function promoteStagedReads(
   supabase: AnySupabase,
   companyId: string,
@@ -233,6 +254,9 @@ export async function promoteStagedReads(
     // ── PAGE WORDS AT PROMOTE (ruling 39) — decided before any write, like S1 and level; fails closed ──────────────────
     const pw = await promotePageWordsRefusal(supabase, companyId, stagedRow!);
     if (pw) throw new PromoteRefused(stagedId, kind, `PAGE WORDS: a record/you line's words are not in its cited rows — ${pw}`);
+    // ── CONTRADICTION AT PROMOTE (ruling 50) — decided before any write; fails closed ───────────────────────────────────
+    const ct = await promoteContradictionRefusal(supabase, stagedRow!);
+    if (ct) throw new PromoteRefused(stagedId, kind, `CONTRADICTION: a line claims a scope the record bounds — ${ct}`);
 
     const { data: prior } = await supabase.from("public_reads")
       .select("id").eq("company_id", companyId).eq("kind", kind).eq("is_current", true).maybeSingle();

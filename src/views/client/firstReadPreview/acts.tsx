@@ -35,6 +35,7 @@ import {
   NEW_KIND_NOTE,
 } from "../../../../supabase/functions/_shared/relationshipKinds.ts";
 import { ListingRow, promiseOurReadTag } from "./primitives";
+import { ALTERNATIVE_GAP_QUESTION, renderAlternative } from "../../../../supabase/functions/_shared/alternativeStrings.ts";
 import { OperatorUnstatedState, OperatorUnstatedReason, OperatorKindTag, OperatorPairMeta, OperatorLooksLine, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
 // Home reskin (2026-09-11): SeqChip / TwoWeightHeadline / NumberedList lifted to primitives.tsx (no behaviour
 // change) so a page outside the First Read can share the chip sequence and the lead/bold headline rhythm.
@@ -1489,6 +1490,22 @@ function PositioningFullRead({ p }: { p: NonNullable<FirstReadPreviewData["posit
             <p className="fr-rung-text"><MarkTarget kind="read_field" keyVal="positioning:best_fit" text={p.bestFit} as="span">{sentenceCase(p.bestFit)}</MarkTarget></p>
             <FieldSource fs={p.fieldSources?.bestFit} />
           </Labeled>
+        </div>
+      ) : null}
+      {/* Rulings 20 + 49 (2026-10-22): each alternative the record names, in the signed string, with its cited row's
+          venue line beneath; an empty field asks the signed open question. Absent on a read written before ruling 15. */}
+      {p.alternatives && p.alternatives.length > 0 ? (
+        <div className="fr-dark-section" data-testid="positioning-alternatives">
+          {p.alternatives.map((a, i) => (
+            <div key={i} className="fr-alternative">
+              <p className="fr-rung-text"><MarkTarget kind="read_field" keyVal={`positioning:alternatives:${i}`} text={a.text} as="span">{renderAlternative(a)}</MarkTarget></p>
+              <FieldSource fs={a.source} />
+            </div>
+          ))}
+        </div>
+      ) : p.alternativesGap ? (
+        <div className="fr-dark-section" data-testid="positioning-alternative-gap">
+          <p className="fr-rung-text">{ALTERNATIVE_GAP_QUESTION}</p>
         </div>
       ) : null}
     </>

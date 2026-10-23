@@ -118,7 +118,7 @@ Deno.test("N1c. exactly ONE re-ask, and only on the S1/N1 refusal", async () => 
   // C1-R (2026-10-15) added a THIRD path — the C1-S trigger inside commit. All three set the one
   // flag, which is what keeps the budget at one attempt per stage however the first was refused.
   const sets = [...fn.matchAll(/reasked = true;/g)].length;
-  assertEquals(sets, 4, "sourcing, level (ruling 14), continuity and class paths all set the one flag");
+  assertEquals(sets, 5, "sourcing, level (ruling 14), contradiction (ruling 50), continuity and class paths all set the one flag");
   assert(fn.includes("if (next) { payload = next; reasked = true; continue; }"),
     "the fresh payload re-enters the loop");
 });

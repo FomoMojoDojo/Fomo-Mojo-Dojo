@@ -253,6 +253,11 @@ export type FRPositioning = {
   /** 1a-4: per-field class + cited rows. Keys: category | value | bestFit | differentiators.N.
    *  OPTIONAL — a read with no classes map has none, and the render then shows no source line. */
   fieldSources?: FRFieldSources;
+  /** Rulings 20 + 49 (2026-10-22): the alternatives the record names, each with its cited row's venue line. Present only
+   *  when the stored read carries an `alternatives` array (a read written before ruling 15 has none and renders as before). */
+  alternatives?: Array<{ name: string; text: string; source?: FRFieldSource }>;
+  /** True when the read carries `alternatives` and it is EMPTY — the beat then asks the signed open question. */
+  alternativesGap?: boolean;
 } | null;
 
 /** Observed promise (ruling 1, 2026-08-21): the market_read canvas has NO distinct promise field,

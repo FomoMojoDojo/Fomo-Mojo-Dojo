@@ -1324,8 +1324,15 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
               })
               .filter(Boolean)
           : [];
+        // Rulings 20 + 49: the alternatives, each with its cited row's venue line; an EMPTY array is the open question.
+        // A read with no `alternatives` key predates ruling 15 and renders as before — no question is invented for it.
+        const posAltRaw = Array.isArray(posRaw.alternatives) ? posRaw.alternatives as Array<Record<string, unknown>> : null;
+        const posAlts = (posAltRaw ?? [])
+          .filter((a) => String(a?.name ?? "").trim() && String(a?.text ?? "").trim())
+          .map((a) => ({ name: String(a.name), text: String(a.text), source: elementSourceOf("positioning", a) }));
+        const posAltFields = posAltRaw ? { alternatives: posAlts, alternativesGap: posAlts.length === 0 } : {};
         const positioning = posRow && posPayload && (posPayload.market_category || posPayload.value_for_customer || posDiffs.length)
-          ? { category: posPayload.market_category ?? null, value: posPayload.value_for_customer ?? null, bestFit: posPayload.best_fit_customers ?? null, differentiators: posDiffs, sourceTag: publicReadTag(posRow.created_at), ...(Object.keys(posFieldSources).length > 0 ? { fieldSources: posFieldSources } : {}) }
+          ? { category: posPayload.market_category ?? null, value: posPayload.value_for_customer ?? null, bestFit: posPayload.best_fit_customers ?? null, differentiators: posDiffs, sourceTag: publicReadTag(posRow.created_at), ...(Object.keys(posFieldSources).length > 0 ? { fieldSources: posFieldSources } : {}), ...posAltFields }
           : null;
 
         // Stage B (2026-08-28): the strategy payload is the 5-rung public cascade SPINE. Rungs 4–5

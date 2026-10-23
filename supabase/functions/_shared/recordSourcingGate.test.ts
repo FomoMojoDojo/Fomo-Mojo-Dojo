@@ -301,7 +301,8 @@ Deno.test("V4. EVERY guard routes through that one funnel, so none can omit the 
   // C1-R (2026-10-15) added a third: its own attempt-1 record, inside the commit catch. V4's
   // invariant is unchanged — no rejected-status audit call may omit the payload, and none does.
   // ruling 14 added a fourth: the level re-ask's attempt-1 record — it carries the payload like the others
-  assertEquals(rejectedCalls.length, 4, "the reject funnel, N1c's, the level re-ask's and C1-R's attempt-1 records");
+  // ruling 50 added a fifth: the contradiction re-ask's attempt-1 record
+  assertEquals(rejectedCalls.length, 5, "the reject funnel, N1c's, the level re-ask's, the contradiction re-ask's and C1-R's attempt-1 records");
   for (const c of rejectedCalls) assert(c.includes("payload"), `every rejected-status audit carries the payload: ${c.slice(0, 70)}`);
 });
 

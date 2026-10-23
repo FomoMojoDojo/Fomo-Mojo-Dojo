@@ -95,7 +95,7 @@ Deno.test("MODEL. every stored read stamps the generator model, in the ledger AN
 });
 
 Deno.test("MODEL. the rules version moved with the model", () => {
-  assertEquals(GEN_RULES_VERSION, "2026-10-22.5");
+  assertEquals(GEN_RULES_VERSION, "2026-10-22.6");
 });
 
 Deno.test("MODEL. the version's own log says the model changed", async () => {

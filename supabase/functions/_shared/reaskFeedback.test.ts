@@ -254,8 +254,8 @@ Deno.test("L1. the attempt number advances at the attempt boundary, and the re-a
   assert(body.includes("attemptNo[kind as Kind] = (attemptNo[kind as Kind] ?? 0) + 1;"), "inside the stamp dep");
   // generate is attempt 1; both re-asks produce the NEXT attempt
   assert(gpr.includes('{ kind: kind as Kind, attempt: 1, role: "generator" }'), "the first answer is attempt 1");
-  assertEquals([...gpr.matchAll(/attempt: \(attemptNo\[kind as Kind\] \?\? 1\) \+ 1/g)].length, 4,
-    "the level re-ask (ruling 14), the C1-S re-ask, the N1 re-ask and the class fix each produce the next attempt");
+  assertEquals([...gpr.matchAll(/attempt: \(attemptNo\[kind as Kind\] \?\? 1\) \+ 1/g)].length, 5,
+    "the level re-ask (ruling 14), the contradiction re-ask (ruling 50), the C1-S re-ask, the N1 re-ask and the class fix each produce the next attempt");
   assert(gpr.includes('attempt: attemptNo[kind as Kind] ?? 1, role: "judge"'),
     "and the judge is ledgered against the attempt it is judging");
 });
@@ -270,8 +270,8 @@ Deno.test("L1. every attempt's audit row carries its prompt_sha and its attempt 
 
 Deno.test("L1. a generator re-ask re-stamps promptSha, so a stored read names the prompt that wrote it", async () => {
   const gpr = await read("../generate-public-read/index.ts");
-  assert(gpr.includes('if (meta?.kind && meta.role !== "judge") promptSha[meta.kind] = sha;'),
-    "every generator call stamps it; the judge's prompt is not the read's");
+  assert(gpr.includes('if (meta?.kind && meta.role !== "judge" && meta.role !== "alternatives") promptSha[meta.kind] = sha;'),
+    "every generator call stamps it; the judge's prompt, and the alternatives step's (ruling 49), are not the read's");
   // and the stored read reads that same map
   // both stored rows read that same map through the one stored-ledger builder (MODEL TRIAL,
   // 2026-10-15) — so a re-ask's sha cannot reach one stored row and not the other

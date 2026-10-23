@@ -57,6 +57,8 @@ export type PerKindGuard =
   // Ruling 14 (2026-10-22): a line refused at LEVEL (L2–L4, readLevel.ts) — the offering restated where a positioning,
   // promise or strategy line belongs. Deterministic, before the judge; ONE re-ask, from the shared budget.
   | "read_level"
+  // Ruling 50 (2026-10-22): a line asserts a national/global scope the pool's own rows bound (contradiction.ts)
+  | "contradiction"
   // Ruling 15 (2026-10-22): a positioning alternative not sourced from a row that names it (positioningAlternative.ts).
   | "alternative_unsourced";
 
@@ -139,7 +141,7 @@ export type PerKindDeps = {
     /** C1-R (2026-10-15): WHICH refusal is being answered. `sourcing` is the S1/N1 gate before the
      *  judge; `continuity` is the C1-S drop raised inside commit. One re-ask serves both, because
      *  the budget is one per stage however the first attempt was refused. */
-    because: "sourcing" | "continuity" | "level",
+    because: "sourcing" | "continuity" | "level" | "contradiction",
   ) => Promise<Record<string, unknown> | null>;
   /** Ruling 14: the LEVEL gate (readLevel.ts L2–L4), over the stamp of the payload about to be judged — after S1, before
    *  the judge. Returns the refusal detail, or null to pass. A refusal is re-asked ONCE, through reaskOnSourcingRefusal
@@ -148,6 +150,9 @@ export type PerKindDeps = {
   /** Ruling 15: the positioning ALTERNATIVE gate (A1–A3), after the level gate. Refused, never re-asked: an alternative no
    *  row names is a guess, and the correct answer is an empty field. */
   alternativeRefusal?: (kind: string, payload: Record<string, unknown>) => { detail: string } | null;
+  /** Ruling 50: the CONTRADICTION gate (contradiction.ts), after level and the alternative gate, before the judge. Re-asked
+   *  ONCE through reaskOnSourcingRefusal with because "contradiction", from the same single budget; a second failure refuses. */
+  contradictionRefusal?: (kind: string, payload: Record<string, unknown>) => { detail: string } | null;
   /** V4 (2026-10-14): one integrity_runs row per kind, carrying the full refused payload and its
    *  citations. Component first_read_public_read_<kind>. Never throws. */
   recordIntegrity?: (kind: string, row: {
@@ -229,7 +234,9 @@ export async function runKindsIsolated(
         /** N1c: set only by the S1/N1 gate, so the loop knows this refusal is the re-askable one. */
         sourcingDetail?: string;
         /** Ruling 14: set only by the level gate — re-askable from the same budget, with because "level". */
-        levelDetail?: string }
+        levelDetail?: string;
+        /** Ruling 50: set only by the contradiction gate — re-askable from the same budget, with because "contradiction". */
+        contradictionDetail?: string }
     | { outcome: "not_accepted"; verdict: Record<string, unknown> }
     | { outcome: "accepted"; verdict: Record<string, unknown> };
 
@@ -289,6 +296,10 @@ export async function runKindsIsolated(
     const alt = deps.alternativeRefusal?.(kind, payload) ?? null;
     if (alt) return { outcome: "rejected", guard: "alternative_unsourced", detail: alt.detail, payload, verdict: null };
 
+    // ── GUARD 5d (ruling 50): no line — our-read lines included — asserts a scope the pool's own rows bound ───────────
+    const contra = deps.contradictionRefusal?.(kind, payload) ?? null;
+    if (contra) return { outcome: "rejected", guard: "contradiction", detail: contra.detail, payload, verdict: null, contradictionDetail: contra.detail };
+
     // ── JUDGE (this kind alone) ────────────────────────────────────────────────────────────────
     let verdict: Record<string, unknown>;
     try {
@@ -335,6 +346,13 @@ export async function runKindsIsolated(
           await deps.recordIntegrity?.(kind, { status: "rejected", guard: g.guard, detail: `${g.levelDetail} (attempt 1 of 2; re-asked)`, payload: g.payload });
           deps.onReject?.(kind, g.guard, detailOf(g.levelDetail));
           const next = await deps.reaskOnSourcingRefusal(kind, g.payload, g.levelDetail, "level");
+          if (next) { payload = next; reasked = true; continue; }
+        }
+        // ── Ruling 50: ONE re-ask on a CONTRADICTION — the same `reasked` flag; a second failure refuses ───────────────
+        if (g.contradictionDetail !== undefined && !reasked && deps.reaskOnSourcingRefusal) {
+          await deps.recordIntegrity?.(kind, { status: "rejected", guard: g.guard, detail: `${g.contradictionDetail} (attempt 1 of 2; re-asked)`, payload: g.payload });
+          deps.onReject?.(kind, g.guard, detailOf(g.contradictionDetail));
+          const next = await deps.reaskOnSourcingRefusal(kind, g.payload, g.contradictionDetail, "contradiction");
           if (next) { payload = next; reasked = true; continue; }
         }
         await reject(kind, g.guard, g.detail, g.payload, g.verdict);

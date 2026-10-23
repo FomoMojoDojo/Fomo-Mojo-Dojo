@@ -32,8 +32,11 @@ Deno.test("RP. ONE prompt builder, and it is the only generator prompt template"
   // and every generator/class_fix call goes through it
   const gen = [...src.matchAll(/await run\(genChoice,/g)].length;
   const built = [...src.matchAll(/buildGenUser\(kind as Kind/g)].length;
-  assertEquals(gen, 5, "the first answer, the three full re-asks (sourcing, continuity, level — ruling 14), and the class fix");
-  assertEquals(built, 5, "all five built by the one builder");
+  // ruling 49 adds the ALTERNATIVES STEP (its own signed prompt, ALTERNATIVES_STEP_PROMPT — not a read prompt, so not built
+  // by buildGenUser) and ruling 50 the contradiction re-ask (built by buildGenUser like every other re-ask)
+  assertEquals(gen, 7, "the first answer, the four full re-asks (sourcing, continuity, level, contradiction), the class fix, and the alternatives step");
+  assert(src.includes("await run(genChoice, ALTERNATIVES_STEP_PROMPT, user, 0,"), "the one call not built by buildGenUser is the alternatives step");
+  assertEquals(built, 6, "all six read prompts built by the one builder");
 });
 
 Deno.test("RP. the builder sends the WHOLE prompt — carried lines and the differentiator count included", async () => {

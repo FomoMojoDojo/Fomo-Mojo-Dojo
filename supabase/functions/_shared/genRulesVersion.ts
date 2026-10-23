@@ -80,4 +80,8 @@
 // cited rows state different values for one measure, a line states one value with its row, or each value with its own
 // row; never a range or blend (Spectrum's "41–45 states", refused twice by S1).
 //   2026-10-22.5  CONFLICTING FIGURES.
-export const GEN_RULES_VERSION = "2026-10-22.5" as const;
+// ALTERNATIVES STEP + CONTRADICTION (operator rulings 49, 50, 2026-10-22): bumped because the positioning PROMPT changed —
+// it no longer asks for `alternatives` (a dedicated step over record and review rows writes them) — and a contradiction
+// refusal now has its own re-ask prompt naming the scope word and the row that bounds it.
+//   2026-10-22.6  ALTERNATIVES STEP + CONTRADICTION.
+export const GEN_RULES_VERSION = "2026-10-22.6" as const;
