@@ -1998,6 +1998,10 @@ Respond with ONLY JSON:
         // (10455) therefore carried attempt 1's distinctness block, while the HTTP response reported
         // null for the same kind. Same family as F1: a per-attempt fact surviving the attempt.
         delete verdicts[kind as Kind];
+        // Ruling 57 (2026-10-22): the contradiction result is cleared WITH the stamp, as F1b clears the verdict. Attempt 2 of
+        // Spectrum's positioning (14198) was refused at GUARD 5b — before GUARD 5d ran — and its audit row carried attempt 1's
+        // "nationwide" hit. A gate that did not run this attempt reports null, never a previous attempt's result.
+        delete contradictionResults[kind as Kind];
         // L1: the loop head IS the attempt boundary, so it is where the attempt number advances.
         attemptNo[kind as Kind] = (attemptNo[kind as Kind] ?? 0) + 1;
         // Ruling 49: the positioning generator no longer writes alternatives — the step does, once, for every attempt

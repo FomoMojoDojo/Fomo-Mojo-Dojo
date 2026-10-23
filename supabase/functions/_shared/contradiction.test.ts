@@ -5,6 +5,8 @@
 //   CT-4  P44-4  our-read lines are checked: the stage gate passes EVERY line of the payload, unfiltered by class
 //   CT-5  P44-5  a line citing a row that states the scope itself is licensed ("nationwide 5G access")
 //   CT-6  P44-6  promote re-runs the check before the flip, and fails closed
+//   C57          ruling 57: the contradiction result is cleared at the attempt boundary — an attempt refused at GUARD 5b
+//                carries no previous attempt's hit (Spectrum 14198)      — plant P57 → RED
 //   CT-W         GUARD 5d sits after level and the alternative gate, before the judge; its re-ask spends the ONE budget
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { contradictionHits } from "./contradiction.ts";
@@ -73,4 +75,20 @@ Deno.test("CT-W GUARD 5d after level and the alternative gate, before the judge;
   assert(lv > 0 && alt > lv && ct > alt && jd > ct, "level → alternatives → contradiction → judge");
   assert(pk.includes("if (g.contradictionDetail !== undefined && !reasked && deps.reaskOnSourcingRefusal) {"), "gated on the ONE flag");
   assert(pk.includes('deps.reaskOnSourcingRefusal(kind, g.payload, g.contradictionDetail, "contradiction")'), "through the one re-ask dep");
+});
+
+Deno.test("C57 the contradiction result is cleared at the attempt boundary — a 5b refusal carries no attempt-1 hit (P57)", async () => {
+  const gpr = await read("../generate-public-read/index.ts");
+  const at = gpr.indexOf("stampPayload: async (kind, payload) => {");
+  const body = gpr.slice(at, gpr.indexOf("\n      },", at));
+  assert(body.includes("delete contradictionResults[kind as Kind];"), "the previous attempt's contradiction result goes");
+  assert(body.indexOf("delete contradictionResults") < body.indexOf("await stampAndDecide"), "cleared before the stamp, as F1b's verdict is");
+  // one writer: the GUARD 5d dep — so the clear above is the whole lifecycle
+  assertEquals([...gpr.matchAll(/contradictionResults\[kind as Kind\] = /g)].length, 1, "one writer: GUARD 5d");
+  // and the audit row reads the live result: absent ⇒ null
+  assert(gpr.includes("contradiction: contradictionResults[kind as Kind] ? { version: CONTRADICTION_VERSION, hits: contradictionResults[kind as Kind] } : null,"), "the audit row reads it live");
+  // the reason it matters: GUARD 5b (level) can refuse before GUARD 5d runs, after the stamp
+  const pk = await read("./publicReadPerKind.ts");
+  assert(pk.indexOf("await deps.stampPayload?.(kind, payload);") < pk.indexOf("const g = await runGates(kind, payload);"), "stamp, then gates");
+  assert(pk.indexOf("const lvl = deps.levelRefusal?.(kind, payload)") < pk.indexOf("const contra = deps.contradictionRefusal?.(kind, payload)"), "level can refuse first");
 });
