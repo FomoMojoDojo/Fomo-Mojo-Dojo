@@ -648,6 +648,10 @@ EXAMPLE. A row of class 'the record' says 'the only level 14 residential facilit
     // programs, the promise's subject was a product. The gate (readLevel.ts) now refuses the deterministic cases; the
     // prompt states the rule the gate cannot read, and the judge is asked it as (g).
     const LEVEL_RULE = `LEVEL. Each read speaks at its own level, above the offering. A value line states the OUTCOME a customer gets, not a product or a feature. A differentiator is RELATIVE TO AN ALTERNATIVE — what the customer gets here that the alternative does not give them. The promise names a CUSTOMER OUTCOME; its subject is the customer or the company, never a product. Strategy speaks at the level of the BUSINESS — where it competes and how it wins — not the products it sells. Product names, features and programs belong ONLY in the offering read: do not restate them here.`;
+    // ── CONFLICTING FIGURES (operator ruling 42, 2026-10-22) ────────────────────────────────────
+    // Spectrum's strategy wrote "in 41–45 states" over a row saying 41 and a row saying 45 (post-merger), twice — S1 refused
+    // both attempts (14047, 14048). S1 already refuses the blend; this tells the model the rule before it writes.
+    const CONFLICTING_FIGURES_RULE = `CONFLICTING FIGURES. When the rows you cite state DIFFERENT values for the same measure — two counts of states, customers, locations or years — state ONE value and cite the row that states it, or state EACH value with its own row and say which row says which. Never write a range, an average or a blend of them: not '41–45 states', not 'over 40 states', not '41 to 45 states'. A value no single row states is not sourced.`;
     // ── SOURCES BY FIELD (operator ruling 34, 2026-10-22) ───────────────────────────────────────
     // Every Spectrum citation was the company's own words: nothing told the model which class each field is drawn from,
     // and the ledger listed own words first. These name it, per field, in the headers' own words. No gate reads them.
@@ -659,6 +663,7 @@ ${SPECIFICS_RULE}
 ${LEVEL_RULE}
 ALTERNATIVES (ruling 15). "alternatives" names what a customer would otherwise choose — a competitor, a substitute, or doing nothing — ONLY as a cited row NAMES it: the name must appear in a row you cite, and that row must be the record or the company, not our read. If no row names an alternative, return "alternatives":[] — that is the correct answer, and it becomes a question for the room. Never infer, guess or invent an alternative.
 ${SOURCES_BY_FIELD_POSITIONING}
+${CONFLICTING_FIGURES_RULE}
 Return ONLY JSON:
 {"market_category":"<a plain-language category this business ACTUALLY IS — e.g. 'neighborhood cafe & roaster', not a fancy or aspirational label>","market_category_citations":["<id>"],
  "value_for_customer":"<the outcome a customer gets, in plain words>","value_citations":["<id>"],
@@ -675,6 +680,7 @@ ${SPECIFICS_RULE}
 ${LEVEL_RULE}
 CRITICAL — cited-or-omitted: if the public record does not GROUND a rung, return it EMPTY ("" for a text rung, [] for a list rung) with empty citations. Do NOT invent capabilities or management systems that the record doesn't show. It is EXPECTED and correct for a rung to be empty.
 ${SOURCES_BY_FIELD_STRATEGY}
+${CONFLICTING_FIGURES_RULE}
 Return ONLY JSON:
 {"winning_aspiration":"<what winning looks like for this business, plainly>","winning_aspiration_citations":["<id>"],
  "where_to_play":"<the arena the record implies — who / where / which segment>","where_to_play_citations":["<id>"],

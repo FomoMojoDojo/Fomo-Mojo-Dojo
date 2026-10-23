@@ -76,4 +76,8 @@
 // never carried), as R5-P withholds an unsourced specific. The commit-time re-stamp to our_read changes no prompt; the
 // read's ledger names it separately (page_words_rule).
 //   2026-10-22.4  R37 — page-words-failing predecessor lines are withheld.
-export const GEN_RULES_VERSION = "2026-10-22.4" as const;
+// CONFLICTING FIGURES (operator ruling 42, 2026-10-22): bumped because the positioning and strategy PROMPTS changed — when
+// cited rows state different values for one measure, a line states one value with its row, or each value with its own
+// row; never a range or blend (Spectrum's "41–45 states", refused twice by S1).
+//   2026-10-22.5  CONFLICTING FIGURES.
+export const GEN_RULES_VERSION = "2026-10-22.5" as const;

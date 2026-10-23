@@ -64,8 +64,8 @@ Deno.test("C34-4 SOURCES BY FIELD, exactly, inside GEN_POSITIONING and GEN_STRAT
   assert(g.includes("const SOURCES_BY_FIELD_STRATEGY = `SOURCES BY FIELD. where_to_play, how_to_win and must_have_capabilities come first from YOU — FILINGS and THE RECORD: what the company told its regulators about its markets, competition, risks and plans, and what press and analysts report. Use the company's own site (YOU) to name the arena only where filings and the record are silent. winning_aspiration may rest on filings, the record or the company's own words.`;"));
   const pos = g.slice(g.indexOf("const GEN_POSITIONING = `"), g.indexOf("const GEN_STRATEGY = `"));
   const str = g.slice(g.indexOf("const GEN_STRATEGY = `"), g.indexOf("const GEN_PROMISE = `"));
-  assert(pos.includes("${SOURCES_BY_FIELD_POSITIONING}\nReturn ONLY JSON:"), "in the positioning prompt, before its JSON");
-  assert(str.includes("${SOURCES_BY_FIELD_STRATEGY}\nReturn ONLY JSON:"), "in the strategy prompt, before its JSON");
+  assert(pos.includes("${SOURCES_BY_FIELD_POSITIONING}\n${CONFLICTING_FIGURES_RULE}\nReturn ONLY JSON:"), "in the positioning prompt, before its JSON (ruling 42's line follows it)");
+  assert(str.includes("${SOURCES_BY_FIELD_STRATEGY}\n${CONFLICTING_FIGURES_RULE}\nReturn ONLY JSON:"), "in the strategy prompt, before its JSON");
 });
 
 Deno.test("C34-V1 V1 is untouched — row text byte-exact, spans equal to the pre-34 capture, the carry choice order-free", async () => {
