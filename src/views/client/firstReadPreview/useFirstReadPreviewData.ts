@@ -1370,7 +1370,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         const promRow = prByKind.get("promise");
         const promText = String(((promRow?.payload ?? {}) as { promise?: string | null }).promise ?? "").trim();
         const promise = promRow && promText
-          ? { text: promText, sourceTag: publicReadTag(promRow.created_at) }
+          ? { text: promText, sourceTag: publicReadTag(promRow.created_at), ourRead: ((promRow.payload ?? {}) as { class?: unknown }).class === "our_read" }
           : null;
 
         // ── Gate-C Stage B (2026-09-01): "What you offer" — the accepted, judged public offering ──

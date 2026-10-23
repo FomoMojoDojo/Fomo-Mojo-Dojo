@@ -325,6 +325,11 @@ export function SourceTag({ children }: { children: ReactNode }) {
  *  (STEP 2b — SIGNED A′: "Our read · <date>", the read date alone; no "read " prefix, no "undated".) */
 /** S5, signed. The ONE "Our read" string: OurReadTag and CommitmentSource both render this. */
 export const OUR_READ_HEAD = "Our read" as const;
+/** Ruling 40 (signed 2026-10-22): the promise foot when the promise is OUR read — "Our read · Public read · {date}".
+ *  Built from the two signed parts so neither can drift: OUR_READ_HEAD, then the promise's own public-read tag. */
+export function promiseOurReadTag(tag: { label: string }): { label: string } {
+  return { label: `${OUR_READ_HEAD} · ${tag.label}` };
+}
 
 export function OurReadTag({ children }: { children?: ReactNode }) {
   // 6A (2026-10-08): a finding carries this tag whether or not it is corroborated, and the published

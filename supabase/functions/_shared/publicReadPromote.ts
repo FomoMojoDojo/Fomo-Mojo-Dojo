@@ -28,7 +28,8 @@ import {
   namesIn, s1Detail, s1Unsourced, type S1Result, unsourcedLabelNames,
 } from "./classFactCheck.ts";
 import { reReadRowTexts } from "./classSourcingScope.ts";
-import { linesOfStoredPayload } from "./citedLines.ts";
+import { citedSlotsOfStoredPayload, linesOfStoredPayload } from "./citedLines.ts";
+import { pageWordsRefusalDetail, pageWordsVerdicts } from "./pageWordsRule.ts";
 import { insertIntegrityRun } from "./integrityWrite.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -182,6 +183,26 @@ export async function promoteLevelRefusal(
   return levelRefusalDetail(hits);
 }
 
+/** Ruling 39 (2026-10-22): the PAGE-WORDS rule again at promote — every stored record/you line against its cited rows'
+ *  verified page words, RE-READ NOW. A line that fails was stamped record/you at stage and the record no longer carries
+ *  its words: refuse. FAILS CLOSED — a re-read that cannot be made is a refusal, never a pass. */
+export async function promotePageWordsRefusal(
+  supabase: AnySupabase,
+  companyId: string,
+  row: { payload?: Record<string, unknown> | null },
+): Promise<string | null> {
+  if (!row.payload) return null;
+  try {
+    const refs = [...new Set(citedSlotsOfStoredPayload(row.payload).flatMap((x) => x.line.refs))];
+    const rowText = refs.length ? await reReadRowTexts(supabase, refs) : {};
+    const { data: co, error } = await supabase.from("companies").select("name").eq("id", companyId).maybeSingle();
+    if (error) return `the company name could not be read (${error.message})`;
+    return pageWordsRefusalDetail(pageWordsVerdicts(row.payload, rowText, String((co as { name?: string } | null)?.name ?? "")));
+  } catch (e) {
+    return `the cited rows could not be re-read (${(e as Error).message})`;
+  }
+}
+
 export async function promoteStagedReads(
   supabase: AnySupabase,
   companyId: string,
@@ -209,6 +230,9 @@ export async function promoteStagedReads(
     // ── LEVEL AT PROMOTE (ruling 14) — decided before any write, like S1 ────────────────────────────────────────────
     const lvl = await promoteLevelRefusal(supabase, companyId, kind, stagedRow!);
     if (lvl) throw new PromoteRefused(stagedId, kind, `LEVEL: a line restates the offering where a ${kind} line belongs — ${lvl}`);
+    // ── PAGE WORDS AT PROMOTE (ruling 39) — decided before any write, like S1 and level; fails closed ──────────────────
+    const pw = await promotePageWordsRefusal(supabase, companyId, stagedRow!);
+    if (pw) throw new PromoteRefused(stagedId, kind, `PAGE WORDS: a record/you line's words are not in its cited rows — ${pw}`);
 
     const { data: prior } = await supabase.from("public_reads")
       .select("id").eq("company_id", companyId).eq("kind", kind).eq("is_current", true).maybeSingle();

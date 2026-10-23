@@ -259,7 +259,9 @@ export type FRPositioning = {
  *  so Promise NEVER reuses value_for_customer. `text` is the own promise field when the schema has
  *  one and it is non-empty; otherwise null → the beat renders the signed not-enough-information
  *  line (no source tag). null = no canvas at all. */
-export type FRPromise = { text: string | null; sourceTag: SourceTagResult } | null;
+/** `ourRead` (ruling 39/40, 2026-10-22): the stored promise is class our_read — its words are not its cited rows' — so the
+ *  foot reads "Our read · Public read · {date}". Absent / false: the plain "Public read · {date}" tag, as before. */
+export type FRPromise = { text: string | null; sourceTag: SourceTagResult; ourRead?: boolean } | null;
 
 /** The public Playing-to-Win cascade (public_reads.kind='strategy', 5 rungs — Stage B, 2026-08-28).
  *  Rungs 1–3 are the spine; capabilities/managementSystems are the two added rungs. Each is the

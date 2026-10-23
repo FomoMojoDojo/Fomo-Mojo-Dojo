@@ -17,6 +17,20 @@ import type { CitedLine } from "./stageContinuity.ts";
 const CITE_OR_CLASS_RE = /citation|cites?$|refs?$|ids$|_class$|^class$/i;
 export function linesOfStoredPayload(payload: Record<string, unknown> | null): CitedLine[] {
   const out: CitedLine[] = [];
+  walkCitedSlots(payload, (line) => out.push(line));
+  return out;
+}
+
+/** Ruling 39 (2026-10-22): the same walk, yielding each line WITH the object and key that hold its class — so the
+ *  page-words rule can re-stamp a line where it lives. One walk feeds both, so they cannot see different lines. */
+export type CitedSlot = { line: CitedLine; holder: Record<string, unknown>; classKey: string };
+export function citedSlotsOfStoredPayload(payload: Record<string, unknown> | null): CitedSlot[] {
+  const out: CitedSlot[] = [];
+  walkCitedSlots(payload, (line, holder, classKey) => out.push({ line, holder, classKey }));
+  return out;
+}
+
+function walkCitedSlots(payload: Record<string, unknown> | null, emit: (line: CitedLine, holder: Record<string, unknown>, classKey: string) => void): void {
   const walk = (v: unknown, path = ""): void => {
     if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
     if (!v || typeof v !== "object") return;
@@ -37,13 +51,11 @@ export function linesOfStoredPayload(payload: Record<string, unknown> | null): C
           for (const kk of ["text", "statement", "promise", "body"]) if (typeof obj[kk] === "string") { text = String(obj[kk]); break; }
         }
         const field = bare ? path : `${path ? `${path}.` : ""}${base}`;
-        if (text) out.push({ field, text, cls, refs: (val as unknown[]).map(String) });
+        if (text) emit({ field, text, cls, refs: (val as unknown[]).map(String) }, obj, clsKey);
         continue;
       }
       if (!CITE_OR_CLASS_RE.test(k)) walk(val, path ? `${path}.${k}` : k);
     }
   };
   walk(payload);
-  return out;
 }
-

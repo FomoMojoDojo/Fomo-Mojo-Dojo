@@ -34,7 +34,7 @@ import {
   relationshipKindLabel,
   NEW_KIND_NOTE,
 } from "../../../../supabase/functions/_shared/relationshipKinds.ts";
-import { ListingRow } from "./primitives";
+import { ListingRow, promiseOurReadTag } from "./primitives";
 import { OperatorUnstatedState, OperatorUnstatedReason, OperatorKindTag, OperatorPairMeta, OperatorLooksLine, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
 // Home reskin (2026-09-11): SeqChip / TwoWeightHeadline / NumberedList lifted to primitives.tsx (no behaviour
 // change) so a page outside the First Read can share the chip sequence and the lead/bold headline rhythm.
@@ -1423,7 +1423,7 @@ function DarkFoot({ tag, why }: { tag?: { label: string } | null; why?: string }
 export function ActPromise({ read }: { read: FirstReadPreviewData }) {
   const pr = read.promise;
   return (
-    <Screen tone="dark" eyebrow={PROMISE_TITLE} foot={<DarkFoot tag={pr?.text ? pr.sourceTag : null} why={PROMISE_WHY} />}>
+    <Screen tone="dark" eyebrow={PROMISE_TITLE} foot={<DarkFoot tag={pr?.text ? (pr.ourRead && pr.sourceTag ? promiseOurReadTag(pr.sourceTag) : pr.sourceTag) : null} why={PROMISE_WHY} />}>
       <main className="fr-stagger">
         {pr?.text ? (
           <h1 className={statementClass(pr.text)}><MarkTarget kind="read_field" keyVal="promise:promise" text={pr.text} as="span">{withStop(pr.text)}</MarkTarget></h1>

@@ -71,4 +71,9 @@
 // and strategy name which class each field is drawn from, and the continue block asks for a record or filing citation
 // to be ADDED beside a carried line's own (keeping it, so C1 still counts the line as continued).
 //   2026-10-22.3  LEDGER BY CLASS + SOURCES BY FIELD.
-export const GEN_RULES_VERSION = "2026-10-22.3" as const;
+// R37 (operator ruling 39, 2026-10-22): bumped because what the model is SHOWN changed — a predecessor line whose content
+// words are in none of its cited rows' verified page words is withheld from the prompt (never shown, never demanded,
+// never carried), as R5-P withholds an unsourced specific. The commit-time re-stamp to our_read changes no prompt; the
+// read's ledger names it separately (page_words_rule).
+//   2026-10-22.4  R37 — page-words-failing predecessor lines are withheld.
+export const GEN_RULES_VERSION = "2026-10-22.4" as const;

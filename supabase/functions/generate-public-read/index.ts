@@ -32,6 +32,9 @@ import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStr
 import { CITATION_CAP, overCited, overCitedDetail, type OverCitedField } from "../_shared/publicReadGuards.ts";
 import { classRefusals, decideFieldClass, extractSpecifics, fieldClassOk, s1Detail, s1Unsourced, specificIsSourced, type FieldClassDecision, type S1Result, namesIn, unsourcedNames, unsourcedLabelNames,
 } from "../_shared/classFactCheck.ts";
+import { applyPageWordsRestamp, pageWordsVerdicts, pageWordsWithheldKeys, PAGE_WORDS_RULE_VERSION, type PageWordsVerdict } from "../_shared/pageWordsRule.ts";
+import { citedSlotsOfStoredPayload } from "../_shared/citedLines.ts";
+import { isAnalysisRow } from "../_shared/voiceLabel.ts";
 import { liveRecordCandidates, reReadRowTexts, searchLiveRecordForSpecifics, specificsCarriedByOurOwnRows, unsourcedSpecificsOf, type SourcingRow } from "../_shared/classSourcingScope.ts";
 import { type CascadeGapItem } from "../_shared/cascadeRouting.ts";
 import { StageRefusal, detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
@@ -107,6 +110,8 @@ async function ledgerOf(inputs: InputRow[], dropped: readonly Dropped[]) {
     // Ruling 33 (2026-10-22): every row the selection did not admit — by kind, with its reason and family (cap, share,
     // class, hold, duplicate, junk, refusal) — including the held / superseded rows the query itself excludes.
     selection_dropped: selectionDroppedOf(dropped),
+    // Ruling 39: which page-words rule judged this read's record/you lines at commit (absent = written before it)
+    page_words_rule: PAGE_WORDS_RULE_VERSION,
     // P1 (2026-10-14): the rows admitted because the CURRENT read cites them, ahead of the cap. The
     // ledger names them so a reader can tell "this row is here because the read before it rested on
     // it" from "this row won the cap", which is exactly the distinction audit 10228 could not make.
@@ -932,8 +937,8 @@ Respond with ONLY JSON:
     // every specific in it passes R5 against its own cited rows. Computed once per kind, from the
     // current read's own ledger and a live R5 re-read (predecessorSourcing.ts), and read by BOTH the
     // prompt site and the continuity check so the two cannot disagree about a line.
-    const predecessorGateCache: Partial<Record<Kind, { verdicts: PredecessorVerdict[]; withheld: Set<string>; level: LevelHit[] }>> = {};
-    const predecessorGateFor = async (kind: Kind): Promise<{ verdicts: PredecessorVerdict[]; withheld: Set<string>; level: LevelHit[] }> => {
+    const predecessorGateCache: Partial<Record<Kind, { verdicts: PredecessorVerdict[]; withheld: Set<string>; level: LevelHit[]; pageWords: PageWordsVerdict[] }>> = {};
+    const predecessorGateFor = async (kind: Kind): Promise<{ verdicts: PredecessorVerdict[]; withheld: Set<string>; level: LevelHit[]; pageWords: PageWordsVerdict[] }> => {
       if (predecessorGateCache[kind]) return predecessorGateCache[kind]!;
       const { data } = await supabase.from("public_reads")
         .select("payload, input_ledger").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
@@ -943,7 +948,22 @@ Respond with ONLY JSON:
       // demanded by continuity, never carried. The model may drop it; continuity licenses the drop.
       const level = levelHitsOfStored(kind, row?.payload ?? null);
       // Ruling 27: the read's own lines go in, so a flagged line's cascade_source mirror is withheld with it.
-      const out = { verdicts: g.verdicts, withheld: unionWithheld(g.withheld, levelWithheldKeys(level, linesOfStoredPayload(row?.payload ?? null))), level };
+      // ── Ruling 39 (R37): a current line that fails the page-words rule joins the withheld set too — a read written before
+      // 1a-4 carries no classes, so its unclassed lines are judged unless they cite our own rows (a finding, an our_read id).
+      const ledgerIn = (row?.input_ledger ?? {}) as { classes?: Record<string, string>; by_kind?: Record<string, string[]> };
+      const ourReadIds = new Set<string>([
+        ...Object.entries(ledgerIn.classes ?? {}).filter(([, c]) => c === "our_read").map(([id]) => id),
+        ...(ledgerIn.by_kind?.finding ?? []),
+      ]);
+      const pRefs = [...new Set(citedSlotsOfStoredPayload(row?.payload ?? null).flatMap((x) => x.line.refs))];
+      // a legacy ledger carries no classes, so an analysis signal it cites is found by the row itself (isAnalysisRow)
+      for (let i = 0; i < pRefs.length; i += 200) {
+        const { data: sigs } = await supabase.from("signals").select("id, voice_class, raw_payload").in("id", pRefs.slice(i, i + 200));
+        for (const sg of (sigs ?? []) as Array<{ id: string; voice_class: string | null; raw_payload?: unknown }>) if (isAnalysisRow(sg)) ourReadIds.add(sg.id);
+      }
+      const pageWords = pageWordsVerdicts(row?.payload ?? null, pRefs.length ? await reReadRowTexts(supabase, pRefs) : {}, companyName, { unclassed: "include", ourReadIds });
+      const out = { verdicts: g.verdicts, withheld: unionWithheld(g.withheld, levelWithheldKeys(level, linesOfStoredPayload(row?.payload ?? null))), level, pageWords };
+      for (const k of pageWordsWithheldKeys(pageWords)) out.withheld.add(k);
       predecessorGateCache[kind] = out;
       return out;
     };
@@ -1112,6 +1132,8 @@ Respond with ONLY JSON:
     const levelResults: Partial<Record<Kind, LevelHit[]>> = {};
     /** Ruling 15: the alternative gate's refusals, per kind (positioning only). */
     const alternativeResults: Partial<Record<Kind, ReturnType<typeof alternativeRefusals>>> = {};
+    /** Ruling 39: every record/you line the page-words rule judged at commit, and which it re-stamped our_read. */
+    const pageWordsResults: Partial<Record<Kind, PageWordsVerdict[]>> = {};
     /** Which kinds used their one re-ask, for the report. */
     const reasked: Partial<Record<Kind, { specifics: string[]; fields: string[] }>> = {};
     const storagePayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
@@ -1195,6 +1217,10 @@ Respond with ONLY JSON:
           level_judge: (verdicts[kind as Kind]?.level as unknown) ?? null,
           // Ruling 15: the alternative gate's refusals
           alternatives: alternativeResults[kind as Kind] ?? null,
+          // Ruling 39: the page-words rule at commit — each judged line, its unsupported words, and whether it flipped
+          page_words: pageWordsResults[kind as Kind]
+            ? { version: PAGE_WORDS_RULE_VERSION, flipped: pageWordsResults[kind as Kind]!.filter((v) => v.flips).length, lines: pageWordsResults[kind as Kind] }
+            : null,
         },
         error: row.guard ? `guard=${row.guard} detail=${detailOf(row.detail ?? "")}` : null,
         run_ref: ledger.corpus_md5 ?? null,
@@ -1320,6 +1346,9 @@ Respond with ONLY JSON:
         // Ruling 14: the predecessor lines withheld at LEVEL, and which check flagged each
         predecessor_withheld_level: (await predecessorGateFor(kind)).level.filter((h) => WITHHELD_LEVEL_CHECKS.has(h.check))
           .map((h) => ({ field: h.field, text: h.text, check: h.check, items: h.items })),
+        // Ruling 39 (R37): the predecessor lines withheld because their words are in none of their cited rows
+        predecessor_withheld_page_words: (await predecessorGateFor(kind)).pageWords.filter((v) => v.flips)
+          .map((v) => ({ field: v.field, text: v.text, unsupported: v.unsupported })),
       } as ContinuityBlock;
       continuityBlocks[kind] = block;
       // V3: ONE refusal, ONE row. The check does NOT record its own integrity row — it throws a
@@ -1343,6 +1372,18 @@ Respond with ONLY JSON:
         if (gap) payload[ALTERNATIVE_GAP_KEY] = gap; else delete payload[ALTERNATIVE_GAP_KEY];
       }
       const built = prepareStorage(kind, payload, verdict);
+      // ── Ruling 39: THE PAGE-WORDS RE-STAMP — after the judge accepted, before anything is written ─────────────────────
+      // A record/you line with 2+ content words in none of its cited rows' verified page words takes class our_read. Not a
+      // refusal, not a re-ask. Both shapes are judged BEFORE either is stamped (staged shares stored's element objects).
+      {
+        const refs = [...new Set([...citedSlotsOfStoredPayload(built.stored), ...citedSlotsOfStoredPayload(built.staged)].flatMap((x) => x.line.refs))];
+        const rowText = await reReadRowTexts(supabase, refs);
+        const vStored = pageWordsVerdicts(built.stored, rowText, companyName);
+        const vStaged = built.staged === built.stored ? vStored : pageWordsVerdicts(built.staged, rowText, companyName);
+        applyPageWordsRestamp(built.stored, vStored);
+        if (built.staged !== built.stored) applyPageWordsRestamp(built.staged, vStaged);
+        pageWordsResults[kind] = doStage ? vStaged : vStored;
+      }
       const storage = built.storage;
       storagePayloads[kind] = storage;
       resolvedPayloads[kind] = built.stored;
