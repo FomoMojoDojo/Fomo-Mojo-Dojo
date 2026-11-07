@@ -169,6 +169,35 @@ Guards that name a non-admin caller read their ids from gitignored env files, an
 
 ---
 
+## Probes — never a function that writes or calls a model (D4, 2026-11-07)
+
+**A function that writes or calls a model is never used as a probe.** A probe is a read-only query or
+an explicit dry run. **A function with no dry-run mode is not probed** — find another way to establish
+the fact, or establish it from the stored record instead.
+
+What this cost on 2026-11-07: `propose-positioning-changes` was invoked to show that a per-row gate
+refused an operator-edited row, because unlike `evaluate-*` it carries no Option B door and so
+exercises the gate alone. It did refuse the cascade — and then **admitted the company's other,
+unstamped surface, called OpenAI, and inserted a `surface_proposals` row** on a live company
+(FomoMojoDojo). The call was lawful (that surface is public and not operator-edited) but nobody asked
+for the proposal, and `propose-*` writes no `model_calls` row, so the spend is unledgered and there is
+no row to correct — only an annotation. Retired under D1 as `rejected`, never deleted.
+
+The tell was there before the call: these functions end in a write. `grep` for the write and for
+`callOpenAIJSON` **before** invoking anything to establish a fact:
+
+```bash
+grep -nE 'callOpenAIJSON|\.from\("[a-z_]+"\)\s*$|\.insert\(|\.update\(' supabase/functions/<fn>/index.ts
+```
+
+Read-only alternatives, in order of preference: query the stored gate decision
+(`integrity_runs` already records every refusal with its reason), exercise the predicate directly in a
+unit test, or use a function's own `dry_run` body flag where one exists (`restamp-aggregator-self-voice`,
+`scripts/r52/plan.ts`). Note that a dry run is not automatically cheap — see the
+`restamp-aggregator-self-voice` warning below.
+
+---
+
 ## Baselines — the two that are easy to run wrong
 
 - **tsc is `npx tsc -p tsconfig.app.json --noEmit` → 232 errors.** The root `tsconfig.json` is
