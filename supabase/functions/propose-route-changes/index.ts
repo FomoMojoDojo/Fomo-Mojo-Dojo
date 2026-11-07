@@ -14,6 +14,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
+import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -274,6 +275,15 @@ Deno.serve(async (req: Request) => {
       apiKey,
       model: (Deno.env.get("OPENAI_MODEL") || "gpt-4.1-mini") as string,
       schemaName: "route_proposal_v1",
+      // E4d (ruling, 2026-11-07): one model_calls row per outside call. This function wrote NONE —
+      // Q5 was scoped to research-company and the three evaluate-*, so every call it has ever
+      // made is absent from the ledger. The hook fires per HTTP response, before parsing.
+      onUsage: (usedModel, usage) =>
+        void recordModelCall(db as unknown as { from: (t: string) => any }, {
+          companyId: String(company_id),
+          callSite: "propose-route-changes",
+          usage: openaiRecord(usedModel, usage),
+        }),
       schema: proposalSchema,
       systemText,
       userText,

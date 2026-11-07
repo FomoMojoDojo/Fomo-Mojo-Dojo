@@ -19,6 +19,7 @@ import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { gateStrategyArtifactsForExternal } from "../_shared/strategyArtifactGate.ts";
 import { gateDriftSurfacesForExternal } from "../_shared/driftExternalGate.ts";
+import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -280,6 +281,15 @@ async function assessSurface(
       apiKey,
       model: "gpt-4.1-mini",
       schemaName: "drift_assessment",
+      // E4d (ruling, 2026-11-07): one model_calls row per outside call. This function wrote NONE —
+      // Q5 was scoped to research-company and the three evaluate-*, so every call it has ever
+      // made is absent from the ledger. The hook fires per HTTP response, before parsing.
+      onUsage: (usedModel, usage) =>
+        void recordModelCall(supabase as unknown as { from: (t: string) => any }, {
+          companyId: String(companyId),
+          callSite: "assess-surface-drift",
+          usage: openaiRecord(usedModel, usage),
+        }),
       schema: driftSchema,
       systemText: DRIFT_SYSTEM_PROMPT,
       userText,

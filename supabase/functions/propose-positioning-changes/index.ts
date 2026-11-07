@@ -27,6 +27,8 @@ import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/j
 import { buildFrameworkBrief, getFrameworkRoutingPlan } from "../_shared/frameworkLibrary.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 import { isExternalAdmissibleNeed } from "../_shared/externalProvenance.ts";
+import { isSubjectExternallyAdmissible } from "../_shared/externalProvenance.ts";   // E4c (2026-11-07)
+import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -263,11 +265,18 @@ Deno.serve(async (req: Request) => {
 
   const strategicProblems = normalizeStrategicProblems(problemRows ?? []);
   const strategicAssumptions = normalizeStrategicAssumptions(assumptionRows ?? []);
-  const strategicProblemBrief = [
-    buildStrategicProblemBrief(strategicProblems),
-    buildStrategicAssumptionBrief(strategicAssumptions),
-    "Use both strategic problems and assumptions to determine what to prioritize, what to test next, and where confidence is still low.",
-  ].join("\n\n");
+  // E4b (ruling, 2026-11-07): OPTION B — client-stated strategic problems + assumptions are
+  // INTERNAL and must not reach an external model. research-company has held them out since
+  // Phase 1 (`const strategicProblemBrief = ""` + a voided builder); this function sent the
+  // SAME two tables to OpenAI under a "Client-stated strategic problems" heading. The same
+  // material cannot be withheld from one caller and sent by another — so the holdout is
+  // matched here EXACTLY, including the shape, so one grep finds every instance.
+  //
+  // The rows are still READ above (so a future local consumer needs no new query), but the
+  // only thing that ever reached a prompt was this brief, so voiding it is the whole holdout.
+  void buildStrategicProblemBrief; void buildStrategicAssumptionBrief;
+  void strategicProblems; void strategicAssumptions;
+  const strategicProblemBrief = "";
 
   const { data: jobStepRows } = await db
     .from("job_steps")
@@ -319,13 +328,27 @@ Deno.serve(async (req: Request) => {
   // including system-generated deprioritized routes — the opposite of intent.
   const { data: routeRows } = await db
     .from("routes")
-    .select("category, title, short_description")
+    .select("category, title, short_description, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .neq("relevance_state", "deprioritized")
     .limit(20);
 
-  const baselineBrief = ["Public baseline context (augmented with uploaded files):", buildBaselineBrief(baselineResultJson)].filter(Boolean).join("\n\n");
-  const routesSummary = (Array.isArray(routeRows) ? routeRows : []).slice(0, 10).map((r, i) =>
+  const baselineBrief = ["Public baseline context:", buildBaselineBrief(baselineResultJson)].filter(Boolean).join("\n\n");
+  // E4c (ruling, 2026-11-07): THE ROUTE BLOCK IS GATED. This select carried neither
+  // provenance_type nor operator_edited_at and passed straight into the prompt, so
+  // internal_hypothesis and operator-edited route prose went to an external model ungated —
+  // the only block in this function that bypassed its own gates. Filtered through the ONE
+  // subject predicate, at the collection point, before any prompt text exists; the withheld
+  // count is reported on every response exactly as needs_withheld_external already is, so the
+  // omission is visible rather than silent.
+  const allRouteRows = (Array.isArray(routeRows) ? routeRows : []) as Array<Record<string, unknown>>;
+  const externalRoutes = allRouteRows.filter((r) =>
+    isSubjectExternallyAdmissible(
+      (r as { provenance_type?: string | null }).provenance_type,
+      (r as { operator_edited_at?: string | null }).operator_edited_at,
+    ));
+  const routesWithheldExternal = allRouteRows.length - externalRoutes.length;
+  const routesSummary = externalRoutes.slice(0, 10).map((r, i) =>
     `${i + 1}. ${(r as Record<string, unknown>).category || "improve"} | ${(r as Record<string, unknown>).title || "Untitled"} | ${(r as Record<string, unknown>).short_description || "No description"}`
   ).join("\n");
 
@@ -393,6 +416,15 @@ Deno.serve(async (req: Request) => {
       apiKey,
       model: (Deno.env.get("OPENAI_MODEL") || "gpt-4.1-mini") as string,
       schemaName: "positioning_proposal_v1",
+      // E4d (ruling, 2026-11-07): one model_calls row per outside call. This function wrote NONE —
+      // Q5 was scoped to research-company and the three evaluate-*, so every call it has ever
+      // made is absent from the ledger. The hook fires per HTTP response, before parsing.
+      onUsage: (usedModel, usage) =>
+        void recordModelCall(db as unknown as { from: (t: string) => any }, {
+          companyId: String(company_id),
+          callSite: "propose-positioning-changes",
+          usage: openaiRecord(usedModel, usage),
+        }),
       schema: proposalSchema,
       systemText,
       userText,
@@ -402,7 +434,7 @@ Deno.serve(async (req: Request) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[propose-positioning-changes] LLM error:", message);
-    return jsonResponse({ error: `LLM generation failed: ${message}`, needs_withheld_external: needsWithheldExternal }, 500);
+    return jsonResponse({ error: `LLM generation failed: ${message}`, needs_withheld_external: needsWithheldExternal, routes_withheld_external: routesWithheldExternal }, 500);
   }
 
   const proposedState = buildSnapshot({}, generated, "proposed");
@@ -413,7 +445,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({
       skipped: true,
       reason: "No meaningful changes from current evidence.",
-      needs_withheld_external: needsWithheldExternal,
+      needs_withheld_external: needsWithheldExternal, routes_withheld_external: routesWithheldExternal,
     });
   }
 
@@ -451,5 +483,5 @@ Deno.serve(async (req: Request) => {
   }
 
   console.log("[propose-positioning-changes] proposal written", { company_id, proposal_id: (inserted as { id: string }).id });
-  return jsonResponse({ proposal_id: (inserted as { id: string }).id, reason, needs_withheld_external: needsWithheldExternal });
+  return jsonResponse({ proposal_id: (inserted as { id: string }).id, reason, needs_withheld_external: needsWithheldExternal, routes_withheld_external: routesWithheldExternal });
 });

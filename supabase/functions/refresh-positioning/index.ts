@@ -31,6 +31,8 @@ import { buildClientCorpus } from "../_shared/syndication.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
+import { isSubjectExternallyAdmissible } from "../_shared/externalProvenance.ts";   // E4c (2026-11-07)
+import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -258,11 +260,18 @@ Deno.serve(async (req) => {
 
     const strategicProblems = normalizeStrategicProblems(problemRows ?? []);
     const strategicAssumptions = normalizeStrategicAssumptions(assumptionRows ?? []);
-    const strategicProblemBrief = [
-      buildStrategicProblemBrief(strategicProblems),
-      buildStrategicAssumptionBrief(strategicAssumptions),
-      "Use both strategic problems and assumptions to determine what to prioritize, what to test next, and where confidence is still low.",
-    ].join("\n\n");
+    // E4b (ruling, 2026-11-07): OPTION B — client-stated strategic problems + assumptions are
+    // INTERNAL and must not reach an external model. research-company has held them out since
+    // Phase 1 (`const strategicProblemBrief = ""` + a voided builder); this function sent the
+    // SAME two tables to OpenAI under a "Client-stated strategic problems" heading. The same
+    // material cannot be withheld from one caller and sent by another — so the holdout is
+    // matched here EXACTLY, including the shape, so one grep finds every instance.
+    //
+    // The rows are still READ above (so a future local consumer needs no new query), but the
+    // only thing that ever reached a prompt was this brief, so voiding it is the whole holdout.
+    void buildStrategicProblemBrief; void buildStrategicAssumptionBrief;
+    void strategicProblems; void strategicAssumptions;
+    const strategicProblemBrief = "";
 
     // --- Fetch job_steps → reconstruct journeys ---
     const { data: jobStepRows } = await supabase
@@ -303,7 +312,7 @@ Deno.serve(async (req) => {
     // --- Fetch routes (non-manual) ---
     const { data: routeRows } = await supabase
       .from("routes")
-      .select("category, title, short_description")
+      .select("category, title, short_description, provenance_type, operator_edited_at")
       .eq("company_id", company_id)
       .not("source", "like", "manual_%")
       .limit(20);
@@ -450,12 +459,26 @@ Deno.serve(async (req) => {
 
     // --- Build context ---
     const baselineBrief = [
-      "Public baseline context (augmented with uploaded files):",
+      "Public baseline context:",
       buildBaselineBrief(baselineResultJson, claimProvenance),
     ].filter(Boolean).join("\n\n");
 
     const routes = Array.isArray(routeRows) ? routeRows : [];
-    const routesSummary = routes.slice(0, 10).map((r, i) =>
+    // E4c (ruling, 2026-11-07): THE ROUTE BLOCK IS GATED. This select carried neither
+    // provenance_type nor operator_edited_at and passed straight into the prompt, so
+    // internal_hypothesis and operator-edited route prose went to an external model ungated —
+    // the only block in this function that bypassed its own gates. Filtered through the ONE
+    // subject predicate, at the collection point, before any prompt text exists; the withheld
+    // count is reported on every response exactly as needs_withheld_external already is, so the
+    // omission is visible rather than silent.
+    const allRouteRows = (Array.isArray(routeRows) ? routeRows : []) as Array<Record<string, unknown>>;
+    const externalRoutes = allRouteRows.filter((r) =>
+      isSubjectExternallyAdmissible(
+        (r as { provenance_type?: string | null }).provenance_type,
+        (r as { operator_edited_at?: string | null }).operator_edited_at,
+      ));
+    const routesWithheldExternal = allRouteRows.length - externalRoutes.length;
+    const routesSummary = externalRoutes.slice(0, 10).map((r, i) =>
       `${i + 1}. ${(r as Record<string, unknown>).category || "improve"} | ${(r as Record<string, unknown>).title || "Untitled"} | ${(r as Record<string, unknown>).short_description || "No description"}`
     ).join("\n");
 
@@ -516,6 +539,7 @@ Deno.serve(async (req) => {
         company_id,
         company_name,
         cascade_source: cascadeRow?.source ?? null,
+        routes_withheld_external: routesWithheldExternal,   // E4c (2026-11-07)
         prompt_used: `SYSTEM:\n${systemText}\n\n---\n\nUSER:\n${userText}`,
       });
     }
@@ -525,6 +549,15 @@ Deno.serve(async (req) => {
       apiKey: openaiKey,
       model: openaiModel,
       schemaName: "mojo_positioning_canvas_v1",
+      // E4d (ruling, 2026-11-07): one model_calls row per outside call. This function wrote NONE —
+      // Q5 was scoped to research-company and the three evaluate-*, so every call it has ever
+      // made is absent from the ledger. The hook fires per HTTP response, before parsing.
+      onUsage: (usedModel, usage) =>
+        void recordModelCall(supabase as unknown as { from: (t: string) => any }, {
+          companyId: String(company_id),
+          callSite: "refresh-positioning",
+          usage: openaiRecord(usedModel, usage),
+        }),
       schema: positioningCanvasSchema,
       systemText,
       userText,
@@ -668,7 +701,7 @@ Deno.serve(async (req) => {
     }
 
     console.log("[refresh-positioning] canvas inserted", { company_id, canvas_id: inserted?.id });
-    return jsonResponse({ status: "ok", company_id, canvas_id: inserted?.id });
+    return jsonResponse({ status: "ok", company_id, canvas_id: inserted?.id, routes_withheld_external: routesWithheldExternal });
   } catch (err) {
     console.error("[refresh-positioning] unhandled error:", err);
     return jsonResponse({ error: String(err instanceof Error ? err.message : err) }, 500);

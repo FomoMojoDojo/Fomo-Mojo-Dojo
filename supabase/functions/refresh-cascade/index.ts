@@ -29,6 +29,7 @@ import {
   normalizeStrategicProblems,
 } from "../_shared/contextBuilders.ts";
 import { buildFrameworkBrief, getFrameworkRoutingPlan } from "../_shared/frameworkLibrary.ts";
+import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -239,11 +240,18 @@ Deno.serve(async (req) => {
 
     const strategicProblems = normalizeStrategicProblems(problemRows ?? []);
     const strategicAssumptions = normalizeStrategicAssumptions(assumptionRows ?? []);
-    const strategicProblemBrief = [
-      buildStrategicProblemBrief(strategicProblems),
-      buildStrategicAssumptionBrief(strategicAssumptions),
-      "Use both strategic problems and assumptions to determine what to prioritize, what to test next, and where confidence is still low.",
-    ].join("\n\n");
+    // E4b (ruling, 2026-11-07): OPTION B — client-stated strategic problems + assumptions are
+    // INTERNAL and must not reach an external model. research-company has held them out since
+    // Phase 1 (`const strategicProblemBrief = ""` + a voided builder); this function sent the
+    // SAME two tables to OpenAI under a "Client-stated strategic problems" heading. The same
+    // material cannot be withheld from one caller and sent by another — so the holdout is
+    // matched here EXACTLY, including the shape, so one grep finds every instance.
+    //
+    // The rows are still READ above (so a future local consumer needs no new query), but the
+    // only thing that ever reached a prompt was this brief, so voiding it is the whole holdout.
+    void buildStrategicProblemBrief; void buildStrategicAssumptionBrief;
+    void strategicProblems; void strategicAssumptions;
+    const strategicProblemBrief = "";
 
     // --- Fetch job_steps → reconstruct journeys ---
     const { data: jobStepRows } = await supabase
@@ -379,7 +387,7 @@ Deno.serve(async (req) => {
     }
 
     const baselineBrief = [
-      "Public baseline context (augmented with uploaded files):",
+      "Public baseline context:",
       buildBaselineBrief(baselineResultJson),
       buildStoreSupplementBrief(storeSupplement),
     ].filter(Boolean).join("\n\n");
@@ -446,6 +454,15 @@ Deno.serve(async (req) => {
       apiKey: openaiKey,
       model: openaiModel,
       schemaName: "mojo_strategy_cascade_v1",
+      // E4d (ruling, 2026-11-07): one model_calls row per outside call. This function wrote NONE —
+      // Q5 was scoped to research-company and the three evaluate-*, so every call it has ever
+      // made is absent from the ledger. The hook fires per HTTP response, before parsing.
+      onUsage: (usedModel, usage) =>
+        void recordModelCall(supabase as unknown as { from: (t: string) => any }, {
+          companyId: String(company_id),
+          callSite: "refresh-cascade",
+          usage: openaiRecord(usedModel, usage),
+        }),
       schema: strategyCascadeSchema,
       systemText,
       userText,

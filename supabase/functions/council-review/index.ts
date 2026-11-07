@@ -10,6 +10,7 @@ import {
 } from "../_shared/phaseFrameworks.ts";
 import { gateStrategyArtifactsForExternal } from "../_shared/strategyArtifactGate.ts";
 import { isExternalAdmissibleNeed } from "../_shared/externalProvenance.ts";
+import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -272,6 +273,10 @@ async function callOpenAIJSON(opts: {
   maxOutputTokens?: number;
   temperature?: number;
   timeoutMs?: number;
+  /** E4d (2026-11-07): fired once per OpenAI HTTP response that returned a body, with the model that
+   *  served it and that response's usage. council-review carries its OWN copy of this client, so the
+   *  hook is added here too; neither copy reads the other. */
+  onUsage?: (model: string, usage: { prompt_tokens: number; completion_tokens: number } | null) => void | Promise<void>;
 }) {
   const {
     apiKey,
@@ -281,7 +286,19 @@ async function callOpenAIJSON(opts: {
     maxOutputTokens = 3500,
     temperature = 0.15,
     timeoutMs = 55_000,
+    onUsage,
   } = opts;
+
+  /** E4d: report one call's usage, never letting the report break the call. /v1/responses reports
+   *  input_tokens/output_tokens; chat-completions reports prompt_tokens/completion_tokens. */
+  const reportUsage = async (activeModel: string, data: unknown) => {
+    if (!onUsage) return;
+    try {
+      const u = (data as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; input_tokens?: unknown; output_tokens?: unknown } } | null)?.usage;
+      const pt = Number(u?.prompt_tokens ?? u?.input_tokens), ct = Number(u?.completion_tokens ?? u?.output_tokens);
+      await onUsage(activeModel, u && Number.isFinite(pt) && Number.isFinite(ct) ? { prompt_tokens: pt, completion_tokens: ct } : null);
+    } catch (_e) { /* observability must not fail the call it measures */ }
+  };
 
   const buildBody = (outputBudget: number, retryNote = "") => ({
     model,
@@ -367,6 +384,8 @@ async function callOpenAIJSON(opts: {
     }
 
     const payload = await response.json();
+    // E4d: ledger BEFORE parsing — the call was billed whether or not its JSON is usable.
+    await reportUsage(model, payload);
     const text = extractResponsesOutputText(payload);
     const parsed = safeParseJsonObject(text);
     if (parsed) return parsed;
@@ -1799,6 +1818,13 @@ Deno.serve(async (req) => {
         maxOutputTokens: councilProfile.maxOutputTokens,
         temperature: councilProfile.temperature,
         timeoutMs: councilProfile.modelTimeoutMs,
+        // E4d (2026-11-07): one model_calls row per outside call; this function wrote none.
+        onUsage: (usedModel, usage) =>
+          void recordModelCall(serviceClient as unknown as { from: (t: string) => any }, {
+            companyId: String(companyId),
+            callSite: "council-review",
+            usage: openaiRecord(usedModel, usage),
+          }),
       });
     } catch (error) {
       modelFailure = error instanceof Error ? error.message : String(error);
