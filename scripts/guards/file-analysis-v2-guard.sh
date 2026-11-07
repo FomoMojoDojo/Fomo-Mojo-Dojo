@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # GUARD — file analysis methodology v2 (operator rulings 2026-09-14; commit "dify: frameworks read the file;
-# absence cannot attest"). Runs REAL Dify analyses on a THROWAWAY company it creates and deletes — never a
-# client company, never a client document. Two throwaway documents:
+# absence cannot attest"). Runs REAL Dify analyses on a THROWAWAY company it creates with per-run uuids and
+# RETIRES with companies.fixture_hold at teardown (E2, 2026-11-07 — it never deletes a company; see the
+# teardown block below) — never a client company, never a client document. Two throwaway documents:
 #   THIN  — an image-borne docx (two sentences + 3 embedded PNGs; scripts/guards/throwaway-docx.py)
 #   FULL  — a substantive markdown with a MARKER sentence no summary would carry verbatim
 # Proves:
@@ -16,32 +17,77 @@
 #   e. PRIORS UNTOUCHED: Edgewood's proposals/signals are byte-identical before and after (analysis_version 1)
 #   v. the stamp: both proposals analysis_version=2, analysis_workflow_id = the LIVE published workflow; every
 #      minted signal raw_payload.analysis_version=2
+#   f. the teardown held the fixture rather than deleting it: the company still exists, carries this run's
+#      FA2:spent-<run> hold, and the fleet-wide FA2:spent-% count grew by exactly one (E2)
+# Plant (E2): three consecutive runs, all GREEN, FA2:spent-% +1 each, no company deleted. Before E2, run 2
+# died on companies_pkey because run 1's teardown aborted on an append-only child.
 # Needs: local stack, Dify (docker-api-1 / docker-db_postgres-1), Ollama. ~5–10 min (two qwen runs).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 DB=supabase_db_dzlgyxcvuwiulgifbmew
 API=http://127.0.0.1:54321
 SR=$(supabase status -o env 2>/dev/null | grep -E '^SERVICE_ROLE_KEY=' | cut -d= -f2- | tr -d '"')
-CO="00000000-0000-4000-8000-00000000aaae"; IN="00000000-0000-4000-8000-00000000ae01"
-F_THIN="00000000-0000-4000-8000-00000000ae10"; F_FULL="00000000-0000-4000-8000-00000000ae20"
-PREFIX="zz-throwaway/v2"; TMP=$(mktemp -d)  # recreated after the initial cleanup below
 EDGEWOOD="3dd2cfbb-0792-4bf1-9cd4-15db9646874b"
+TMP=$(mktemp -d)
 psql() { docker exec -i "$DB" psql -U postgres -Atc "$1"; }
 dify() { docker exec -i docker-db_postgres-1 psql -U postgres -d dify -Atc "$1"; }
-fail() { echo "FAIL step $1: $2"; cleanup; exit 1; }
+fail() { echo "FAIL step $1: $2"; exit 1; }   # the EXIT trap tears down on every path
+
+# ── E2 (operator ruling, 2026-11-07): UNIQUE IDS PER RUN ─────────────────────────────────────────
+# The guard used five hardcoded uuids and one fixed storage prefix, so a run whose teardown did not
+# complete made EVERY later run die on companies_pkey. Per-run ids remove that failure mode
+# permanently: a leftover can never block a later run, and the opening cleanup is no longer needed
+# as a correctness device (there is nothing of ours to clear).
+read -r CO IN F_THIN F_FULL <<<"$(psql "select gen_random_uuid()||' '||gen_random_uuid()||' '||gen_random_uuid()||' '||gen_random_uuid()")"
+# NOTE: $RUN is already taken further down for the Dify workflow run id — hence FRUN (fixture run).
+FRUN="$(date -u +%Y%m%dT%H%M%SZ)-${CO:0:8}"
+PREFIX="zz-throwaway/v2/$FRUN"
+[ "${#CO}" = 36 ] && [ "${#IN}" = 36 ] && [ "${#F_THIN}" = 36 ] && [ "${#F_FULL}" = 36 ] || { echo "FAIL setup: could not mint per-run uuids (CO='$CO')"; exit 1; }
+
+# ── E2: THE TEARDOWN NEVER DELETES THE COMPANY ───────────────────────────────────────────────────
+# TWELVE tables cascade from companies AND carry an immutability trigger — claims, findings,
+# interview_records/_items/_segments, odi_market_definitions, market_options, check_outcomes,
+# provenance_remints, first_read_marks, claim_delta_relevance_overrides, excerpt_verifications — so
+# `delete from companies` is STRUCTURALLY unachievable for any company a real run has touched. As one
+# transaction it aborted the entire teardown, which is how the 2026-11-07 fixture was left live.
+# Instead:
+#   1. stamp the hold FIRST, so an abort anywhere below can never leave a live fixture company;
+#   2. delete each deletable child in its OWN statement, so one append-only table cannot abort
+#      the rest, and name whatever is left behind;
+#   3. never delete the company, and never delete through an append-only table.
+# R40 already defines fixture_hold non-null as "outside every fleet sweep, product proof and client
+# surface" (three companies carry R39:test_fixture as precedent; r52-sweep-guard p4 proves held
+# companies are refused before any read). The fixture becomes INERT rather than absent — the honest
+# outcome, since the append-only rows genuinely cannot be removed.
 cleanup() {
+  psql "update companies set fixture_hold='FA2:spent-$FRUN' where id='$CO' and fixture_hold is null" >/dev/null 2>&1 || true
   curl -s -X DELETE "$API/storage/v1/object/input-files" -H "Authorization: Bearer $SR" -H 'Content-Type: application/json' --data "{\"prefixes\":[\"$PREFIX/thin.docx\",\"$PREFIX/thin.docx.extracted.txt\",\"$PREFIX/full.md\",\"$PREFIX/full.md.extracted.txt\",\"$PREFIX/shape.pdf\",\"$PREFIX/shape.pdf.extracted.txt\"]}" >/dev/null || true
-  psql "select set_claim_status(id, 'active', 'guard cleanup', 'guard') from claims where company_id='$CO' and status='struck'" >/dev/null 2>&1 || true
-  psql "begin; set local app.remint_ledger_purge='on'; delete from provenance_remints where company_id='$CO'; delete from long_runner_runs where company_id='$CO'; delete from companies where id='$CO'; delete from claim_removals where company_id='$CO'; commit;" >/dev/null || true
+  LEFT=""
+  try_del() { psql "$2" >/dev/null 2>&1 || LEFT="$LEFT $1"; }
+  try_del signal_excerpt_blankings "delete from signal_excerpt_blankings where company_id='$CO'"
+  try_del signal_voice_restamps    "delete from signal_voice_restamps where company_id='$CO'"
+  try_del signal_hold_audit        "delete from signal_hold_audit where company_id='$CO'"
+  try_del signals                  "delete from signals where company_id='$CO'"
+  # claims only AFTER their signals are gone, so signals_gone is literally the reason (the category
+  # is checked by claims_delete_audit and recorded in claim_removals — which stays, as the audit).
+  try_del claims                   "begin; set local app.claim_removal_category='signals_gone'; delete from claims where company_id='$CO'; commit;"
+  try_del file_proposals           "delete from file_proposals where company_id='$CO'"
+  try_del doc_voice_verdicts       "delete from doc_voice_verdicts where company_id='$CO'"
+  try_del input_files              "delete from input_files where input_id='$IN'"
+  try_del inputs                   "delete from inputs where company_id='$CO'"
+  try_del long_runner_runs         "delete from long_runner_runs where company_id='$CO'"
+  if [ -n "$LEFT" ]; then echo "   teardown: left behind —$LEFT (held, not live)"; else echo "   teardown: every deletable child removed; company $CO held FA2:spent-$FRUN"; fi
   rm -rf "$TMP"
+  return 0
 }
 call() { curl -s --max-time 600 -o "$TMP/body" -w '%{http_code}' -X POST "$API/functions/v1/$1" -H "Authorization: Bearer $SR" -H 'Content-Type: application/json' --data "$2"; }
 upload() { curl -s -o /dev/null -X POST "$API/storage/v1/object/input-files/$PREFIX/$1" -H "Authorization: Bearer $SR" -H "Content-Type: $2" -H "x-upsert: true" --data-binary "@$3"; }
 snapshot_edgewood() { psql "select md5((select string_agg(row_to_json(p)::text, ',' order by id) from file_proposals p where company_id='$EDGEWOOD') || (select string_agg(row_to_json(s)::text, ',' order by id) from signals s where company_id='$EDGEWOOD'))"; }
 wait_ready() { local pid=$1; for i in $(seq 1 180); do st=$(psql "select processing_state from file_proposals where id='$pid'"); [ "$st" = ready ] && return 0; [ "$st" = failed ] && { echo "proposal $pid failed: $(psql "select processing_error from file_proposals where id='$pid'")"; return 1; }; sleep 5; done; echo "timeout waiting for $pid"; return 1; }
 
-cleanup; TMP=$(mktemp -d)
+trap cleanup EXIT
 BEFORE=$(snapshot_edgewood)
+SPENT_BEFORE=$(psql "select count(*) from companies where fixture_hold like 'FA2:spent-%'")
 LIVE_WF=$(dify "select workflow_id from apps where id='2b694256-d03d-4e2f-a0ae-8a0e666f3c38'")
 THIN_TEXT="We are the heart of guard-town youth services. We strive to be a beacon for every family we serve."
 MARKER="The intake desk logs every referral in the amber ledger before the nurse named Orrin Vasque returns the call within four minutes."
@@ -66,7 +112,7 @@ node scripts/guards/throwaway-pdf.mjs "$TMP/shape.pdf" 0 4 >/dev/null
 upload thin.docx application/vnd.openxmlformats-officedocument.wordprocessingml.document "$TMP/thin.docx"
 upload full.md text/markdown "$TMP/full.md"
 upload shape.pdf application/pdf "$TMP/shape.pdf"
-psql "insert into companies (id, name, created_by) values ('$CO', 'ZZ throwaway v2 guard', (select id from auth.users order by created_at limit 1))" >/dev/null
+psql "insert into companies (id, name, created_by) values ('$CO', 'ZZ throwaway v2 guard $FRUN', (select id from auth.users order by created_at limit 1))" >/dev/null
 psql "insert into inputs (id, company_id, user_id, input_key, input_label) values ('$IN', '$CO', (select id from auth.users order by created_at limit 1), 'zz_v2', 'ZZ v2')" >/dev/null
 psql "insert into input_files (id, input_id, file_name, file_type, file_path, tags) values ('$F_THIN','$IN','thin.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document','$PREFIX/thin.docx','{}'), ('$F_FULL','$IN','full.md','text/markdown','$PREFIX/full.md','{}')" >/dev/null
 # sidecars (analyze-file writes these at upload; the guard writes them directly — the guard basis, ruling 5)
@@ -159,5 +205,17 @@ PY
 [ "$(snapshot_edgewood)" = "$BEFORE" ] || fail e "Edgewood proposals/signals changed"
 [ "$(psql "select count(*) from file_proposals where company_id='$EDGEWOOD' and analysis_version<>1")" = 0 ] || fail e "an Edgewood proposal is not analysis_version 1"
 echo "e. priors untouched: Edgewood proposals + signals byte-identical; all analysis_version 1"
+
+# ── f. E2: the teardown holds the fixture instead of deleting it ──────────────────────────────────
+# Asserted AFTER the teardown, on the teardown's own result: the company still exists (no delete was
+# attempted, so no append-only child could abort anything), it carries this run's hold, and the
+# fleet-wide spent count grew by exactly one. The last of the three is what makes a repeat run
+# meaningful: it can only hold if each run holds its OWN company rather than reusing one.
 cleanup
+trap - EXIT
+[ "$(psql "select count(*) from companies where id='$CO'")" = 1 ] || fail f "the teardown deleted company $CO — companies is never deleted"
+[ "$(psql "select coalesce(fixture_hold,'∅') from companies where id='$CO'")" = "FA2:spent-$FRUN" ] || fail f "company $CO hold is $(psql "select coalesce(fixture_hold,'∅') from companies where id='$CO'"), expected FA2:spent-$FRUN"
+SPENT_AFTER=$(psql "select count(*) from companies where fixture_hold like 'FA2:spent-%'")
+[ "$SPENT_AFTER" = "$((SPENT_BEFORE + 1))" ] || fail f "FA2:spent-% went $SPENT_BEFORE → $SPENT_AFTER, expected +1"
+echo "f. teardown: company $CO kept and held FA2:spent-$FRUN; FA2:spent-% $SPENT_BEFORE → $SPENT_AFTER (+1); nothing deleted from companies"
 echo "GUARD OK"
