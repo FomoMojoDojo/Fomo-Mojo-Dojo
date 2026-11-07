@@ -35,7 +35,13 @@ export type IntegrityRecord = {
     | "cascade_reconcile"
     | "local_synthesis"
     | "interview_upload" // Gate B (2026-09-19): record-interview-upload — completed (one record) or rejected (rolled back)
-    | "interview_market_inference"; // Gate B 2b (2026-09-21): infer-interview-market — one row per run: planned (bumped per window) → completed | failed
+    | "interview_market_inference" // Gate B 2b (2026-09-21): infer-interview-market — one row per run: planned (bumped per window) → completed | failed
+    // Q2 (2026-11-06): buildClientCorpus refused — the corpus could not be proven complete, so the
+    // caller aborts rather than compare against a short corpus. Always status 'failed'.
+    | "client_corpus_gate"
+    // Q4 (2026-11-06): the Option B DOOR on the three evaluate-* functions. One row per refused
+    // call, carrying companyHasClientProvidedMaterial's own found/errors plus the surface.
+    | "option_b_door";
   surface_type?: string | null;
   surface_id?: string | null;
   status: "completed" | "failed" | "skipped_empty_input" | "rejected"; // mirrors integrity_runs_status_check (planned is written by other paths directly)

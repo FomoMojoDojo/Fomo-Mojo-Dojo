@@ -1514,7 +1514,7 @@ Deno.serve(async (req) => {
         gateStrategyArtifactsForExternal({
           supabase: serviceClient as unknown as { from: (t: string) => any },
           companyId,
-          artifacts: rows as Array<{ artifact_role?: string | null; provenance_type?: string | null }>,
+          artifacts: rows as Array<{ artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null }>,
           artifactKind: "positioning_canvas",
           consumer: "council-review",
         }).then((gate) => gate.admissible),
@@ -1523,7 +1523,7 @@ Deno.serve(async (req) => {
         gateStrategyArtifactsForExternal({
           supabase: serviceClient as unknown as { from: (t: string) => any },
           companyId,
-          artifacts: rows as Array<{ artifact_role?: string | null; provenance_type?: string | null }>,
+          artifacts: rows as Array<{ artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null }>,
           artifactKind: "strategy_cascade",
           consumer: "council-review",
         }).then((gate) => gate.admissible),

@@ -206,7 +206,7 @@ Deno.serve(async (req: Request) => {
   // --- Fetch current cascade (latest row — same ordering as alignment evaluators) ---
   const { data: cascadeRow } = await db
     .from("strategy_cascades")
-    .select("id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, source, artifact_role, provenance_type")
+    .select("id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, source, artifact_role, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .eq("artifact_role", "market_read")
     .order("created_at", { ascending: false })
@@ -217,7 +217,7 @@ Deno.serve(async (req: Request) => {
   const cascadeRowGate = await gateStrategyArtifactForExternal({
     supabase: db as unknown as { from: (t: string) => any },
     companyId: String(company_id),
-    artifact: cascadeRow as { artifact_role?: string | null; provenance_type?: string | null },
+    artifact: cascadeRow as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null },
     artifactKind: "strategy_cascade",
     consumer: "propose-cascade-changes",
   });
@@ -301,7 +301,7 @@ Deno.serve(async (req: Request) => {
     .from("odi_needs")
     // 4f-6 (F9): a company-held need (journey_key NULL) is not of any market, so it never enters a
     // market-framed proposal context — the prompt would print it under a Journey it does not have.
-    .select("desired_outcome as outcome, journey_key, step_number, step_label, importance, satisfaction, opportunity_score, tier as priority_tier, provenance_type")
+    .select("desired_outcome as outcome, journey_key, step_number, step_label, importance, satisfaction, opportunity_score, tier as priority_tier, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .not("journey_key", "is", null)
     .neq("strategy_alignment", "off_strategy")

@@ -32,6 +32,9 @@ export type OdiNeedRow = {
   sort_order?: number | null;
   service_state: "underserved" | "served" | "overserved" | string;
   provenance_type?: "manual" | "public_research" | "framework_adjudicated" | "odi_survey" | "internal_declared" | string | null;
+  /** Q3 (2026-11-06): non-NULL ⇒ operator-authored; both external gates refuse the row, so the
+   *  client skips the evaluate-* invoke rather than firing a call the server will refuse. */
+  operator_edited_at?: string | null;
   confidence?: number | null;
   source_path: string;
   source_url?: string | null;

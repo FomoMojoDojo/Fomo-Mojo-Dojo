@@ -83,7 +83,8 @@ Deno.serve(async (req: Request) => {
       // Fetch the need row
       const { data: needRow, error: needErr } = await db
         .from("odi_needs")
-        .select("id, company_id, desired_outcome, odi_canonical_statement, journey_key, provenance_type")
+        // Q3 (2026-11-06): operator_edited_at selected because the subject gate REQUIRES it.
+        .select("id, company_id, desired_outcome, odi_canonical_statement, journey_key, provenance_type, operator_edited_at")
         .eq("id", needId)
         .maybeSingle();
 
@@ -99,6 +100,7 @@ Deno.serve(async (req: Request) => {
         odi_canonical_statement: string | null;
         journey_key: string;
         provenance_type: string | null;
+        operator_edited_at: string | null;
       };
 
       // Skip if already populated
@@ -119,6 +121,7 @@ Deno.serve(async (req: Request) => {
         surfaceType: "opportunity",
         surfaceId: row.id,
         provenance: row.provenance_type,
+        operatorEditedAt: row.operator_edited_at,
         consumer: "backfill-canonical-statements",
       });
       if (!subjectGate.admissible) {

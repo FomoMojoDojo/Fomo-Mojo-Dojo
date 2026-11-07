@@ -72,6 +72,9 @@ export type RouteRow = {
   what_would_have_to_be_true?: Array<{ condition: string; satisfied_flag: boolean; evidence_refs?: string[]; checked_at?: string | null }> | null;
   primary_desired_outcome_id?: string | null;
   provenance_type?: string | null;
+  /** Q3 (2026-11-06): non-NULL ⇒ operator-authored; both external gates refuse the row, so the
+   *  client skips the evaluate-* invoke rather than firing a call the server will refuse. */
+  operator_edited_at?: string | null;
   // A67 strategy-alignment evaluation
   strategy_alignment?: "aligned" | "off_strategy" | "unknown" | null;
   strategy_alignment_reason?: string | null;

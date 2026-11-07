@@ -20,29 +20,41 @@
 // not-applicable outcome is persisted truth, not silence (the integrity laws).
 
 import { recordIntegrityRun } from "./integrity.ts";
-import { EXTERNAL_ADMISSIBLE_PROVENANCE, isSubjectLocalAdmissible, isCascadeLocalAdmissible } from "./externalProvenance.ts";
+import {
+  isSubjectExternallyAdmissible, isSubjectLocalAdmissible, isCascadeLocalAdmissible, isOperatorEdited,
+} from "./externalProvenance.ts";
 
+// Q3 (2026-11-06): delegates to the one authority rather than re-testing the provenance set here,
+// and takes operator authorship as a second REQUIRED argument. A surface the operator typed is
+// refused whatever its provenance label says.
 export function isDriftSurfaceExternallyAdmissible(
   provenance: string | null | undefined,
+  operatorEditedAt: string | null | undefined,
 ): boolean {
-  return provenance != null && EXTERNAL_ADMISSIBLE_PROVENANCE.has(String(provenance));
+  return isSubjectExternallyAdmissible(provenance, operatorEditedAt);
 }
 
 // Single-row form: the one skip+record path for consumers that send ONE internal
 // subject surface to an external model (the verdict/propose lanes). Inadmissible
-// (internal/NULL-provenance) subject → record an excluded-by-rule integrity row
-// and return admissible:false so the caller skips the external call entirely.
-// Admissible (public-derived) → admissible:true, no record, caller proceeds.
+// (internal/NULL-provenance, OR operator-edited — Q3, 2026-11-06) subject → record
+// an excluded-by-rule integrity row and return admissible:false so the caller skips
+// the external call entirely. Admissible (public-derived AND never operator-edited)
+// → admissible:true, no record, caller proceeds.
 export async function gateSubjectForExternal(opts: {
   supabase: { from: (t: string) => any } | undefined | null;
   companyId: string;
   surfaceType: string;
   surfaceId: string;
   provenance: string | null | undefined;
+  /** Q3 (2026-11-06) — REQUIRED. The caller must select operator_edited_at; an unselected column
+   *  reads undefined and the gate would admit an operator-edited row. */
+  operatorEditedAt: string | null | undefined;
   consumer: string;
 }): Promise<{ admissible: boolean }> {
   const prov = opts.provenance == null ? null : String(opts.provenance);
-  if (isDriftSurfaceExternallyAdmissible(prov)) {
+  const editedAt = opts.operatorEditedAt == null ? null : String(opts.operatorEditedAt);
+  const operatorEdited = isOperatorEdited(editedAt);
+  if (isDriftSurfaceExternallyAdmissible(prov, editedAt)) {
     return { admissible: true };
   }
   console.log("[drift-external-gate] subject excluded", {
@@ -51,6 +63,7 @@ export async function gateSubjectForExternal(opts: {
     surface_type: opts.surfaceType,
     surface_id: opts.surfaceId,
     provenance: prov,
+    operator_edited: operatorEdited,
   });
   await recordIntegrityRun(opts.supabase ?? null, {
     company_id: opts.companyId,
@@ -60,7 +73,16 @@ export async function gateSubjectForExternal(opts: {
     status: "completed",
     examined: 1,
     admitted: 0,
-    excluded_by_rule: { non_public_provenance: true, provenance: prov },
+    // The two reasons are reported SEPARATELY: a row can be refused for its provenance, for
+    // operator authorship, or for both, and collapsing them would lose which rule fired.
+    excluded_by_rule: {
+      // "would the provenance ALONE have admitted it?" — asked by passing a null flag, so the two
+      // rules stay independently readable in the audit row.
+      non_public_provenance: !isSubjectExternallyAdmissible(prov, null),
+      operator_edited: operatorEdited,
+      operator_edited_at: operatorEdited ? editedAt : null,
+      provenance: prov,
+    },
     run_ref: opts.consumer,
   });
   return { admissible: false };
@@ -79,10 +101,14 @@ export async function gateSubjectForLocal(opts: {
   surfaceType: string;
   surfaceId: string;
   provenance: string | null | undefined;
+  /** Q3 (2026-11-06) — REQUIRED, and the reason XOR survives: an operator-edited public row is
+   *  refused by the external gate, so the LOCAL lane must admit it or it would be judged nowhere. */
+  operatorEditedAt: string | null | undefined;
   consumer: string;
 }): Promise<{ admissible: boolean }> {
   const prov = opts.provenance == null ? null : String(opts.provenance);
-  if (isSubjectLocalAdmissible(prov)) {
+  const editedAt = opts.operatorEditedAt == null ? null : String(opts.operatorEditedAt);
+  if (isSubjectLocalAdmissible(prov, editedAt)) {
     return { admissible: true };
   }
   console.log("[local-lane-gate] subject declined (external lane)", {
@@ -118,11 +144,14 @@ export async function gateCascadeSubjectForLocal(opts: {
   surfaceId: string;
   artifactRole: string | null | undefined;
   provenance: string | null | undefined;
+  /** Q3 (2026-11-06) — REQUIRED; see gateSubjectForLocal. */
+  operatorEditedAt: string | null | undefined;
   consumer: string;
 }): Promise<{ admissible: boolean }> {
   const role = opts.artifactRole == null ? null : String(opts.artifactRole);
   const prov = opts.provenance == null ? null : String(opts.provenance);
-  if (isCascadeLocalAdmissible(role, prov)) {
+  const editedAt = opts.operatorEditedAt == null ? null : String(opts.operatorEditedAt);
+  if (isCascadeLocalAdmissible(role, prov, editedAt)) {
     return { admissible: true };
   }
   console.log("[local-lane-gate] cascade declined (external lane)", {
@@ -151,7 +180,7 @@ export async function gateCascadeSubjectForLocal(opts: {
 // rule drops. Inadmissible rows never reach assessSurface, so zero external calls
 // are made on their behalf.
 export async function gateDriftSurfacesForExternal<
-  T extends { id: string; provenance_type?: string | null },
+  T extends { id: string; provenance_type?: string | null; operator_edited_at?: string | null },
 >(opts: {
   supabase: { from: (t: string) => any } | undefined | null;
   companyId: string;
@@ -162,19 +191,24 @@ export async function gateDriftSurfacesForExternal<
   const rows = Array.isArray(opts.rows) ? opts.rows : [];
   const admissible: T[] = [];
   let excludedCount = 0;
+  let operatorEditedCount = 0;
   for (const row of rows) {
     const provenance = row?.provenance_type == null ? null : String(row.provenance_type);
-    if (isDriftSurfaceExternallyAdmissible(provenance)) {
+    const editedAt = row?.operator_edited_at == null ? null : String(row.operator_edited_at);
+    const operatorEdited = isOperatorEdited(editedAt);
+    if (isDriftSurfaceExternallyAdmissible(provenance, editedAt)) {
       admissible.push(row);
       continue;
     }
     excludedCount++;
+    if (operatorEdited) operatorEditedCount++;
     console.log("[drift-external-gate] excluded", {
       consumer: opts.consumer,
       company_id: opts.companyId,
       surface_type: opts.surfaceType,
       surface_id: row?.id ?? null,
       provenance,
+      operator_edited: operatorEdited,
     });
     await recordIntegrityRun(opts.supabase ?? null, {
       company_id: opts.companyId,
@@ -184,7 +218,12 @@ export async function gateDriftSurfacesForExternal<
       status: "completed",
       examined: 1,
       admitted: 0,
-      excluded_by_rule: { non_public_provenance: true, provenance },
+      excluded_by_rule: {
+        non_public_provenance: !isSubjectExternallyAdmissible(provenance, null),
+        operator_edited: operatorEdited,
+        operator_edited_at: operatorEdited ? editedAt : null,
+        provenance,
+      },
       run_ref: opts.consumer,
     });
   }
@@ -196,6 +235,7 @@ export async function gateDriftSurfacesForExternal<
       examined: rows.length,
       admitted: admissible.length,
       excluded_non_public_provenance: excludedCount,
+      excluded_operator_edited: operatorEditedCount,   // Q3 (2026-11-06)
     });
   }
   return { admissible, excludedCount };

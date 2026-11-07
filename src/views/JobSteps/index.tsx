@@ -2468,6 +2468,11 @@ export default function JobStepsView() {
           chooser: chooserValue,
           jtbd: jtbdValue,
           source_path: "manual_context_edit",
+          // Q3 (2026-11-06): operator-typed market context carries operator authorship. No external
+          // gate reads odi_market_definitions today (reported at STOP 1) — the stamp is here so the
+          // invariant `source_path like 'manual_%' ⟺ operator_edited_at is not null` holds on every
+          // manual_% table, and so a future gate on this surface inherits the flag already set.
+          operator_edited_at: nowIso,
           frameworks_used: marketFrameworks,
           updated_at: nowIso,
         })
@@ -2485,6 +2490,7 @@ export default function JobStepsView() {
           chooser: chooserValue,
           jtbd: jtbdValue,
           source_path: "manual_context_edit",
+          operator_edited_at: nowIso,   // Q3 (2026-11-06) — see the update branch above
           frameworks_used: marketFrameworks,
           // OOD-1 register birth-stamp → internal_inferred (operator ruling
           // 2026-07-16). The operator types these fields, but a manual edit is a

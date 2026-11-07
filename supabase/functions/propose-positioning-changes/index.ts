@@ -193,7 +193,7 @@ Deno.serve(async (req: Request) => {
   // --- Fetch current canvas (any source — proposals are safe even for manual canvases) ---
   const { data: canvasRow } = await db
     .from("positioning_canvases")
-    .select("id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, source, artifact_role, provenance_type")
+    .select("id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, source, artifact_role, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .eq("artifact_role", "market_read")
     .maybeSingle();
@@ -202,7 +202,7 @@ Deno.serve(async (req: Request) => {
   const canvasRowGate = await gateStrategyArtifactForExternal({
     supabase: db as unknown as { from: (t: string) => any },
     companyId: String(company_id),
-    artifact: canvasRow as { artifact_role?: string | null; provenance_type?: string | null },
+    artifact: canvasRow as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null },
     artifactKind: "positioning_canvas",
     consumer: "propose-positioning-changes",
   });
@@ -216,7 +216,7 @@ Deno.serve(async (req: Request) => {
   // --- Fetch cascade ---
   const { data: cascadeRow } = await db
     .from("strategy_cascades")
-    .select("winning_aspiration, where_to_play, how_to_win, source, artifact_role, provenance_type")
+    .select("winning_aspiration, where_to_play, how_to_win, source, artifact_role, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .eq("artifact_role", "market_read")
     .order("created_at", { ascending: false })
@@ -225,7 +225,7 @@ Deno.serve(async (req: Request) => {
   const cascadeRowGate = await gateStrategyArtifactForExternal({
     supabase: db as unknown as { from: (t: string) => any },
     companyId: String(company_id),
-    artifact: (cascadeRow ?? null) as { artifact_role?: string | null; provenance_type?: string | null } | null,
+    artifact: (cascadeRow ?? null) as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null } | null,
     artifactKind: "strategy_cascade",
     consumer: "propose-positioning-changes",
   });
@@ -299,7 +299,7 @@ Deno.serve(async (req: Request) => {
     .from("odi_needs")
     // 4f-6 (F9): a company-held need (journey_key NULL) is not of any market, so it never enters a
     // market-framed proposal context — the prompt would print it under a Journey it does not have.
-    .select("desired_outcome as outcome, journey_key, step_number, step_label, importance, satisfaction, opportunity_score, tier as priority_tier, provenance_type")
+    .select("desired_outcome as outcome, journey_key, step_number, step_label, importance, satisfaction, opportunity_score, tier as priority_tier, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .not("journey_key", "is", null)
     .neq("strategy_alignment", "off_strategy")

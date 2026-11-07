@@ -14,6 +14,27 @@ export const EXTERNAL_ADMISSIBLE_PROVENANCE = new Set([
   "public_baseline",
 ]);
 
+// ── OPERATOR AUTHORSHIP (ruling Q3, 2026-11-06) ───────────────────────────────
+//
+// A provenance LABEL does not know who typed the row. saveManualEdit stamped
+// `source='manual_inline'` — a REGEN-protection marker, not an authorship flag — and left
+// provenance_type alone, so four Edgewood rows and one FomoMojoDojo row sat stamped
+// `public_research` while carrying operator prose, and both external gates admitted them.
+// `operator_edited_at` is the authorship flag. Non-NULL ⇒ operator-authored material ⇒ never
+// external, whatever the provenance says. provenance_type is NOT restamped (out of scope).
+//
+// THE FLAG IS AN ARGUMENT, NOT AN OPTION. Every predicate below takes it explicitly and every
+// caller must supply it: a defaulted parameter would fail OPEN the moment a new consumer forgot
+// to select the column, which is the exact failure mode this ruling exists to close.
+//
+// XOR IS PRESERVED BY CONSTRUCTION. Each local predicate is the literal negation of its external
+// twin, flag included, so an operator-edited public row does not fall through both lanes and
+// vanish — it moves to the LOCAL lane and is still judged, just never by an outside model.
+/** Non-NULL, non-blank ⇒ the row carries operator authorship. */
+export function isOperatorEdited(operatorEditedAt: string | null | undefined): boolean {
+  return typeof operatorEditedAt === "string" && operatorEditedAt.trim().length > 0;
+}
+
 // ── Subject partition (LOCAL LANE, 2026-06-18) ────────────────────────────────
 // Every subject surface carries a provenance_type from this enum (or NULL). The
 // six enum values, single-sourced here so the partition below is provably total.
@@ -52,20 +73,36 @@ export const LOCAL_LANE_PROVENANCE = new Set(
 // internal enum value, and any value that does not exist yet are withheld.
 // Consumers filter at the collection point and report the withheld count —
 // omission is visible, never silent.
+// Q3 (2026-11-06): also withheld when the row carries operator authorship. Row-shaped, so a
+// consumer that selects the row gets the flag for free — but a consumer that does NOT select
+// operator_edited_at reads undefined and would fail open, so the need-row collectors must select
+// it. src/lib/operatorEditedSelectGate.test.ts asserts the column is in every gated select list.
 export function isExternalAdmissibleNeed(
-  row: { provenance_type?: unknown } | null | undefined,
+  row: { provenance_type?: unknown; operator_edited_at?: unknown } | null | undefined,
 ): boolean {
   const p = row?.provenance_type;
+  const edited = row?.operator_edited_at;
+  if (isOperatorEdited(typeof edited === "string" ? edited : edited == null ? null : String(edited))) return false;
   return typeof p === "string" && EXTERNAL_ADMISSIBLE_PROVENANCE.has(p);
+}
+
+/** The subject (route / need / opportunity) EXTERNAL test — the one authority, flag included. */
+export function isSubjectExternallyAdmissible(
+  provenance: string | null | undefined,
+  operatorEditedAt: string | null | undefined,
+): boolean {
+  if (isOperatorEdited(operatorEditedAt)) return false;   // operator-authored → never external
+  return provenance != null && EXTERNAL_ADMISSIBLE_PROVENANCE.has(String(provenance));
 }
 
 export function isSubjectLocalAdmissible(
   provenance: string | null | undefined,
+  operatorEditedAt: string | null | undefined,
 ): boolean {
-  // NULL → local (fail-closed external means local is its only lane). Any non-enum
-  // / unknown value also falls to local (never external) — fail-closed.
-  if (provenance == null) return true;
-  return !EXTERNAL_ADMISSIBLE_PROVENANCE.has(String(provenance));
+  // The LITERAL negation of the external test — NULL provenance, every internal enum value, any
+  // unknown value, AND every operator-edited row land here. Local is where a refused row is still
+  // judged; nothing falls through both lanes.
+  return !isSubjectExternallyAdmissible(provenance, operatorEditedAt);
 }
 
 // ── Cascade partition (Phase 3a) ──────────────────────────────────────────────
@@ -75,10 +112,15 @@ export function isSubjectLocalAdmissible(
 // by gateCascadeSubjectForLocal (local), so the cascade XOR partition holds by
 // construction (one predicate, never a re-typed boolean that can drift — the same
 // one-authority law as the single identity hash).
+// Q3 (2026-11-06): operatorEditedAt joins role and provenance as a third REQUIRED dimension. An
+// operator-edited market_read/public_research cascade — Edgewood 00f9d893, FomoMojoDojo b9f2318b —
+// is refused here and judged on the local lane instead.
 export function isCascadeExternallyAdmissible(
   artifactRole: string | null | undefined,
   provenance: string | null | undefined,
+  operatorEditedAt: string | null | undefined,
 ): boolean {
+  if (isOperatorEdited(operatorEditedAt)) return false;
   return String(artifactRole ?? "") === "market_read"
     && provenance != null
     && EXTERNAL_ADMISSIBLE_PROVENANCE.has(String(provenance));
@@ -89,6 +131,7 @@ export function isCascadeExternallyAdmissible(
 export function isCascadeLocalAdmissible(
   artifactRole: string | null | undefined,
   provenance: string | null | undefined,
+  operatorEditedAt: string | null | undefined,
 ): boolean {
-  return !isCascadeExternallyAdmissible(artifactRole, provenance);
+  return !isCascadeExternallyAdmissible(artifactRole, provenance, operatorEditedAt);
 }

@@ -72,6 +72,21 @@ import {
   rewriteRouteLanguage,
 } from "../../../src/lib/routeLanguage.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
+import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // Q5 (2026-11-06)
+
+// ── Q5 (ruling, 2026-11-06): THE SPEND LEDGER ───────────────────────────────────────────────────
+// research-company made every one of its OpenAI calls off-ledger: Edgewood holds 4,000+ model_calls
+// rows across 15 call sites and not one of them is this function. The hook below is threaded into
+// each stage that calls OpenAI, so one HTTP response = one model_calls row, labelled by stage.
+//
+// NO MODULE-LEVEL MUTABLE STATE: an isolate serves many requests, so a shared "current company"
+// would cross-contaminate under concurrency. `makeUsageLedger` is built INSIDE the handler and
+// closes over that request's client and company id; the hook is passed down explicitly.
+export type UsageHook = (
+  model: string,
+  usage: { prompt_tokens: number; completion_tokens: number } | null,
+) => void | Promise<void>;
+
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -1686,6 +1701,7 @@ function buildStageEvidenceRules(
 }
 
 async function generateManagedOutcomes(args: {
+  onUsage?: UsageHook;   // Q5 (2026-11-06): the spend ledger, threaded from the handler
   apiKey: string;
   model: string;
   companyName: string;
@@ -1739,6 +1755,7 @@ async function generateManagedOutcomes(args: {
     apiKey: args.apiKey,
     model: args.model,
     schemaName: "mojo_managed_outcomes_v2",
+    onUsage: args.onUsage,   // Q5 (2026-11-06)
     schema: managedOutcomesSchema,
     systemText,
     userText,
@@ -2132,6 +2149,7 @@ function isUsableManagedOutcome(outcome: ReturnType<typeof normalizeManagedOutco
 }
 
 async function repairManagedOutcomes(args: {
+  onUsage?: UsageHook;   // Q5 (2026-11-06): the spend ledger, threaded from the handler
   apiKey: string;
   model: string;
   companyName: string;
@@ -2183,6 +2201,7 @@ async function repairManagedOutcomes(args: {
     apiKey: args.apiKey,
     model: args.model,
     schemaName: "mojo_managed_outcomes_repair_v2",
+    onUsage: args.onUsage,   // Q5 (2026-11-06)
     schema: managedOutcomesSchema,
     systemText,
     userText,
@@ -2624,6 +2643,7 @@ const reviewSchema = {
 };
 
 async function runConsistencyReview(opts: {
+  onUsage?: UsageHook;   // Q5 (2026-11-06): the spend ledger, threaded from the handler
   apiKey: string;
   model: string;
   companyName: string;
@@ -2669,6 +2689,7 @@ async function runConsistencyReview(opts: {
     apiKey: opts.apiKey,
     model: opts.model,
     schemaName: "mojo_consistency_review_v1",
+    onUsage: opts.onUsage,   // Q5 (2026-11-06)
     schema: reviewSchema,
     systemText,
     userText,
@@ -2724,6 +2745,7 @@ async function runPositioningReview(opts: {
 }
 
 async function runEvidenceReview(opts: {
+  onUsage?: UsageHook;   // Q5 (2026-11-06): the spend ledger, threaded from the handler
   apiKey: string;
   model: string;
   companyName: string;
@@ -2772,6 +2794,7 @@ async function runEvidenceReview(opts: {
     apiKey: opts.apiKey,
     model: opts.model,
     schemaName: "mojo_evidence_review_v1",
+    onUsage: opts.onUsage,   // Q5 (2026-11-06)
     schema: reviewSchema,
     systemText,
     userText,
@@ -2826,6 +2849,7 @@ async function runStrategyReview(opts: {
 }
 
 async function runAllDraftReviews(opts: {
+  onUsage?: UsageHook;   // Q5 (2026-11-06)
   apiKey: string;
   model: string;
   companyName: string;
@@ -2847,6 +2871,7 @@ async function runAllDraftReviews(opts: {
   // deferred — leaf functions own those tables and a separate review pass is a future enhancement.
   const [consistencyReview, evidenceReview] = await Promise.all([
     runConsistencyReview({
+      onUsage: opts.onUsage,   // Q5 (2026-11-06)
       apiKey: opts.apiKey,
       model: opts.model,
       companyName: opts.companyName,
@@ -2863,6 +2888,7 @@ async function runAllDraftReviews(opts: {
       knownTensions: opts.knownTensions,
     }),
     runEvidenceReview({
+      onUsage: opts.onUsage,   // Q5 (2026-11-06)
       apiKey: opts.apiKey,
       model: opts.model,
       companyName: opts.companyName,
@@ -2921,6 +2947,11 @@ async function callOpenAIJSON(opts: {
   temperature?: number;
   requestTimeoutMs?: number;
   transientRetries?: number;
+  /** Q5 (ruling, 2026-11-06): fired once per OpenAI HTTP response that returned a body, with the
+   *  model that ACTUALLY served it (not `model`, after a failover) and that response's usage.
+   *  One invocation = one billable call = one model_calls row. research-company carries its own
+   *  copy of this client, so the hook is added in both places; neither reads the other. */
+  onUsage?: UsageHook;
 }) {
   const {
     apiKey,
@@ -2934,7 +2965,26 @@ async function callOpenAIJSON(opts: {
     temperature = 0.2,
     requestTimeoutMs = 240_000,
     transientRetries = 2,
+    onUsage,
   } = opts;
+
+  /** Q5: report one call's usage, never letting the report break the call. */
+  const reportUsage = async (activeModel: string, data: unknown) => {
+    if (!onUsage) return;
+    try {
+      // /v1/responses reports input_tokens/output_tokens; chat-completions reports
+      // prompt_tokens/completion_tokens. Accept both — reading only one shape logs NULL tokens.
+      const u = (data as {
+        usage?: {
+          prompt_tokens?: unknown; completion_tokens?: unknown;
+          input_tokens?: unknown; output_tokens?: unknown;
+        };
+      } | null)?.usage;
+      const pt = Number(u?.prompt_tokens ?? u?.input_tokens);
+      const ct = Number(u?.completion_tokens ?? u?.output_tokens);
+      await onUsage(activeModel, u && Number.isFinite(pt) && Number.isFinite(ct) ? { prompt_tokens: pt, completion_tokens: ct } : null);
+    } catch (_e) { /* observability must not fail the call it measures */ }
+  };
   const withSchemaContext = (error: unknown) => {
     const message = String(error instanceof Error ? error.message : error);
     if (message.startsWith(`[${schemaName}]`)) return new Error(message);
@@ -3019,6 +3069,8 @@ async function callOpenAIJSON(opts: {
             }
 
             const data = await resp.json();
+            // Q5: ledger BEFORE parsing — the call was billed whether or not its JSON is usable.
+            await reportUsage(activeModel, data);
             const text = extractResponsesOutputText(data);
             if (!text) {
               console.log("[research-company] OpenAI response missing output_text. keys=", Object.keys(data || {}));
@@ -5924,7 +5976,20 @@ Deno.serve(async (req) => {
       `- description max 10 words\n` +
       `- why_it_matters max 10 words\n`;
 
+    // ── Q5 (2026-11-06): the spend ledger for this request ──────────────────────────────────────
+    // Built here, not at module scope: an isolate serves many requests, so a shared company id
+    // would cross-contaminate under concurrency. One model_calls row per OpenAI HTTP response,
+    // labelled by stage, so a run's spend can be attributed rather than inferred.
+    const makeUsageLedger = (stage: string): UsageHook => (usedModel, usage) =>
+      void recordModelCall(supabase as unknown as { from: (t: string) => any }, {
+        companyId: String(company_id),
+        runId: baselineRun?.id != null ? String(baselineRun.id) : null,
+        callSite: `research-company:${stage}`,
+        usage: openaiRecord(usedModel, usage),
+      });
+
     const inputsResult = await callOpenAIJSON({
+      onUsage: makeUsageLedger("inputs"),   // Q5 (2026-11-06)
       apiKey: openaiKey,
       model: openaiModel,
       schemaName: "mojo_inputs_v2",
@@ -6117,6 +6182,7 @@ Deno.serve(async (req) => {
       jobStepUserClosing;
 
     const journeysResult = await callOpenAIJSON({
+      onUsage: makeUsageLedger("journeys"),   // Q5 (2026-11-06)
       apiKey: openaiKey,
       model: openaiModel,
       schemaName: "mojo_journeys_v1",
@@ -6180,6 +6246,7 @@ Deno.serve(async (req) => {
 
     const managedOutcomeContextTokensFromJourneys = collectOutcomeContextTokensFromJourneys(journeys);
     const managedOutcomesResult = await generateManagedOutcomes({
+      onUsage: makeUsageLedger("managed_outcomes"),   // Q5 (2026-11-06)
       apiKey: openaiKey,
       model: openaiModel,
       companyName: company_name,
@@ -6206,6 +6273,7 @@ Deno.serve(async (req) => {
 
     if (weakManagedOutcomeCount > 0) {
       const repairedManagedOutcomesResult = await repairManagedOutcomes({
+        onUsage: makeUsageLedger("managed_outcomes_repair"),   // Q5 (2026-11-06)
         apiKey: openaiKey,
         model: openaiModel,
         companyName: company_name,
@@ -6345,6 +6413,7 @@ Deno.serve(async (req) => {
       `Every opportunity must use journey_key=customer.\n`;
 
     const oppsResult = await callOpenAIJSON({
+      onUsage: makeUsageLedger("opportunities"),   // Q5 (2026-11-06)
       apiKey: openaiKey,
       model: openaiModel,
       schemaName: "mojo_opps_v1",
@@ -6646,6 +6715,7 @@ Deno.serve(async (req) => {
       `Generate routes that synthesize these into coherent strategic workstreams.\n`;
 
     const routesResult = await callOpenAIJSON({
+      onUsage: makeUsageLedger("routes"),   // Q5 (2026-11-06)
       apiKey: openaiKey,
       model: openaiModel,
       schemaName: "mojo_routes_v1",
@@ -6688,6 +6758,7 @@ Deno.serve(async (req) => {
         evidenceReview,
         strategyReview,
       } = await runAllDraftReviews({
+        onUsage: makeUsageLedger("draft_reviews"),   // Q5 (2026-11-06)
         apiKey: openaiKey,
         model: openaiModel,
         companyName: company_name,
@@ -6805,6 +6876,7 @@ Deno.serve(async (req) => {
             evidenceReview,
             strategyReview,
           } = await runAllDraftReviews({
+        onUsage: makeUsageLedger("draft_reviews"),   // Q5 (2026-11-06)
             apiKey: openaiKey,
             model: openaiModel,
             companyName: company_name,
@@ -7875,7 +7947,7 @@ Deno.serve(async (req) => {
     // -------------------------
     const { data: freshCascadeRowRaw } = await supabase
       .from("strategy_cascades")
-      .select("winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, artifact_role, provenance_type")
+      .select("winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, artifact_role, provenance_type, operator_edited_at")
       .eq("company_id", company_id)
       .eq("artifact_role", "market_read")
       .order("created_at", { ascending: false })
@@ -7884,7 +7956,7 @@ Deno.serve(async (req) => {
 
     const { data: freshPositioningRowRaw } = await supabase
       .from("positioning_canvases")
-      .select("competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, artifact_role, provenance_type")
+      .select("competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, artifact_role, provenance_type, operator_edited_at")
       .eq("company_id", company_id)
       .eq("artifact_role", "market_read")
       .order("created_at", { ascending: false })
@@ -7894,14 +7966,14 @@ Deno.serve(async (req) => {
     const freshCascadeGate = await gateStrategyArtifactForExternal({
       supabase: supabase as unknown as { from: (t: string) => any },
       companyId: String(company_id),
-      artifact: (freshCascadeRowRaw ?? null) as { artifact_role?: string | null; provenance_type?: string | null } | null,
+      artifact: (freshCascadeRowRaw ?? null) as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null } | null,
       artifactKind: "strategy_cascade",
       consumer: "research-company",
     });
     const freshPositioningGate = await gateStrategyArtifactForExternal({
       supabase: supabase as unknown as { from: (t: string) => any },
       companyId: String(company_id),
-      artifact: (freshPositioningRowRaw ?? null) as { artifact_role?: string | null; provenance_type?: string | null } | null,
+      artifact: (freshPositioningRowRaw ?? null) as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null } | null,
       artifactKind: "positioning_canvas",
       consumer: "research-company",
     });

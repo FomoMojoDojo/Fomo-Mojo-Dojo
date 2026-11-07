@@ -13,6 +13,8 @@ import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 import { gateSubjectForExternal, gateSubjectForLocal } from "../_shared/driftExternalGate.ts";
 import { judgeOpportunityAlignmentLocal } from "../_shared/localAlignmentJudge.ts";
+import { optionBDoor } from "../_shared/optionBDoor.ts";
+import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";
 
 // 4f-6 (F9): the one refusal for a company-held need reaching a market-framed judgement.
 export const NEED_IS_COMPANY_HELD = "This need is held by the company, not a market — there is no market to align it to.";
@@ -71,7 +73,9 @@ Deno.serve(async (req: Request) => {
   // Fetch need/opportunity
   const { data: needData, error: needError } = await db
     .from("odi_needs")
-    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key, provenance_type")
+    // Q3 (2026-11-06): operator_edited_at is selected because the subject gate REQUIRES it. An
+    // unselected column reads undefined and the gate would admit an operator-edited need.
+    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key, provenance_type, operator_edited_at")
     .eq("id", need_id)
     .eq("company_id", company_id)
     .maybeSingle();
@@ -91,29 +95,47 @@ Deno.serve(async (req: Request) => {
   // provenance) opportunity must never have its text sent to an external model.
   // Inadmissible → skip the evaluation entirely (no OpenAI, no strategy_alignment
   // write), recording an excluded-by-rule integrity row.
-  const subjectGate = await gateSubjectForExternal({
+  // Q4 (ruling, 2026-11-06) — THE OPTION B DOOR, in front of the per-row gate. See
+  // _shared/optionBDoor.ts for why a company-level rule is stricter than the material-level law.
+  const door = await optionBDoor({
     supabase: db as unknown as { from: (t: string) => any },
     companyId: String(company_id),
     surfaceType: "opportunity",
     surfaceId: String(need_id),
-    provenance: (needData as { provenance_type?: string | null }).provenance_type,
     consumer: "evaluate-opportunity-alignment",
   });
-  if (!subjectGate.admissible) {
-    // LOCAL LANE (Phase 1) — declared/internal opportunities are judged LOCALLY
-    // (llama3:70b, direct Ollama); text never reaches OpenAI. The partition gate
-    // confirms this subject belongs to the local lane (XOR with the external gate).
-    const localGate = await gateSubjectForLocal({
+  const subjectGate = door.allowed
+    ? await gateSubjectForExternal({
       supabase: db as unknown as { from: (t: string) => any },
       companyId: String(company_id),
       surfaceType: "opportunity",
       surfaceId: String(need_id),
       provenance: (needData as { provenance_type?: string | null }).provenance_type,
+      operatorEditedAt: (needData as { operator_edited_at?: string | null }).operator_edited_at,
       consumer: "evaluate-opportunity-alignment",
-    });
-    if (!localGate.admissible) {
-      // Partition violation (should be impossible): neither lane admitted. Fail loud.
-      return jsonResponse({ error: "subject admitted by neither lane (partition violation)", need_id }, 500);
+    })
+    : { admissible: false };
+  if (!subjectGate.admissible) {
+    // LOCAL LANE (Phase 1) — declared/internal opportunities are judged LOCALLY
+    // (llama3:70b, direct Ollama); text never reaches OpenAI. The partition gate
+    // confirms this subject belongs to the local lane (XOR with the external gate).
+    // Q4: the XOR partition is asserted ONLY when the per-row gate decided. A door refusal is
+    // company-level, so a genuinely public row is legitimately in neither provenance lane and
+    // asserting the partition would 500 on exactly the rows the ruling means to downgrade.
+    if (door.allowed) {
+      const localGate = await gateSubjectForLocal({
+        supabase: db as unknown as { from: (t: string) => any },
+        companyId: String(company_id),
+        surfaceType: "opportunity",
+        surfaceId: String(need_id),
+        provenance: (needData as { provenance_type?: string | null }).provenance_type,
+        operatorEditedAt: (needData as { operator_edited_at?: string | null }).operator_edited_at,
+        consumer: "evaluate-opportunity-alignment",
+      });
+      if (!localGate.admissible) {
+        // Partition violation (should be impossible): neither lane admitted. Fail loud.
+        return jsonResponse({ error: "subject admitted by neither lane (partition violation)", need_id }, 500);
+      }
     }
     const need = needData as {
       journey_key?: string | null; desired_outcome?: string | null; odi_canonical_statement?: string | null;
@@ -153,7 +175,7 @@ Deno.serve(async (req: Request) => {
   // Fetch most recent strategy cascade
   const { data: cascadeData, error: cascadeError } = await db
     .from("strategy_cascades")
-    .select("winning_aspiration, where_to_play, how_to_win, artifact_role, provenance_type")
+    .select("winning_aspiration, where_to_play, how_to_win, artifact_role, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .eq("artifact_role", "market_read")
     .order("created_at", { ascending: false })
@@ -168,7 +190,7 @@ Deno.serve(async (req: Request) => {
   const cascadeDataGate = await gateStrategyArtifactForExternal({
     supabase: db as unknown as { from: (t: string) => any },
     companyId: String(company_id),
-    artifact: cascadeData as { artifact_role?: string | null; provenance_type?: string | null },
+    artifact: cascadeData as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null },
     artifactKind: "strategy_cascade",
     consumer: "evaluate-opportunity-alignment",
   });
@@ -242,6 +264,13 @@ ${statementBlock}`;
       userText,
       maxOutputTokens: 300,
       temperature: 0.1,
+      // Q5 (2026-11-06): one model_calls row per outside call; this function wrote none before.
+      onUsage: (usedModel, usage) =>
+        void recordModelCall(db as unknown as { from: (t: string) => any }, {
+          companyId: String(company_id),
+          callSite: "evaluate-opportunity-alignment",
+          usage: openaiRecord(usedModel, usage),
+        }),
     }) as { classification: string; reason: string };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

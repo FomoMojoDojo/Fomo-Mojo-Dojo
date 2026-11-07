@@ -110,7 +110,7 @@ Deno.serve(async (req: Request) => {
   // --- Fetch opportunity ---
   const { data: oppData, error: oppError } = await db
     .from("odi_needs")
-    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key, service_state, importance, satisfaction, opportunity_score, strategy_alignment, provenance_type")
+    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key, service_state, importance, satisfaction, opportunity_score, strategy_alignment, provenance_type, operator_edited_at")
     .eq("id", opportunity_id)
     .eq("company_id", company_id)
     .maybeSingle();
@@ -138,6 +138,7 @@ Deno.serve(async (req: Request) => {
     surfaceType: "opportunity",
     surfaceId: String(opportunity_id),
     provenance: (oppData as { provenance_type?: string | null }).provenance_type,
+    operatorEditedAt: (oppData as { operator_edited_at?: string | null }).operator_edited_at,
     consumer: "propose-opportunity-changes",
   });
   if (!subjectGate.admissible) {
@@ -147,7 +148,7 @@ Deno.serve(async (req: Request) => {
   // --- Fetch strategy cascade ---
   const { data: cascadeData, error: cascadeError } = await db
     .from("strategy_cascades")
-    .select("winning_aspiration, where_to_play, how_to_win, artifact_role, provenance_type")
+    .select("winning_aspiration, where_to_play, how_to_win, artifact_role, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .eq("artifact_role", "market_read")
     .order("created_at", { ascending: false })
@@ -162,7 +163,7 @@ Deno.serve(async (req: Request) => {
   const cascadeDataGate = await gateStrategyArtifactForExternal({
     supabase: db as unknown as { from: (t: string) => any },
     companyId: String(company_id),
-    artifact: cascadeData as { artifact_role?: string | null; provenance_type?: string | null },
+    artifact: cascadeData as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null },
     artifactKind: "strategy_cascade",
     consumer: "propose-opportunity-changes",
   });

@@ -347,7 +347,7 @@ async function assessCascades(
 ): Promise<{ aligned: number; slight_drift: number; material_drift: number; assessed: number }> {
   const query = supabase
     .from("strategy_cascades")
-    .select("id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, evidence_baseline_signal_ids, evidence_baseline_captured_at, artifact_role, provenance_type")
+    .select("id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, evidence_baseline_signal_ids, evidence_baseline_captured_at, artifact_role, provenance_type, operator_edited_at")
     .eq("company_id", companyId)
     .eq("artifact_role", "market_read");
 
@@ -400,7 +400,7 @@ async function assessPositioning(
 ): Promise<{ aligned: number; slight_drift: number; material_drift: number; assessed: number }> {
   const query = supabase
     .from("positioning_canvases")
-    .select("id, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, competitive_alternatives_json, unique_attributes_json, evidence_baseline_signal_ids, evidence_baseline_captured_at, artifact_role, provenance_type")
+    .select("id, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, competitive_alternatives_json, unique_attributes_json, evidence_baseline_signal_ids, evidence_baseline_captured_at, artifact_role, provenance_type, operator_edited_at")
     .eq("company_id", companyId)
     .eq("artifact_role", "market_read");
 
@@ -452,7 +452,7 @@ async function assessRoutes(
 ): Promise<{ aligned: number; slight_drift: number; material_drift: number; assessed: number }> {
   const query = supabase
     .from("routes")
-    .select("id, title, short_description, rejected_alternatives, what_would_have_to_be_true, evidence_baseline_signal_ids, evidence_baseline_captured_at, provenance_type")
+    .select("id, title, short_description, rejected_alternatives, what_would_have_to_be_true, evidence_baseline_signal_ids, evidence_baseline_captured_at, provenance_type, operator_edited_at")
     .eq("company_id", companyId)
     .eq("relevance_state", "active");
 
@@ -507,7 +507,7 @@ async function assessOpportunities(
 ): Promise<{ aligned: number; slight_drift: number; material_drift: number; assessed: number }> {
   const query = supabase
     .from("odi_needs")
-    .select("id, desired_outcome, odi_canonical_statement, evidence_baseline_signal_ids, evidence_baseline_captured_at, provenance_type")
+    .select("id, desired_outcome, odi_canonical_statement, evidence_baseline_signal_ids, evidence_baseline_captured_at, provenance_type, operator_edited_at")
     .eq("company_id", companyId);
 
   if (filterSurfaceId) query.eq("id", filterSurfaceId);

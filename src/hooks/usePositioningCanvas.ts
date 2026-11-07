@@ -223,7 +223,13 @@ export function usePositioningCanvas(companyId?: string, refreshKey = 0) {
     setSavingField(field);
     try {
       const patch: Record<string, unknown> = { [field]: String(value || "").trim() };
-      if (opts?.isManualInline) patch.source = "manual_inline";
+      // Q3 (2026-11-06): the authorship flag travels with the manual_% stamp, so
+      // `source like 'manual_%' ⟺ operator_edited_at is not null` holds for every writer.
+      // Both external gates refuse a stamped row; provenance_type is untouched.
+      if (opts?.isManualInline) {
+        patch.source = "manual_inline";
+        patch.operator_edited_at = new Date().toISOString();
+      }
 
       const { data, error } = await supabase
         .from("positioning_canvases")

@@ -83,6 +83,14 @@ describe("handleAcceptRouteProposal — refused condition write is surfaced", ()
     await waitFor(() => expect(calls.filter((c) => c.table === "surface_proposals" && c.op === "update")).toHaveLength(1));
     expect(toasts.error).not.toHaveBeenCalled();
     const routePatch = calls.find((c) => c.table === "routes" && c.op === "update")!.args[0] as Record<string, unknown>;
-    expect(routePatch).toEqual({ source: "manual_prop-1" }); // the condition array went through the RPC, not the raw patch
+    // Q3 (2026-11-06): the patch now also carries operator_edited_at — accepting a proposal is an
+    // operator decision over which fields land, so the row becomes operator-authored and both
+    // external gates refuse it thereafter. Asserted as a real ISO timestamp rather than pinned to a
+    // value, and the rest of the patch is still asserted EXACTLY: the condition array must still go
+    // through the RPC, never the raw patch, which is what this test exists to protect.
+    const { operator_edited_at, ...restOfPatch } = routePatch;
+    expect(restOfPatch).toEqual({ source: "manual_prop-1" });
+    expect(typeof operator_edited_at).toBe("string");
+    expect(Number.isFinite(Date.parse(String(operator_edited_at)))).toBe(true);
   });
 });

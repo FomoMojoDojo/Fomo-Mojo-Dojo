@@ -14,6 +14,8 @@ import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate
 import { gateSubjectForExternal, gateSubjectForLocal } from "../_shared/driftExternalGate.ts";
 import { judgeRouteAlignmentLocal } from "../_shared/localRouteAlignmentJudge.ts";
 import { FROZEN_COMPANY_IDS } from "../_shared/frozenCompanies.ts";
+import { optionBDoor } from "../_shared/optionBDoor.ts";
+import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -69,7 +71,9 @@ Deno.serve(async (req: Request) => {
   // Fetch route
   const { data: routeData, error: routeError } = await db
     .from("routes")
-    .select("id, title, short_description, category, rejected_alternatives, what_would_have_to_be_true, provenance_type")
+    // Q3 (2026-11-06): operator_edited_at is selected because the subject gate REQUIRES it. An
+    // unselected column reads undefined and the gate would admit an operator-edited route.
+    .select("id, title, short_description, category, rejected_alternatives, what_would_have_to_be_true, provenance_type, operator_edited_at")
     .eq("id", route_id)
     .eq("company_id", company_id)
     .maybeSingle();
@@ -81,14 +85,28 @@ Deno.serve(async (req: Request) => {
   // DECL-OPP 1a.1 — Option-B subject gate: an internal (declared/NULL-provenance)
   // route must never have its text sent to an external model. Inadmissible → skip
   // (no OpenAI, no strategy_alignment write), recording an excluded-by-rule row.
-  const subjectGate = await gateSubjectForExternal({
+  // Q4 (ruling, 2026-11-06) — THE OPTION B DOOR, in front of the per-row gate. A company holding
+  // client-provided material (or whose lookup could not prove it holds none) makes NO outside call
+  // here; the row is judged on the local lane instead. See _shared/optionBDoor.ts for why a
+  // company-level rule is stricter than the material-level law, and what that costs.
+  const door = await optionBDoor({
     supabase: db as unknown as { from: (t: string) => any },
     companyId: String(company_id),
     surfaceType: "route",
     surfaceId: String(route_id),
-    provenance: (routeData as { provenance_type?: string | null }).provenance_type,
     consumer: "evaluate-route-alignment",
   });
+  const subjectGate = door.allowed
+    ? await gateSubjectForExternal({
+      supabase: db as unknown as { from: (t: string) => any },
+      companyId: String(company_id),
+      surfaceType: "route",
+      surfaceId: String(route_id),
+      provenance: (routeData as { provenance_type?: string | null }).provenance_type,
+      operatorEditedAt: (routeData as { operator_edited_at?: string | null }).operator_edited_at,
+      consumer: "evaluate-route-alignment",
+    })
+    : { admissible: false };
   if (!subjectGate.admissible) {
     // LOCAL LANE 3b — internal/NULL-provenance routes are judged LOCALLY (llama3:70b,
     // direct Ollama); route text never reaches OpenAI. Frozen reference fixtures
@@ -96,16 +114,23 @@ Deno.serve(async (req: Request) => {
     if (FROZEN_COMPANY_IDS.has(String(company_id))) {
       return jsonResponse({ skipped: true, reason: "frozen reference fixture — not evaluated", route_id });
     }
-    const localGate = await gateSubjectForLocal({
-      supabase: db as unknown as { from: (t: string) => any },
-      companyId: String(company_id),
-      surfaceType: "route",
-      surfaceId: String(route_id),
-      provenance: (routeData as { provenance_type?: string | null }).provenance_type,
-      consumer: "evaluate-route-alignment",
-    });
-    if (!localGate.admissible) {
-      return jsonResponse({ error: "subject admitted by neither lane (partition violation)", route_id }, 500);
+    // Q4: the XOR partition is asserted ONLY when the per-row gate made the decision. When the DOOR
+    // refused, a genuinely public row is legitimately in neither provenance lane — the refusal is
+    // company-level, not row-level — so asserting the partition here would 500 on exactly the rows
+    // the ruling means to downgrade. The door's refusal is the authority and the local lane runs.
+    if (door.allowed) {
+      const localGate = await gateSubjectForLocal({
+        supabase: db as unknown as { from: (t: string) => any },
+        companyId: String(company_id),
+        surfaceType: "route",
+        surfaceId: String(route_id),
+        provenance: (routeData as { provenance_type?: string | null }).provenance_type,
+        operatorEditedAt: (routeData as { operator_edited_at?: string | null }).operator_edited_at,
+        consumer: "evaluate-route-alignment",
+      });
+      if (!localGate.admissible) {
+        return jsonResponse({ error: "subject admitted by neither lane (partition violation)", route_id }, 500);
+      }
     }
     const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
     try {
@@ -139,7 +164,7 @@ Deno.serve(async (req: Request) => {
   // Fetch most recent strategy cascade
   const { data: cascadeData, error: cascadeError } = await db
     .from("strategy_cascades")
-    .select("winning_aspiration, where_to_play, how_to_win, artifact_role, provenance_type")
+    .select("winning_aspiration, where_to_play, how_to_win, artifact_role, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .eq("artifact_role", "market_read")
     .order("created_at", { ascending: false })
@@ -154,7 +179,7 @@ Deno.serve(async (req: Request) => {
   const cascadeDataGate = await gateStrategyArtifactForExternal({
     supabase: db as unknown as { from: (t: string) => any },
     companyId: String(company_id),
-    artifact: cascadeData as { artifact_role?: string | null; provenance_type?: string | null },
+    artifact: cascadeData as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null },
     artifactKind: "strategy_cascade",
     consumer: "evaluate-route-alignment",
   });
@@ -235,6 +260,14 @@ ${wwhtbtText}`;
       userText,
       maxOutputTokens: 300,
       temperature: 0.1,
+      // Q5 (ruling, 2026-11-06): one model_calls row per outside call. This function wrote none
+      // before — every alignment call it has ever made is absent from the ledger.
+      onUsage: (usedModel, usage) =>
+        void recordModelCall(db as unknown as { from: (t: string) => any }, {
+          companyId: String(company_id),
+          callSite: "evaluate-route-alignment",
+          usage: openaiRecord(usedModel, usage),
+        }),
     }) as { classification: string; reason: string };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

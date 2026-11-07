@@ -255,11 +255,18 @@ test("b1. Apply on a declared need: odi_needs PATCH (outcome + canonical + sourc
   const needPatches = g.captured.filter((c) => /\/rest\/v1\/odi_needs\?/.test(c.url) && c.method === "PATCH");
   expect(needPatches).toHaveLength(2);
   expect(q(needPatches[0]).get("id")).toBe(`eq.${declared.id}`);
-  expect(needPatches[0].body).toEqual({
+  // Q3 (2026-11-06): the patch now also carries operator_edited_at — accepting a proposal is an
+  // operator decision over which fields land, so the row becomes operator-authored and both external
+  // gates refuse it thereafter. Asserted as a real ISO timestamp rather than pinned to a value; the
+  // REST of the patch is still asserted exactly, which is what this test exists to protect.
+  const { operator_edited_at, ...needPatchRest } = needPatches[0].body as Record<string, unknown>;
+  expect(needPatchRest).toEqual({
     source_path: `manual_${g.proposalId}`,
     desired_outcome: declared.desired_outcome,
     odi_canonical_statement: `${declared.odi_canonical_statement ?? declared.desired_outcome} — planted rewrite`,
   });
+  expect(typeof operator_edited_at).toBe("string");
+  expect(Number.isFinite(Date.parse(String(operator_edited_at)))).toBe(true);
   // captureBaseline: the active-signal snapshot onto the same row.
   expect(q(needPatches[1]).get("id")).toBe(`eq.${declared.id}`);
   expect(Object.keys(needPatches[1].body as object).sort()).toEqual(["evidence_baseline_captured_at", "evidence_baseline_signal_ids"]);

@@ -311,7 +311,7 @@ Deno.serve(async (req) => {
     // --- Fetch current cascade as positioning anchor (strategy-as-lens) ---
     const { data: cascadeRow } = await supabase
       .from("strategy_cascades")
-      .select("winning_aspiration, where_to_play, how_to_win, source, artifact_role, provenance_type")
+      .select("winning_aspiration, where_to_play, how_to_win, source, artifact_role, provenance_type, operator_edited_at")
       .eq("company_id", company_id)
       .eq("artifact_role", "market_read")
       .order("created_at", { ascending: false })
@@ -322,7 +322,7 @@ Deno.serve(async (req) => {
     const cascadeRowGate = await gateStrategyArtifactForExternal({
       supabase: supabase as unknown as { from: (t: string) => any },
       companyId: String(company_id),
-      artifact: (cascadeRow ?? null) as { artifact_role?: string | null; provenance_type?: string | null } | null,
+      artifact: (cascadeRow ?? null) as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null } | null,
       artifactKind: "strategy_cascade",
       consumer: "refresh-positioning",
     });
@@ -343,7 +343,7 @@ Deno.serve(async (req) => {
     if (!bodyKnownTensions) {
       const { data: priorCanvas } = await supabase
         .from("positioning_canvases")
-        .select("known_tensions_json, artifact_role, provenance_type")
+        .select("known_tensions_json, artifact_role, provenance_type, operator_edited_at")
         .eq("company_id", company_id)
         .eq("artifact_role", "market_read")
         .order("created_at", { ascending: false })
@@ -353,7 +353,7 @@ Deno.serve(async (req) => {
       const priorCanvasGate = await gateStrategyArtifactForExternal({
         supabase: supabase as unknown as { from: (t: string) => any },
         companyId: String(company_id),
-        artifact: (priorCanvas ?? null) as { artifact_role?: string | null; provenance_type?: string | null } | null,
+        artifact: (priorCanvas ?? null) as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null } | null,
         artifactKind: "positioning_canvas",
         consumer: "refresh-positioning",
       });

@@ -1,0 +1,2061 @@
+app:
+  description: Fetches company data from Supabase, runs framework analysis through
+    Ollama, adjudicates signals, and triggers re-scoring.
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  icon_type: emoji
+  mode: workflow
+  name: MOJO MAP Analysis Pipeline
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/ollama:1.0.2@ef203a332d1b2b8952dbaa012be70be3e0a2d576b001489fb3b070efc970ffbe
+    version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: http-request
+      id: 1776712248719-source-1776712401270-target
+      selected: false
+      source: '1776712248719'
+      sourceHandle: source
+      target: '1776712401270'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: http-request
+      id: 1776712248719-source-1776717316102-target
+      selected: false
+      source: '1776712248719'
+      sourceHandle: source
+      target: '1776717316102'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: start
+        targetType: http-request
+      id: 1776712248719-source-1776717025665-target
+      selected: false
+      source: '1776712248719'
+      sourceHandle: source
+      target: '1776717025665'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: http-request
+      id: 1776712248719-source-1776717442339-target
+      selected: false
+      source: '1776712248719'
+      sourceHandle: source
+      target: '1776717442339'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: http-request
+      id: 1776712248719-source-1776717446536-target
+      selected: false
+      source: '1776712248719'
+      sourceHandle: source
+      target: '1776717446536'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: http-request
+        targetType: variable-aggregator
+      id: 1776717316102-source-1776717781192-target
+      selected: false
+      source: '1776717316102'
+      sourceHandle: source
+      target: '1776717781192'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: http-request
+        targetType: variable-aggregator
+      id: 1776717025665-source-1776717781192-target
+      selected: false
+      source: '1776717025665'
+      sourceHandle: source
+      target: '1776717781192'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: http-request
+        targetType: variable-aggregator
+      id: 1776712401270-source-1776717781192-target
+      selected: false
+      source: '1776712401270'
+      sourceHandle: source
+      target: '1776717781192'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: http-request
+        targetType: variable-aggregator
+      id: 1776717442339-source-1776717781192-target
+      selected: false
+      source: '1776717442339'
+      sourceHandle: source
+      target: '1776717781192'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: http-request
+        targetType: variable-aggregator
+      id: 1776717446536-source-1776717781192-target
+      selected: false
+      source: '1776717446536'
+      sourceHandle: source
+      target: '1776717781192'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1776718133707-source-1776720558355-target
+      selected: false
+      source: '1776718133707'
+      sourceHandle: source
+      target: '1776720558355'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: llm
+      id: 1776732678847-source-1776718133707-target
+      selected: false
+      source: '1776732678847'
+      sourceHandle: source
+      target: '1776718133707'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: http-request
+      id: 1776712248719-source-1776733334048-target
+      selected: false
+      source: '1776712248719'
+      sourceHandle: source
+      target: '1776733334048'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: http-request
+        targetType: variable-aggregator
+      id: 1776733334048-source-1776717781192-target
+      selected: false
+      source: '1776733334048'
+      sourceHandle: source
+      target: '1776717781192'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: variable-aggregator
+      id: 1776734069683-source-1776782667715-target
+      selected: false
+      source: '1776734069683'
+      sourceHandle: source
+      target: '1776782667715'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: variable-aggregator
+      id: 1776734086291-source-1776782667715-target
+      selected: false
+      source: '1776734086291'
+      sourceHandle: source
+      target: '1776782667715'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: variable-aggregator
+      id: 1776734101826-source-1776782667715-target
+      selected: false
+      source: '1776734101826'
+      sourceHandle: source
+      target: '1776782667715'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: http-request
+      id: 1776712248719-source-1776786858289-target
+      selected: false
+      source: '1776712248719'
+      sourceHandle: source
+      target: '1776786858289'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: http-request
+        targetType: variable-aggregator
+      id: 1776786858289-source-1776717781192-target
+      selected: false
+      source: '1776786858289'
+      sourceHandle: source
+      target: '1776717781192'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: variable-aggregator
+      id: 1776787920183-source-1776782667715-target
+      selected: false
+      source: '1776787920183'
+      sourceHandle: source
+      target: '1776782667715'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: variable-aggregator
+        targetType: code
+      id: 1776717781192-source-1776794957376-target
+      selected: false
+      source: '1776717781192'
+      sourceHandle: source
+      target: '1776794957376'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776794957376-source-1776896765231-target
+      selected: false
+      source: '1776794957376'
+      sourceHandle: source
+      target: '1776896765231'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1776896765231-source-1776896986327-target
+      selected: false
+      source: '1776896765231'
+      sourceHandle: source
+      target: '1776896986327'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1776896986327-true-1776787920183-target
+      selected: false
+      source: '1776896986327'
+      sourceHandle: 'true'
+      target: '1776787920183'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1776896986327-true-1776734069683-target
+      selected: false
+      source: '1776896986327'
+      sourceHandle: 'true'
+      target: '1776734069683'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1776896986327-true-1776734086291-target
+      selected: false
+      source: '1776896986327'
+      sourceHandle: 'true'
+      target: '1776734086291'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1776896986327-true-1776734101826-target
+      selected: false
+      source: '1776896986327'
+      sourceHandle: 'true'
+      target: '1776734101826'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1776896986327-false-1776897728308-target
+      selected: false
+      source: '1776896986327'
+      sourceHandle: 'false'
+      target: '1776897728308'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776897728308-source-1776902191355-target
+      selected: false
+      source: '1776897728308'
+      sourceHandle: source
+      target: '1776902191355'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: variable-aggregator
+        targetType: code
+      id: 1776782667715-source-1776902191355-target
+      selected: false
+      source: '1776782667715'
+      sourceHandle: source
+      target: '1776902191355'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: 1776902191355-source-1776732678847-target
+      selected: false
+      source: '1776902191355'
+      sourceHandle: source
+      target: '1776732678847'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: end
+      id: 1776720558355-source-1777744406938-target
+      selected: false
+      source: '1776720558355'
+      sourceHandle: source
+      target: '1777744406938'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        selected: false
+        title: User Input
+        type: start
+        variables:
+        - default: ''
+          hint: ''
+          label: COMPANY ID
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: company_id
+        - default: ''
+          hint: ''
+          label: Trigger Type
+          options: []
+          placeholder: ''
+          required: false
+          type: text-input
+          variable: trigger_type
+        - default: ''
+          hint: ''
+          label: journey_key
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: journey_key
+        - default: ''
+          hint: ''
+          label: file_url
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: file_url
+        - default: ''
+          hint: ''
+          label: job_performer
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: job_performer
+        - default: ''
+          hint: ''
+          label: primary_job
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: primary_job
+        - default: ''
+          hint: ''
+          label: desired_outcome
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: desired_outcome
+        - default: ''
+          hint: ''
+          label: recurring_progress_challenge
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: recurring_progress_challenge
+      height: 291
+      id: '1776712248719'
+      position:
+        x: -505.0980392156865
+        y: 297.1960784313726
+      positionAbsolute:
+        x: -505.0980392156865
+        y: 297.1960784313726
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data: []
+          type: none
+        desc: Company
+        headers: 'apikey:sb_secret_REDACTED
+
+          authorization:Bearer sb_secret_REDACTED'
+        method: get
+        params: 'id:eq.{{#1776712248719.company_id#}}
+
+          select:*'
+        retry_config:
+          max_retries: 3
+          retry_enabled: true
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          max_connect_timeout: 0
+          max_read_timeout: 0
+          max_write_timeout: 0
+        title: Company
+        type: http-request
+        url: http://100.96.232.94:54321/rest/v1/companies
+        variables: []
+      height: 166
+      id: '1776712401270'
+      position:
+        x: -104.60784313725506
+        y: -162.0588235294116
+      positionAbsolute:
+        x: -104.60784313725506
+        y: -162.0588235294116
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data: []
+          type: none
+        desc: Inputs
+        headers: 'apikey:sb_secret_REDACTED
+
+          authorization:Bearer sb_secret_REDACTED'
+        method: get
+        params: 'company_id:eq.{{#1776712248719.company_id#}}
+
+          select:*'
+        retry_config:
+          max_retries: 3
+          retry_enabled: true
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          max_connect_timeout: 0
+          max_read_timeout: 0
+          max_write_timeout: 0
+        title: Inputs
+        type: http-request
+        url: http://100.96.232.94:54321/rest/v1/inputs
+        variables: []
+      height: 166
+      id: '1776717025665'
+      position:
+        x: -104.60784313725506
+        y: 23.666666666666714
+      positionAbsolute:
+        x: -104.60784313725506
+        y: 23.666666666666714
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data: []
+          type: none
+        headers: 'apikey:sb_secret_REDACTED
+
+          authorization:Bearer sb_secret_REDACTED'
+        method: get
+        params: 'company_id:eq.{{#1776712248719.company_id#}}
+
+          select:*'
+        retry_config:
+          max_retries: 3
+          retry_enabled: true
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          max_connect_timeout: 0
+          max_read_timeout: 0
+          max_write_timeout: 0
+        title: Job Steps
+        type: http-request
+        url: http://100.96.232.94:54321/rest/v1/job_steps
+        variables: []
+      height: 138
+      id: '1776717316102'
+      position:
+        x: -104.60784313725506
+        y: 199.1568627450979
+      positionAbsolute:
+        x: -104.60784313725506
+        y: 199.1568627450979
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data:
+          - type: text
+            value: ''
+          type: none
+        desc: Opportunities
+        headers: 'apikey:sb_secret_REDACTED
+
+          Authorization:Bearer sb_secret_REDACTED'
+        method: get
+        params: 'company_id:eq.{{#1776712248719.company_id#}}
+
+          select:id,desired_outcome,journey_key,importance,satisfaction,opportunity_score,service_state'
+        retry_config:
+          max_retries: 3
+          retry_enabled: true
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          max_connect_timeout: 0
+          max_read_timeout: 0
+          max_write_timeout: 0
+        title: Opportunities
+        type: http-request
+        url: http://100.96.232.94:54321/rest/v1/odi_needs
+        variables: []
+      height: 166
+      id: '1776717442339'
+      position:
+        x: -104.60784313725506
+        y: 340.1039585307354
+      positionAbsolute:
+        x: -104.60784313725506
+        y: 340.1039585307354
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data: []
+          type: none
+        desc: Strategic Problems
+        headers: 'apikey:sb_secret_REDACTED
+
+          authorization:Bearer sb_secret_REDACTED'
+        method: get
+        params: 'company_id:eq.{{#1776712248719.company_id#}}
+
+          select:*'
+        retry_config:
+          max_retries: 3
+          retry_enabled: true
+          retry_interval: 100
+        selected: false
+        ssl_verify: true
+        timeout:
+          max_connect_timeout: 0
+          max_read_timeout: 0
+          max_write_timeout: 0
+        title: Strategic Problems
+        type: http-request
+        url: http://100.96.232.94:54321/rest/v1/strategy_problem_statements
+        variables: []
+      height: 182
+      id: '1776717446536'
+      position:
+        x: -104.60784313725506
+        y: 510.45098039215657
+      positionAbsolute:
+        x: -104.60784313725506
+        y: 510.45098039215657
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        output_type: string
+        selected: false
+        title: Variable Aggregator
+        type: variable-aggregator
+        variables:
+        - - '1776712401270'
+          - body
+        - - '1776717025665'
+          - body
+        - - '1776717316102'
+          - body
+        - - '1776717442339'
+          - body
+        - - '1776717446536'
+          - body
+        - - '1776733334048'
+          - body
+        - - '1776786858289'
+          - body
+      height: 264
+      id: '1776717781192'
+      position:
+        x: 228.18125358243702
+        y: 427.19831709374785
+      positionAbsolute:
+        x: 228.18125358243702
+        y: 427.19831709374785
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            json_schema: ''
+            temperature: 0
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 7f1b810e-0359-4183-8ec4-bf34d6388b5a
+          role: system
+          text: 'You are the MojoMap strategic intelligence system. You synthesize
+            the CURRENT STRATEGIC STATE of a company based on all accumulated evidence
+            inputs.
+
+
+            CRITICAL RULES:
+
+            - NEVER say "the document provides", "this file suggests", "the uploaded
+            content shows", or any reference to a single document or file
+
+            - NEVER present hypotheses as confirmed facts
+
+            - ALWAYS write about the current strategic picture, not about any individual
+            input
+
+            - ALWAYS separate: EVIDENCE (what is observed) | INTERPRETATION (what
+            it may mean) | UNCERTAINTY (what is not yet known)
+
+
+            You are NOT summarizing documents. You are synthesizing what the system
+            currently understands across ALL evidence sources.
+
+
+            Write as if briefing a founder directly — observational, grounded, specific.
+            No AI narration. No consulting framing.
+
+
+            Additional banned phrases:
+
+            - "The system currently believes"
+
+            - "characterized by"
+
+            - "strategic situation"
+
+            - "The company positions itself as"
+
+
+
+            Surface in order of priority:
+
+            1. Unresolved tensions between signal sources
+
+            2. Contradictions between what is claimed and what evidence shows
+
+            3. Evidence gaps — what is missing that would change the picture
+
+            4. Confidence blockers — what would need to be true for confidence to
+            increase
+
+            5. Competing interpretations — where evidence supports multiple readings
+
+            6. What is emerging repeatedly across inputs
+
+
+            PHASE RULES:
+
+            - outside_signals / validate_outside: present findings as possible hypotheses
+            only, no route recommendations
+
+            - diagnose / validate_diagnose: synthesize across signal tiers, routes
+            remain hypotheses
+
+            - focus / validate_focus: routes can be presented as candidates for decision
+
+            - flow / validate_flow: monitor execution vs. expected outcomes
+
+
+            Output format: JSON with fields: summary, confidence, confidence_reason,
+            evidence (array), framework_results (array), contradictions (array), questions_to_verify
+            (array), possible_gaps (array), experiments_to_run (array)
+
+            '
+        - id: dea866da-0621-4051-82b2-9e406e573dd3
+          role: user
+          text: "Phase: {{#1776794957376.engagement_phase#}}\nODI Analysis: {{#1776902191355.ODI#}}\n\
+            Discovery Analysis:{{#1776902191355.Discovery_Analysis#}}\nPositioning\
+            \ Analysis: {{#1776902191355.Positioning_Analysis#}}\nStrategy Analysis:\
+            \ {{#1776902191355.Strategy_Analysis#}}\nTension Analysis: {{#1776732678847.text#}}\n\
+            \n\nInstructions:\n- NEVER say \"the document provides\", \"this file\
+            \ suggests\", \"the uploaded content shows\", \"the company positions\
+            \ itself as\", or any phrase that references a single input or document.\
+            \ You are synthesizing the current strategic state — not summarizing any\
+            \ individual source.\n- Do not prematurely converge on a strategic direction.\n\
+            - Your job is not to decide.\n- Your job is to:\n  - clarify uncertainty\n\
+            \  - expose tensions\n  - identify missing proof\n  - explain what would\
+            \ materially increase confidence\n- Treat strategic clarity as something\
+            \ earned through evidence, not inferred from narrative quality.\n- Do\
+            \ not present strategic interpretation as settled fact.\n- Preserve ambiguity\
+            \ where evidence is incomplete.\n- Distinguish between:\n  - founder narrative\n\
+            \  - internal assumptions\n  - market signals\n  - customer validation\n\
+            \  - validated insight\n- If evidence is weak, incomplete, or internally\
+            \ sourced, say so explicitly.\n- Routes generated during outside_signals\
+            \ or diagnose are hypotheses only, not recommendations.\n- Prefer:\n \
+            \ - tensions\n  - contradictions\n  - unresolved customer motivations\n\
+            \  - competing interpretations\n  - missing evidence\n  - confidence limiters\n\
+            over:\n  - polished summaries\n  - motivational strategy language\n  -\
+            \ generic recommendations\n  - vague abstractions\n- Ban generic phrases\
+            \ unless tied to concrete evidence.\n- Avoid phrases like:\n  - \"focus\
+            \ is drifting\"\n  - \"clear focus keeps momentum\"\n  - \"keep scope\
+            \ tight\"\n  - \"move faster\"\n  - \"clearer direction\"\nunless directly\
+            \ supported by evidence and fully explained.\n- The summary field must:\n\
+            \  - One plainspoken sentence, max 12 words\n  - Name the main tension\
+            \ or gap directly\n  - Start with the subject — never with \"The system\"\
+            , \"The document\", \"There is\", \"This analysis\", or \"Based on\"\n\
+            \  - Example: \"The positioning is clearer than the customer proof.\"\n\
+            \  - Example: \"Internal confidence is ahead of market evidence.\"\n"
+        selected: false
+        title: Adjudication
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1776718133707'
+      position:
+        x: 2449.1929824561403
+        y: 325.89962416541033
+      positionAbsolute:
+        x: 2449.1929824561403
+        y: 325.89962416541033
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "function main({ arg1 }) {\n  let data;\n  try {\n    data = typeof\
+          \ arg1 === \"string\" ? JSON.parse(arg1) : arg1;\n  } catch (e) {\n    data\
+          \ = {};\n  }\n\n  const summary = String(data?.summary || \"\").trim();\n\
+          \n  const evidence = Array.isArray(data?.evidence)\n    ? data.evidence.map((item)\
+          \ => String(item || \"\").trim()).filter(Boolean)\n    : [];\n\n  const\
+          \ contradictions = Array.isArray(data?.contradictions)\n    ? data.contradictions.map((item)\
+          \ => ({\n        claim: String(item?.claim || item || \"\").trim(),\n  \
+          \      conflicts_with: String(item?.conflicts_with || \"\").trim(),\n  \
+          \    })).filter((item) => item.claim)\n    : [];\n\n  const questionsToVerify\
+          \ = Array.isArray(data?.questions_to_verify)\n    ? data.questions_to_verify.map((item)\
+          \ => String(item || \"\").trim()).filter(Boolean)\n    : [];\n\n  const\
+          \ possibleGaps = Array.isArray(data?.possible_gaps)\n    ? data.possible_gaps.map((item)\
+          \ => String(item || \"\").trim()).filter(Boolean)\n    : [];\n\n  const\
+          \ frameworkResults = Array.isArray(data?.framework_results)\n    ? data.framework_results\n\
+          \    : [];\n\n  const experimentsToRun = Array.isArray(data?.experiments_to_run)\n\
+          \    ? data.experiments_to_run.map((item) => ({\n        what_it_tests:\
+          \ String(item?.what_it_tests || \"\").trim(),\n      })).filter((item) =>\
+          \ item.what_it_tests)\n    : [];\n\n  const rawConfidence = String(data?.confidence\
+          \ || \"medium\").trim().toLowerCase();\n  const confidence = [\"high\",\
+          \ \"medium\", \"low\"].includes(rawConfidence) ? rawConfidence : \"medium\"\
+          ;\n  const confidenceReason = String(data?.confidence_reason || \"\").trim();\n\
+          \n    return {\n    summary,\n    evidence: JSON.stringify(evidence),\n\
+          \    contradictions: JSON.stringify(contradictions),\n    questions_to_verify:\
+          \ JSON.stringify(questionsToVerify),\n    possible_gaps: JSON.stringify(possibleGaps),\n\
+          \    framework_results: JSON.stringify(frameworkResults),\n    experiments_to_run:\
+          \ JSON.stringify(experimentsToRun),\n    confidence,\n    confidence_reason:\
+          \ confidenceReason,\n\n  };\n\n}\n"
+        code_language: javascript
+        outputs:
+          confidence:
+            children: null
+            type: string
+          confidence_reason:
+            children: null
+            type: string
+          contradictions:
+            children: null
+            type: string
+          evidence:
+            children: null
+            type: string
+          experiments_to_run:
+            children: null
+            type: string
+          framework_results:
+            children: null
+            type: string
+          possible_gaps:
+            children: null
+            type: string
+          questions_to_verify:
+            children: null
+            type: string
+          summary:
+            children: null
+            type: string
+        selected: false
+        title: Code
+        type: code
+        variables:
+        - value_selector:
+          - '1776718133707'
+          - text
+          value_type: string
+          variable: arg1
+      height: 52
+      id: '1776720558355'
+      position:
+        x: 2731.1619108943028
+        y: 325.89962416541033
+      positionAbsolute:
+        x: 2731.1619108943028
+        y: 325.89962416541033
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: cfaf3f56-65a7-4f9d-81e8-dd1733bb3a01
+          role: system
+          text: 'You are a strategic tension analyst.
+
+
+            You receive diagnostic outputs from four framework analysts: ODI, Discovery,
+            Positioning, and Strategy.
+
+
+            Your job is to identify what remains strategically unresolved after looking
+            at all four together. You are NOT summarizing them. You are finding where
+            they disagree, where the same gap appears in multiple frameworks, and
+            what the most important unresolved tension is.
+
+
+            A tension is: two things that both appear to be true but cannot both be
+            acted on simultaneously, OR where the evidence points in opposite directions,
+            OR where the strategy requires something the evidence does not support.
+
+
+            Every tension must be grounded in specific evidence from the framework
+            outputs — not generated from general strategic knowledge.
+
+
+            Banned phrases — never use these under any circumstances:
+
+            - "The system believes" / "The system currently believes"
+
+            - "characterized by"
+
+            - "validated evidence" / "lack of validated evidence"
+
+            - "strategic situation"
+
+            - "leverage" / "optimize" / "best-in-class"
+
+            - "Focus is drifting"
+
+            - "Clear focus keeps momentum"
+
+            - "Keep scope tight"
+
+            - "Test one opportunity"
+
+            - "Clarify priorities"
+
+            - Any phrase that could apply to most companies without modification
+
+
+            Return ONLY valid JSON.
+
+            '
+        - id: 4f3f535c-b0a5-48c6-8a0b-a26e4a80301f
+          role: user
+          text: "{{#1776902191355.ODI#}}\n{{#1776902191355.Discovery_Analysis#}}\n\
+            {{#1776902191355.Positioning_Analysis#}}\n{{#1776902191355.Strategy_Analysis#}}\n\
+            {{#1776794957376.engagement_phase#}}\n\n\nInstructions:\n- Identify the\
+            \ top tensions that appear across multiple frameworks — where the same\
+            \ gap or conflict surfaces in more than one place\n- Identify where frameworks\
+            \ disagree with each other\n- Identify the single most important unresolved\
+            \ tension for this company right now\n- Every tension must cite which\
+            \ framework(s) surfaced it\n- Do not summarize the framework outputs —\
+            \ find what is unresolved across them\n- If phase is \"diagnose\": tensions\
+            \ should focus on what is unclear or unvalidated, not what to do\n\nprimary_tension\
+            \ rules:\n- Max 12 words\n- Start with the subject directly — never start\
+            \ with \"The strongest...\", \"The most important...\", \"The system...\"\
+            , \"There is a...\"\n- State the conflict plainly. Example: \"The positioning\
+            \ claim is specific. The customer proof is not.\"\n\nweakest_assumptions\
+            \ rules:\n- One short plain sentence each\n- Name the specific claim that\
+            \ is load-bearing, not a general observation\n- Example: \"Customers value\
+            \ the sourcing story enough to pay a premium for it\"\n\nReturn ONLY valid\
+            \ JSON:\n\n{\n  \"top_tensions\": [\n    {\n      \"tension\": \"one specific\
+            \ sentence naming the conflict, max 15 words\",\n      \"frameworks\"\
+            : [\"ODI\", \"Discovery\"],\n      \"evidence\": \"what specific data\
+            \ point surfaces this tension\",\n      \"missing_evidence\": \"what would\
+            \ resolve this tension\"\n    }\n  ],\n  \"recurring_patterns\": [\"observations\
+            \ that appear across 2 or more frameworks, one sentence each\"],\n  \"\
+            weakest_assumptions\": [\"specific load-bearing claims with thin evidence,\
+            \ one sentence each\"],\n  \"primary_tension\": \"max 12 words, starts\
+            \ with the subject, no preamble\",\n  \"evidence_strength\": \"none |\
+            \ thin | partial | strong\"\n}\n"
+        selected: false
+        title: Normalization / Compression
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1776732678847'
+      position:
+        x: 2178.5438596491235
+        y: 325.89962416541033
+      positionAbsolute:
+        x: 2178.5438596491235
+        y: 325.89962416541033
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data: []
+          type: none
+        headers: 'apikey:sb_secret_REDACTED
+
+          authorization:Bearer sb_secret_REDACTED'
+        method: get
+        params: 'company_id:eq.{{#1776712248719.company_id#}}
+
+          select:*'
+        retry_config:
+          max_retries: 3
+          retry_enabled: true
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          max_connect_timeout: 0
+          max_read_timeout: 0
+          max_write_timeout: 0
+        title: Strategy Cascades
+        type: http-request
+        url: http://100.96.232.94:54321/rest/v1/strategy_cascades
+        variables: []
+      height: 138
+      id: '1776733334048'
+      position:
+        x: -104.60784313725506
+        y: 875.5528600540337
+      positionAbsolute:
+        x: -104.60784313725506
+        y: 875.5528600540337
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 1b1d2635-da28-4cf7-b973-466b7cf43138
+          role: system
+          text: 'You are a customer discovery analyst using Teresa Torres'' continuous
+            discovery framework.
+
+
+            You are diagnosing the CURRENT STATE of customer discovery evidence for
+            this company — not summarizing any document or input. Write as if answering:
+            "What does the accumulated evidence currently show about the health of
+            this company''s discovery process and customer understanding?"
+
+
+            You are looking for:
+
+            - whether customer outcomes are connected to job steps
+
+            - whether evidence is documented or assumed
+
+            - where the journey has gaps that are acknowledged vs ignored
+
+            - what switching triggers or customer motivations are present or missing
+
+
+            A tension must name two specific things in conflict.
+
+            Bad: "Discovery is incomplete"
+
+            Good: "The ordering step is flagged as the highest priority outcome but
+            has no documented customer evidence — the score is based on assumption,
+            not validation"
+
+
+            Evidence types — always tag each observation:
+
+            - [CUSTOMER VALIDATED] — confirmed through direct customer research
+
+            - [ASSUMED] — scores or claims without documented customer source
+
+            - [INFERRED] — derived from available signals, not directly stated
+
+            - [MISSING] — evidence that should exist but does not
+
+
+            Rules:
+
+            - Use only the data provided
+
+            - Never write "the document provides", "this input shows", "the file contains",
+            or any reference to a source document
+
+            - Do not invent customer quotes or validation
+
+            - Do not return IDs, step numbers, or record-level references
+
+            - If evidence_confidence is below 30 on a step, tag that step''s data
+            [ASSUMED] — it is not evidence
+
+            - If importance and satisfaction scores appear estimated rather than survey-derived,
+            flag them [ASSUMED] explicitly
+
+            - Return only valid JSON
+
+            '
+        - id: c1a3ee0e-260b-46fb-9c8a-4fb86f4e2e77
+          role: user
+          text: "Job steps data: {{#1776717316102.body#}}\nOpportunities data: {{#1776717442339.body#}}\n\
+            \n{{#1776794957376.engagement_phase#}}\n\n\nDiagnose the CURRENT STATE\
+            \ of customer discovery evidence across job steps and opportunities. Do\
+            \ not summarize — diagnose. Tag every observation [CUSTOMER VALIDATED],\
+            \ [ASSUMED], or [INFERRED]. If phase is \"diagnose\", note what customer\
+            \ interviews or validation would be needed before acting on this data.\n\
+            \nIf both inputs are empty return:\n{\"framework\":\"Discovery\",\"signals\"\
+            :[],\"tensions\":[],\"evidence_gaps\":[\"No discovery evidence available.\"\
+            ],\"implications\":[],\"confidence\":\"low\"}\n\nReturn ONLY valid JSON:\n\
+            \n{\n  \"framework\": \"Discovery\",\n  \"signals\": [\"max 3 — each tagged\
+            \ [CUSTOMER VALIDATED], [ASSUMED], or [INFERRED] — current evidence state\
+            \ only, never references a document\"],\n  \"tensions\": [\"max 3 — each\
+            \ names what is claimed vs what evidence actually supports\"],\n  \"evidence_gaps\"\
+            : [\"max 3 — steps or claims that are assumption-based, not validated\"\
+            ],\n\"implications\": [\"max 2 — plain language, what the current discovery\
+            \ state means for reliability. Max 12 words each. No jargon.\"]\n  \"\
+            confidence\": \"low | medium | high\"\n}\n"
+        selected: false
+        title: Discovery Analysis
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1776734069683'
+      position:
+        x: 1387.2779642992277
+        y: 239.19221183917512
+      positionAbsolute:
+        x: 1387.2779642992277
+        y: 239.19221183917512
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: e9991074-ca9d-4f43-bacd-0b0328912952
+          role: system
+          text: 'You are a positioning analyst using April Dunford''s Obviously Awesome
+            framework.
+
+
+            You are diagnosing the CURRENT STATE of positioning evidence for this
+            company — not summarizing any document or input. Write as if answering:
+            "What does the accumulated evidence currently show about this company''s
+            positioning strength and gaps?"
+
+
+            The five components of strong positioning:
+
+            1. Competitive alternatives — what customers would do if this didn''t
+            exist
+
+            2. Unique attributes — capabilities that no alternative has
+
+            3. Value — what those attributes enable for the customer
+
+            4. Best-fit customers — the segment that cares most about that value
+
+            5. Market category — the frame that makes the value obvious
+
+
+            Your job is to diagnose where positioning evidence is strong, weak, inconsistent,
+            or unvalidated. You are NOT summarizing, scoring, or rewriting positioning.
+
+
+            A tension must name two specific things in conflict.
+
+            Bad: "Positioning lacks clarity"
+
+            Good: "The tagline targets independent cafe operators but the value statement
+            describes enterprise food service buyers"
+
+
+            Evidence types — always tag each observation:
+
+            - [FOUNDER CLAIM] — stated by the company, not yet validated
+
+            - [MARKET SIGNAL] — supported by external evidence
+
+            - [CUSTOMER VALIDATED] — confirmed by customer research
+
+            - [INFERRED] — derived from available signals, not directly stated
+
+            - [MISSING] — component absent from available evidence
+
+
+            Rules:
+
+            - Use only the data provided
+
+            - Never write "the document provides", "this input shows", "the file contains",
+            or any reference to a source document
+
+            - Do not invent customer validation
+
+            - If a component is missing, say what is missing and why it matters strategically
+
+            - If claims are made without external validation, tag them [FOUNDER CLAIM]
+            and flag the gap
+
+            - Return only valid JSON
+
+            '
+        - id: 76cb0736-b295-435f-9f26-36a9e48acb8e
+          role: user
+          text: "\nInputs data: {{#1776717025665.body#}}\n\nPositioning Data:\n{{#1776786858289.body#}}\n\
+            {{#1776794957376.engagement_phase#}}\n\nDiagnose the CURRENT STATE of\
+            \ positioning evidence across all five components. Do not summarize —\
+            \ diagnose. Tag every observation with its evidence type. If phase is\
+            \ \"diagnose\", note what validation would be needed before acting on\
+            \ this data.\n\nIf positioning data is empty return:\n{\"framework\":\"\
+            Positioning\",\"signals\":[],\"tensions\":[],\"evidence_gaps\":[\"No positioning\
+            \ evidence available.\"],\"implications\":[],\"confidence\":\"low\"}\n\
+            \nReturn ONLY valid JSON:\n\n{\n  \"framework\": \"Positioning\",\n  \"\
+            signals\": [\"max 3 — each tagged [FOUNDER CLAIM], [MARKET SIGNAL], [CUSTOMER\
+            \ VALIDATED], or [INFERRED] — describes current evidence state, never\
+            \ references a document\"],\n  \"tensions\": [\"max 3 — each names two\
+            \ specific things in conflict in the current positioning evidence\"],\n\
+            \  \"evidence_gaps\": [\"max 3 — missing components or claims that lack\
+            \ external validation\"],\n\"implications\": [\"max 2 — plain language,\
+            \ what the current positioning state means for go-to-market confidence.\
+            \ Max 12 words each. No jargon.\"]\n  \"confidence\": \"low | medium |\
+            \ high\"\n}\n"
+        selected: false
+        title: Positioning Analysis
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1776734086291'
+      position:
+        x: 1387.2779642992277
+        y: 352.8674030345062
+      positionAbsolute:
+        x: 1387.2779642992277
+        y: 352.8674030345062
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 0c23adad-a36d-4e81-a4fa-884bbc3dcbe3
+          role: system
+          text: 'You are a strategy analyst using Roger Martin''s Playing to Win cascade
+            framework.
+
+
+            A complete strategy cascade has five levels:
+
+            1. Winning aspiration — specific, measurable ambition
+
+            2. Where to play — specific customer segment, geography, and channel
+
+            3. How to win — specific advantage that is hard to replicate
+
+            4. Capabilities — what the business must be great at to execute the strategy
+
+            5. Management systems — how the business reinforces and measures the strategy
+
+
+            Your job is to diagnose where the cascade is coherent, where it breaks
+            down, and what is assumed versus evidenced. You are NOT recommending strategy
+            or rewriting the cascade.
+
+
+            A tension must name two specific things in conflict.
+
+            Bad: "Strategy lacks clarity"
+
+            Good: "The winning aspiration targets premium cafe partners but the where-to-play
+            includes price-sensitive segments — these cannot both be true"
+
+
+            Rules:
+
+            - use only the data provided
+
+            - do not invent capabilities or systems
+
+            - do not return IDs or record-level references
+
+            - flag untested assumptions explicitly
+
+            - active problem statements are unresolved tensions — treat them as such
+
+            '
+        - id: 5c1c3fea-1489-4711-b30d-ecbb8b30c6d2
+          role: user
+          text: "Strategy cascade data: {{#1776733334048.body#}}\nStrategic problems\
+            \ data: {{#1776717446536.body#}}\n{{#1776794957376.engagement_phase#}}\n\
+            \n\nAssess each of the five cascade levels. Identify where levels are\
+            \ coherent, where they conflict, and where they are asserted without evidence.\
+            \ Active problem statements are unresolved tensions — include them in\
+            \ tensions. If Engagement Phase is \"diagnose\", note in evidence_gaps\
+            \ what strategic validation would be needed before acting on this data.\n\
+            \nIf both inputs are empty return:\n{\"framework\":\"Strategy\",\"signals\"\
+            :[],\"tensions\":[],\"evidence_gaps\":[\"No strategy data provided.\"\
+            ],\"implications\":[],\"confidence\":\"low\"}\n\nReturn ONLY valid JSON:\n\
+            \n{\n  \"framework\": \"Strategy\",\n  \"signals\": [\"max 3 — specific\
+            \ observations about the strategy cascade\"],\n  \"tensions\": [\"max\
+            \ 3 — each names what is in conflict between cascade levels or unsupported\"\
+            ],\n  \"evidence_gaps\": [\"max 3 — untested assumptions or missing cascade\
+            \ levels\"],\n\"implications\": [\"max 2 — plain language, what this means\
+            \ for strategic coherence. Max 12 words each. No jargon.\"]\n  \"confidence\"\
+            : \"low | medium | high\"\n}\n"
+        selected: false
+        title: Strategy Analysis
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1776734101826'
+      position:
+        x: 1387.2779642992277
+        y: 468.75438596491233
+      positionAbsolute:
+        x: 1387.2779642992277
+        y: 468.75438596491233
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        output_type: string
+        selected: false
+        title: Fallback Outputs
+        type: variable-aggregator
+        variables:
+        - - '1776787920183'
+          - text
+        - - '1776734069683'
+          - text
+        - - '1776734086291'
+          - text
+        - - '1776734101826'
+          - text
+      height: 186
+      id: '1776782667715'
+      position:
+        x: 1723.4736842105267
+        y: 264.98761609907126
+      positionAbsolute:
+        x: 1723.4736842105267
+        y: 264.98761609907126
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data: []
+          type: none
+        headers: 'apikey:sb_secret_REDACTED
+
+          authorization:Bearer sb_secret_REDACTED'
+        method: get
+        params: company_id:eq.{{#1776712248719.company_id#}}
+        retry_config:
+          max_retries: 3
+          retry_enabled: true
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          max_connect_timeout: 0
+          max_read_timeout: 0
+          max_write_timeout: 0
+        title: Positioning
+        type: http-request
+        url: http://100.96.232.94:54321/rest/v1/positioning_canvases?company_id=eq.{{User
+          Input.company_id}}&select=*
+        variables: []
+      height: 170
+      id: '1776786858289'
+      position:
+        x: -104.60784313725506
+        y: 699.0771273819821
+      positionAbsolute:
+        x: -104.60784313725506
+        y: 699.0771273819821
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen2.5:14b-instruct
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: d60d90f8-86cc-438e-b8df-3e0092fbef62
+          role: system
+          text: 'You are an ODI signal extractor.
+
+
+            Your job is to identify:
+
+            - strongest demand signals from the opportunity and job step data
+
+            - structural tensions: where two things are in conflict, or where a claim
+            lacks supporting evidence
+
+            - missing evidence: what ODI analysis requires that is not present in
+            this data
+
+            - the 8-step job progression for this specific job performer and primary
+            job
+
+
+            You are NOT writing narrative, recommending solutions, or naming products.
+
+
+            A tension must name two specific things in conflict.
+
+            Bad: "Customer needs are unclear"
+
+            Good: "Ordering is the highest-priority step by score but has no designed
+            process or evidence to support it"
+
+
+            Rules:
+
+            - use only the data provided
+
+            - do not invent validation or scores
+
+            - do not return step IDs or nested objects
+
+            - keep signals, tensions, and gaps short and concrete
+
+            - if importance or satisfaction data appears estimated rather than survey-validated,
+            flag it in evidence_gaps
+
+            - set confidence to low if more than 40% of job steps have evidence_confidence
+            below 30
+
+
+            Job map rules:
+
+            - generate exactly 8 steps grounded in the job performer and primary job
+            stated in the inputs
+
+            - each step label answers: what is this job performer trying to accomplish
+            at this point in the job?
+
+            - use verbs: determine, identify, evaluate, validate, confirm, detect,
+            adjust
+
+            - do NOT use bare stage names as labels: Define, Locate, Prepare, Confirm,
+            Execute, Monitor, Modify, Conclude
+
+            - do NOT describe what the company does — describe what the job performer
+            is trying to accomplish
+
+            - do NOT start a step label with these words: Define, Locate, Prepare,
+            Confirm, Execute, Monitor, Modify, Conclude — not even as the first word
+
+            - tie each step to the specific job context, not a generic workflow
+
+            - if the desired outcome is provided, at least one step should reflect
+            progress toward it
+
+            - if the recurring progress challenge is provided, at least one step should
+            reflect where that challenge appears in the job
+
+            '
+        - id: 40959c24-ba4f-42c4-8fc3-85c2e259a800
+          role: user
+          text: "DATA BELOW IS PRE-FILTERED FOR ONE JOURNEY.\n\nOpportunities:\n{{#1776717442339.body#}}\n\
+            \nJob Steps:\n{{#1776717316102.body#}}\n\nEngagement_Phase:\n{{#1776794957376.engagement_phase#}}\n\
+            \nJob Performer\n{{#1776712248719.job_performer#}}\n\nPrimary Job\n{{#1776712248719.primary_job#}}\n\
+            \nDesired Outcome\n{{#1776712248719.desired_outcome#}}\n\nRecurring Progress\
+            \ Challenge\n{{#1776712248719.recurring_progress_challenge#}}\n\n\nExtract\
+            \ the strongest observable ODI signals from the journey data above.\n\n\
+            Generate job_map from the job performer and primary job inputs — not from\
+            \ the step labels in the existing data. Each step_label must describe\
+            \ what the JOB PERFORMER is actively trying to accomplish at that stage.\
+            \ Use performer verbs: determine, identify, evaluate, select, confirm,\
+            \ monitor, adjust, validate. Do NOT describe what the company does internally.\n\
+            \nGenerate internal_job_map from the same inputs. Each step_label must\
+            \ describe what the COMPANY does internally to support the customer at\
+            \ that stage. Use operational verbs: source, prepare, configure, deliver,\
+            \ monitor, adjust, report. Align by stage number — internal step N supports\
+            \ customer step N.\n\nIf Engagement Phase is \"diagnose\", note in evidence_gaps\
+            \ what validation would be needed before acting on these signals.\n\n\
+            If both Opportunities and Job Steps are empty return:\n{\"framework\"\
+            :\"ODI\",\"signals\":[],\"tensions\":[],\"evidence_gaps\":[\"No records\
+            \ returned.\"],\"implications\":[],\"job_map\":[],\"internal_job_map\"\
+            :[],\"confidence\":\"low\"}\n\nReturn ONLY valid JSON:\n\n{\n  \"framework\"\
+            : \"ODI\",\n  \"signals\": [\"max 3 — specific, grounded in actual data\"\
+            ],\n  \"tensions\": [\"max 3 — each names two specific things in conflict\"\
+            ],\n  \"evidence_gaps\": [\"max 3 — what is missing or unvalidated\"],\n\
+            \  \"implications\": [\"max 2 — plain language, name what this suggests,\
+            \ not what to do. Max 12 words each. No jargon.\"],\n  \"job_map\": [\n\
+            \    {\"step_number\": 1, \"step_label\": \"Determine what a successful\
+            \ outcome looks like\", \"description\": \"20-35 words tied to the specific\
+            \ job and performer\"},\n    {\"step_number\": 2, \"step_label\": \"...\"\
+            , \"description\": \"...\"},\n    {\"step_number\": 3, \"step_label\"\
+            : \"...\", \"description\": \"...\"},\n    {\"step_number\": 4, \"step_label\"\
+            : \"...\", \"description\": \"...\"},\n    {\"step_number\": 5, \"step_label\"\
+            : \"...\", \"description\": \"...\"},\n    {\"step_number\": 6, \"step_label\"\
+            : \"...\", \"description\": \"...\"},\n    {\"step_number\": 7, \"step_label\"\
+            : \"...\", \"description\": \"...\"},\n    {\"step_number\": 8, \"step_label\"\
+            : \"Evaluate what worked and carry it forward\", \"description\": \"...\"\
+            }\n  ],\n  \"internal_job_map\": [\n    {\"step_number\": 1, \"step_label\"\
+            : \"...\", \"description\": \"20-35 words describing the company's internal\
+            \ action at this stage\"},\n    {\"step_number\": 2, \"step_label\": \"\
+            ...\", \"description\": \"...\"},\n    {\"step_number\": 3, \"step_label\"\
+            : \"...\", \"description\": \"...\"},\n    {\"step_number\": 4, \"step_label\"\
+            : \"...\", \"description\": \"...\"},\n    {\"step_number\": 5, \"step_label\"\
+            : \"...\", \"description\": \"...\"},\n    {\"step_number\": 6, \"step_label\"\
+            : \"...\", \"description\": \"...\"},\n    {\"step_number\": 7, \"step_label\"\
+            : \"...\", \"description\": \"...\"},\n    {\"step_number\": 8, \"step_label\"\
+            : \"...\", \"description\": \"...\"}\n  ],\n  \"confidence\": \"low |\
+            \ medium | high\"\n}\n"
+        selected: false
+        title: ODI
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1776787920183'
+      position:
+        x: 1387.2779642992277
+        y: 118.62196505811298
+      positionAbsolute:
+        x: 1387.2779642992277
+        y: 118.62196505811298
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "function main({ opportunities, job_steps, company }) {\n\n  function\
+          \ toArray(value) {\n    if (value == null) return [];\n    if (Array.isArray(value))\
+          \ return value;\n    if (typeof value === \"object\") {\n      if (Array.isArray(value.body))\
+          \ return value.body;\n      if (Array.isArray(value.data)) return value.data;\n\
+          \      if (typeof value.body === \"string\") {\n        try {\n        \
+          \  const parsed = JSON.parse(value.body);\n          if (Array.isArray(parsed))\
+          \ return parsed;\n          if (Array.isArray(parsed.data)) return parsed.data;\n\
+          \        } catch (e) {}\n      }\n    }\n    if (typeof value === \"string\"\
+          ) {\n      try {\n        const parsed = JSON.parse(value);\n        if\
+          \ (Array.isArray(parsed)) return parsed;\n        if (Array.isArray(parsed.data))\
+          \ return parsed.data;\n      } catch (e) {}\n    }\n    return [];\n  }\n\
+          \n  function extractPhase(raw) {\n    let obj = raw;\n    if (typeof obj\
+          \ === \"string\") {\n      try { obj = JSON.parse(obj); } catch (e) { return\
+          \ \"diagnose\"; }\n    }\n    if (obj && Array.isArray(obj.data) && obj.data.length\
+          \ > 0) obj = obj.data[0];\n    if (obj && typeof obj.body === \"string\"\
+          ) {\n      try { obj = JSON.parse(obj.body); } catch (e) {}\n      if (obj\
+          \ && Array.isArray(obj.data) && obj.data.length > 0) obj = obj.data[0];\n\
+          \    }\n    const phase = obj?.engagement_phase || \"\";\n    const valid\
+          \ = [\"outside_signals\",\"validate_outside\",\"diagnose\",\"validate_diagnose\"\
+          ,\"focus\",\"validate_focus\",\"flow\",\"validate_flow\"];\n    return valid.includes(phase)\
+          \ ? phase : \"diagnose\";\n  }\n\n  return {\n    odi_opportunities: JSON.stringify(toArray(opportunities)),\n\
+          \    odi_job_steps: JSON.stringify(toArray(job_steps)),\n    engagement_phase:\
+          \ extractPhase(company),\n  };\n}\n"
+        code_language: javascript
+        outputs:
+          engagement_phase:
+            children: null
+            type: string
+          odi_job_steps:
+            children: null
+            type: string
+          odi_opportunities:
+            children: null
+            type: string
+        selected: false
+        title: Prepare Frameworks Inputs
+        type: code
+        variables:
+        - value_selector:
+          - '1776717442339'
+          - body
+          value_type: string
+          variable: opportunities
+        - value_selector:
+          - '1776717316102'
+          - body
+          value_type: string
+          variable: job_steps
+        - value_selector:
+          - '1776712401270'
+          - body
+          value_type: string
+          variable: company
+      height: 52
+      id: '1776794957376'
+      position:
+        x: 514.1268711349354
+        y: 207.88235294117635
+      positionAbsolute:
+        x: 514.1268711349354
+        y: 207.88235294117635
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "function toArray(v) {\n  if (Array.isArray(v)) return v;\n  if (typeof\
+          \ v === \"string\") {\n    try {\n      const p = JSON.parse(v);\n     \
+          \ return Array.isArray(p) ? p : [];\n    } catch {\n      return [];\n \
+          \   }\n  }\n  if (v && Array.isArray(v.body)) return v.body;\n  if (v &&\
+          \ typeof v.body === \"string\") {\n    try {\n      const p = JSON.parse(v.body);\n\
+          \      return Array.isArray(p) ? p : [];\n    } catch {\n      return [];\n\
+          \    }\n  }\n  return [];\n}\n\nfunction main({ opportunities, job_steps\
+          \ }) {\n  const opp = toArray(opportunities);\n  const steps = toArray(job_steps);\n\
+          \n  return {\n    has_journey_data: opp.length > 0 && steps.length > 0,\n\
+          \    opportunities_count: opp.length,\n    job_steps_count: steps.length\n\
+          \  };\n}\n"
+        code_language: javascript
+        outputs:
+          has_journey_data:
+            children: null
+            type: boolean
+          job_steps_count:
+            children: null
+            type: number
+          opportunities_count:
+            children: null
+            type: number
+        selected: false
+        title: Pre LLM Guard
+        type: code
+        variables:
+        - value_selector:
+          - '1776717442339'
+          - body
+          value_type: string
+          variable: opportunities
+        - value_selector:
+          - '1776717316102'
+          - body
+          value_type: string
+          variable: job_steps
+      height: 52
+      id: '1776896765231'
+      position:
+        x: 789.5132584168748
+        y: 207.88235294117635
+      positionAbsolute:
+        x: 789.5132584168748
+        y: 207.88235294117635
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: 11b3b366-7fc4-40ce-abe5-187e2e6f6f67
+            value: true
+            varType: boolean
+            variable_selector:
+            - '1776896765231'
+            - has_journey_data
+          id: 'true'
+          logical_operator: and
+        selected: false
+        title: IF/ELSE
+        type: if-else
+      height: 148
+      id: '1776896986327'
+      position:
+        x: 1032.4358590360698
+        y: 294.46130030959756
+      positionAbsolute:
+        x: 1032.4358590360698
+        y: 294.46130030959756
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "function main() {\n  return {\n    ODI: JSON.stringify({\n      signals:\
+          \ [],\n      tensions: [],\n      evidence_gaps: [\"No journey-scoped records\
+          \ returned for the provided journey_key.\"],\n      confidence: \"low\"\n\
+          \    }),\n    Discovery_Analysis: JSON.stringify({\n      discovery_health_score:\
+          \ 0,\n      assumption_density: 1.0,\n      evidence_quality: \"none\",\n\
+          \      steps_with_evidence: 0,\n      steps_total: 0,\n      connected_outcomes:\
+          \ 0,\n      key_assumption: null,\n      discovery_verdict: \"No journey-scoped\
+          \ records returned for the provided journey_key.\"\n    }),\n    Positioning_Analysis:\
+          \ JSON.stringify({\n      positioning_clarity_score: 0,\n      components_present:\
+          \ [],\n      components_missing: [\n        \"competitive alternatives\"\
+          ,\n        \"unique attributes\",\n        \"value\",\n        \"best-fit\
+          \ customers\",\n        \"market category\"\n      ],\n      differentiation_strength:\
+          \ \"none\",\n      category_clarity: \"none\",\n      best_fit_customer_defined:\
+          \ false,\n      positioning_verdict: \"No journey-scoped records returned\
+          \ for the provided journey_key.\"\n    }),\n    Strategy_Analysis: JSON.stringify({\n\
+          \      strategy_clarity_score: 0,\n      cascade_completeness: \"partial\"\
+          ,\n      capability_gaps: [],\n      system_gaps: [],\n      untested_assumptions:\
+          \ 0,\n      active_problem_statements: 0,\n      strategic_risk: \"medium\"\
+          ,\n      strategy_verdict: \"No journey-scoped records returned for the\
+          \ provided journey_key.\"\n    })\n  };\n}\n"
+        code_language: javascript
+        outputs:
+          Discovery_Analysis:
+            children: null
+            type: string
+          ODI:
+            children: null
+            type: string
+          Positioning_Analysis:
+            children: null
+            type: string
+          Strategy_Analysis:
+            children: null
+            type: string
+        selected: false
+        title: Else Fallback
+        type: code
+        variables: []
+      height: 52
+      id: '1776897728308'
+      position:
+        x: 1913.0409515846384
+        y: 618.222889695058
+      positionAbsolute:
+        x: 1913.0409515846384
+        y: 618.222889695058
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "function main({\n  if_output,\n  if_odi,\n  if_discovery,\n  if_positioning,\n\
+          \  if_strategy,\n  else_odi,\n  else_discovery,\n  else_positioning,\n \
+          \ else_strategy\n}) {\n  function pick(...vals) {\n    for (const v of vals)\
+          \ {\n      if (v !== undefined && v !== null && v !== \"\") return v;\n\
+          \    }\n    return \"\";\n  }\n\n  return {\n    ODI: pick(if_odi, else_odi),\n\
+          \    Discovery_Analysis: pick(if_discovery, else_discovery),\n    Positioning_Analysis:\
+          \ pick(if_positioning, else_positioning),\n    Strategy_Analysis: pick(if_strategy,\
+          \ else_strategy)\n  };\n}\n"
+        code_language: javascript
+        outputs:
+          Discovery_Analysis:
+            children: null
+            type: string
+          ODI:
+            children: null
+            type: string
+          Positioning_Analysis:
+            children: null
+            type: string
+          Strategy_Analysis:
+            children: null
+            type: string
+        selected: false
+        title: Branch Merge
+        type: code
+        variables:
+        - value_selector:
+          - '1776897728308'
+          - ODI
+          value_type: string
+          variable: ODI
+        - value_selector:
+          - '1776897728308'
+          - Discovery_Analysis
+          value_type: string
+          variable: Discovery_Analysis
+        - value_selector:
+          - '1776897728308'
+          - Positioning_Analysis
+          value_type: string
+          variable: Positioning_Analysis
+        - value_selector:
+          - '1776897728308'
+          - Strategy_Analysis
+          value_type: string
+          variable: Strategy_Analysis
+        - value_selector:
+          - '1776782667715'
+          - output
+          value_type: string
+          variable: if_output
+        - value_selector:
+          - '1776787920183'
+          - text
+          value_type: string
+          variable: if_odi
+        - value_selector:
+          - '1776734069683'
+          - text
+          value_type: string
+          variable: if_discovery
+        - value_selector:
+          - '1776734086291'
+          - text
+          value_type: string
+          variable: if_positioning
+        - value_selector:
+          - '1776734101826'
+          - text
+          value_type: string
+          variable: if_strategy
+      height: 52
+      id: '1776902191355'
+      position:
+        x: 1957.491228070175
+        y: 557.4657562376495
+      positionAbsolute:
+        x: 1957.491228070175
+        y: 557.4657562376495
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1776720558355'
+          - summary
+          value_type: string
+          variable: summary
+        - value_selector:
+          - '1776720558355'
+          - evidence
+          value_type: string
+          variable: evidence
+        - value_selector:
+          - '1776720558355'
+          - contradictions
+          value_type: string
+          variable: contradictions
+        - value_selector:
+          - '1776720558355'
+          - confidence_reason
+          value_type: string
+          variable: confidence_reason
+        - value_selector:
+          - '1776720558355'
+          - confidence
+          value_type: string
+          variable: confidence
+        - value_selector:
+          - '1776720558355'
+          - questions_to_verify
+          value_type: string
+          variable: questions_to_verify
+        - value_selector:
+          - '1776720558355'
+          - possible_gaps
+          value_type: string
+          variable: possible_gaps
+        - value_selector:
+          - '1776720558355'
+          - framework_results
+          value_type: string
+          variable: framework_results
+        - value_selector:
+          - '1776720558355'
+          - experiments_to_run
+          value_type: string
+          variable: experiments_to_run
+        - value_selector:
+          - '1776787920183'
+          - text
+          value_type: string
+          variable: odi_text
+        selected: false
+        title: Output
+        type: end
+      height: 322
+      id: '1777744406938'
+      position:
+        x: 3035.675575872129
+        y: 325.89962416541033
+      positionAbsolute:
+        x: 3035.675575872129
+        y: 325.89962416541033
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: -742.3566917395269
+      y: 271.0448396622203
+      zoom: 0.6758866484595545
+  rag_pipeline_variables: []

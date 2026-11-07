@@ -52,7 +52,7 @@ function dimText(value: unknown): string {
   try { return JSON.stringify(value); } catch { return String(value); }
 }
 
-type CascadeRow = Record<string, unknown> & { id: string; artifact_role?: string | null; provenance_type?: string | null };
+type CascadeRow = Record<string, unknown> & { id: string; artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null };
 
 type DimFinding = {
   dimension: string;
@@ -96,7 +96,7 @@ export async function reconcileCascadeLocal(args: {
     // ── SUBJECT: the internal declared_direction cascade (latest) ──
     const { data: subjectRows } = await supabase
       .from("strategy_cascades")
-      .select("id, artifact_role, provenance_type, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, updated_at")
+      .select("id, artifact_role, provenance_type, operator_edited_at, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, updated_at")
       .eq("company_id", companyId)
       .eq("artifact_role", "declared_direction")
       .order("updated_at", { ascending: false })
@@ -109,6 +109,9 @@ export async function reconcileCascadeLocal(args: {
     const lane = await gateCascadeSubjectForLocal({
       supabase, companyId, surfaceId: String(subject.id),
       artifactRole: subject.artifact_role, provenance: subject.provenance_type,
+      // Q3 (2026-11-06): declared_direction is local-admissible on role alone; passed because the
+      // gate requires it, and so an operator-edited market_read row would also land local.
+      operatorEditedAt: subject.operator_edited_at,
       consumer: "reconcile-cascade",
     });
     if (!lane.admissible) return { status: "external_lane", company_id: companyId };

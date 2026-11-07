@@ -940,7 +940,10 @@ export function RoutesOrgPanel({
     setAcceptLoadingProposalId(proposalId);
     try {
       const proposed = proposal.proposed_state as Record<string, unknown>;
-      const patch: Record<string, unknown> = { source: `manual_${proposalId}` };
+      // Q3 (2026-11-06): the operator chose which fields land, so the row carries operator
+      // authorship — both external gates refuse it. Keeps `source like 'manual_%' ⟺
+      // operator_edited_at is not null`. provenance_type is untouched (out of scope).
+      const patch: Record<string, unknown> = { source: `manual_${proposalId}`, operator_edited_at: new Date().toISOString() };
       for (const field of acceptedFields) { patch[field] = proposed[field]; }
       // Check-outcome preservation law (2026-09-12): a proposed condition array replaces the route's
       // conditions only through the sanctioned writer, which refuses to drop a checked (stamped) one.
@@ -1139,7 +1142,12 @@ export function RoutesOrgPanel({
       toast.error("Edit didn't save — please try again.", { duration: 5000 });
       return;
     }
-    supabase.functions.invoke("evaluate-route-alignment", { body: { route_id: routeOrLegId, company_id: activeCompany.id } }).catch(() => {});
+    // Q4 (ruling, 2026-11-06): NO invoke after an inline edit. saveManualEdit has just stamped
+    // operator_edited_at on this row, so the server's subject gate will refuse it — firing the call
+    // anyway would send the operator's just-typed text at an outside model and rely on the gate to
+    // catch it. This was the live breach: handleSaveRouteField wrote operator prose to a row stamped
+    // public_research and invoked immediately, un-awaited. The alignment verdict for an
+    // operator-edited route now comes from the LOCAL lane on the next deliberate re-evaluate.
     onCommitSuccess?.();
   }
 

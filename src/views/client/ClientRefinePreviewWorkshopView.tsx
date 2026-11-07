@@ -807,7 +807,10 @@ export default function ClientRefinePreviewWorkshopView() {
     setAcceptLoading(true);
     try {
       const proposed = proposal.proposed_state as Record<string, unknown>;
-      const patch: Record<string, unknown> = { source: `manual_${proposalId}` };
+      // Q3 (2026-11-06): the operator chose which fields land, so the row carries operator
+      // authorship — both external gates refuse it. Keeps `source like 'manual_%' ⟺
+      // operator_edited_at is not null`. provenance_type is untouched (out of scope).
+      const patch: Record<string, unknown> = { source: `manual_${proposalId}`, operator_edited_at: new Date().toISOString() };
       for (const field of acceptedFields) {
         patch[field] = proposed[field];
       }
@@ -880,7 +883,10 @@ export default function ClientRefinePreviewWorkshopView() {
     setCascadeReEvalProgress(null);
     try {
       const proposed = cascadeProposal.proposed_state as Record<string, unknown>;
-      const patch: Record<string, unknown> = { source: `manual_${proposalId}` };
+      // Q3 (2026-11-06): the operator chose which fields land, so the row carries operator
+      // authorship — both external gates refuse it. Keeps `source like 'manual_%' ⟺
+      // operator_edited_at is not null`. provenance_type is untouched (out of scope).
+      const patch: Record<string, unknown> = { source: `manual_${proposalId}`, operator_edited_at: new Date().toISOString() };
       for (const field of acceptedFields) {
         patch[field] = proposed[field];
       }
@@ -956,12 +962,25 @@ export default function ClientRefinePreviewWorkshopView() {
     if (!canInlineCascade) return; // structure.cascade.inlineEdit
     await updateNarrativeField(field, value, opts);
     if (!companyId) return;
-    const routeIds = routes.filter((r) => r.level === "route" || !r.level).map((r) => r.id);
-    const needIds = needs.map((n) => n.id);
+    // Q4 (ruling, 2026-11-06): an operator-edited row is refused by the server's gates, so it is
+    // skipped here rather than fanned out as a call the server will decline. Before this, one cascade
+    // narrative edit fired 1 + <every route-level route> + <every need> invocations — 22 of them on
+    // Edgewood — including the two routes carrying operator prose under a public_research stamp.
+    const isOperatorEdited = (row: { operator_edited_at?: string | null }) =>
+      typeof row.operator_edited_at === "string" && row.operator_edited_at.trim().length > 0;
+    const routeIds = routes
+      .filter((r) => (r.level === "route" || !r.level) && !isOperatorEdited(r))
+      .map((r) => r.id);
+    const needIds = needs.filter((n) => !isOperatorEdited(n)).map((n) => n.id);
     routeIds.forEach((route_id) => {
       supabase.functions.invoke("evaluate-route-alignment", { body: { route_id, company_id: companyId } }).catch(() => {});
     });
-    supabase.functions.invoke("evaluate-positioning-alignment", { body: { company_id: companyId } }).catch(() => {});
+    // Q4: a manual inline edit has just stamped the CASCADE, and evaluate-positioning-alignment
+    // requires an externally-admissible cascade — so after an inline edit that call is guaranteed to
+    // be refused. Skip it rather than fire a call whose only possible outcome is a refusal row.
+    if (!opts?.isManualInline) {
+      supabase.functions.invoke("evaluate-positioning-alignment", { body: { company_id: companyId } }).catch(() => {});
+    }
     needIds.forEach((need_id) => {
       supabase.functions.invoke("evaluate-opportunity-alignment", { body: { need_id, company_id: companyId } }).catch(() => {});
     });

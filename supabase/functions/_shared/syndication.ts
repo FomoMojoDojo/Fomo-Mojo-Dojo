@@ -50,6 +50,9 @@ const BAND_SHINGLE_THRESHOLD = 0.1;
 
 import type { ModelCallRecord } from "./recordModelCall.ts";
 import { isOwnHostSet, ownHostMatchHost, type OwnHostSet } from "./ownHosts.ts";
+import { recordIntegrityRun } from "./integrity.ts";
+// Q2 (2026-11-06): the ONE authority for which source_types mean "a human handed us this".
+import { CLIENT_PROVIDED_SIGNAL_SOURCE_TYPES } from "./clientMaterial.ts";
 
 type SyndicationVerdict = {
   score: number;
@@ -128,6 +131,18 @@ function companyHostOf(url: string): string {
 // heuristic identifies (company-domain URL, profile_or_company_page, company_claim
 // bucket in raw_payload) — the same provenance authority the judges use.
 export type CorpusRow = { claim_text?: string; evidence_excerpt?: string; source_url?: string; voice_class?: string | null; raw_payload?: { bucket?: string; source_type?: string; run_id?: string } | null };
+/** Q2 (ruling, 2026-11-06): the corpus could not be proven complete. Fail CLOSED — the caller must
+ *  not proceed on a partial corpus, because a short corpus silently WEAKENS every syndication
+ *  comparison made against it (a candidate scores as original merely because its match was missing). */
+export class ClientCorpusRefused extends Error {
+  readonly companyId: string;
+  constructor(companyId: string, cause: string) {
+    super(`client corpus refused for ${companyId}: ${cause}`);
+    this.name = "ClientCorpusRefused";
+    this.companyId = companyId;
+  }
+}
+
 export async function buildClientCorpus(
   supabase: { from: (t: string) => any },
   companyId: string,
@@ -139,11 +154,32 @@ export async function buildClientCorpus(
 ): Promise<ClientCorpus> {
   const texts: string[] = [...extraClientTexts];
   try {
-    const { data } = await supabase
+    // ── Q2 (ruling, 2026-11-06): CLIENT-PROVIDED SOURCE TYPES ARE EXCLUDED AT THE QUERY ──────────
+    //
+    // This select had NO source_type filter, so a signal the client handed us — an uploaded file,
+    // an intake answer, an interview — entered the corpus whenever it looked client-authored
+    // (voice_class='client_voice', or a NULL voice on an own-host URL / profile page / company_claim
+    // bucket). The corpus is the one place in research-company that ASSEMBLES client text, and
+    // although its only consumer today is the LOCAL Ollama band judge, nothing structural stopped a
+    // future caller putting it in an external prompt.
+    //
+    // Fleet-wide at the time of the ruling, ZERO rows satisfied that client test among the five
+    // client-provided source types — Edgewood held 233 such signals with no source_url, no
+    // client_voice stamp and no qualifying bucket. The protection was an accident of how upload
+    // signals happen to be minted, not a rule. A classify-upload-voice pass that stamps client_voice,
+    // or one upload signal minted with a source_url, would have opened it.
+    //
+    // The exclusion is the SAME list the wall predicate names (CLIENT_PROVIDED_SIGNAL_SOURCE_TYPES
+    // in clientMaterial.ts), imported — never a second copy that could drift from it.
+    const { data, error } = await supabase
       .from("signals")
       .select("claim_text, evidence_excerpt, source_url, voice_class, raw_payload")
       .eq("company_id", companyId)
+      .not("source_type", "in", `(${CLIENT_PROVIDED_SIGNAL_SOURCE_TYPES.join(",")})`)
       .limit(1000);
+    // Q2: a query error is a REFUSAL, not a warning. The old code logged and continued with only the
+    // in-memory texts, which is the fail-OPEN this ruling closes.
+    if (error) throw new ClientCorpusRefused(companyId, String((error as { message?: string }).message ?? error));
     for (const row of (Array.isArray(data) ? data : [])) {
       const r = row as CorpusRow;
       if (exclude && exclude(r)) continue;
@@ -161,9 +197,23 @@ export async function buildClientCorpus(
       }
     }
   } catch (error) {
-    console.warn("[syndication] corpus fetch failed — corpus limited to in-memory client texts", {
-      message: String(error instanceof Error ? error.message : error),
+    // Q2 (2026-11-06): fail CLOSED and AUDITED. The refusal is on record before it propagates, so a
+    // caller that aborts is distinguishable from one that was never asked.
+    const refusal = error instanceof ClientCorpusRefused
+      ? error
+      : new ClientCorpusRefused(companyId, String(error instanceof Error ? error.message : error));
+    console.error("[syndication] corpus REFUSED — caller must not proceed on a partial corpus", {
+      company_id: companyId,
+      message: refusal.message,
     });
+    await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+      company_id: companyId,
+      component: "client_corpus_gate",
+      status: "failed",
+      error: refusal.message,
+      excluded_by_rule: { fail_closed: true, client_provided_source_types_excluded: CLIENT_PROVIDED_SIGNAL_SOURCE_TYPES },
+    }).catch(() => {});   // the audit must never mask the refusal it records
+    throw refusal;
   }
   return buildCorpusFromTexts(texts);
 }

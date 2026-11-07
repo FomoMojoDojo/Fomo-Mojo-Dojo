@@ -291,13 +291,16 @@ Deno.serve(async (req) => {
     // Reduced/empty set rebuilds fine — routes are input context, not cascade output.
     const { data: routeRowsRaw } = await supabase
       .from("routes")
-      .select("category, title, short_description, pts_value, effort, provenance_type")
+      .select("category, title, short_description, pts_value, effort, provenance_type, operator_edited_at")
       .eq("company_id", company_id)
       .not("source", "like", "manual_%")
       .limit(100);
     const allRoutes = Array.isArray(routeRowsRaw) ? routeRowsRaw : [];
     const admittedRoutes = allRoutes.filter((r) =>
-      isDriftSurfaceExternallyAdmissible((r as { provenance_type?: string | null }).provenance_type)
+      isDriftSurfaceExternallyAdmissible(
+        (r as { provenance_type?: string | null }).provenance_type,
+        (r as { operator_edited_at?: string | null }).operator_edited_at,
+      )
     );
     const routeExcludedCount = allRoutes.length - admittedRoutes.length;
     if (routeExcludedCount > 0) {

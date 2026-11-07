@@ -137,6 +137,18 @@ async function callOpenAIJSON(opts: {
   temperature?: number;
   requestTimeoutMs?: number;
   transientRetries?: number;
+  /** Q5 (ruling, 2026-11-06): fired once per OpenAI HTTP response that returned a body, with the
+   *  model that ACTUALLY served it (which is not `model` after a failover) and that response's own
+   *  usage object. One invocation = one billable call = one model_calls row.
+   *
+   *  WHY A CALLBACK AND NOT A RETURN VALUE: this function's return is the parsed JSON and ~30 call
+   *  sites destructure it. A callback adds the ledger without touching any of them, and it fires on
+   *  the retry and failover paths too — which a return value could not, since those attempts are
+   *  consumed internally and their spend was previously invisible.
+   *
+   *  IT MUST NEVER FAIL THE CALL IT MEASURES (the recordModelCall law): the callback is invoked
+   *  inside a try/catch that swallows, so a broken ledger cannot take down a model call. */
+  onUsage?: (model: string, usage: { prompt_tokens: number; completion_tokens: number } | null) => void | Promise<void>;
 }) {
   const {
     apiKey,
@@ -150,7 +162,31 @@ async function callOpenAIJSON(opts: {
     temperature = 0.2,
     requestTimeoutMs = 240_000,
     transientRetries = 2,
+    onUsage,
   } = opts;
+
+  /** Q5: report one call's usage, never letting the report break the call. */
+  const reportUsage = async (activeModel: string, data: unknown) => {
+    if (!onUsage) return;
+    try {
+      // /v1/responses reports `input_tokens` / `output_tokens`; /v1/chat/completions reports
+      // `prompt_tokens` / `completion_tokens`. This client calls /v1/responses, so reading only the
+      // chat-completions names logged a row with NULL tokens and NULL usd — a ledger row that proved
+      // a call happened but not what it cost. Both shapes are accepted; neither is guessed at.
+      const u = (data as {
+        usage?: {
+          prompt_tokens?: unknown; completion_tokens?: unknown;
+          input_tokens?: unknown; output_tokens?: unknown;
+        };
+      } | null)?.usage;
+      const p = Number(u?.prompt_tokens ?? u?.input_tokens);
+      const c = Number(u?.completion_tokens ?? u?.output_tokens);
+      await onUsage(
+        activeModel,
+        u && Number.isFinite(p) && Number.isFinite(c) ? { prompt_tokens: p, completion_tokens: c } : null,
+      );
+    } catch (_e) { /* observability must not fail the call it measures */ }
+  };
 
   const withSchemaContext = (error: unknown) => {
     const message = String(error instanceof Error ? error.message : error);
@@ -227,6 +263,9 @@ async function callOpenAIJSON(opts: {
             }
 
             const data = await resp.json();
+            // Q5: ledger BEFORE parsing. The call was billed whether or not its JSON is usable, so
+            // a truncated or unparseable answer must still appear in model_calls.
+            await reportUsage(activeModel, data);
             const text = extractResponsesOutputText(data);
             if (!text) throw withSchemaContext("OpenAI response missing output_text");
 

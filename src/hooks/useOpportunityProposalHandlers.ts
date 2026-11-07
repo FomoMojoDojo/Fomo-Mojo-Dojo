@@ -52,7 +52,10 @@ export function useOpportunityProposalHandlers(
       return;
     }
 
-    const patch: Record<string, unknown> = { source_path: `manual_${proposalId}` };
+    // Q3 (2026-11-06): accepting a proposal is an operator decision over which fields land, so the
+    // row carries operator authorship and both external gates refuse it. Keeps the invariant
+    // `source_path like 'manual_%' ⟺ operator_edited_at is not null`. provenance_type is untouched.
+    const patch: Record<string, unknown> = { source_path: `manual_${proposalId}`, operator_edited_at: new Date().toISOString() };
     if (acceptedFields.includes("outcome_statement")) {
       patch.desired_outcome = String(proposal.proposed_state.desired_outcome ?? "");
       patch.odi_canonical_statement = String(proposal.proposed_state.odi_canonical_statement ?? "");
@@ -70,9 +73,18 @@ export function useOpportunityProposalHandlers(
     // Re-evaluate alignment only for externally-admissible (public) subjects. Declared
     // subjects short-circuit at the 1a.1-A subject gate (not-applicable, zero OpenAI),
     // so the round-trip is wasted — skip it.
-    const { data: provRow } = await supabase
-      .from("odi_needs").select("provenance_type").eq("id", needId).maybeSingle();
-    if ((provRow as { provenance_type?: string | null } | null)?.provenance_type !== "internal_declared") {
+    //
+    // C5 (ruling, 2026-11-06): operator_edited_at is the SECOND reason the round-trip is wasted.
+    // The patch above stamps it, so after an accept the server's subject gate will refuse this row
+    // — the call could only ever produce a refusal row. Read it from the SAME post-update row as
+    // provenance (one query, one truth) and skip on either reason. In practice this means an accept
+    // no longer invokes at all; that is the point, not a side effect, and it is why spec b2's
+    // "plus the evaluate-opportunity-alignment invoke" was re-pinned with this ruling.
+    const { data: gateRow } = await supabase
+      .from("odi_needs").select("provenance_type, operator_edited_at").eq("id", needId).maybeSingle();
+    const row = gateRow as { provenance_type?: string | null; operator_edited_at?: string | null } | null;
+    const operatorEdited = typeof row?.operator_edited_at === "string" && row.operator_edited_at.trim().length > 0;
+    if (row?.provenance_type !== "internal_declared" && !operatorEdited) {
       await supabase.functions.invoke("evaluate-opportunity-alignment", {
         body: { need_id: needId, company_id: companyId },
       });
@@ -143,8 +155,12 @@ export function useOpportunityProposalHandlers(
     if (!companyId) return;
     await saveManualEdit("opportunity", needId, companyId, field, value);
     onNeedsRefresh();
-    supabase.functions.invoke("evaluate-opportunity-alignment", { body: { need_id: needId, company_id: companyId } })
-      .catch(() => {});
+    // C5 (ruling, 2026-11-06): NO invoke after an inline edit. saveManualEdit has just stamped
+    // operator_edited_at, so the server's subject gate will refuse this need — firing the call
+    // anyway would send the operator's just-typed text at an outside model and lean on the gate to
+    // stop it. Byte-for-byte the same decision as handleSaveRouteField in ClientRefinePreviewRoutesView:
+    // leaving this one invoking would have been an inconsistency, not a scope boundary. The alignment
+    // verdict for an operator-edited need comes from the LOCAL lane on the next deliberate re-evaluate.
   }, [companyId, onNeedsRefresh]);
 
   return {

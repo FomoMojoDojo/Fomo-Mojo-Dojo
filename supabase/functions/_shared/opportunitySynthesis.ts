@@ -433,6 +433,9 @@ export async function writeDeclaredOpportunities(args: {
         surfaceType: "opportunity",
         surfaceId: id,
         provenance: "internal_declared", // existingRows are all internal_declared by the select
+        // Q3 (2026-11-06): internal_declared is already local-admissible on provenance alone, so the
+        // flag cannot change this lane decision — passed explicitly because the gate requires it.
+        operatorEditedAt: (r.operator_edited_at as string | null | undefined) ?? null,
         consumer: "declared-canonical-backfill",
       });
       if (!gate.admissible) continue; // public → external backfill keeps it

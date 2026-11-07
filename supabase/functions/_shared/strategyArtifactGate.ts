@@ -13,7 +13,7 @@
 // are legal) — it is role-scoped at the read instead.
 
 import { recordIntegrityRun } from "./integrity.ts";
-import { EXTERNAL_ADMISSIBLE_PROVENANCE, isCascadeExternallyAdmissible } from "./externalProvenance.ts";
+import { EXTERNAL_ADMISSIBLE_PROVENANCE, isCascadeExternallyAdmissible, isOperatorEdited } from "./externalProvenance.ts";
 
 // Admit set single-sourced in externalProvenance.ts (operator ruling 2026-06-18):
 // only public-derived provenance crosses an external boundary. framework_adjudicated
@@ -24,7 +24,7 @@ import { EXTERNAL_ADMISSIBLE_PROVENANCE, isCascadeExternallyAdmissible } from ".
 export type StrategyArtifactKind = "positioning_canvas" | "strategy_cascade";
 
 export async function gateStrategyArtifactForExternal<
-  T extends { artifact_role?: string | null; provenance_type?: string | null },
+  T extends { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null },
 >(opts: {
   supabase: { from: (t: string) => any } | undefined | null;
   companyId: string;
@@ -35,6 +35,12 @@ export async function gateStrategyArtifactForExternal<
   const artifact = opts.artifact ?? null;
   const role = String(artifact?.artifact_role ?? "");
   const provenance = artifact?.provenance_type == null ? null : String(artifact.provenance_type);
+  // Q3 (2026-11-06): operator authorship is the third admission dimension. The CALLER must select
+  // operator_edited_at — an unselected column reads undefined, which isOperatorEdited treats as
+  // "not edited", so the gate cannot detect a caller that forgot.
+  // src/lib/operatorEditedSelectGate.test.ts asserts every consumer's select list carries the column.
+  const operatorEditedAt = artifact?.operator_edited_at == null ? null : String(artifact.operator_edited_at);
+  const operatorEdited = artifact !== null && isOperatorEdited(operatorEditedAt);
   // excluded_by_rule flags kept for the integrity record; the ADMIT decision is the
   // single-sourced cascade predicate (admitted === !nonMarketRead && !nullProvenance
   // && !internalProvenance, behaviour-identical).
@@ -42,7 +48,7 @@ export async function gateStrategyArtifactForExternal<
   const nullProvenance = artifact !== null && provenance === null;
   const internalProvenance =
     artifact !== null && provenance !== null && !EXTERNAL_ADMISSIBLE_PROVENANCE.has(provenance);
-  const admitted = artifact !== null && isCascadeExternallyAdmissible(role, provenance);
+  const admitted = artifact !== null && isCascadeExternallyAdmissible(role, provenance, operatorEditedAt);
   const fallback = !admitted;
 
   if (artifact !== null && !admitted) {
@@ -52,6 +58,7 @@ export async function gateStrategyArtifactForExternal<
       kind: opts.artifactKind,
       role: role || null,
       provenance,
+      operator_edited: operatorEdited,
     });
   }
   await recordIntegrityRun(opts.supabase ?? null, {
@@ -65,6 +72,10 @@ export async function gateStrategyArtifactForExternal<
       non_market_read: nonMarketRead,
       internal_provenance: internalProvenance,
       null_provenance: nullProvenance,
+      // Q3 (2026-11-06) — the named reason the ruling requires. Carries the stamp itself so the
+      // refusal is reconstructable from the audit row alone.
+      operator_edited: operatorEdited,
+      operator_edited_at: operatorEdited ? operatorEditedAt : null,
       fallback,
     },
     run_ref: opts.consumer,
@@ -75,7 +86,7 @@ export async function gateStrategyArtifactForExternal<
 // Array form for consumers that fetch row sets (council-review's context payload).
 // One integrity record per call with examined/admitted counts.
 export async function gateStrategyArtifactsForExternal<
-  T extends { artifact_role?: string | null; provenance_type?: string | null },
+  T extends { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null },
 >(opts: {
   supabase: { from: (t: string) => any } | undefined | null;
   companyId: string;
@@ -85,9 +96,12 @@ export async function gateStrategyArtifactsForExternal<
 }): Promise<{ admissible: T[]; fallback: boolean }> {
   const rows = Array.isArray(opts.artifacts) ? opts.artifacts : [];
   const admissible = rows.filter((row) =>
-    isCascadeExternallyAdmissible(row?.artifact_role, row?.provenance_type)
+    isCascadeExternallyAdmissible(row?.artifact_role, row?.provenance_type, row?.operator_edited_at)
   );
   const excluded = rows.length - admissible.length;
+  // Q3 (2026-11-06): counted separately so the array form's audit row says HOW MANY were refused
+  // for operator authorship, not just that some were refused.
+  const operatorEditedExcluded = rows.filter((row) => isOperatorEdited(row?.operator_edited_at)).length;
   const fallback = admissible.length === 0;
   if (excluded > 0) {
     console.log("[strategy-artifact-gate] composition", {
@@ -105,7 +119,7 @@ export async function gateStrategyArtifactsForExternal<
     status: "completed",
     examined: rows.length,
     admitted: admissible.length,
-    excluded_by_rule: { excluded_rows: excluded, fallback },
+    excluded_by_rule: { excluded_rows: excluded, operator_edited: operatorEditedExcluded, fallback },
     run_ref: opts.consumer,
   });
   return { admissible, fallback };

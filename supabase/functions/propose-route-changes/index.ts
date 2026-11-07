@@ -151,7 +151,7 @@ Deno.serve(async (req: Request) => {
   // --- Fetch route ---
   const { data: routeData, error: routeError } = await db
     .from("routes")
-    .select("id, title, short_description, category, rejected_alternatives, what_would_have_to_be_true, source, provenance_type")
+    .select("id, title, short_description, category, rejected_alternatives, what_would_have_to_be_true, source, provenance_type, operator_edited_at")
     .eq("id", route_id)
     .eq("company_id", company_id)
     .eq("relevance_state", "active")
@@ -173,6 +173,7 @@ Deno.serve(async (req: Request) => {
     surfaceType: "route",
     surfaceId: String(route_id),
     provenance: (routeData as { provenance_type?: string | null }).provenance_type,
+    operatorEditedAt: (routeData as { operator_edited_at?: string | null }).operator_edited_at,
     consumer: "propose-route-changes",
   });
   if (!subjectGate.admissible) {
@@ -182,7 +183,7 @@ Deno.serve(async (req: Request) => {
   // --- Fetch strategy cascade ---
   const { data: cascadeData, error: cascadeError } = await db
     .from("strategy_cascades")
-    .select("winning_aspiration, where_to_play, how_to_win, artifact_role, provenance_type")
+    .select("winning_aspiration, where_to_play, how_to_win, artifact_role, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .eq("artifact_role", "market_read")
     .order("created_at", { ascending: false })
@@ -197,7 +198,7 @@ Deno.serve(async (req: Request) => {
   const cascadeDataGate = await gateStrategyArtifactForExternal({
     supabase: db as unknown as { from: (t: string) => any },
     companyId: String(company_id),
-    artifact: cascadeData as { artifact_role?: string | null; provenance_type?: string | null },
+    artifact: cascadeData as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null },
     artifactKind: "strategy_cascade",
     consumer: "propose-route-changes",
   });

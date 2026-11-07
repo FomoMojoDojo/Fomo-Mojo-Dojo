@@ -22,7 +22,14 @@ export async function saveManualEdit(
 ): Promise<void> {
   const table = TABLE[surfaceType];
 
-  const payload: Record<string, unknown> = { [fieldName]: newValue };
+  // Q3 (ruling, 2026-11-06): an inline edit is text typed from private client knowledge, so the row
+  // must stop being admissible to an outside model. `source='manual_inline'` was never that flag —
+  // it is a REGEN-protection marker the refresh paths read, and it left provenance_type stamped
+  // public_research on four Edgewood rows plus one FomoMojoDojo row that both external gates then
+  // admitted. operator_edited_at is the authorship flag; gateStrategyArtifactForExternal and
+  // gateSubjectForExternal refuse any row that carries it. provenance_type is NOT restamped
+  // (explicitly out of scope): that column would ripple through the local/external XOR partition.
+  const payload: Record<string, unknown> = { [fieldName]: newValue, operator_edited_at: new Date().toISOString() };
   if (HAS_SOURCE_FIELD.has(surfaceType)) {
     payload.source = "manual_inline";
   }

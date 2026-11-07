@@ -39,6 +39,22 @@ export function fakeDb(seed: Record<string, Row[]>) {
       eq: (k: string, v: unknown) => { const m = /^(\w+)->>(\w+)$/.exec(k); filters.push(m ? (r) => ((r[m[1]] as Record<string, unknown> | null)?.[m[2]] ?? null) === v : (r) => r[k] === v); return b; },   // R41: raw_payload->>run_id
       is: (k: string, v: unknown) => { filters.push((r) => (v === null ? r[k] == null : r[k] === v)); return b; },
       in: (k: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[k])); return b; },
+      // Q2 (2026-11-06): buildClientCorpus now excludes the client-provided source_types with
+      // .not("source_type", "in", "(a,b,c)"), so the fake must model that filter — a stub that
+      // cannot apply it would mean these tests exercise a corpus the real query never builds.
+      // (Before this, the missing method made buildClientCorpus REFUSE, which is the fail-closed
+      // behaviour working as designed — the stub, not the code, was the thing that was wrong.)
+      not: (k: string, op: string, v: unknown) => {
+        if (op === "in") {
+          const vals = String(v).replace(/^\(|\)$/g, "").split(",").map((x) => x.trim()).filter(Boolean);
+          filters.push((r) => !vals.includes(String(r[k] ?? "")));
+        } else if (op === "is" && v === null) {
+          filters.push((r) => r[k] != null);
+        } else {
+          filters.push((r) => r[k] !== v);
+        }
+        return b;
+      },
       maybeSingle: () => Promise.resolve({ data: run()[0] ?? null, error: null }),
       single: () => Promise.resolve(pendingError ? { data: null, error: pendingError } : { data: pendingInsert?.[0] ?? run()[0] ?? null, error: null }),
       insert: (rows: Row | Row[]) => {

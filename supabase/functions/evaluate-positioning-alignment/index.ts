@@ -11,6 +11,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
+import { optionBDoor } from "../_shared/optionBDoor.ts";
+import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -63,7 +65,7 @@ Deno.serve(async (req: Request) => {
   // Fetch most recent positioning canvas for this company
   const { data: canvasData, error: canvasError } = await db
     .from("positioning_canvases")
-    .select("id, best_fit_customers, market_category, value_for_customer, unique_attributes_json, competitive_alternatives_json, current_tagline, artifact_role, provenance_type")
+    .select("id, best_fit_customers, market_category, value_for_customer, unique_attributes_json, competitive_alternatives_json, current_tagline, artifact_role, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .eq("artifact_role", "market_read")
     .order("created_at", { ascending: false })
@@ -74,11 +76,30 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: canvasError?.message ?? "No positioning canvas found" }, 404);
   }
 
+  // Q4 (ruling, 2026-11-06) — THE OPTION B DOOR, in front of the per-row gate. This function has NO
+  // local lane (unlike the route and opportunity evaluators), so a door refusal ends the request
+  // with an explicit 409 rather than a downgrade. The refusal is already on record as one
+  // integrity_runs row; the response names it so a caller is never left guessing.
+  const door = await optionBDoor({
+    supabase: db as unknown as { from: (t: string) => any },
+    companyId: String(company_id),
+    surfaceType: "positioning_canvas",
+    surfaceId: String((canvasData as { id?: string }).id ?? company_id),
+    consumer: "evaluate-positioning-alignment",
+  });
+  if (!door.allowed) {
+    return jsonResponse({
+      skipped: true,
+      reason: "option_b_door: company holds client-provided material — no outside call made",
+      company_id,
+    }, 409);
+  }
+
   // Gate 3a: external-bound artifact content passes the strategy-artifact gate.
   const canvasDataGate = await gateStrategyArtifactForExternal({
     supabase: db as unknown as { from: (t: string) => any },
     companyId: String(company_id),
-    artifact: canvasData as { artifact_role?: string | null; provenance_type?: string | null },
+    artifact: canvasData as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null },
     artifactKind: "positioning_canvas",
     consumer: "evaluate-positioning-alignment",
   });
@@ -89,7 +110,7 @@ Deno.serve(async (req: Request) => {
   // Fetch most recent strategy cascade
   const { data: cascadeData, error: cascadeError } = await db
     .from("strategy_cascades")
-    .select("winning_aspiration, where_to_play, how_to_win")
+    .select("winning_aspiration, where_to_play, how_to_win, artifact_role, provenance_type, operator_edited_at")
     .eq("company_id", company_id)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -102,7 +123,7 @@ Deno.serve(async (req: Request) => {
   const cascadeDataGate = await gateStrategyArtifactForExternal({
     supabase: db as unknown as { from: (t: string) => any },
     companyId: String(company_id),
-    artifact: cascadeData as { artifact_role?: string | null; provenance_type?: string | null },
+    artifact: cascadeData as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null },
     artifactKind: "strategy_cascade",
     consumer: "evaluate-positioning-alignment",
   });
@@ -183,6 +204,13 @@ Current tagline: ${canvas.current_tagline || "(none)"}`;
       userText,
       maxOutputTokens: 300,
       temperature: 0.1,
+      // Q5 (2026-11-06): one model_calls row per outside call; this function wrote none before.
+      onUsage: (usedModel, usage) =>
+        void recordModelCall(db as unknown as { from: (t: string) => any }, {
+          companyId: String(company_id),
+          callSite: "evaluate-positioning-alignment",
+          usage: openaiRecord(usedModel, usage),
+        }),
     }) as { classification: string; reason: string };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
