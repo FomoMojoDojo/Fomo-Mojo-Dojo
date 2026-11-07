@@ -85,12 +85,30 @@ export function makePsqlSweepStore(s: PsqlSession) {
         from: (table: string) => {
           if (table !== "signals") throw new Error(`corpus client reads signals only, not ${table}`);
           let cols = "*"; let companyId = ""; let lim = 1000;
+          // Q2 (2026-11-06): buildClientCorpus now excludes the client-provided source_types with
+          // .not("source_type", "in", "(a,b,c)"). This client is deliberately strict — it throws on
+          // any column it does not model — so the method has to exist, or the shipped corpus builder
+          // refuses (fail closed) and the whole sweep stops. It did: `.not is not a function`.
+          // Modelled as SQL rather than filtered in JS, so this client stays what it claims to be:
+          // the same query the shipped builder would send, run over a psql session.
+          const extra: string[] = [];
           const q = {
             select(c: string) { cols = c; return q; },
             eq(k: string, v: string) { if (k !== "company_id") throw new Error(`corpus client filters company_id only, not ${k}`); companyId = v; return q; },
+            not(k: string, op: string, v: string) {
+              if (k !== "source_type" || op !== "in") {
+                throw new Error(`corpus client models .not("source_type","in",…) only, not .not(${k},${op},…)`);
+              }
+              const vals = String(v).replace(/^\(|\)$/g, "").split(",").map((x) => x.trim()).filter(Boolean);
+              // NOT IN is NULL-blind: a NULL source_type would be dropped by `source_type not in (…)`.
+              // The shipped PostgREST filter keeps NULL rows, so the SQL must too.
+              if (vals.length) extra.push(`(source_type is null or source_type not in (${vals.map(lit).join(", ")}))`);
+              return q;
+            },
             async limit(n: number) {
               lim = n;
-              const data = await s.query(`select ${cols} from signals where company_id=${lit(companyId)}::uuid limit ${lim}`);
+              const where = [`company_id=${lit(companyId)}::uuid`, ...extra].join(" and ");
+              const data = await s.query(`select ${cols} from signals where ${where} limit ${lim}`);
               return { data, error: null };
             },
           };
