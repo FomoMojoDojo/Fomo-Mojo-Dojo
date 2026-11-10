@@ -19,4 +19,9 @@ export const FRONT_DOOR_STRINGS = {
    *  (WorkshopSidebar.tsx:205). Before N2 neither "All companies" mount linked to the Company view
    *  at all, so reaching a named company's took four steps and a typed URL. */
   company: "Company",
+  /** T1/T2 (signed 2026-11-09) — the row's fourth link: that company's Diagnose flow. Shown ONLY
+   *  when Diagnose is running for the company (S2: a live document or a live interview record),
+   *  so the door appears when there is something behind it and not before. A bare noun like its
+   *  two neighbours — the arrow belongs to the client-facing link on the First Read, not here. */
+  diagnose: "Diagnose",
 } as const;

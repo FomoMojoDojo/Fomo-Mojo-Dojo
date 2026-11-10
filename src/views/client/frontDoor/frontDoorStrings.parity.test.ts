@@ -11,6 +11,8 @@ describe("front door strings", () => {
     expect(S.workspace).toBe("Workspace");
     // N2 (2026-09-26) — reused byte-exact from WorkshopSidebar's own label for this destination
     expect(S.company).toBe("Company");
-    expect(Object.keys(S).length).toBe(5);
+    // T2 (2026-11-09) — the conditional fourth link, shown only where Diagnose is running (S2)
+    expect(S.diagnose).toBe("Diagnose");
+    expect(Object.keys(S).length).toBe(6);
   });
 });

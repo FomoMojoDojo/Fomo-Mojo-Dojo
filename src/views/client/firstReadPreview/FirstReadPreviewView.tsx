@@ -8,7 +8,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import "./firstRead.css";
 import { useCompany } from "@/hooks/useCompany";
-import { routeCompanyToActivate } from "@/lib/clientRefinePreview";
+import { clientRefineDiagnosePath, routeCompanyToActivate } from "@/lib/clientRefinePreview";
+import { isDiagnoseRunning } from "@/lib/diagnoseRunning";
 import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -146,6 +147,20 @@ export default function FirstReadPreviewView() {
   // Questions come from the ONE open-question authority — it applies
   // the outside-only provenance gate (doc-derived questions never render).
   const { questions, rows: questionRows } = useFirstReadOpenQuestions(companyId);
+  // S2/T3 — is Diagnose running for this company? A SIBLING read, like the marks and the open
+  // questions beside it: useFirstReadPreviewData is not touched, and nothing here changes what the
+  // read says. Null until the answer lands and null when it is false, so the link appears only on
+  // a positive answer and never flashes on a reload.
+  const [diagnosePath, setDiagnosePath] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setDiagnosePath(null);
+    if (!companyId) return;
+    void isDiagnoseRunning(companyId)
+      .then((running) => { if (!cancelled && running) setDiagnosePath(clientRefineDiagnosePath(companyId)); })
+      .catch((err) => { console.error("[first-read] diagnose-running check failed:", err); });
+    return () => { cancelled = true; };
+  }, [companyId]);
   // The offering payload's open_questions route to the Questions beat via the SAME open-question
   // list (the existing mechanic) — appended after the DB-authority questions, never rendered as
   // verdicts on the offer beat itself. Marks (FM15): the DB rows' question_identity rides beside them.
@@ -311,7 +326,7 @@ export default function FirstReadPreviewView() {
       case "questions":
         return <ActQuestions read={data} eyebrow={beats[index].label} />;
       case "next":
-        return <ActNext isLast={index === beats.length - 1} />;
+        return <ActNext isLast={index === beats.length - 1} diagnosePath={diagnosePath} />;
       case HEARD_BEAT_KEY:
         return (
           <Spread eyebrow={beats[index].label}>
@@ -409,6 +424,21 @@ export default function FirstReadPreviewView() {
               {...{ [OPERATOR_MARK.attr]: OPERATOR_MARK.allCompanies }}
             >
               {OPERATOR_STRINGS.allCompanies}
+            </Link>
+          ) : null
+        }
+        operatorLink={
+          // T4 — the operator's way INTO Diagnose, beside the way out. Same gate as every other
+          // operator node (null unless the glyph toggle is on) and the same link class, so the
+          // default render is untouched and the switch-on header gains a sibling, not a row.
+          operatorControls && diagnosePath ? (
+            <Link
+              to={diagnosePath}
+              className="fr-shell-link"
+              data-testid="first-read-diagnose"
+              {...{ [OPERATOR_MARK.attr]: OPERATOR_MARK.diagnoseLink }}
+            >
+              {OPERATOR_STRINGS.diagnose}
             </Link>
           ) : null
         }

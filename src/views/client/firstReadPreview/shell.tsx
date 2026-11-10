@@ -12,6 +12,7 @@ export type ShellBeat = { readonly key: string; readonly label: string; readonly
 
 export function Header({
   backLink,
+  operatorLink,
   title,
   identity,
   beats,
@@ -27,6 +28,10 @@ export function Header({
   title: ReactNode;
   /** "{company} · {host}" from the caller (companies.name / website). */
   identity?: ReactNode;
+  /** T4 (2026-11-09) — a second operator link in the id row, beside `backLink`. Both are null on
+   *  the client render, so the row is unchanged by default; when the switch is on they sit side by
+   *  side in the same flex line rather than adding one. */
+  operatorLink?: ReactNode;
   /** Progress ticks. Optional since the home reskin (2026-09-11): a page with no beats renders `right`
    *  in the progress slot instead. The First Read passes all three exactly as before. */
   beats?: ReadonlyArray<ShellBeat>;
@@ -42,6 +47,7 @@ export function Header({
       <div className="fr-shell-header-inner">
         <div className="fr-shell-id fr-mono">
           {backLink ?? null}
+          {operatorLink ?? null}
           <span className="fr-shell-title">{title}</span>
           {identity ? <span className="fr-shell-identity">{identity}</span> : null}
         </div>

@@ -36,6 +36,9 @@ export const OPERATOR_STRINGS = {
   /** The way out of the First Read (2026-09-09, SIGNED). Operator affordance, not a client element:
    *  the client never navigates, so it lives behind the glyph toggle with every other control. */
   allCompanies: "All companies",
+  /** T4 (2026-11-09, SIGNED) — the operator's way INTO this company's Diagnose flow, beside the way
+   *  out. Bare, like its neighbour: the arrow belongs to the client link on the closer beat. */
+  diagnose: "Diagnose",
 } as const;
 
 /** The per-row operator kind label — ONE formatter, byte-exact. null kind → "Kind · untyped"; a reason is appended
@@ -60,6 +63,8 @@ export const OPERATOR_MARK = {
   notMeetingReady: "not-meeting-ready",
   kindLabel: "kind-label",
   allCompanies: "all-companies",
+  /** T4 (2026-11-09) — the operator's Diagnose link in the header. */
+  diagnoseLink: "diagnose-link",
   looks: "looks",
   /** FM12 revised (2026-09-22): the revisit prompt, page level. */
   revisit: "revisit",

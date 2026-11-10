@@ -22,7 +22,8 @@ import {
   type CompanyInventoryRow,
 } from "@/lib/admin/companiesInventory";
 import { useCompany } from "@/hooks/useCompany";
-import { clientRefineCompanyPath, clientRefineFirstReadPath, clientRefineWorkspacePath } from "@/lib/clientRefinePreview";
+import { clientRefineCompanyPath, clientRefineDiagnosePath, clientRefineFirstReadPath, clientRefineWorkspacePath } from "@/lib/clientRefinePreview";
+import { fetchDiagnoseRunning, type DiagnoseRunning } from "@/lib/diagnoseRunning";
 import { FRONT_DOOR_STRINGS } from "./frontDoorStrings";
 import "../firstReadPreview/firstRead.css";
 
@@ -38,6 +39,10 @@ export default function FrontDoorView() {
   const [rows, setRows] = useState<CompanyInventoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  // T1 — which companies have Diagnose running (S2). ONE pair of queries for the whole list, not
+  // two per row; an empty Set simply hides every Diagnose link, which is the honest default while
+  // the answer is still in flight or the query failed.
+  const [diagnoseRunning, setDiagnoseRunning] = useState<DiagnoseRunning>(() => new Set<string>());
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +62,16 @@ export default function FrontDoorView() {
         setRows([]);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Beside the inventory fetch, never inside it: a failure here must not empty the table, and the
+  // table's own failure must not depend on this one.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchDiagnoseRunning()
+      .then((running) => { if (!cancelled) setDiagnoseRunning(running); })
+      .catch((err) => { console.error("[front-door] diagnose-running fetch failed:", err); });
     return () => { cancelled = true; };
   }, []);
 
@@ -139,6 +154,21 @@ export default function FrontDoorView() {
                 >
                   {FRONT_DOOR_STRINGS.company}
                 </Link>
+                {/* T1: the row's fourth door, and the only conditional one — that company's
+                    Diagnose flow, shown only where S2 holds. Same shape as its two neighbours, so
+                    the row gains a link rather than a new kind of thing; the href names the
+                    company, like the Company link beside it. */}
+                {diagnoseRunning.has(id) ? (
+                  <Link
+                    to={clientRefineDiagnosePath(id)}
+                    className="font-mono text-[10px] uppercase tracking-wide"
+                    style={{ color: "hsl(var(--fr-slate))" }}
+                    data-testid={`front-door-diagnose-${id}`}
+                    onClick={() => setActiveCompanyId(id)}
+                  >
+                    {FRONT_DOOR_STRINGS.diagnose}
+                  </Link>
+                ) : null}
               </span>
             )}
           />

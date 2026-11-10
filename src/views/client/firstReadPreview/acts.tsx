@@ -7,6 +7,7 @@
 
 import { MarkTarget } from "@/lib/firstReadMarks/MarksContext";
 import { useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { NOT_ENOUGH_SIGNAL_NOTE } from "./signedNotes";
 import {
   Absent,
@@ -2146,7 +2147,7 @@ export function ActQuestions({ read, eyebrow }: { read: FirstReadPreviewData; ey
 // Eyebrow "Before you go" is rendered HERE (BEATS["next"].label stays "Next move" for the nav/forward
 // link; the parent suppresses its auto-eyebrow for this beat). `isLast` is still passed by the parent
 // (unused now — the end-marker line was dropped per ruling); kept optional so <ActNext/> fixtures render.
-export function ActNext({ isLast }: { isLast?: boolean }) {
+export function ActNext({ isLast, diagnosePath }: { isLast?: boolean; diagnosePath?: string | null }) {
   void isLast;
   // Stage 3b: the same four NEXT_STATIONS on a FlowLine — label (chip) · title · body · timing ·
   // bullets per column; the highlight is the NEXT station (Diagnose, state "here"). The outcome
@@ -2195,6 +2196,23 @@ export function ActNext({ isLast }: { isLast?: boolean }) {
                     </li>
                   ))}
                 </ul>
+              ) : null}
+              {/* T3 (2026-11-09) — THE CLIENT'S WAY IN, on the station that already names it.
+                  This is the Up-next station, "Diagnose", state "here": the reader has just been
+                  told what happens next and until now had no way to go there. It renders only when
+                  Diagnose is RUNNING for this company (S2: a live document or a live interview
+                  record), so it never points at an empty walk. NOT an operator node — no
+                  data-fr-operator, no context — so it lives in the default client render. The
+                  action pattern is the opener's "Start the read →", as a real Link. */}
+              {s.state === "here" && diagnosePath ? (
+                <Link
+                  to={diagnosePath}
+                  data-testid="first-read-diagnose-client"
+                  className="fr-link-ink group mt-4 inline-block text-xs font-bold uppercase tracking-[0.2em] transition-colors fr-mono"
+                >
+                  Diagnose{" "}
+                  <span className="inline-block transition-transform group-hover:translate-x-1">&rarr;</span>
+                </Link>
               ) : null}
             </div>
           ))}
