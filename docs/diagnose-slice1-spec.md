@@ -472,3 +472,24 @@ segment drops at zero.
 **R5 — The K5 shaded wedge is withdrawn.** It drew a corridor to a goal nobody has chosen. It
 returns when a goal is chosen. Its tests go with it, and a test asserts that no wedge renders while
 no goal is chosen.
+
+## Filed, not fixed (X4, 2026-11-09)
+
+**`claim_deltas.operator_disposition` records the act but not the actor.** The table carries
+`operator_disposition` and `operator_seen_at` and no identity column, so a disposition says that an
+operator ruled and when, never who. It is the one browser write path into any of the seven relations
+the `20261110050000_cv5_member_read` migration walled (`src/hooks/useStrategicDelta.ts:509-514`), and
+after that migration only an admin can make it — but the row still cannot name them.
+
+Wanted: an `operator_disposition_by` column stamped with `auth.uid()`, which would make the
+disposition attributable the way `check_outcomes.recorded_by` and the `claim_delta_rule_refusals`
+`actor` column already are. **Its own brief later** — not part of U1–U5 or X1–X3.
+
+What the audit found, for whoever picks it up: **1 row of 1819** carries a disposition —
+`rejected_pairing`, 2026-08-19 21:01:01 UTC, on CB2 (`fd3f7f63`). It is an admin-workshop action and
+**stays as it is** (X4). Five non-admin fixture accounts held a session before that timestamp and the
+row records no identity, so it cannot attribute itself either way; the account audit (W1–W3) is what
+rules out a real person, not the row. Six of the seven walled relations have no writer column at all —
+`signal_recurrence_verdicts`, `claim_deltas`, `public_reads`, `outside_page_snapshots`, `market_lens`
+and `finding_recurrence`; only `excerpt_verifications.recorded_by` exists, and it is free text naming
+the writing process (3 distinct values across 2267 rows), never a user id.

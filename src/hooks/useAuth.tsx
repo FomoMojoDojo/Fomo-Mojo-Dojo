@@ -23,10 +23,26 @@ const PREVIEW_ADMIN_USER = {
   created_at: new Date().toISOString(),
 } as User;
 
+// ADMIN BYPASS — EXPLICIT OPT-IN, DEFAULT OFF (U1, operator ruling 2026-11-09).
+//
+// This read `import.meta.env.DEV || host === "localhost" || host === "127.0.0.1"`, and checkAdmin
+// below consults it when the user_roles lookup finds NO admin row — so on the dev server EVERY
+// signed-in account was treated as an admin. That was never local-only: `tailscale serve` proxies
+// https://mojomap.tail7b863b.ts.net/ to http://localhost:8080, which IS this dev server, so the one
+// URL partners reach ran with the bypass on. Measured 2026-11-09 with the throwaway non-admin: it
+// rendered the Front Door, the First Read shell and the Diagnose home. Only RLS kept it off the rows,
+// which is why those pages came up EMPTY rather than refused — and an empty shell reads like a page
+// with no data, not like a door that is shut.
+//
+// WHY BOTH LOCKS. `import.meta.env.*` is baked per SERVER, so a flag alone cannot tell this browser
+// from a partner's — they share the server. The hostname can, at runtime, per viewer: partners always
+// arrive on the tailnet name, never on loopback. So the flag must be set AND the host must be
+// loopback. VITE_ADMIN_BYPASS is absent from .env, so the bypass is off everywhere, here included.
 function isLocalAdminBypassEnabled() {
   if (typeof window === "undefined") return false;
+  if (import.meta.env.VITE_ADMIN_BYPASS !== "1") return false;
   const host = window.location.hostname;
-  return import.meta.env.DEV || host === "localhost" || host === "127.0.0.1";
+  return host === "localhost" || host === "127.0.0.1";
 }
 
 function clearSupabaseStorage() {

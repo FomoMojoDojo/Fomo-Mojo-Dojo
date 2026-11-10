@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import "./firstRead.css";
 import { useCompany } from "@/hooks/useCompany";
+import { useAuth } from "@/hooks/useAuth";
 import { clientRefineDiagnosePath, routeCompanyToActivate } from "@/lib/clientRefinePreview";
 import { isDiagnoseRunning } from "@/lib/diagnoseRunning";
 import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
@@ -107,6 +108,9 @@ export default function FirstReadPreviewView() {
   // Skipped when the id is not a company this operator holds — an unknown id must never be
   // persisted to localStorage, from where it would follow them onto every other surface.
   const { companies, activeCompany, setActiveCompanyId } = useCompany();
+  // U5 (2026-11-09): the operator affordance below is gated on this, not on the route. See the
+  // OPERATOR OVERRIDE note further down for why the route stopped being the gate.
+  const { isAdmin } = useAuth();
   useEffect(() => {
     const next = routeCompanyToActivate({
       routeCompanyId: companyId,
@@ -117,8 +121,16 @@ export default function FirstReadPreviewView() {
   }, [companyId, companies, activeCompany?.id, setActiveCompanyId]);
   // OPERATOR OVERRIDE (stage 3, 2026-09-03): the preview re-reads after a decision (refreshKey — this
   // hook is plain state, not react-query) and invalidates the react-query readers of claim_deltas so no
-  // surface holds a stale verdict. This view is the ONLY provider of OperatorControlsContext: it mounts
-  // solely under the admin preview route, so client views structurally never render the controls.
+  // surface holds a stale verdict. This view is the ONLY provider of OperatorControlsContext.
+  //
+  // WHAT GATES IT, AS OF U5 (2026-11-09): isAdmin, not the route. The line here used to read "it mounts
+  // solely under the admin preview route, so client views structurally never render the controls" — true
+  // while /preview/client-refine/first-read/* stayed admin-gated, and CV5 retires that premise by landing
+  // a signed-in client on this very view. The switch below was useState(false) with no auth check: a
+  // visible button any viewer could click, and clicking it reaches decide() → set_relevance_override plus
+  // refresh-relevance-step, a write and an Option B call. So the affordance now requires isAdmin, and
+  // operatorActive — not operatorOn — is what the context and the button read, so a role that goes away
+  // cannot leave a stale `true` behind.
   const [refreshKey, setRefreshKey] = useState(0);
   const { data: baseData, loading, error } = useFirstReadPreviewData(companyId, refreshKey);
   // Marks (commit 2): this view is the ONLY provider of MarksContext — the affordance exists on this route alone.
@@ -131,8 +143,9 @@ export default function FirstReadPreviewView() {
   // provided and every operator node (controls, provenance tags, struck-pairs blocks) renders; when off
   // the context is null and the preview is byte-identical to the client render.
   const [operatorOn, setOperatorOn] = useState(false);
+  const operatorActive = isAdmin && operatorOn;
   const operatorControls = useMemo<OperatorControls | null>(() => {
-    if (!companyId || !operatorOn) return null;
+    if (!companyId || !operatorActive) return null;
     return {
       decide: async ({ pair, verdict, reason }: OperatorDecision) => {
         // A withdrawal also awaits refresh-relevance-step (decideRelevance) so this refresh shows the machine verdict.
@@ -143,7 +156,7 @@ export default function FirstReadPreviewView() {
         setRefreshKey((k) => k + 1);
       },
     };
-  }, [companyId, queryClient, operatorOn]);
+  }, [companyId, queryClient, operatorActive]);
   // Questions come from the ONE open-question authority — it applies
   // the outside-only provenance gate (doc-derived questions never render).
   const { questions, rows: questionRows } = useFirstReadOpenQuestions(companyId);
@@ -482,23 +495,28 @@ export default function FirstReadPreviewView() {
           />
         ) : null}
       </div>
-      {/* Operator switch (rule (a), edited 2026-09-03): the operator's own affordance, not a client element —
-          fixed bottom-left, glyph only (circle-with-dot), muted while off, full while on. No text node; the
-          aria strings are the only strings. State only — never persisted. */}
-      <button
-        type="button"
-        className="fixed bottom-6 left-6 flex h-8 w-8 items-center justify-center transition-opacity"
-        style={{ color: "hsl(var(--fr-muted))", opacity: operatorOn ? 1 : 0.35 }}
-        data-fr-operator-switch={operatorOn ? "on" : "off"}
-        aria-label={OPERATOR_STRINGS.switchAriaLabel}
-        aria-pressed={operatorOn}
-        onClick={() => setOperatorOn((v) => !v)}
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-          <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.25" />
-          <circle cx="8" cy="8" r="2" fill="currentColor" />
-        </svg>
-      </button>
+      {/* Operator switch (rule (a), edited 2026-09-03; gated on isAdmin by U5 2026-11-09): the operator's
+          own affordance, not a client element — fixed bottom-left, glyph only (circle-with-dot), muted while
+          off, full while on. No text node; the aria strings are the only strings. State only — never
+          persisted. ABSENT ENTIRELY for a non-admin: a disabled button would still say an operator mode
+          exists, and the client has no business knowing that. `position: fixed` keeps it out of header flow,
+          so its presence or absence moves no measured height. */}
+      {isAdmin ? (
+        <button
+          type="button"
+          className="fixed bottom-6 left-6 flex h-8 w-8 items-center justify-center transition-opacity"
+          style={{ color: "hsl(var(--fr-muted))", opacity: operatorActive ? 1 : 0.35 }}
+          data-fr-operator-switch={operatorActive ? "on" : "off"}
+          aria-label={OPERATOR_STRINGS.switchAriaLabel}
+          aria-pressed={operatorActive}
+          onClick={() => setOperatorOn((v) => !v)}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.25" />
+            <circle cx="8" cy="8" r="2" fill="currentColor" />
+          </svg>
+        </button>
+      ) : null}
     </div>
     </OperatorControlsContext.Provider>
     </MarksProvider>

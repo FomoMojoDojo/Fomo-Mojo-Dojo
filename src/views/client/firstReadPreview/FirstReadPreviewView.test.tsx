@@ -31,6 +31,10 @@ vi.mock("@/hooks/useCompany", () => ({
   useCompany: () => ({ companies: [], activeCompany: null, setActiveCompanyId: () => {} }),
 }));
 vi.mock("@/hooks/useFirstReadOpenQuestions", () => ({ useFirstReadOpenQuestions: () => ({ questions: [] }) }));
+// U5 (2026-11-09): the view reads isAdmin to decide whether the operator switch exists at all. These
+// cases are about beat chrome, not the affordance, so they render as the operator — the state these
+// assertions were written against. The gate itself is proved in operatorToggle.test.tsx (g).
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u-1" }, isAdmin: true, loading: false }) }));
 
 import FirstReadPreviewView, { BEATS } from "./FirstReadPreviewView";
 

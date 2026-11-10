@@ -7,6 +7,11 @@
 //   (c) unmount + remount (a reload) → OFF again;
 //   (d) no storage API is touched by the toggle (localStorage / sessionStorage spies untouched, URL unchanged);
 //   (e) the switch is glyph-only: no text node, an SVG inside, aria-label + aria-pressed reflecting state, focusable.
+//   (g) U5 (2026-11-09) — isAdmin false: the switch is ABSENT, so there is no way in at all, and the
+//       operator surface cannot be reached by clicking anything. This is the gate that replaces "the
+//       route is admin-only": CV5 lands a signed-in client on this view, and the switch used to be a
+//       visible button with no auth check whose decide() reaches set_relevance_override and
+//       refresh-relevance-step. Every case above renders as the operator; this one renders as the client.
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
 import { EMPTY_FIRST_READ, type FirstReadPreviewData, type FRGapPair } from "./types";
@@ -50,12 +55,16 @@ vi.mock("@/hooks/useCompany", () => ({
   useCompany: () => ({ companies: [], activeCompany: null, setActiveCompanyId: () => {} }),
 }));
 vi.mock("@/hooks/useFirstReadOpenQuestions", () => ({ useFirstReadOpenQuestions: () => ({ questions: [] }) }));
+// U5 (2026-11-09): the affordance is gated on isAdmin, so a mount has to say which role it renders as.
+// Cases (a)–(f) are the operator's own view; (g) flips this to false and is the client's.
+let isAdmin = true;
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u-1" }, isAdmin, loading: false }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn(), functions: { invoke: vi.fn() } } }));
 
 import FirstReadPreviewView, { BEATS } from "./FirstReadPreviewView";
 
 beforeAll(() => { window.scrollTo = vi.fn() as unknown as typeof window.scrollTo; });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { isAdmin = true; vi.restoreAllMocks(); });
 
 const gapIndex = BEATS.findIndex((b) => b.key === "gap");
 const toGap = () => { for (let i = 0; i < gapIndex; i++) fireEvent.keyDown(window, { key: "ArrowRight" }); };
@@ -216,5 +225,53 @@ describe("(f) the way out is an operator affordance, behind the toggle", () => {
     fireEvent.click(container.querySelector(SEL_SWITCH)!);
     fireEvent.click(getByTestId("first-read-back"));
     expect(container.querySelector(SEL_SWITCH)!.getAttribute("data-fr-operator-switch")).toBe("on");
+  });
+});
+
+// ── (g) U5 · the client never sees the switch ─────────────────────────────────────────────────────
+describe("(g) isAdmin false: no switch, and no way to the operator surface", () => {
+  it("the switch is absent on every beat, and the read still renders", () => {
+    isAdmin = false;
+    const { container } = render(<FirstReadPreviewView />);
+    for (let i = 0; i < BEATS.length; i++) {
+      expect(container.querySelectorAll(SEL_SWITCH)).toHaveLength(0);
+      expect(container.querySelectorAll(SEL)).toHaveLength(0);
+      expect(container.querySelectorAll(SEL_PROV)).toHaveLength(0);
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+    }
+  });
+
+  it("the gap beat still shows the client read — the gate removes the affordance, not the page", () => {
+    isAdmin = false;
+    const { container } = render(<FirstReadPreviewView />);
+    toGap();
+    expect(container.textContent).toContain("geniant does not train models on client data.");
+    expect(container.querySelectorAll(SEL_SWITCH)).toHaveLength(0);
+  });
+
+  it("NON-VACUOUS: the same mount as an admin has exactly one switch", () => {
+    isAdmin = false;
+    const asClient = render(<FirstReadPreviewView />);
+    expect(asClient.container.querySelectorAll(SEL_SWITCH)).toHaveLength(0);
+    asClient.unmount();
+    isAdmin = true;
+    const asOperator = render(<FirstReadPreviewView />);
+    expect(asOperator.container.querySelectorAll(SEL_SWITCH)).toHaveLength(1);
+  });
+
+  it("a role that goes away takes the operator surface with it (no stale `true`)", () => {
+    // operatorActive = isAdmin && operatorOn, so the nodes depend on the role at render time and not
+    // only on the click that turned the switch on.
+    isAdmin = true;
+    const { container, unmount } = render(<FirstReadPreviewView />);
+    toGap();
+    fireEvent.click(container.querySelector(SEL_SWITCH)!);
+    expect(container.querySelectorAll(SEL).length).toBeGreaterThan(0);
+    unmount();
+    isAdmin = false;
+    const after = render(<FirstReadPreviewView />);
+    toGap();
+    expect(after.container.querySelectorAll(SEL)).toHaveLength(0);
+    expect(after.container.querySelectorAll(SEL_SWITCH)).toHaveLength(0);
   });
 });

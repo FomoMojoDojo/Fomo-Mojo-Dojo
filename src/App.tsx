@@ -377,7 +377,11 @@ const App = () => (
                 <Route path="/legacy/opportunities" element={<ModeAwareFocusRoute />} />
                 <Route path="/legacy/positioning" element={<InternalViewOnlyRoute><PositioningView /></InternalViewOnlyRoute>} />
                 <Route path="/legacy/analytics" element={<ModeAwareScoreRoute />} />
-                <Route path="/legacy/routes" element={<InternalViewOnlyRoute><RoutesView /></InternalViewOnlyRoute>} />
+                {/* U5 (2026-11-09): admin-gated like the rest. This route mounts RouteInspectPanel, whose
+                    handleSave fires refresh-mojo-score — an Option B path — and routes_select AND
+                    routes_update both carry a company_members arm, so a client with a membership could
+                    have driven it. InternalViewOnlyRoute checks the presentation mode, never the user. */}
+                <Route path="/legacy/routes" element={<AdminModeRoute><InternalViewOnlyRoute><RoutesView /></InternalViewOnlyRoute></AdminModeRoute>} />
                 <Route path="/legacy/movement" element={<InternalViewOnlyRoute><MovementView /></InternalViewOnlyRoute>} />
                 <Route path="/legacy/fmd" element={<AdminModeRoute><FMDStrategicField /></AdminModeRoute>} />
                 {/* First Read — presenter-driven five-act first-meeting rail. Admin-gated (presenter-driven; client never logs in). */}
