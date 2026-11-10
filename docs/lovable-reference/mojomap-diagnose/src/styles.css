@@ -1,0 +1,112 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@theme inline {
+  --font-display: "Space Grotesk", sans-serif;
+  --font-sans: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-primary: var(--foreground);
+  --color-primary-foreground: var(--background);
+  --color-dot: var(--dot);
+  --color-phase-first: var(--phase-first);
+  --color-phase-diagnose: var(--phase-diagnose);
+  --color-phase-focus: var(--phase-focus);
+  --color-phase-flow: var(--phase-flow);
+  --color-kind-echoed: var(--kind-echoed);
+  --color-kind-disputed: var(--kind-disputed);
+  --color-kind-notEchoed: var(--kind-not-echoed);
+  --color-kind-raised: var(--kind-raised);
+  --color-evidence: var(--evidence);
+  --color-next: var(--next);
+  --color-track: var(--track);
+  --color-tone-base: var(--tone-base);
+  --color-tone-goal: var(--tone-goal);
+  --color-tone-market: var(--tone-market);
+  --color-tone-base-ink: var(--tone-base-ink);
+  --color-tone-goal-ink: var(--tone-goal-ink);
+  --color-tone-market-ink: var(--tone-market-ink);
+}
+
+:root {
+  --background: #f4f3f1;
+  --foreground: #242323;
+  --muted-foreground: #8a8580;
+  --border: #d9d6d1;
+  --dot: #9cbe6f;
+  --phase-first: #cbc8c2;
+  --phase-diagnose: #b0c1de;
+  --phase-focus: #f3cd91;
+  --phase-flow: #bbd39c;
+  --kind-echoed: #9cbe6f;
+  --kind-disputed: #f6af3c;
+  --kind-not-echoed: #d0cdc8;
+  --kind-raised: #686464;
+  --evidence: #d6e5c1;
+  --next: #f8dfb3;
+  --track: #dedbd6;
+  --tone-base: #e3edd3;
+  --tone-base-ink: #6f9a3e;
+  --tone-goal: #fbe3b8;
+  --tone-goal-ink: #d98a12;
+  --tone-market: #dbe4f2;
+  --tone-market-ink: #4a6fa8;
+}
+
+:root {
+  --paper: #f6f1e8;
+  --surface: #fffdf8;
+  --recess: color-mix(in oklab, var(--paper) 70%, var(--surface));
+  --soft-shadow: 0 1px 2px rgba(60, 50, 30, 0.06), 0 12px 32px -12px rgba(60, 50, 30, 0.22);
+  --lift-shadow: 0 2px 4px rgba(60, 50, 30, 0.08), 0 20px 40px -14px rgba(60, 50, 30, 0.3);
+}
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-recess: var(--recess);
+  --shadow-soft: var(--soft-shadow);
+  --shadow-lift: var(--lift-shadow);
+}
+@keyframes draw { from { stroke-dashoffset: 1200; } to { stroke-dashoffset: 0; } }
+@utility draw-in {
+  stroke-dasharray: 1200;
+  animation: draw 1.6s cubic-bezier(.3,.7,.2,1) both;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@utility rise { animation: rise 500ms cubic-bezier(.2,.8,.2,1) both; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+@utility label {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+}
+
+@utility hatch {
+  background-image: repeating-linear-gradient(135deg, var(--kind-echoed) 0 1px, transparent 1px 5px);
+  background-color: var(--evidence);
+}
+
+@keyframes screen-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@utility screen-in {
+  animation: screen-in 150ms ease-out;
+}
+
+@layer base {
+  * { border-color: var(--color-border); border-radius: 0; }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+}

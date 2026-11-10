@@ -1,0 +1,942 @@
+/* DIAGNOSE · SLICE 1 — THE TOKEN AND SHAPE LAYER (spec "Tokens", Nov 6).
+ *
+ * EVERY hex in this slice lives in this file. A component carries class names and nothing else, so a
+ * token change happens once, here, and the screens cannot drift from the handoff.
+ *
+ * Type comes from the First Read's tokens — --fr-font-display is already Space Grotesk and
+ * --fr-font-mono is already JetBrains Mono, which the spec asks for, so this slice reuses them
+ * rather than restating the stacks. Everything else is new because the Diagnose palette is its own:
+ * the First Read's paper is #f5f4f2, Diagnose's is #f6f1e8, and the two must not be confused.
+ *
+ * SHAPE LAW (spec): SQUARE corners everywhere. The only round things are status dots (≤24px) and the
+ * three 96px outcome rings. There is exactly one border-radius: 999px in this file outside those two
+ * primitives — the composer/segment pills, which the spec itself calls pills. Everything else is 0,
+ * and .dg-page sets it so a stray utility class cannot round a corner. */
+
+.dg-page {
+  /* ── palette ── */
+  --dg-paper: #f6f1e8;
+  --dg-surface: #fffdf8;
+  --dg-ink: #242323;
+  --dg-muted: #6b665f;
+  --dg-track: #dedbd6;
+  --dg-hairline: rgba(36, 35, 35, 0.12);
+  --dg-dot: #9cbe6f;
+  --dg-amber: #f6af3c;
+  /* "Only the outside shows it" — the spec's third sub-line mark. */
+  --dg-outside: #d0cdc8;
+
+  /* ── tones (one per screen family) ── */
+  --dg-base-bg: #9cbe6f;
+  --dg-base-fill: #6f9a3e;
+  --dg-base-text: #4e7428;
+  --dg-goal-bg: #f6af3c;
+  --dg-goal-fill: #d98a12;
+  --dg-goal-text: #8a5300;
+  --dg-market-bg: #b0c1de;
+  --dg-market-fill: #4a6fa8;
+  --dg-market-text: #3b5d93;
+
+  /* ── kind chips ── */
+  --dg-chip-need: #f6af3c;
+  --dg-chip-recipients: #9cbe6f;
+  --dg-chip-referrers: #b0c1de;
+  --dg-chip-funders: #f6af3c;
+  --dg-chip-partners: #d0cdc8;
+  --dg-chip-users: #8ccbc1;
+  --dg-chip-underway: #242323;
+  --dg-chip-planned: transparent;
+  --dg-chip-stalled: #686464;
+
+  /* ── home-only surfaces ── */
+  --dg-inset: #efe9dd;
+  --dg-needs: #d6e5c1;
+  /* The Before timeline card. One shade off --dg-inset, and deliberately so: the ruling names
+   * #efe9de for the card and #efe9dd for the Today panel. */
+  --dg-card: #efe9de;
+  /* The Today card's kicker chip rides on the card's own tone, so it is the surface at 75%. */
+  --dg-kicker: rgba(255, 253, 248, 0.75);
+
+  /* ── THE LOVABLE CARD TINTS (K2). The spec's tone bgs (#9cbe6f / #f6af3c / #b0c1de) are the
+   * SATURATED marks used for chips and fills; the handoff's --tone-* values are the card washes a
+   * 470px card can carry behind 30px type. K2 signs these for the stack: "Card tint = Lovable
+   * --tone-* bg values unless Skoobs rules otherwise." */
+  --dg-tint-base: #e3edd3;
+  --dg-tint-goal: #fbe3b8;
+  --dg-tint-market: #dbe4f2;
+  /* The handoff's recess (paper over surface) and its two shadows. */
+  --dg-recess: color-mix(in oklab, var(--dg-paper) 70%, var(--dg-surface));
+  /* The handoff's --next: the fill of the innermost (probable) ring. */
+  --dg-next: #f8dfb3;
+  --dg-lift: 0 2px 4px rgba(60, 50, 30, 0.08), 0 20px 40px -14px rgba(60, 50, 30, 0.3);
+
+  /* ── the one shadow ── */
+  --dg-shadow: 0 1px 2px rgba(60, 50, 30, 0.06), 0 12px 32px -12px rgba(60, 50, 30, 0.22);
+
+  /* ── type (borrowed; the spec's own stacks) ── */
+  --dg-font: var(--fr-font-display, "Space Grotesk", ui-sans-serif, system-ui, sans-serif);
+  --dg-mono: var(--fr-font-mono, "JetBrains Mono", ui-monospace, Menlo, monospace);
+
+  /* THE PAGE IS A FULL-HEIGHT COLUMN (H-1). Without this the body is a block, a short screen
+   * leaves the bar floating mid-page over empty paper, and the home strip is cut off at the fold. */
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--dg-paper);
+  color: var(--dg-ink);
+  font-family: var(--dg-font);
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* THE SHAPE LAW, enforced rather than remembered. */
+.dg-page *,
+.dg-page *::before,
+.dg-page *::after { border-radius: 0; box-sizing: border-box; }
+.dg-page .dg-dot,
+.dg-page .dg-ring { border-radius: 999px; }
+/* .dg-pill is NOT here. The spec's shape law is absolute — "SQUARE corners everywhere. Only true
+ * circles are round: status dots (<=24px) and the three 96px outcome rings" — and it calls the Next
+ * button, the segmented group and the cone's name tags "pills" in the same breath. The law wins;
+ * "pill" names the token, not the radius. The cone's ellipses and the rings set their own radius. */
+
+/* ── tone selection: one attribute on the screen root ── */
+.dg-page[data-dg-tone="base"] { --dg-tone-bg: var(--dg-base-bg); --dg-tone-fill: var(--dg-base-fill); --dg-tone-text: var(--dg-base-text); }
+.dg-page[data-dg-tone="goal"] { --dg-tone-bg: var(--dg-goal-bg); --dg-tone-fill: var(--dg-goal-fill); --dg-tone-text: var(--dg-goal-text); }
+.dg-page[data-dg-tone="market"] { --dg-tone-bg: var(--dg-market-bg); --dg-tone-fill: var(--dg-market-fill); --dg-tone-text: var(--dg-market-text); }
+.dg-page { --dg-tone-bg: var(--dg-base-bg); --dg-tone-fill: var(--dg-base-fill); --dg-tone-text: var(--dg-base-text); }
+
+/* ── type primitives ───────────────────────────────────────────────────────────────────────── */
+
+.dg-mono {
+  font-family: var(--dg-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.dg-h {
+  font-size: 52px;
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  margin: 0;
+  max-width: 22ch;
+}
+/* The hero's final . or ? in dot green (spec). The screens wrap it in this span. */
+.dg-h-stop { color: var(--dg-dot); }
+.dg-lede {
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--dg-muted);
+  margin: 0;
+  max-width: 72ch;
+}
+.dg-statement { font-size: 20px; font-weight: 500; line-height: 1.35; margin: 0; }
+.dg-body { font-size: 15px; line-height: 1.55; }
+.dg-small { font-size: 13px; line-height: 1.5; color: var(--dg-muted); }
+
+/* ── chrome ────────────────────────────────────────────────────────────────────────────────── */
+
+.dg-crumb { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.dg-crumb-brand { font-weight: 700; }
+.dg-crumb-sep { color: var(--dg-muted); }
+.dg-phase {
+  background: var(--dg-market-bg);
+  font-size: 13px;
+  padding: 4px 18px;
+  clip-path: polygon(9px 0, 100% 0, calc(100% - 9px) 100%, 0 100%);
+}
+
+/* THE HANDOFF'S SHELL HEADER: `flex items-center gap-6 px-10 pt-6`, and no rule — the hairline
+ * under the header was ours, not the handoff's; "few boxes: hairlines and whitespace" spends its
+ * one hairline on the bottom bar, and the header floats on the paper.
+ *
+ * IT STAYS STICKY. The handoff's is not, but the port's rule is that the handoff supplies
+ * geometry, and sticky is behaviour: the spec puts ALL navigation in the top header, and W6's
+ * eighteen market rows would put Back and Next off the screen the moment anyone scrolled. The 2px
+ * paper shadow is the same seam guard the bottom bar carries. */
+.dg-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  box-shadow: 0 2px 0 0 var(--dg-paper);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 40px;
+  background: var(--dg-paper);
+  flex-wrap: nowrap;
+  flex: none;
+}
+/* The breadcrumb yields; Back and Next never do (W-2). A long company name truncates instead of
+ * widening the row past the viewport. */
+.dg-crumb { min-width: 0; }
+.dg-crumb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dg-header-right { display: flex; align-items: center; gap: 20px; flex: none; }
+.dg-nav { flex: none; }
+
+.dg-segments { display: flex; align-items: center; gap: 6px; }
+.dg-segment { height: 8px; width: 16px; background: var(--dg-track); transition: width 150ms ease; }
+.dg-segment[data-state="current"] { width: 32px; background: var(--dg-tone-fill); }
+.dg-segment[data-state="done"] { background: var(--dg-ink); opacity: 0.5; }
+
+.dg-ghost {
+  background: none;
+  border: 1px solid var(--dg-hairline);
+  color: var(--dg-muted);
+  font-family: var(--dg-font);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 8px 16px;
+}
+.dg-ghost:hover { color: var(--dg-ink); border-color: var(--dg-ink); }
+.dg-next {
+  background: var(--dg-ink);
+  color: var(--dg-surface);
+  border: none;
+  font-family: var(--dg-font);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 10px 20px;
+  cursor: pointer;
+}
+.dg-pill { padding: 8px 18px; }
+
+/* ── bottom bar + score ────────────────────────────────────────────────────────────────────── */
+
+.dg-bottom {
+  position: sticky;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 84px;
+  background: var(--dg-paper);
+  border-top: 1px solid var(--dg-hairline);
+  flex: none;
+  /* THE SEAM. The bar's top lands on a fractional pixel whenever the body above it does, so its
+   * painted box can stop one device row short of the viewport's bottom and the last line of the
+   * list shows through. Two pixels of paper under the bar close it without touching layout. */
+  box-shadow: 0 2px 0 0 var(--dg-paper);
+}
+/* align-items matters here: the left half now grows to fill the bar, and a stretched column would
+ * stretch Welcome's lone ghost button across the whole width. */
+.dg-bottom-left { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 6px; padding: 14px 40px; min-width: 0; flex: 1 1 auto; }
+.dg-score {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 14px 28px;
+  background: var(--dg-surface);
+  border-left: 1px solid var(--dg-hairline);
+  box-shadow: 0 2px 0 0 var(--dg-surface);
+}
+.dg-score-row { display: flex; align-items: center; gap: 8px; }
+.dg-score-value { font-size: 34px; font-weight: 700; line-height: 1; }
+.dg-score--app .dg-score-value { font-size: 56px; }
+
+.dg-dot { display: inline-block; height: 8px; width: 8px; background: var(--dg-dot); flex: none; }
+.dg-dot--amber { background: var(--dg-amber); }
+.dg-dot--ink { background: var(--dg-ink); }
+.dg-dot--outside { background: var(--dg-outside); }
+.dg-dot--24 { height: 24px; width: 24px; }
+
+/* ── walk body ─────────────────────────────────────────────────────────────────────────────── */
+
+/* THE BODY IS AN EXPLICIT STACKING LEVEL BELOW THE BAR. Its 150ms enter animates a transform, and
+ * a filling transform animation leaves the element on its own composited layer — which paints over
+ * the sticky bar's opaque background, so the last row of the list bled through the bar's bottom
+ * edge. Positioned at z 0, the bar's z 40 wins deterministically, composited or not. */
+.dg-walk { position: relative; z-index: 0; flex: 1 1 auto; width: 100%; max-width: 1280px; margin: 0 auto; padding: 32px 40px 40px; display: grid; grid-template-columns: 340px 1fr; gap: 72px; align-content: start; }
+.dg-walk-hero { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 18px; }
+.dg-walk-left { display: flex; flex-direction: column; gap: 36px; }
+.dg-walk-group { display: flex; flex-direction: column; gap: 10px; }
+.dg-walk-right { display: flex; flex-direction: column; gap: 18px; }
+.dg-pattern { font-family: var(--dg-mono); font-size: 13px; line-height: 1.6; color: var(--dg-ink); }
+
+.dg-rows { display: flex; flex-direction: column; }
+.dg-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 32px;
+  align-items: start;
+  padding: 24px 0;
+  border-top: 1px solid var(--dg-hairline);
+}
+.dg-rows > .dg-row:last-child { border-bottom: 1px solid var(--dg-hairline); }
+/* The handoff's send list is a thinner row than its base rows: `py-3.5`, not `py-6`. */
+.dg-rows[data-dg-list="files"] > .dg-row { padding: 14px 0; align-items: center; }
+.dg-row-index { font-family: var(--dg-mono); font-size: 11px; color: var(--dg-muted); padding-top: 4px; }
+.dg-row-main { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.dg-row-source { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-family: var(--dg-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dg-muted); }
+.dg-row-actions { display: flex; align-items: center; gap: 8px; padding-top: 2px; }
+.dg-row-btn { background: none; border: 1px solid var(--dg-hairline); color: var(--dg-ink); font-family: var(--dg-font); font-size: 13px; padding: 7px 14px; cursor: pointer; }
+.dg-row-btn[aria-pressed="true"] { background: var(--dg-ink); color: var(--dg-surface); border-color: var(--dg-ink); }
+
+.dg-subline { display: flex; align-items: baseline; gap: 10px; font-size: 13px; line-height: 1.5; }
+.dg-subline-mark { margin-top: 6px; flex: none; }
+.dg-subline-label { font-weight: 700; }
+.dg-subline-text { color: var(--dg-muted); }
+.dg-ring { height: 10px; width: 10px; border: 1.5px solid var(--dg-ink); flex: none; }
+.dg-ring--amber { border-color: var(--dg-amber); }
+.dg-square { height: 9px; width: 9px; border: 1.5px solid var(--dg-ink); flex: none; }
+
+.dg-chip {
+  font-family: var(--dg-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border: 1px solid var(--dg-hairline);
+}
+.dg-chip[data-kind="need"] { background: var(--dg-chip-need); border-color: transparent; }
+.dg-chip[data-kind="recipients"] { background: var(--dg-chip-recipients); border-color: transparent; }
+.dg-chip[data-kind="referrers"] { background: var(--dg-chip-referrers); border-color: transparent; }
+.dg-chip[data-kind="funders"] { background: var(--dg-chip-funders); border-color: transparent; }
+.dg-chip[data-kind="partners"] { background: var(--dg-chip-partners); border-color: transparent; }
+.dg-chip[data-kind="users"] { background: var(--dg-chip-users); border-color: transparent; }
+.dg-chip[data-kind="plain"] { background: none; }
+/* K4 — the handoff's "Needs you" chip: dark ink, surface text, mono 9px. */
+.dg-chip[data-kind="dark"] { background: var(--dg-ink); color: var(--dg-surface); border-color: var(--dg-ink); font-size: 9px; white-space: nowrap; }
+
+.dg-composer { display: flex; align-items: center; gap: 10px; }
+.dg-composer-field {
+  display: flex;
+  align-items: center;
+  background: var(--dg-surface);
+  border: 1px solid var(--dg-hairline);
+  padding: 4px 4px 4px 18px;
+  width: 420px;
+  max-width: 100%;
+}
+.dg-composer-input { background: none; border: none; outline: none; font-family: var(--dg-font); font-size: 14px; color: var(--dg-ink); flex: 1; padding: 8px 0; }
+.dg-composer-input::placeholder { color: var(--dg-muted); }
+.dg-noneyet { background: none; border: 1px solid var(--dg-ink); color: var(--dg-ink); font-family: var(--dg-font); font-size: 14px; padding: 9px 18px; cursor: pointer; }
+.dg-noneyet[aria-pressed="true"] { background: var(--dg-ink); color: var(--dg-surface); }
+
+/* The one box: the Send drop zone (spec — a box only for things you grab or drop). */
+.dg-drop {
+  border: 2px dashed var(--dg-track);
+  padding: 72px 32px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+.dg-drop[data-dragging="true"] { border-color: var(--dg-dot); background: var(--dg-surface); }
+
+/* The three 96px outcome rings on Welcome. */
+.dg-rings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 48px; position: relative; }
+.dg-rings::before { content: ""; position: absolute; left: 48px; right: 48px; top: 48px; height: 1px; background: var(--dg-hairline); }
+.dg-ring96 {
+  height: 96px;
+  width: 96px;
+  border: 2px dashed var(--dg-track);
+  border-radius: 999px;
+  background: var(--dg-paper);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+}
+.dg-ring96--base { border-color: var(--dg-base-bg); }
+.dg-ring96--goal { border-color: var(--dg-goal-bg); }
+.dg-ring96--market { border-color: var(--dg-market-bg); }
+
+.dg-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 56px; }
+.dg-stack { display: flex; flex-direction: column; gap: 12px; }
+.dg-stack-lg { display: flex; flex-direction: column; gap: 28px; }
+.dg-hairline-top { border-top: 1px solid var(--dg-hairline); padding-top: 18px; }
+.dg-emph { font-weight: 700; }
+
+/* ── MH1 HOME — PORTED FROM routes/index.tsx + CardStack.tsx + FutureCone.tsx ───────────────────
+ *
+ * EVERY NUMBER IN THIS BLOCK IS THE HANDOFF'S. Where the spec's prose and the handoff disagree, the
+ * port's rule is that the handoff supplies layout, geometry, spacing, type sizes, tints and motion:
+ *   · card stack 520x470 (spec prose said 500x430)
+ *   · Before cards 190px (spec prose said 180)
+ *   · Before 760 wide (spec prose said 640)
+ *   · the segmented group's ACTIVE button is dark ink (spec prose said surface + shadow)
+ * Square corners, the signed strings and the SCORE RULE are not the handoff's to give, and stay.
+ *
+ * THE PAGE IS NO LONGER CLAMPED TO ONE VIEWPORT. The handoff's home is `h-screen min-h-[820px]
+ * overflow-hidden` — it CLIPS what does not fit. We do not clip: the column grows to what its
+ * tallest section needs, the page scrolls, and the sticky bar stays on the viewport's bottom edge.
+ * That is why the floor below is a measurement and not the spec's 560 minimum. */
+.dg-page[data-dg-screen="home"] { min-height: 100vh; }
+
+/* Title row: the handoff's `flex items-end justify-between px-10 pt-10`. */
+.dg-home-head { position: relative; z-index: 0; flex: none; display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; padding: 40px 40px 0; }
+.dg-home-title { max-width: none; font-size: 44px; line-height: 1; }
+.dg-home-head .dg-lede { margin-top: 8px; }
+
+/* K6 · the segmented group: `flex gap-1 bg-surface p-1 shadow-soft`, buttons `min-h-10 px-5
+ * text-[14px] font-medium`, active `bg-foreground text-background`, else `hover:bg-track`. */
+.dg-seg-group { display: flex; gap: 4px; padding: 4px; background: var(--dg-surface); box-shadow: var(--dg-shadow); flex: none; }
+.dg-seg-btn {
+  min-height: 40px;
+  background: none;
+  border: none;
+  font-family: var(--dg-font);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 0 20px;
+  cursor: pointer;
+  color: var(--dg-ink);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.dg-seg-btn[aria-pressed="true"] { background: var(--dg-ink); color: var(--dg-surface); }
+.dg-seg-btn:hover:not([aria-pressed="true"]) { background: var(--dg-track); }
+
+.dg-nav { display: flex; align-items: center; gap: 18px; }
+.dg-nav-btn { background: none; border: none; font-family: var(--dg-font); font-size: 14px; color: var(--dg-ink); cursor: pointer; padding: 0; display: inline-flex; align-items: center; gap: 8px; }
+.dg-nav-btn:disabled { color: var(--dg-muted); cursor: default; }
+/* M1 · THE APP BAR'S NAVIGATION. The handoff's footer buttons are `min-h-11 px-4 text-[14px]
+ * font-medium hover:bg-track`; square here. The MojoScore block keeps the page edge (spec), so
+ * What changed sits just left of it rather than to its right as the handoff has it. */
+.dg-bottom-nav { display: flex; align-items: center; gap: 4px; padding: 0 40px; flex: 1 1 auto; min-width: 0; }
+.dg-bar-btn {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  background: none;
+  border: none;
+  font-family: var(--dg-font);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--dg-ink);
+  cursor: pointer;
+}
+.dg-bar-btn:disabled { color: var(--dg-muted); cursor: default; }
+.dg-bar-btn:hover:not(:disabled) { background: var(--dg-track); }
+.dg-whatchanged { align-self: center; flex: none; margin-right: 16px; background: var(--dg-surface); box-shadow: var(--dg-shadow); padding: 0 20px; }
+
+/* The handoff's Add: `border-2 py-1 pl-1.5 pr-4` with a filled 32px square holding the glyph. */
+.dg-add { position: relative; margin-left: 8px; }
+.dg-nav-add { border: 2px solid var(--dg-ink); padding: 4px 16px 4px 6px; }
+.dg-nav-add:hover:not(:disabled) { background: none; }
+
+/* THE MENU OPENS UPWARD (M1): the button is at the foot of the page now, so the handoff's own
+ * `bottom-14` placement is the only one that fits. Its targets are disabled — no destination in
+ * slice 1 — but the menu is real, and its strings were signed for exactly this. */
+.dg-add-menu {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 0;
+  z-index: 50;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: var(--dg-ink);
+  color: var(--dg-surface);
+  box-shadow: var(--dg-lift);
+}
+.dg-add-title { color: var(--dg-dot); }
+.dg-add-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 12px;
+  background: none;
+  border: 1px solid rgba(255, 253, 248, 0.2);
+  color: inherit;
+  font-family: var(--dg-font);
+  cursor: default;
+}
+.dg-add-item-t { font-size: 15px; font-weight: 600; }
+.dg-add-item-d { font-size: 12px; line-height: 1.4; opacity: 0.7; }
+.dg-nav-add-sq {
+  background: var(--dg-ink);
+  color: var(--dg-surface);
+  height: 32px;
+  width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  flex: none;
+}
+.dg-nav-add-glyph { display: inline-block; transition: transform 150ms ease; }
+.dg-nav-add-glyph[data-open="true"] { transform: rotate(45deg); }
+/* The badge is a mark, not a figure: slice 1 has no store for n (P12), so the square carries
+ * nothing. G3's treatment of a zero segment, applied to a count that does not exist yet. */
+.dg-nav-badge { height: 24px; width: 24px; background: var(--dg-amber); flex: none; }
+
+/* ── the strip: the handoff's canvas (`min-h-0 flex-1 overflow-x-auto` on a 28px dot grid) ───── */
+.dg-strip {
+  flex: 1 1 auto;
+  /* THE FLOOR IS WHAT THE TALLEST SECTION NEEDS. Today is the tallest: a 470px card stack under
+   * its 17px panel label, beside five In-focus rows at the handoff's 24px padding — and the inset
+   * must FILL the strip (K1), so a floor below what the inset's content needs would cut the panel
+   * off rather than shrink it. Measured, then pinned here; test (h2) fails on a lower floor. */
+  min-height: 824px;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  cursor: grab;
+  background-image: radial-gradient(var(--dg-hairline) 1px, transparent 1px);
+  background-size: 28px 28px;
+  /* the grid is the map's paper, so it travels with the map — the handoff paints it on the
+   * inner w-max track, and `local` is the same thing on the scroll container itself */
+  background-attachment: local;
+}
+.dg-strip::-webkit-scrollbar { display: none; }
+.dg-strip[data-dragging="true"] { cursor: grabbing; }
+
+/* Section paddings are the handoff's, per zone. */
+.dg-sec { flex: none; display: flex; flex-direction: column; }
+.dg-sec > .dg-mono { color: var(--dg-muted); flex: none; }
+.dg-sec--before { width: 760px; padding: 24px 0 40px; }
+.dg-sec--before > .dg-mono { padding: 0 40px; }
+.dg-sec--today { width: 1120px; padding: 24px 80px 40px; }
+.dg-sec--today > .dg-score-row { color: var(--dg-ink); flex: none; }
+.dg-sec--ahead { width: 2340px; padding: 24px 40px 16px 0; }
+/* The band the handoff calls `relative mt-4 flex-1`: the one flexible row inside a section. */
+.dg-band { position: relative; margin-top: 16px; flex: 1 1 auto; min-height: 0; }
+
+/* ── BEFORE: the handoff's timeline — a 330px block centred on the band, hairline at 170 ──────── */
+.dg-timeline { position: absolute; left: 0; right: 0; top: calc(50% - 170px); height: 330px; }
+.dg-tl-axis { position: absolute; left: 70px; right: 0; top: 170px; height: 1px; background: var(--dg-hairline); }
+.dg-tl-point { position: absolute; top: 0; height: 100%; }
+.dg-tl-stem { position: absolute; left: 0; top: 170px; width: 0; border-left: 1px dashed var(--dg-hairline); }
+.dg-tl-point[data-side="above"] .dg-tl-stem { height: 80px; transform: translateY(-100%); }
+.dg-tl-point[data-side="below"] .dg-tl-stem { height: 52px; }
+.dg-tl-ring {
+  position: absolute;
+  left: -9px;
+  top: 161px;
+  height: 18px;
+  width: 18px;
+  border: 2px solid var(--dg-ink);
+  border-radius: 999px;
+  background: var(--dg-surface);
+  z-index: 1;
+}
+.dg-tl-card {
+  position: absolute;
+  left: -16px;
+  width: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  background: var(--dg-recess);
+  border: 1px solid var(--dg-hairline);
+  box-shadow: inset 0 1px 2px rgba(60, 50, 30, 0.1);
+}
+.dg-tl-point[data-side="above"] .dg-tl-card { top: 30px; }
+.dg-tl-point[data-side="below"] .dg-tl-card { top: 222px; }
+.dg-tl-card > .dg-mono { color: var(--dg-muted); }
+.dg-tl-title { font-size: 16px; font-weight: 600; line-height: 1.2; }
+.dg-tl-note { font-size: 12px; line-height: 1.4; color: var(--dg-muted); }
+
+/* ── TODAY: the inset panel fills the band, content vertically centred (K1) ──────────────────── */
+/* The time line runs straight through Today and out both sides, so it continues into the cone. */
+.dg-today-axis { position: absolute; left: -80px; right: -80px; top: 50%; height: 1px; background: rgba(36, 35, 35, 0.4); }
+.dg-inset {
+  position: relative;
+  height: 100%;
+  margin-left: -40px;
+  margin-right: -80px;
+  display: grid;
+  grid-template-columns: 560px 1fr;
+  align-items: center;
+  gap: 80px;
+  padding: 40px 40px 64px;
+  background: var(--dg-inset);
+  box-shadow: inset 0 2px 6px rgba(60, 50, 30, 0.07), inset 0 14px 32px -20px rgba(60, 50, 30, 0.12);
+}
+.dg-panel { min-width: 0; }
+.dg-panel-label { display: block; font-size: 17px; font-weight: 500; margin-bottom: 20px; }
+
+/* K2 · the card stack, the handoff's geometry exactly: 520x470, 28px padding, 16px gaps, the pager
+ * inside the card's top right, the dark CTA bottom left, the ‹ › buttons bottom right INSIDE the
+ * card, back cards offset 14px / rotated 1.6deg / scaled 0.97 per step and tinted per tone. */
+.dg-cardstack { position: relative; height: 470px; width: 520px; flex: none; }
+.dg-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 28px;
+  background: var(--dg-surface);
+  border: 1px solid var(--dg-hairline);
+  box-shadow: var(--dg-shadow);
+  transform-origin: center;
+  /* the handoff's 500ms slide, on its own easing */
+  transition: transform 500ms cubic-bezier(0.34, 1.4, 0.5, 1), opacity 500ms cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+.dg-card[data-tone="base"] { background: var(--dg-tint-base); }
+.dg-card[data-tone="goal"] { background: var(--dg-tint-goal); }
+.dg-card[data-tone="market"] { background: var(--dg-tint-market); }
+.dg-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dg-card-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--dg-kicker);
+  padding: 6px 12px;
+  font-family: var(--dg-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.dg-card[data-tone="base"] .dg-card-kicker .dg-dot { background: var(--dg-base-fill); }
+.dg-card[data-tone="goal"] .dg-card-kicker .dg-dot { background: var(--dg-goal-fill); }
+.dg-card[data-tone="market"] .dg-card-kicker .dg-dot { background: var(--dg-market-fill); }
+/* The pager rides INSIDE the card, top right (K2) — not above the stack. */
+.dg-card-pager { font-family: var(--dg-mono); font-size: 10px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dg-muted); white-space: nowrap; }
+.dg-card-h { font-size: 32px; font-weight: 700; line-height: 1.05; letter-spacing: -0.02em; margin: 0; }
+.dg-card-body { font-size: 16px; line-height: 1.6; color: var(--dg-muted); margin: 0; }
+.dg-card-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.dg-card-cta {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 20px;
+  background: var(--dg-ink);
+  color: var(--dg-surface);
+  border: none;
+  font-family: var(--dg-font);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.dg-card-cta:disabled { cursor: default; }
+.dg-pager { display: flex; gap: 8px; flex: none; }
+.dg-pager-btn {
+  height: 44px;
+  width: 44px;
+  background: none;
+  border: 1px solid rgba(36, 35, 35, 0.3);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--dg-ink);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.dg-pager-btn:hover { background: var(--dg-ink); color: var(--dg-surface); }
+
+/* K3 · the base rows inside "Where {company} stands": the handoff's bar row
+ * (`grid-cols-[110px_1fr_90px] items-center gap-3 text-sm`, track `h-2`), widened to 150px because
+ * the signed label "Who {company} serves" does not fit 110. THE FILL IS COMPUTED: sides of the part
+ * present on the map, over two. No percentage is typed. */
+.dg-base-rows { display: flex; flex-direction: column; gap: 10px; }
+.dg-base-row { display: grid; grid-template-columns: 150px 1fr 90px; align-items: center; gap: 12px; font-size: 14px; }
+.dg-base-name { font-weight: 500; }
+.dg-base-track { display: block; height: 8px; background: var(--dg-kicker); overflow: hidden; }
+.dg-base-fill { display: block; height: 100%; transition: width 700ms ease; }
+.dg-card[data-tone="base"] .dg-base-fill { background: var(--dg-base-fill); }
+.dg-card[data-tone="goal"] .dg-base-fill { background: var(--dg-goal-fill); }
+.dg-card[data-tone="market"] .dg-base-fill { background: var(--dg-market-fill); }
+.dg-base-state { font-size: 12px; color: var(--dg-muted); text-align: right; }
+/* Card 1's roles, one line each (K3), on the handoff's outcome-row rhythm. */
+.dg-role-rows { display: flex; flex-direction: column; gap: 8px; }
+.dg-role-row { display: flex; align-items: center; gap: 12px; font-size: 17px; font-weight: 600; }
+
+/* K4 · In focus: the handoff's row with the brief's measures — 24px padding, 20px title, 16px sub,
+ * 16px gap, a dark NEEDS chip, and a dashed row for what is not yet. */
+/* N3 — a list whose rows the data cannot justify renders its signed empty state instead. */
+.dg-rows-empty {
+  display: block;
+  padding: 18px 20px;
+  border: 1px dashed rgba(36, 35, 35, 0.3);
+  font-size: 15px;
+  color: var(--dg-muted);
+}
+.dg-focus-list { display: flex; flex-direction: column; gap: 16px; }
+.dg-focus-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 24px;
+  background: var(--dg-surface);
+  border: 1px solid transparent;
+  box-shadow: var(--dg-shadow);
+}
+.dg-focus-row[data-state="needs"] { background: var(--dg-needs); }
+.dg-focus-row[data-state="notyet"] { background: none; border: 1px dashed rgba(36, 35, 35, 0.3); box-shadow: none; }
+.dg-focus-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dg-focus-label { font-size: 20px; font-weight: 600; line-height: 1.25; }
+.dg-focus-notes { display: flex; flex-wrap: wrap; gap: 8px; font-size: 16px; line-height: 1.4; color: var(--dg-muted); }
+.dg-focus-note { color: var(--dg-muted); }
+/* N8 — the legend is swatches. The white one is a bordered square so it reads on paper; the green
+ * and the dashed ones are the row backgrounds they stand for. */
+.dg-focus-legend, .dg-cone-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; flex: none; margin-top: 12px; }
+/* THE CONE'S LEGEND STICKS TO THE READER. The Ahead zone is 2340px wide and its legend sat at the
+ * zone's left edge — so at the one scroll position where the rings and the band are on screen, the
+ * key to them was 1500px off it. Sticky keeps it under whatever part of the cone is being read. */
+.dg-cone-legend { position: sticky; left: 0; width: max-content; }
+.dg-leg { display: inline-flex; align-items: center; gap: 8px; }
+.dg-swatch { display: inline-block; height: 14px; width: 14px; flex: none; }
+.dg-swatch[data-kind="underway"] { background: var(--dg-surface); border: 1px solid var(--dg-hairline); box-shadow: var(--dg-shadow); }
+.dg-swatch[data-kind="needs"] { background: var(--dg-needs); }
+.dg-swatch[data-kind="notyet"] { background: none; border: 1px dashed rgba(36, 35, 35, 0.4); }
+.dg-swatch[data-kind="amber"] { background: var(--dg-amber); }
+.dg-swatch[data-kind="dashed"] {
+  height: 0;
+  width: 26px;
+  border-top: 1.25px dashed var(--dg-ink);
+  opacity: 0.45;
+}
+/* A ring's swatch is drawn the way its ring is: surface-filled with a hairline, and dashed for
+ * Probable, which is empty until P7. A swatch that does not match its ring is worse than none. */
+.dg-swatch[data-kind="ring"] {
+  width: 20px;
+  border: 1px solid var(--dg-muted);
+  border-radius: 50%;
+  background: var(--dg-surface);
+  opacity: 0.7;
+}
+.dg-swatch[data-kind="ring"][data-ring="probable"] { border-style: dashed; }
+.dg-panel > .dg-small { display: block; margin-top: 16px; }
+
+/* N5 (Nov 9) — THE BOTTOM SCRUBBER IS WITHDRAWN. Its rules are gone with it rather than left to
+ * rot: a selector nothing renders is a selector the next reader has to prove unused. */
+
+/* ── K5 · THE FUTURES CONE — ported from FutureCone.tsx ─────────────────────────────────────────
+ *
+ * The handoff's own coordinate space, unscaled: AX 80, AY 320, EX 1760, H 640, and the four rings
+ * at their BASE radii (possible 64x250, plausible 50x190, goal 38x110, probable 18x44). With
+ * AY == H/2 the handoff's vertical stretch factor k is exactly 1, so these ARE its positions.
+ *
+ * W is 2300, not the handoff's 2200: its goal ring is labelled "Your goal · 61", four characters
+ * wide, and ours carries the signed "{company}'s goal · chosen at the end of Diagnose" — so the
+ * right-hand label lane is 300px and the box grows by 100 to hold it.
+ *
+ * The paint lives here, keyed by class, so no component carries a colour — SVG geometry and paint
+ * are CSS properties, which is also why custom properties resolve inside the svg. */
+.dg-cone { position: relative; flex: 1 1 auto; min-height: 0; margin-top: 16px; display: flex; align-items: center; }
+.dg-cone-box { position: relative; width: 2300px; height: 640px; flex: none; }
+.dg-cone-svg { position: absolute; left: 0; top: 0; overflow: visible; }
+
+.dg-cone-axis { stroke: var(--dg-ink); stroke-width: 1.5; fill: none; }
+.dg-cone-arrow { stroke: var(--dg-ink); stroke-width: 1.5; fill: none; }
+.dg-cone-vert { stroke: var(--dg-muted); stroke-width: 1; stroke-dasharray: 2 6; }
+.dg-cone-outline { stroke: var(--dg-muted); stroke-opacity: 0.3; stroke-width: 0.75; fill: none; }
+.dg-cone-outline[data-ring="possible"] { stroke-opacity: 0.5; }
+/* R5 — K5's wedge from Today to the goal is withdrawn until a goal is chosen; its rule goes with
+ * it, so nothing can quietly render one again under the old class. */
+.dg-cone-ell { stroke: var(--dg-muted); stroke-opacity: 0.5; stroke-width: 0.75; fill: var(--dg-surface); fill-opacity: 0.9; }
+.dg-cone-ell[data-ring="possible"] { fill-opacity: 0.6; }
+/* N1 — PROBABLE IS EMPTY until P7, so it is not filled. The amber it used to carry now belongs to
+ * the goal marker alone, and two amber shapes in one cone read as two goals. */
+.dg-cone-ell[data-ring="probable"] { stroke-dasharray: 4 4; }
+/* N1 — THE GOAL IS A MARKER, NOT A RING. A dashed amber ellipse read as a zone with room in it;
+ * the goal is one point the company has not chosen yet, so it is one amber square, and the shape
+ * law keeps it square. It stays empty until a goal exists — there is nothing to put in a marker. */
+.dg-cone-goal { fill: var(--dg-amber); stroke: var(--dg-ink); stroke-width: 1.5; }
+.dg-cone-leader { stroke: var(--dg-muted); stroke-opacity: 0.5; stroke-width: 1; stroke-dasharray: 2 4; }
+.dg-cone-ghost { stroke: var(--dg-outside); stroke-width: 1; stroke-dasharray: 1 5; }
+/* N3 — EVERY STROKE IS FAINT AND DASHED, because every route here is a generated route idea and
+ * nothing in the data says otherwise. M2 keeps the weight: ink at 45%, 1.25px at rest; full ink at
+ * 2px for the one being pointed at, and nothing else moves.
+ *
+ * O2 — THE BAND is the same stroke closed into a shape: one zone whose routes do not differ by
+ * evidence count is one band, not a fan of lines pretending to be different futures. */
+.dg-cone-line, .dg-cone-band {
+  stroke: var(--dg-ink);
+  stroke-opacity: 0.45;
+  stroke-width: 1.25;
+  stroke-dasharray: 6 5;
+  fill: none;
+  transition: stroke-opacity 150ms ease, stroke-width 150ms ease;
+}
+.dg-cone-band { fill: var(--dg-ink); fill-opacity: 0.04; }
+.dg-cone-end { fill: var(--dg-ink); stroke: none; transition: fill-opacity 150ms ease; }
+.dg-cone-lane[data-on="true"] .dg-cone-line,
+.dg-cone-lane[data-on="true"] .dg-cone-band { stroke-opacity: 1; stroke-width: 2; }
+.dg-cone-lane[data-on="true"] .dg-cone-band { fill-opacity: 0.08; }
+/* M3 — the hit target is invisible and focusable, so a keyboard reaches every lane in turn. */
+.dg-cone-hit { fill: transparent; stroke: transparent; cursor: pointer; }
+.dg-cone-lane { outline: none; }
+.dg-cone-lane:focus-visible .dg-cone-hit { stroke: var(--dg-ink); stroke-width: 2; stroke-dasharray: 3 3; }
+/* N10 — ONE card, placed beside the pointer or beside the stroke's end. It never takes the
+ * pointer: it follows along the stroke, and a card that swallowed the hover would flicker. */
+.dg-cone-card, .dg-cone-zone-card {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  background: var(--dg-surface);
+  box-shadow: var(--dg-lift);
+  pointer-events: none;
+}
+.dg-cone-zone-card { width: 300px; font-size: 14px; line-height: 1.45; }
+.dg-cone-card-name { font-size: 18px; font-weight: 700; line-height: 1.2; }
+.dg-cone-card-row { font-size: 14px; line-height: 1.35; }
+.dg-cone-card > .dg-mono, .dg-cone-zone-card > .dg-mono { color: var(--dg-muted); }
+.dg-cone-apex { fill: var(--dg-dot); stroke: var(--dg-ink); stroke-width: 2; }
+
+.dg-cone-time-label {
+  position: absolute;
+  transform: translateX(-50%);
+  font-family: var(--dg-mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+/* N1 — the zone's NAME is the control its definition hangs off, so it is a button with the span's
+ * own type: no chrome, because it is a label that answers when you point at it. */
+.dg-cone-ell-label {
+  position: absolute;
+  transform: translateY(-50%);
+  font-family: var(--dg-mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--dg-ink);
+  cursor: help;
+}
+.dg-cone-ell-note {
+  position: absolute;
+  width: 300px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--dg-muted);
+}
+.dg-cone-goal-label { position: absolute; transform: translateY(-50%); width: 300px; font-size: 13px; line-height: 1.45; color: var(--dg-muted); }
+.dg-cone-ghost-label { position: absolute; font-family: var(--dg-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dg-muted); white-space: nowrap; }
+
+
+/* ── O3 / R1 / R2 · THE SEE ALL OVERLAY (A-SeeAll) ─────────────────────────────────────────────
+ *
+ * R1 — A SCRIM, NOT A PANEL: the page stays visible under it, dimmed. The reader is looking at an
+ * index of the map they are already on, and an opaque sheet broke that.
+ *
+ * R1 — IT FITS 1440x900 WITH NO SCROLL, which is the constraint every number here answers to:
+ * four equal columns at gap 36, cards at their NATURAL height (align-items: start — stretching a
+ * short card to match a tall neighbour spends the one axis that is tight), 18px between cards.
+ */
+.dg-seeall {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  overflow: auto;
+  background: rgba(36, 35, 35, 0.88);
+  color: var(--dg-surface);
+  animation: dg-fade-up 150ms ease-out both;
+}
+.dg-seeall-inner { display: flex; flex-direction: column; gap: 26px; padding: 32px 40px 36px; }
+.dg-seeall-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 32px; }
+/* 52px with the green stop, and NOT .dg-h: that caps at 22ch and would break the title over two
+ * lines, which the height budget cannot pay for. */
+.dg-seeall-title {
+  font-family: var(--dg-font);
+  font-size: 52px;
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.dg-seeall-lede { font-size: 16px; line-height: 1.4; color: rgba(255, 253, 248, 0.72); margin: 8px 0 0; }
+.dg-seeall-close {
+  flex: none;
+  height: 44px;
+  width: 44px;
+  background: none;
+  border: 1px solid rgba(255, 253, 248, 0.3);
+  color: inherit;
+  font-family: var(--dg-font);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dg-seeall-close:focus-visible { outline: 2px solid var(--dg-dot); outline-offset: 2px; }
+.dg-seeall-cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 36px; align-items: start; }
+.dg-seeall-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.dg-seeall-group-label {
+  font-size: 11px;
+  color: rgba(255, 253, 248, 0.72);
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 253, 248, 0.25);
+}
+.dg-seeall-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 24px;
+  /* THE CARD IS FILLED, THE SCRIM IS NOT. With the cards transparent, the page read straight
+   * through their bodies — the hero headline and the score sat inside card text and made it
+   * unreadable. The scrim stays translucent so the page is visible BETWEEN cards, which is what
+   * R1 asks for; each card then composites to effectively opaque so its own words are clean. */
+  background: rgba(36, 35, 35, 0.82);
+  border: 1px solid rgba(255, 253, 248, 0.25);
+  color: inherit;
+  font-family: var(--dg-font);
+  cursor: default;
+}
+.dg-seeall-card[data-open="true"] { border-color: rgba(255, 253, 248, 0.6); cursor: pointer; }
+/* R1 — the card the reader is already on: dot-green 2px, with the tint behind it. */
+.dg-seeall-card[data-current="true"] {
+  border: 2px solid var(--dg-dot);
+  /* the green tint rides ON the card's own fill, so the current card is tinted without going
+   * see-through the way a bare rgba() would */
+  background-color: rgba(36, 35, 35, 0.82);
+  background-image: linear-gradient(0deg, rgba(156, 190, 111, 0.18), rgba(156, 190, 111, 0.18));
+  padding: 23px;
+}
+.dg-seeall-card:disabled { opacity: 0.7; }
+.dg-seeall-card:focus-visible { outline: 2px solid var(--dg-dot); outline-offset: 2px; }
+.dg-seeall-card-t { font-size: 22px; font-weight: 700; line-height: 1.2; }
+.dg-seeall-card-d { font-size: 16px; line-height: 1.4; color: rgba(255, 253, 248, 0.72); }
+.dg-seeall-card-s { font-size: 12px; color: var(--dg-dot); }
+.dg-seeall-card:disabled .dg-seeall-card-s { color: rgba(255, 253, 248, 0.6); }
+
+@media (max-width: 1080px) {
+  .dg-seeall-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ── motion (spec): 150ms fade-up on enter, staggered rise on list items ───────────────────── */
+
+@keyframes dg-fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.dg-enter { animation: dg-fade-up 150ms ease-out both; }
+.dg-rows > .dg-row { animation: dg-fade-up 150ms ease-out both; animation-delay: calc(var(--dg-i, 0) * 40ms); }
+.dg-score-value { transition: color 600ms ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dg-page *,
+  .dg-page *::before,
+  .dg-page *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (max-width: 1080px) {
+  .dg-walk { grid-template-columns: 1fr; gap: 40px; }
+  .dg-cols { grid-template-columns: 1fr; gap: 32px; }
+  .dg-inset { grid-template-columns: 1fr; }
+  .dg-h { font-size: 40px; }
+}

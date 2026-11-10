@@ -309,3 +309,33 @@ export function OperatorUnstatedState({ state }: { state: "not_yet" | "looked_no
     </p>
   );
 }
+
+/** THE OPERATOR GLYPH SWITCH (extracted, 2026-11-07 ruling G9). The markup below has existed twice,
+ *  byte-identical, since the workspace shipped — ClientRefinePreviewView (the home) and WorkspaceShell
+ *  each carry their own copy. The Diagnose flow would have been the third, so it is a component now.
+ *
+ *  The two existing copies are DELIBERATELY left inline: homeOperatorDefault.test.tsx pins the home's
+ *  source text literally (`data-fr-operator-switch={homeOperatorOn ? "on" : "off"}`), so converting it
+ *  would break a pinned test for no behavioural gain in this slice.
+ *
+ *  It carries NO visible text — OPERATOR_STRINGS.switchAriaLabel is the only string, and it is already
+ *  signed. It is not itself a [data-fr-operator] node: WorkspaceShell's law is that the default render
+ *  has zero of those, and the switch is how you get them, not one of them. */
+export function OperatorSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className="fixed bottom-6 left-6 flex h-8 w-8 items-center justify-center transition-opacity"
+      style={{ color: "hsl(var(--fr-muted))", opacity: on ? 1 : 0.35, zIndex: 300 }}
+      data-fr-operator-switch={on ? "on" : "off"}
+      aria-label={OPERATOR_STRINGS.switchAriaLabel}
+      aria-pressed={on}
+      onClick={onToggle}
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.25" />
+        <circle cx="8" cy="8" r="2" fill="currentColor" />
+      </svg>
+    </button>
+  );
+}

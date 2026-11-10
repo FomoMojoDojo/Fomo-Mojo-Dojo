@@ -60,6 +60,7 @@ import WorkspaceMarketPage from "./views/client/workspace/MarketPage";
 import WorkspaceOpportunitiesPage from "./views/client/workspace/OpportunitiesPage";
 import WorkspaceRoutesPage from "./views/client/workspace/RoutesPage";
 import WorkspaceCouncilPage from "./views/client/workspace/CouncilPage";
+import { DiagnoseFlowView } from "./views/client/diagnoseFlow/DiagnoseFlowView";
 import type { ClientSystemPhase } from "./hooks/useClientMapInteractionState";
 import { dispatchClientPhaseChange, writeStoredClientPhase } from "./hooks/useClientMapInteractionState";
 import { isClientPhasePath } from "./lib/clientPhaseRoutes";
@@ -76,6 +77,7 @@ import {
   CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE,
   CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE,
   CLIENT_REFINE_PREVIEW_FIRSTREAD_ROUTE,
+  CLIENT_REFINE_PREVIEW_DIAGNOSE_ROUTE,
   CLIENT_REFINE_PREVIEW_WORKSPACE_ROUTE,
 } from "./lib/clientRefinePreview";
 import { CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE } from "./lib/clientViewVisibilityAudit";
@@ -244,6 +246,18 @@ function ClientRefinePreviewExtractsRoute() {
   );
 }
 
+// DIAGNOSE FLOW (slice 1) — the same double gate as every sibling. The eleven screens are nested
+// inside the view's own <Routes>, so one element covers the family.
+function ClientRefinePreviewDiagnoseRoute() {
+  return (
+    <AdminModeRoute>
+      <InternalViewOnlyRoute>
+        <DiagnoseFlowView />
+      </InternalViewOnlyRoute>
+    </AdminModeRoute>
+  );
+}
+
 function ClientRefinePreviewFirstReadRoute() {
   return (
     <AdminModeRoute>
@@ -345,6 +359,7 @@ const App = () => (
                 <Route path={CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE} element={<ClientRefinePreviewMembersRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE} element={<ClientRefinePreviewExtractsRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_FIRSTREAD_ROUTE} element={<ClientRefinePreviewFirstReadRoute />} />
+                <Route path={`${CLIENT_REFINE_PREVIEW_DIAGNOSE_ROUTE}/*`} element={<ClientRefinePreviewDiagnoseRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_WORKSPACE_ROUTE} element={<ClientRefinePreviewWorkspaceRoute />}>
                   <Route index element={<WorkspaceIndexPage />} />
                   <Route path="inputs" element={<WorkspaceInputsPage />} />

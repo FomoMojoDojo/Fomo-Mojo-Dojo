@@ -89,6 +89,20 @@ export function clientRefineFirstReadMarkPath(companyId: string, markAnchorId: s
   return `${clientRefineFirstReadPath(companyId)}?${FIRSTREAD_MARK_PARAM}=${encodeURIComponent(markAnchorId)}`;
 }
 
+// DIAGNOSE FLOW (slice 1, 2026-11-07). The client-facing Diagnose section beside the First Read:
+// eleven read-only screens under one shell. Company comes from the URL, like the First Read and
+// unlike every other sibling, because the walk is presented per company.
+export const CLIENT_REFINE_PREVIEW_DIAGNOSE_BASE = "/preview/client-refine/diagnose";
+export const CLIENT_REFINE_PREVIEW_DIAGNOSE_ROUTE = `${CLIENT_REFINE_PREVIEW_DIAGNOSE_BASE}/:companyId`;
+
+/** The signed screen ids, in walk order. There is no w3. `home` (MH1) is the default. */
+export const DIAGNOSE_SCREENS = ["send", "welcome", "w1", "w2", "w4", "w5", "w6", "w7", "w8", "w9", "home"] as const;
+export type DiagnoseScreen = (typeof DIAGNOSE_SCREENS)[number];
+
+export function clientRefineDiagnosePath(companyId: string, screen: DiagnoseScreen = "home") {
+  return `${CLIENT_REFINE_PREVIEW_DIAGNOSE_BASE}/${companyId}/${screen}`;
+}
+
 // WORKSPACE (2026-09-11). A nested route family under one shell (the First Read language):
 // /workspace is the index; the nine pages are children. Company comes from CompanyProvider
 // (the active company), never a URL param — same as every sibling except the First Read.
@@ -112,7 +126,8 @@ export function isClientRefinePreviewPath(pathname: string) {
     pathname === CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE ||
     pathname === CLIENT_REFINE_PREVIEW_WORKSPACE_ROUTE ||
     pathname.startsWith(`${CLIENT_REFINE_PREVIEW_WORKSPACE_ROUTE}/`) ||
-    pathname.startsWith(`${CLIENT_REFINE_PREVIEW_FIRSTREAD_BASE}/`)
+    pathname.startsWith(`${CLIENT_REFINE_PREVIEW_FIRSTREAD_BASE}/`) ||
+    pathname.startsWith(`${CLIENT_REFINE_PREVIEW_DIAGNOSE_BASE}/`)
   );
 }
 
