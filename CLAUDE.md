@@ -135,9 +135,12 @@ These files are long — search within them rather than reading top-to-bottom:
   source backups/fr-login.env && source backups/fr-nonadmin.env && source backups/fr-member.env && npx playwright test --retries=0
   ```
 
-  **Baseline: 364 passed / 4 skipped / 0 failed.** With only `fr-login.env` sourced it reads
-  330/18/0 — the 14 difference is `s2-interview-storage-rls`, `s3-first-read-marks-rls`,
-  `v-tensions-rls`, `v-integrity-admin` and `v2-slots-swap` skipping, not passing.
+  **Baseline: 500 passed / 4 skipped / 0 failed** (measured 2026-11-11, 28.5 min serial; was 364
+  before the U6 landing specs landed). With only `fr-login.env` sourced 14 of them silently skip —
+  `s2-interview-storage-rls`, `s3-first-read-marks-rls`, `v-tensions-rls`, `v-integrity-admin` and
+  `v2-slots-swap` — which reads as passes lost, not gained. That login-only figure was 330/18/0
+  against the 364 baseline and has NOT been re-measured since; expect 486/18/0 but do not treat it
+  as measured.
 
 - **Known flakes (R35, 2026-10-19)** — each passes alone on rerun; a single failure of one of these in a full run
   is read as the flake, re-run that spec file alone, and the baseline stands:
@@ -200,10 +203,10 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
 
 ## Baselines — the two that are easy to run wrong
 
-- **tsc is `npx tsc -p tsconfig.app.json --noEmit` → 232 errors.** The root `tsconfig.json` is
-  solution-style (`"files": []` plus `references`), so a bare `npx tsc --noEmit` compiles **nothing**
-  and reports a clean **0** — a false green that looks like a 232-error improvement.
-  `tsconfig.node.json` is 0.
+- **tsc is `npx tsc -p tsconfig.app.json --noEmit` → 231 errors** (measured 2026-11-11; recorded as
+  232 until then). The root `tsconfig.json` is solution-style (`"files": []` plus `references`), so a
+  bare `npx tsc --noEmit` compiles **nothing** and reports a clean **0** — a false green that looks
+  like a 231-error improvement. `tsconfig.node.json` is 0.
 - **The boot-sweep bearer is the LEGACY JWT service-role key**, from
   `npx supabase status --output env` (`SERVICE_ROLE_KEY=eyJ…`). The `sb_secret_…` value printed in
   `supabase status`'s Authentication Keys panel is **not** accepted by the functions gateway: every
