@@ -18,9 +18,14 @@ import {
 const src = (p: string) => readFileSync(resolve(__dirname, "../../..", p), "utf8");
 
 const navigateSpy = vi.fn();
+// <Login /> is rendered bare here, with no <Router> above it, so every router hook it calls has to be
+// mocked. useLocation joined useNavigate when U6-55 made the page honour the `next` path a refused
+// visitor carried; an empty search is the no-carry case, which is what these two tests are about —
+// where sign-in lands when nothing was carried. The assertions below are unchanged.
 vi.mock("react-router-dom", async (orig) => ({
   ...(await orig<typeof import("react-router-dom")>()),
   useNavigate: () => navigateSpy,
+  useLocation: () => ({ pathname: "/login", search: "", hash: "", state: null, key: "test" }),
 }));
 
 const signIn = vi.fn(async () => ({ error: null as Error | null }));

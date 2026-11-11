@@ -1,6 +1,7 @@
 import { Link, useLocation, Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { usePresentationMode } from '@/hooks/usePresentationMode';
+import { loginPathFor } from '@/lib/authRedirect';
 
 export default function AdminGuard({ children }: { children: React.ReactNode }) {
   const { user, isAdmin, loading } = useAuth();
@@ -15,23 +16,15 @@ export default function AdminGuard({ children }: { children: React.ReactNode }) 
     );
   }
 
+  // U6-55 (2026-11-10): NO SESSION → /login, carrying the attempted path. This used to render an
+  // "Admin Login Required" page, and U6-46 made that untenable: every gated route now sends a
+  // signed-out visitor here, members included, and a page telling a client to "sign in with an admin
+  // account" is both wrong and the wrong register. The two refusals stay DISTINCT — no session is a
+  // redirect, a session without an admin row is still the "Access Denied" page below — because
+  // conflating them would let a signed-in non-admin be read as merely signed out
+  // (zz-admin-gate v2 asserts exactly that distinction).
   if (!user) {
-    return (
-      <div className="min-h-screen bg-ink flex items-center justify-center px-4">
-        <div className="text-center max-w-md">
-          <h1 className="font-serif text-[22px] text-t-dp mb-2">Admin Login Required</h1>
-          <p className="font-mono text-[12px] text-t-ds mb-5">
-            Sign in with an admin account to open this page.
-          </p>
-          <Link
-            to="/login"
-            className="inline-flex items-center rounded-md border border-white/20 bg-white/5 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-[#d7def8] transition-colors hover:bg-white/10"
-          >
-            Go to Login
-          </Link>
-        </div>
-      </div>
-    );
+    return <Navigate to={loginPathFor(`${location.pathname}${location.search}`)} replace />;
   }
   if (!isAdmin) {
     const attemptedPath = location.pathname;

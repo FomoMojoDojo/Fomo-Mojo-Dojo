@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { HAS_SUPABASE_CREDENTIALS } from '@/integrations/supabase/client';
 import { CLIENT_REFINE_PREVIEW_ROUTE } from '@/lib/clientRefinePreview';
+import { carriedNextFrom } from '@/lib/authRedirect';
+import { LOGIN_STRINGS } from './loginStrings';
 
 const c = {
   bg: "#faf7f6",
@@ -27,6 +29,7 @@ export default function Login() {
   const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
   const { signIn, signUp } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,7 +72,14 @@ export default function Login() {
       } else {
         // The front door. /admin/companies is the legacy site now, and it was also the one path
         // AdminGuard refuses to bounce — a non-admin landed on "Access Denied" instead of a surface.
-        navigate(CLIENT_REFINE_PREVIEW_ROUTE);
+        // U6-55: honour the path the visitor was refused on, when one was carried and is safe.
+        // carriedNextFrom re-validates it here rather than trusting the query string.
+        //
+        // Without a carry this is unchanged. For an ADMIN that is the front door itself. For a
+        // NON-ADMIN it is still AdminGuard: client mode bounces to "/" (today the Decision screen
+        // on the fallback company), internal mode shows "Access Denied". The landing build
+        // (U6 part 1) is what gives a member somewhere of their own to go.
+        navigate(carriedNextFrom(location.search) ?? CLIENT_REFINE_PREVIEW_ROUTE);
       }
     }
   };
@@ -98,14 +108,14 @@ export default function Login() {
 
         <div className="rounded-[24px] border p-6 shadow-sm" style={{ background: c.panel, borderColor: c.line }}>
           <h1 className="font-serif text-[24px] mb-1" style={{ color: c.charcoal }}>
-            {mode === 'login' ? 'Admin Login' : mode === 'signup' ? 'Create Account' : 'Reset Password'}
+            {mode === 'login' ? LOGIN_STRINGS.heading : mode === 'signup' ? 'Create Account' : 'Reset Password'}
           </h1>
           <p className="font-mono text-[11px] mb-5 uppercase tracking-wide" style={{ color: c.muted }}>
-            {mode === 'forgot' ? 'Enter your email to reset' : 'CMS Access'}
+            {mode === 'forgot' ? 'Enter your email to reset' : LOGIN_STRINGS.subheading}
           </p>
           {!HAS_SUPABASE_CREDENTIALS ? (
             <p className="mb-4 rounded-[12px] border px-3 py-2 font-mono text-[11px]" style={{ borderColor: c.line, color: c.secondary, background: c.paper }}>
-              Preview mode: Supabase credentials are not configured, so admin access is local-only.
+              {LOGIN_STRINGS.previewMode}
             </p>
           ) : null}
 

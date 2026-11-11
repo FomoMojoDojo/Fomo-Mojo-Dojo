@@ -4,10 +4,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useEffect } from "react";
-import { AuthProvider } from "@/hooks/useAuth";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { CompanyProvider, useCompany } from "@/hooks/useCompany";
 import { PresentationModeProvider, usePresentationMode } from "@/hooks/usePresentationMode";
 import AdminGuard from "@/components/AdminGuard";
+import { loginPathFor } from "@/lib/authRedirect";
 import AppErrorBoundary from "@/components/AppErrorBoundary";
 import MapView from "./views/MapView";
 import InputsView from "./views/Inputs";
@@ -89,14 +90,28 @@ import {
 
 const queryClient = new QueryClient();
 
+// U6-46 (2026-11-10): this used to check the MODE and never the user, and `internal` is the default
+// for a visitor with no localStorage — so eleven routes behind it rendered to anyone with the URL,
+// each one showing the fallback company's name. Measured signed out on 2026-11-10: /legacy/map,
+// /legacy/strategy, /legacy/opportunities, /legacy/positioning, /legacy/analytics, /legacy/movement,
+// /legacy/inputs, /legacy/files, /legacy/job-steps, /process/mojomap and /map-signal-prototype all
+// rendered "Cafe Barra". The mode check stays (it is what sends a client-mode viewer home); the
+// admin requirement is what closes the door.
 function InternalViewOnlyRoute({ children }: { children: JSX.Element }) {
   const { mode } = usePresentationMode();
-  if (mode === "client") return <Navigate to="/" replace />;
-  return children;
+  return <AdminGuard>{mode === "client" ? <Navigate to="/" replace /> : children}</AdminGuard>;
 }
 
+// U6-46: "/" needs a SIGNED-IN account — not an admin, because this is where a member lands. It had
+// no auth check at all, so a signed-out visitor with mojo.presentation.mode="client" already stored
+// rendered the whole Decision Command Screen: measured 2026-11-10 with auth.getUser() returning null
+// and the page showing the fallback company's name, website and score.
 function ModeAwareMapRoute() {
   const { mode } = usePresentationMode();
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  if (loading) return null;
+  if (!user) return <Navigate to={loginPathFor(`${location.pathname}${location.search}`)} replace />;
   if (mode === "client") return <ClientDecisionSystemView />;
   return <Navigate to={CLIENT_REFINE_PREVIEW_ROUTE} replace />;
 }
@@ -157,17 +172,20 @@ function ClientPhaseAliasRoute({
 
 function ModeAwareFocusRoute() {
   const { mode } = usePresentationMode();
-  return mode === "client" ? <Navigate to="/" replace /> : <OpportunitiesView />;
+  // U6-46: the legacy view is admin-only; the mode check alone never looked at the user.
+  return mode === "client" ? <Navigate to="/" replace /> : <AdminGuard><OpportunitiesView /></AdminGuard>;
 }
 
 function ModeAwareScoreRoute() {
   const { mode } = usePresentationMode();
-  return mode === "client" ? <Navigate to="/" replace /> : <AnalyticsView />;
+  // U6-46: the legacy view is admin-only; the mode check alone never looked at the user.
+  return mode === "client" ? <Navigate to="/" replace /> : <AdminGuard><AnalyticsView /></AdminGuard>;
 }
 
 function ModeAwareStrategyRoute() {
   const { mode } = usePresentationMode();
-  return mode === "client" ? <Navigate to="/" replace /> : <StrategyView />;
+  // U6-46: the legacy view is admin-only; the mode check alone never looked at the user.
+  return mode === "client" ? <Navigate to="/" replace /> : <AdminGuard><StrategyView /></AdminGuard>;
 }
 
 function AdminModeRoute({ children }: { children: JSX.Element }) {

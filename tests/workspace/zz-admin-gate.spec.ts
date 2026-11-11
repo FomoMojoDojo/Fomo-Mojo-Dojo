@@ -87,18 +87,58 @@ test("(v1) a signed-in non-admin is refused on every client-refine surface, not 
   }
 });
 
-test("(v2) with no session at all the refusal names the sign-in, not the role", async ({ page }) => {
+// ── (v2) SUPERSEDED IN FORM, NOT IN PURPOSE (U6-55 / U6-56, 2026-11-10) ──────────────────────────
+//
+// WHAT IT USED TO ASSERT. That a visitor with no session got AdminGuard's "Admin Login Required"
+// PAGE — h1 count 1 — and never the role refusal. That page is gone. U6-46 found eleven routes that
+// rendered to a signed-out visitor, so EVERY gated route now sends one to /login, members included,
+// and a page saying "sign in with an admin account" is the wrong answer on a client-facing URL.
+//
+// WHAT IT ASSERTS NOW. The same distinction, in the new shape. No session is a REDIRECT carrying the
+// attempted path; a session without an admin row is still the "Access Denied" page. The original
+// reason for separating them is unchanged and is restated here because it is easy to lose:
+// conflating the two would let a signed-in non-admin be read as merely signed out.
+//
+// BOTH HALVES LIVE IN THIS TEST ON PURPOSE. A version that only checked the signed-out redirect
+// would pass a build that redirected EVERYONE — including the non-admin who should see a role
+// refusal — which is the second plant below.
+test("(v2) no session is a redirect to sign-in; a non-admin session is still a role refusal", async ({ page }) => {
   test.setTimeout(240_000);
+  const email = process.env.NONADMIN_EMAIL, password = process.env.NONADMIN_PASSWORD;
+  test.skip(!email || !password, "no NONADMIN_EMAIL / NONADMIN_PASSWORD (throwaway non-admin user) in the environment");
+
+  // ── half one: no session at all ────────────────────────────────────────────────────────────────
   const ctx = await page.context().browser()!.newContext({ storageState: NO_SESSION });
   const p = await ctx.newPage();
   try {
     for (const path of PATHS) {
-      await p.goto(path, { waitUntil: "domcontentloaded", timeout: 120_000 });
-      await p.waitForSelector("h1", { timeout: 60_000 });   // the refusal, not a fixed sleep
+      await p.goto(path, { waitUntil: "networkidle", timeout: 120_000 });
+      const url = new URL(p.url());
+      expect(url.pathname, `${path}: a signed-out visitor was not sent to sign in`).toBe("/login");
+      expect(url.searchParams.get("next"), `${path}: the attempted path was not carried`).toBe(path);
       const r = await probe(p);
-      expect(r.loginRequired, `${path}: no Admin Login Required refusal`).toBe(1);
+      expect(r.loginRequired, `${path}: the superseded "Admin Login Required" page is back`).toBe(0);
       expect(r.accessDenied, `${path}: a visitor with no session was refused on role`).toBe(0);
       expect(r.companyRows + r.firstReadShell + r.diagnosePage, `${path}: a real surface rendered with no session`).toBe(0);
+    }
+
+    // ── half two: a session WITHOUT an admin row is a different refusal, and is NOT redirected ────
+    await p.goto("/login", { waitUntil: "networkidle", timeout: 120_000 });
+    const signed = await p.evaluate(async (c) => {
+      const s = (window as unknown as { supabase: Sb }).supabase;
+      const { data, error } = await s.auth.signInWithPassword(c);
+      return { ok: Boolean(data?.session), error: error?.message ?? null };
+    }, { email: email!, password: password! });
+    expect(signed, "the throwaway non-admin could not sign in").toEqual({ ok: true, error: null });
+
+    for (const path of PATHS) {
+      await p.goto(path, { waitUntil: "domcontentloaded", timeout: 120_000 });
+      await p.waitForSelector("h1", { timeout: 60_000 });
+      const r = await probe(p);
+      expect(new URL(p.url()).pathname, `${path}: a signed-in non-admin was redirected as if signed out`).not.toBe("/login");
+      expect(r.accessDenied, `${path}: a signed-in non-admin got no role refusal`).toBe(1);
+      expect(r.loginRequired, `${path}: refused as signed-out, but this user has a session`).toBe(0);
+      expect(r.companyRows + r.firstReadShell + r.diagnosePage, `${path}: a real surface rendered for a non-admin`).toBe(0);
     }
   } finally {
     await ctx.close();
