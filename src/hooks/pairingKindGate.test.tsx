@@ -12,6 +12,7 @@
 // Shown red with each guard disabled (pre-trust runs recorded in the gate report).
 
 import { describe, it, expect, vi } from "vitest";
+import { clientDoorRpc } from "@/lib/testing/clientDoors";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
@@ -61,8 +62,10 @@ function fakeDb(seed: Record<string, Row[]>) {
   };
   // DELETE AUDIT (2026-09-03): the stale sweep deletes through delete_claim_deltas_audited (company-scoped,
   // reason required); the fake models the RPC so the kind-scoped sweep assertions below stay byte-identical.
+  const doors = clientDoorRpc(tables);
   const rpc = (fn: string, a: { p_company_id?: string; p_ids?: string[]; p_reason?: string }) => {
-    if (fn !== "delete_claim_deltas_audited") return Promise.resolve({ data: null, error: { message: `unknown rpc ${fn}` } });
+    // U6-25/U6-22/U6-14: the First Read's narrow doors, answered from these same fixtures.
+    if (fn !== "delete_claim_deltas_audited") return doors(fn, a as Record<string, unknown>);
     if (!a.p_reason?.trim()) return Promise.resolve({ data: null, error: { message: "a reason is required" } });
     const ids = a.p_ids ?? [];
     tables["claim_deltas"] ??= [];
@@ -222,7 +225,7 @@ describe("(iv) gap integrity record", () => {
 // ── (ii) render-level cross-leak — through the real hooks ─────────────────────
 let hookDb = fakeDb({});
 vi.mock("@/integrations/supabase/client", () => ({
-  supabase: { from: (t: string) => hookDb.from(t), functions: { invoke: vi.fn() } },
+  supabase: { from: (t: string) => hookDb.from(t), rpc: (n: string, a?: Record<string, unknown>) => hookDb.rpc(n, a), functions: { invoke: vi.fn() } },
   HAS_SUPABASE_CREDENTIALS: true,
   RESOLVED_SUPABASE_URL: "http://localhost",
   isFrozenCompany: () => false,

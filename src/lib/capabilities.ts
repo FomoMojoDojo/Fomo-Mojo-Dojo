@@ -110,6 +110,13 @@ export const CAPABILITIES = {
     surface: "handleRefreshBaseline — InputsTab.tsx:1206",
   },
 
+  // interviews ────────────────────────────────────────────────────────────────
+  "interview.readText": {
+    status: "enforce",
+    summary: "Read interview text — the verbatim, and the speaker's name with it.",
+    surface: "interview_text / interview_item_text (SECURITY DEFINER, has_capability-gated); AttestedOriginChip — InterviewOrigin.tsx",
+  },
+
   // participation ─────────────────────────────────────────────────────────────
   "participation.suggest": {
     status: "enforce",
@@ -207,7 +214,10 @@ export const ROLE_BUNDLES: Record<RoleName, readonly Capability[]> = {
   Analyst: [],
 
   // client (company_members.role).
-  Sponsor: ["governance.proposal.apply", "governance.proposal.reject"],
+  // U6-19 (2026-11-10): interview.readText is SPONSOR ONLY. It is the first capability where Sponsor
+  // and Decision-Owner diverge — every other cap Sponsor holds, Decision-Owner holds too. Per-user
+  // grants are filed with invites (U6-18); for now the operator confers it by setting the role.
+  Sponsor: ["governance.proposal.apply", "governance.proposal.reject", "interview.readText"],
   "Decision-Owner": [
     "governance.proposal.apply",
     "governance.proposal.reject",

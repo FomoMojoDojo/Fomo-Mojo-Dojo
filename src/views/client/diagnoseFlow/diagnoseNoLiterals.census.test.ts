@@ -224,10 +224,26 @@ describe("the route mounts nothing that can reach an outside model", () => {
 
   it("useDiagnoseData holds no write of any kind", () => {
     const src = stripNonRendering(source("useDiagnoseData.ts"));
-    for (const write of [".insert(", ".update(", ".upsert(", ".delete(", ".rpc("]) {
+    for (const write of [".insert(", ".update(", ".upsert(", ".delete("]) {
       expect(src.includes(write), `useDiagnoseData performs ${write}`).toBe(false);
     }
     expect(src.includes(".select(")).toBe(true); // and it does read, so the check is not vacuous
+  });
+
+  // U6-14 (2026-11-10): `.rpc(` used to be banned outright here, as a proxy for "no write path".
+  // W9's people now come through interview_people — a read-only SECURITY DEFINER door (tier 1: name,
+  // role and date, never the text), because reading interview_records directly answered differently
+  // for an operator and a client. So the ban becomes an ALLOWLIST BY NAME: a read-only door may be
+  // added to this list with its brief, and any other rpc still fails this check. A function that
+  // writes must never appear here — the probe ruling of 2026-11-07 is the standing reason.
+  it("the only rpc useDiagnoseData calls is a named read-only door", () => {
+    const src = stripNonRendering(source("useDiagnoseData.ts"));
+    const READ_ONLY_DOORS = ["interview_people"];
+    const called = [...src.matchAll(/\.rpc\(\s*"([a-z_]+)"/g)].map((m) => m[1]);
+    expect(called.length, "useDiagnoseData calls no rpc at all — this check is vacuous").toBeGreaterThan(0);
+    for (const fn of called) {
+      expect(READ_ONLY_DOORS, `useDiagnoseData calls rpc ${fn}, which is not a named read-only door`).toContain(fn);
+    }
   });
 });
 

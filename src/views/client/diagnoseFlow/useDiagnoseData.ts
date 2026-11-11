@@ -176,8 +176,11 @@ function useDirectReads(companyId: string | undefined) {
           .eq("company_id", companyId).is("retracted_at", null),
         supabase.from("strategic_hypotheses")
           .select("id, statement, hypothesis_kind, is_active").eq("company_id", companyId),
-        supabase.from("interview_records")
-          .select("id, person_name, person_role, interviewed_at").eq("company_id", companyId).is("retracted_at", null),
+        // W9 "Who should be heard?" — tier 1 (U6-14). Name, role and date, never the text, and the
+        // same door fetchDiagnoseRunning uses, so the people W9 lists are exactly the people that
+        // made Diagnose "running". The function filters retracted rows and resolves membership.
+        (supabase as unknown as { rpc: (n: string, a: Record<string, unknown>, o?: { get?: boolean }) => Promise<{ data: unknown }> })
+          .rpc("interview_people", { p_company_ids: [companyId] }, { get: true }),
         supabase.from("first_read_sessions")
           .select("started_at").eq("company_id", companyId).order("started_at", { ascending: true }).limit(1),
       ]);

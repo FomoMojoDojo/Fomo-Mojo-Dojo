@@ -11,7 +11,9 @@
 // Cleanup inside the spec: the throwaway's model_calls rows are deleted by id (listed), then the company cascade.
 // Never CB1 / CB2 / Edgewood data; the texts are filler written here. Plant: the guard's detection removed → (b) red.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { expect, test, type Page } from "playwright/test";
+import { plantInterviewRecord } from "./helpers";
 
 type Sb = { from: (t: string) => any; auth: { getUser: () => Promise<{ data: { user: { id: string } | null } }> }; functions: { invoke: (fn: string, args: { body: Record<string, unknown> }) => Promise<{ data: unknown; error: { message?: string; context?: Response } | null }> } };
 const PGC = process.env.PGC || "supabase_db_dzlgyxcvuwiulgifbmew";
@@ -59,15 +61,28 @@ async function plant(page: Page) {
     for (const [tag, text] of [["three", args.three], ["overflow", args.overflow]] as const) {
       const { data: file, error: fErr } = await s.from("input_files").insert({ input_id: (inp as { id: string }).id, file_name: `fixture-${tag}.txt`, file_type: "text/plain", file_path: `${user!.id}/zz-x6/${Date.now()}/fixture-${tag}.txt`, tags: [], is_interview: true }).select("id").single();
       if (fErr) return bail(`input_files ${tag}: ${fErr.message}`);
-      const sha = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))).map((b) => b.toString(16).padStart(2, "0")).join("");
-      const { data: rec, error: rErr } = await s.from("interview_records").insert({ company_id: cid, speaker_role: "market_participant", verbatim: text, created_by: user!.id, input_file_id: (file as { id: string }).id, file_sha256: sha, file_bytes: text.length, text_sha256: sha, extraction_method: "local_text_reader", extraction_version: "v", market_state: "unplaced", market_basis: [{ kind: "original", result: "none" }] }).select("id").single();
-      if (rErr) return bail(`record ${tag}: ${rErr.message}`);
-      ids[tag] = (rec as { id: string }).id;
+      ids[tag] = (file as { id: string }).id;
     }
     return { cid, adminId: user!.id, three: ids.three, overflow: ids.overflow };
   }, { name: `zz-x6-real-run-${Date.now()}`, three: threeWindows(), overflow: overflowLine() });
   expect(planted.error ?? null).toBeNull();
-  const p = planted as { cid: string; adminId: string; three: string; overflow: string };
+  const seed = planted as { cid: string; adminId: string; three: string; overflow: string };
+  // U6-35: the records are planted as the table owner. INSERT on interview_records is revoked from
+  // `authenticated` (U6-26) — the product's only write path is record-interview-upload's service-role
+  // client — so a browser-side fixture insert is no longer possible, and should not be. `three` and
+  // `overflow` above are now the INPUT FILE ids; the record ids come back from the plant.
+  const recIds: Record<string, string> = {};
+  for (const [tag, text] of [["three", threeWindows()], ["overflow", overflowLine()]] as const) {
+    const sha = createHash("sha256").update(text, "utf8").digest("hex");
+    recIds[tag] = plantInterviewRecord({
+      company_id: seed.cid, speaker_role: "market_participant", verbatim: text, created_by: seed.adminId,
+      input_file_id: tag === "three" ? seed.three : seed.overflow,
+      file_sha256: sha, file_bytes: Buffer.byteLength(text, "utf8"), text_sha256: sha,
+      extraction_method: "local_text_reader", extraction_version: "v", market_state: "unplaced",
+      market_basis: [{ kind: "original", result: "none" }],
+    });
+  }
+  const p = { cid: seed.cid, adminId: seed.adminId, three: recIds.three, overflow: recIds.overflow };
   for (const [k, ex, job] of [["mkt-families", "Families and caregivers of a child in counselling", "Find a counsellor who can see the child during school hours"], ["mkt-funders", "Grant-making bodies funding youth programmes", "Fund a programme and see its outcome numbers"], ["mkt-clinics", "Paediatric clinics referring teenagers", "Refer a young patient to a specialist quickly"]]) {
     psql(`insert into odi_market_definitions (company_id, user_id, journey_key, job_executor, jtbd, market_register) values ('${p.cid}', '${p.adminId}', '${k}', '${ex}', '${job}', 'internal_declared')`);
     psql(`insert into market_lens (company_id, journey_key, title, portfolio_state) values ('${p.cid}', '${k}', '${ex}', 'active')`); // R45: only an active lens is a candidate

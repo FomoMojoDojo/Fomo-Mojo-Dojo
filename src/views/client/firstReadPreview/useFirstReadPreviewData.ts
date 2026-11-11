@@ -89,7 +89,7 @@ function syntheticTag(date: string | null): { label: string } | null {
 
 // Tables not yet in the generated Database types use the established
 // loose-typing bypass, scoped to this module.
-const loose = () => supabase as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+const loose = () => supabase as unknown as { from: (t: string) => any; rpc: (n: string, a?: Record<string, unknown>, o?: { get?: boolean }) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 const OUTSIDE_METHODOLOGY_PREFIX = "outside-";
 
@@ -600,19 +600,19 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           .eq("status", "accepted")
           .is("superseded_by_id", null)
           .is("duplicate_of", null);
-        const { data: chosenRow } = await loose()
-          .from("operator_primary_selection")
-          .select("item_id")
-          .eq("company_id", companyId)
-          .eq("domain", "market")
-          .maybeSingle();
-        const chosenId = (chosenRow as { item_id?: string } | null)?.item_id ?? null;
+        // U6-17 (signed 2026-11-10): the chosen-market read is DELETED, not ported. It asked
+        // operator_primary_selection for domain='market', and that table's
+        // operator_primary_selection_domain_check admits only 'finding' and 'job_step_set' — so the
+        // row could never exist and `chosen` was false for every reader, admin included, since the
+        // query was written. Nothing rendered from it. operator_primary_selection stays admin-only
+        // and sits on the U6-15 operator-only list; if a chosen primary market is ever wanted it
+        // needs the CHECK widened in its own brief.
         const markets = ((moRows ?? []) as Array<{ id: string; executor_statement: string; job_statement: string | null }>)
           .map((m) => ({
             id: m.id,
             executorStatement: m.executor_statement,
             jobStatement: m.job_statement,
-            chosen: m.id === chosenId,
+            chosen: false,
           }));
 
         // ── S3/S5: live status conflicts — pinned atop Questions + Findings, and the match
@@ -967,11 +967,28 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             // absence, and the operator toggle says which criterion said so). A candidate whose
             // current ruling is NOT a rejection (accepted, deduped, already_decided) drops out even if
             // an older version rejected it — the current criterion has spoken.
-            const { data: outRows } = await loose()
+            // U6-22 (2026-11-10): the narrow door for every reader. judge_reasons is NOT in it — the
+            // verbatim gate clause is operator-only. The OUTCOME filter deliberately stays in
+            // selectUnstatedRows below rather than moving into SQL: that selector is version-aware,
+            // and a candidate whose CURRENT ruling is an acceptance must drop out even when an older
+            // version rejected it. Filtering to rejections in the function would hide the current
+            // acceptance and resurrect the stale rejection.
+            const { data: outBase } = await loose()
+              .rpc("market_candidate_outcomes_client", { p_run_id: mdRunId }, { get: true });
+            // The operator's judge reason, merged back in by id. The table is admin-only, so for a
+            // member this returns NO ROWS (not an error) and every judgeReason stays null — which is
+            // what OperatorUnstatedReason renders nothing from anyway.
+            const { data: outReasons } = await loose()
               .from("market_candidate_outcomes")
-              .select("id, candidate_index, job_executor, original_jtbd, original_identity, relationship_kind, outcome, judge_reasons, reconstructed, criterion_version")
-              .eq("run_id", mdRunId)
-              .order("candidate_index", { ascending: true });
+              .select("id, judge_reasons")
+              .eq("run_id", mdRunId);
+            const reasonById = new Map<string, Record<string, string> | null>(
+              ((outReasons ?? []) as Array<{ id: string; judge_reasons: Record<string, string> | null }>)
+                .map((r) => [r.id, r.judge_reasons] as const),
+            );
+            const outRows: OutRow[] = ((outBase ?? []) as OutRow[])
+              .map((r) => ({ ...r, judge_reasons: reasonById.get(String(r.id)) ?? null }))
+              .sort((a, b) => Number(a.candidate_index) - Number(b.candidate_index));
             type OutRow = {
               id: string; candidate_index: number; job_executor: string | null; original_jtbd: string | null; original_identity?: string | null;
               relationship_kind: string | null; outcome: string;
@@ -1462,12 +1479,14 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
 
         // Findings (S4): public_inferred open findings, ranked by recurrence breadth
         // (finding_recurrence.distinct_host_count) desc, then recency. No verdict language.
-        const { data: fRows } = await supabase
-          .from("findings")
-          .select("id, body, created_at, origin_signal_id")
-          .eq("company_id", companyId)
-          .eq("status", "open")
-          .eq("register", "public_inferred");
+        // U6-25 (2026-11-10): through the narrow door, for EVERY reader including the admin. The
+        // open + public_inferred filter that used to live on this query is now inside
+        // findings_client, because a page filter is not a lock: before this, a member read nothing
+        // here while `findingsIntegrity` below (integrity_runs, member-readable) still answered —
+        // so the beat told 22 companies' clients "nothing stood out" over findings they owned.
+        // The function also withholds beats (the facilitation plan), kind, register and tone, which
+        // this page has never rendered.
+        const { data: fRows } = await loose().rpc("findings_client", { p_company_id: companyId }, { get: true });
         const { data: frRows } = await loose()
           .from("finding_recurrence")
           .select("finding_id, distinct_host_count, cluster_signal_ids")

@@ -14,6 +14,7 @@
 //         override after it → not M4. Plant: lastRunFailed always false (hook).
 import { execFileSync } from "node:child_process";
 import { expect, test, type Page } from "playwright/test";
+import { plantInterviewRecord } from "./helpers";
 
 type Sb = { from: (t: string) => any; auth: { getUser: () => Promise<{ data: { user: { id: string } | null } }> } };
 const FIXTURE = "FIXTURE (not a transcript) — x5 real-stack proof.\nSpeaker A: a throwaway line.\n";
@@ -40,12 +41,20 @@ async function plant(page: Page, tag: string): Promise<Planted> {
     if (iErr) return bail(`input: ${iErr.message}`);
     const { data: file, error: fErr } = await s.from("input_files").insert({ input_id: (inp as { id: string }).id, file_name: `fixture-${args.tag}.txt`, file_type: "text/plain", file_path: `${user!.id}/zz-x5/${Date.now()}/fixture-${args.tag}.txt`, tags: [], is_interview: true }).select("id").single();
     if (fErr) return bail(`input_files: ${fErr.message}`);
-    const { data: rec, error: rErr } = await s.from("interview_records").insert({ company_id: cid, speaker_role: "market_participant", verbatim: args.fixture, created_by: user!.id, input_file_id: (file as { id: string }).id, file_sha256: "a".repeat(64), file_bytes: args.fixture.length, text_sha256: "b".repeat(64), extraction_method: "local_text_reader", extraction_version: "v", market_state: "unplaced", market_basis: [{ kind: "original", result: "none" }] }).select("id").single();
-    if (rErr) return bail(`record: ${rErr.message}`);
-    return { cid, fileId: (file as { id: string }).id, recId: (rec as { id: string }).id, adminId: user!.id };
+    return { cid, fileId: (file as { id: string }).id, adminId: user!.id };
   }, { name: `zz-x5-${tag}-${Date.now()}`, fixture: FIXTURE, tag });
   expect(planted.error ?? null).toBeNull();
-  const p = planted as Planted;
+  const seed = planted as { cid: string; fileId: string; adminId: string };
+  // U6-35: the record is planted as the table owner. INSERT on interview_records is revoked from
+  // `authenticated` (U6-26) — the product's only write path is record-interview-upload's service-role
+  // client — so a browser-side fixture insert is no longer possible, and should not be.
+  const recId = plantInterviewRecord({
+    company_id: seed.cid, speaker_role: "market_participant", verbatim: FIXTURE, created_by: seed.adminId,
+    input_file_id: seed.fileId, file_sha256: "a".repeat(64), file_bytes: FIXTURE.length, text_sha256: "b".repeat(64),
+    extraction_method: "local_text_reader", extraction_version: "v", market_state: "unplaced",
+    market_basis: [{ kind: "original", result: "none" }],
+  });
+  const p: Planted = { ...seed, recId };
   psql(`insert into odi_market_definitions (company_id, user_id, journey_key, job_executor, jtbd, market_register) values ('${p.cid}', '${p.adminId}', '${MARKET_KEY}', 'Fixture executor', 'Fixture job', 'internal_declared')`);
   psql(`insert into market_lens (company_id, journey_key, title) values ('${p.cid}', '${MARKET_KEY}', '${MARKET_TITLE}')`);
   return p;

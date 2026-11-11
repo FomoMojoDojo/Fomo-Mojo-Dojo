@@ -43,25 +43,41 @@ export type CorrectionClaimRow = {
   status: "active";
   confidence: "high";
   topic: null;
+  // U6-20 / U6-27: ids and the date only. item_raw_words, speaker_label and person_name were removed
+  // on 2026-11-10 — `claims` carries a company_members arm, so anything here is member-readable, and
+  // the words and the speaker are interview text. They come from interview_item_text now.
   raw_payload: {
     origin: "interview_correction";
+    /** The tier-2 key the chip uses to ask for the words and the speaker. */
     interview_item_id: string;
     interview_record_id: string;
-    /** The client's own words as the parser cut them — kept beside the operator's wording, never instead of it. */
-    item_raw_words: string;
-    speaker_label: string | null;
     attested_at: string | null;
-    person_name: string | null;
   };
 };
 
 /** The claim a given correction item mints. Pure: same item in, same row out. */
+/**
+ * U6-20 / U6-27 (operator rulings, signed 2026-11-10) — THE PAYLOAD CARRIES NO WORDS AND NO NAME.
+ *
+ * This used to stamp item_raw_words, speaker_label and person_name onto the minted claim. `claims`
+ * carries a company_members arm, so every one of those put interview content in a table any member of
+ * the company can read — measured on Edgewood 2026-11-10, a member read a real meeting utterance and
+ * the name of the person who said it. RLS is row-level and the quote sat inside a jsonb column, so no
+ * policy or column grant could reach it; the only fix is to stop writing it.
+ *
+ * What stays: interview_item_id and interview_record_id (ids, not quotes — and the first is the key
+ * the chip's tier-2 read uses) and attested_at (the date the chip shows even when the name is
+ * withheld, S-U6-4). The words and the speaker are served by interview_item_text(item_id), gated on
+ * interview.readText.
+ *
+ * `item` keeps its raw_words / speaker_label fields: the caller already has the row and the refusal
+ * path reads them. They are simply not copied into the claim.
+ */
 export function correctionClaimFor(args: {
   companyId: string;
   item: { id: string; interview_record_id: string; raw_words: string; speaker_label: string | null };
-  /** The interview's date, for the "You told us · {name} · {date}" frame. */
+  /** The interview's date — the one half of the "You told us" frame that is not interview text. */
   attestedAt: string | null;
-  personName: string | null;
 }): CorrectionClaimRow {
   return {
     company_id: args.companyId,
@@ -76,10 +92,7 @@ export function correctionClaimFor(args: {
       origin: "interview_correction",
       interview_item_id: args.item.id,
       interview_record_id: args.item.interview_record_id,
-      item_raw_words: args.item.raw_words,
-      speaker_label: args.item.speaker_label,
       attested_at: args.attestedAt,
-      person_name: args.personName,
     },
   };
 }

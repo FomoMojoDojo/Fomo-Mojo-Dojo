@@ -245,11 +245,49 @@ fi
 # (t) The reader must SELECT the revisit columns, or every mark reads as unresolved and a remembered Keep is
 # silently forgotten — the prompt would ask the same question on every reload with nothing else failing.
 HOOK=src/lib/firstReadMarks/useFirstReadMarks.ts
+# U6-25 (2026-11-10): the reader no longer SELECTs a column list — it calls first_read_marks_client,
+# a SECURITY DEFINER function, so that `withdrawn_at IS NULL` and the column projection live in the
+# database instead of in this query. The INTENT of (t) is unchanged and still the thing that matters:
+# the revisit columns must come BACK, or every mark reads as unresolved and a remembered Keep is
+# silently forgotten. So the check follows the columns to where they are now declared — the function's
+# RETURNS TABLE — and still requires the hook to be the one caller that asks for them.
+# U6-44 (2026-11-10): the door's columns are read from the LIVE CATALOGUE, never from the migration
+# file. A migration file is a historical record — it says what one migration once created, not what
+# the database serves today. A later migration that redefined first_read_marks_client would leave
+# this check reading a stale definition and passing while the column it names had gone.
+# pg_get_function_result reports the function as it actually is now.
+#
+# PLANT=t_col drops and recreates the door inside ONE rolled-back transaction with a renamed return
+# column, then reads the catalogue in that same transaction — the only way the plant can be visible
+# to the read, since a separate psql connection would never see it.
+# The replace() below matches 'timestamp with time zone', NOT the 'timestamptz' the migration was
+# written with: pg_get_functiondef renders types canonically, so a replace on the source spelling
+# matches nothing and plants nothing — which is how the first version of this plant passed.
+# Keep DOUBLE QUOTES out of the SQL below: this is a double-quoted shell string, and a `"` inside it
+# ends the assignment early and leaves T_PLANT holding a fragment (which is how the SECOND version
+# of this plant passed, silently, with the rest parsed as shell commands).
+T_PLANT=""
+[ "${PLANT:-}" = "t_col" ] && T_PLANT="do \$t\$ declare d text; begin
+  d := pg_get_functiondef('public.first_read_marks_client'::regproc);
+  execute 'drop function public.first_read_marks_client(uuid)';
+  execute replace(d, 'revisit_resolved_at timestamp with time zone',
+                     'revisit_resolved_at_PLANTED timestamp with time zone');
+end \$t\$;"
+DOOR_SIG=$(docker exec -i "$PGC" psql -U postgres -d postgres -At -v ON_ERROR_STOP=0 <<SQL 2>&1
+begin;
+$T_PLANT
+select pg_get_function_result('public.first_read_marks_client'::regproc);
+rollback;
+SQL
+)
 if grep -q 'revisit_resolved_against' "$HOOK" && grep -q 'revisit_resolved_at' "$HOOK" \
-   && [ "$(grep -c 'select("id, company_id, kind, beat_key, anchor_kind, anchor_key, anchor_text, anchor_text_sha256, created_at, revisit_resolved_against, revisit_resolved_at")' "$HOOK")" = 1 ]; then
-  echo "  ok   (t) the one reader selects both revisit columns — a remembered Keep is actually read back"
+   && [ "$(grep -c 'rpc("first_read_marks_client"' "$HOOK")" = 1 ] \
+   && echo "$DOOR_SIG" | grep -q 'revisit_resolved_against text' \
+   && echo "$DOOR_SIG" | grep -qE 'revisit_resolved_at timestamp with time zone|revisit_resolved_at timestamptz'; then
+  echo "  ok   (t) the one reader calls first_read_marks_client and the LIVE catalogue says that door returns both revisit columns — a remembered Keep is actually read back"
 else
-  echo "  FAIL (t) $HOOK does not select revisit_resolved_against + revisit_resolved_at"; fail=1
+  echo "  FAIL (t) $HOOK / the live first_read_marks_client do not carry revisit_resolved_against + revisit_resolved_at"
+  echo "       catalogue says: $DOOR_SIG"; fail=1
 fi
 if [ -f tests/workspace/x8-revisit-prompt.spec.ts ] \
    && grep -q 'operator_removed_on_revisit' tests/workspace/x8-revisit-prompt.spec.ts \

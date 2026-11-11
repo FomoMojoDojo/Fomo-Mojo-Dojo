@@ -18,6 +18,10 @@ const GOV_CAPS: Capability[] = [
   "governance.proposal.reject",
   "participation.suggest",
   "workspace.member.assignRole",
+  // U6-19 (2026-11-10): adjudicated by has_capability for interview_text / interview_item_text, and
+  // the one cap where Sponsor and Decision-Owner differ — so parity here is what proves the divergence
+  // is the SAME divergence on both sides of the boundary.
+  "interview.readText",
 ];
 
 // Fixed synthetic UUIDs (company_members.user_id has no FK, so any uuid works).

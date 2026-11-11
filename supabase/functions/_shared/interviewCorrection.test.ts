@@ -80,26 +80,38 @@ Deno.test("accepts a parser 'ask' WITH an override in force — the override is 
   assertEquals(r.effective.override?.decided_by, "operator");
 });
 
-Deno.test("the minted claim is client_attested, carries BOTH ids, and the operator's wording verbatim", () => {
+Deno.test("the minted claim is client_attested, carries BOTH ids and the date, and the operator's wording verbatim", () => {
   const c = correctionClaimFor({
-    companyId: CO, item: goodRow, attestedAt: "2026-09-24T17:00:00Z", personName: "Lynn",
+    companyId: CO, item: goodRow, attestedAt: "2026-09-24T17:00:00Z",
   });
   assertEquals(c.provenance, "client_attested");
   assertEquals(c.statement, CORRECTION_STATEMENT);
   assertEquals(c.statement, "Level 14 is retired terminology; the current California designation is STRTP (AB 403).");
   assertEquals(c.raw_payload.interview_item_id, ITEM);
   assertEquals(c.raw_payload.interview_record_id, "rec-1");
-  // the client's own words are kept BESIDE the operator's wording, never instead of it
-  assertEquals(c.raw_payload.item_raw_words, "We're no longer level 14.");
   assertEquals(c.raw_payload.origin, "interview_correction");
-  assertEquals(c.raw_payload.person_name, "Lynn");
+  assertEquals(c.raw_payload.attested_at, "2026-09-24T17:00:00Z");
+});
+
+// U6-20 / U6-27 — the refusal test that matters: `claims` carries a member arm, so ANY interview
+// content on this payload is readable by every member of the company. The words and the speaker's
+// name are served by interview_item_text instead, gated on interview.readText.
+Deno.test("the payload carries NO interview text and NO speaker name", () => {
+  const c = correctionClaimFor({
+    companyId: CO, item: goodRow, attestedAt: "2026-09-24T17:00:00Z",
+  });
+  const keys = Object.keys(c.raw_payload).sort();
+  assertEquals(keys, ["attested_at", "interview_item_id", "interview_record_id", "origin"]);
+  const blob = JSON.stringify(c.raw_payload);
+  assertEquals(blob.includes(goodRow.raw_words), false, "the item's raw words reached the claim payload");
+  assertEquals(blob.includes("Lynn"), false, "a speaker name reached the claim payload");
 });
 
 Deno.test("the statement is NEVER taken from the item's raw words", () => {
   const c = correctionClaimFor({
     companyId: CO,
     item: { ...goodRow, raw_words: "something else entirely" },
-    attestedAt: null, personName: null,
+    attestedAt: null,
   });
   assertEquals(c.statement, CORRECTION_STATEMENT);
 });

@@ -7,6 +7,7 @@
 // that must PASS at every site (intake/told-us claims stay included — R2).
 
 import { describe, it, expect, vi } from "vitest";
+import { clientDoorRpc } from "@/lib/testing/clientDoors";
 import { renderHook, waitFor } from "@testing-library/react";
 
 // ── Fixture ids ────────────────────────────────────────────────────────────────
@@ -48,12 +49,13 @@ function fakeSupabase(tables: Record<string, Row[]>) {
     });
     return builder;
   };
-  return { from, functions: { invoke: vi.fn() } };
+  // U6-25/U6-22/U6-14: the narrow doors answer from these same table fixtures.
+  return { from, rpc: clientDoorRpc(tables), functions: { invoke: vi.fn() } };
 }
 
 let db = fakeSupabase({});
 vi.mock("@/integrations/supabase/client", () => ({
-  supabase: { from: (t: string) => db.from(t), functions: { invoke: vi.fn() } },
+  supabase: { from: (t: string) => db.from(t), rpc: (n: string, a?: Record<string, unknown>) => db.rpc(n, a), functions: { invoke: vi.fn() } },
   HAS_SUPABASE_CREDENTIALS: true,
   RESOLVED_SUPABASE_URL: "http://localhost",
 }));

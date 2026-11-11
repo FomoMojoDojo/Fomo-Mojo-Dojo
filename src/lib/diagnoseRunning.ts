@@ -16,6 +16,19 @@
 // isDiagnoseRunning is the same call for one id. Measured 2026-11-09: 67 live input_files across 7
 // companies and 6 live interview_records across 4, fleet-wide — the unfiltered form is small.
 //
+// ONE ANSWER FOR EVERY READER (U6-14, 2026-11-10). The records arm used to read interview_records
+// directly, whose only non-admin SELECT policy was gated on `input_file_id IS NULL` — so a member
+// could not see a file-derived record and this predicate answered DIFFERENTLY for an operator and a
+// client on the same company. Edgewood read "running" only because its 10 live input_files carried it;
+// its one live interview record was invisible to a member. The arm now reads `interview_people`, the
+// tier-1 door, which returns name/role/date for any input_file_id and resolves membership itself — so
+// operator and client get the same answer from the same rows.
+//
+// U6-7 (signed 2026-11-10): interview_records stays MEMBER-BLIND for its text and its columns, and
+// no migration here changes that. The FILES ARM ALONE used to carry members; it no longer has to,
+// because tier 1 is role-independent. A role-independent check over the records themselves is filed,
+// not built.
+//
 // THE EMBED IS VERIFIED UNDER RLS (T, 2026-11-09). `inputs!inner(company_id)` resolves in ONE round
 // trip rather than the two-step select-inputs-then-files shape useCompanyFiles uses, and it was
 // checked through the browser's own signed-in client, not with a service-role key: Edgewood
@@ -29,7 +42,7 @@ export type DiagnoseRunning = ReadonlySet<string>;
 
 // The embedded filter is not in the generated types, which know nothing of `inputs.company_id` as a
 // column path. Same escape hatch the interview reads use.
-const loose = () => supabase as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+const loose = () => supabase as unknown as { from: (t: string) => any; rpc: (n: string, a?: Record<string, unknown>, o?: { get?: boolean }) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 type FileRow = { inputs?: { company_id?: string | null } | null };
 type RecordRow = { company_id?: string | null };
@@ -45,11 +58,16 @@ export async function fetchDiagnoseRunning(companyIds?: readonly string[]): Prom
   if (companyIds !== undefined && companyIds.length === 0) return new Set<string>();
 
   let files = loose().from("input_files").select("inputs!inner(company_id)").is("archived_at", null);
-  let records = loose().from("interview_records").select("company_id").is("retracted_at", null);
   if (companyIds !== undefined) {
     files = files.in("inputs.company_id", companyIds);
-    records = records.in("company_id", companyIds);
   }
+  // U6-14: tier 1. The function filters retracted rows and resolves membership itself, so there is
+  // nothing to add here; OMITTING p_company_ids asks for every company this caller may see (the
+  // Front Door's list).
+  // U6-36: over GET the argument is OMITTED rather than sent as null. postgrest-js drops `undefined`
+  // but stringifies `null`, and `?p_company_ids=null` reaches Postgres as the text "null" --
+  // 400 malformed array literal. The function's own default covers the no-ids case.
+  const records = loose().rpc("interview_people", companyIds === undefined ? {} : { p_company_ids: companyIds }, { get: true });
 
   const [fileRes, recordRes] = await Promise.all([files, records]);
   const running = new Set<string>();

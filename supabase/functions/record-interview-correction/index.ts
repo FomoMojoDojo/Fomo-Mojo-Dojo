@@ -49,16 +49,17 @@ Deno.serve(async (req) => {
     }
     const item = lookup.item;
 
-    // The interview's date and the person, for the "You told us · {name} · {date}" frame.
+    // The interview's DATE — the only half of the "You told us · {date}" frame that is not interview
+    // text. U6-27: person_name is no longer read here and no longer travels onto the claim; the chip
+    // asks interview_item_text for the speaker, which answers only a holder of interview.readText.
     const { data: rec } = await supabase.from("interview_records")
-      .select("id, interviewed_at, person_name").eq("id", item.interview_record_id).maybeSingle();
-    const record = (rec ?? null) as { interviewed_at?: string | null; person_name?: string | null } | null;
+      .select("id, interviewed_at").eq("id", item.interview_record_id).maybeSingle();
+    const record = (rec ?? null) as { interviewed_at?: string | null } | null;
 
     const claim = correctionClaimFor({
       companyId: company_id,
       item,
       attestedAt: record?.interviewed_at ?? null,
-      personName: record?.person_name ?? null,
     });
 
     // ── IDEMPOTENT ON THE ITEM ID ───────────────────────────────────────────────────────────────

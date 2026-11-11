@@ -12,7 +12,10 @@
 // quotation it is, attributed to the person (stakeholder) or the market label (market participant).
 // The two chip strings are the only client-visible strings here (signed 2026-09-16); the date is
 // short month + day, formatted in UTC so an interview date never shifts by timezone.
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
+import { INTERVIEW_ORIGIN_STRINGS as S } from "./interviewOriginStrings";
 
 //   filing (C2, signed 2026-09-17) → the company's own words arriving through a REGISTRY (a publicly_declared claim):
 //                          "In your filing · {host} · {fiscal year}"   when raw_payload.registry page_type = filing_data
@@ -129,13 +132,22 @@ export function filingOrigin(
 // the same UTC short-date formatter interviewOrigin uses for its client_attested branch. The only
 // difference is where the name and date come from: a claim carries them on raw_payload (written at
 // mint by record-interview-correction), not on a joined record.
+// U6-27 (signed 2026-11-10): THE PAYLOAD NO LONGER CARRIES THE WORDS OR THE NAME.
+//
+// record-interview-correction used to stamp person_name, speaker_label and item_raw_words onto the
+// minted claim's raw_payload. `claims` carries a member arm, so that put a real meeting utterance —
+// and the name of the person who said it — in a table any company member can read: measured on
+// Edgewood 2026-11-10, a member read "And that's not even true. We're no longer level 14…" attributed
+// to a named speaker. The ruling treats the NAME as interview text alongside the words, so both now
+// come through interview_item_text (tier 2, interview.readText) and neither is read from the payload
+// here. interview_item_id, interview_record_id and attested_at stay: an id is not a quote, and the
+// date is what the chip says even when the name is withheld.
 export type AttestedOriginView = {
   origin?: string | null;
-  person_name?: string | null;
-  /** R-A2: the item's speaker, used for the name ONLY when the record has no person_name. */
-  speaker_label?: string | null;
   attested_at?: string | null;
-  item_raw_words?: string | null;
+  /** The tier-2 key: which interview item this correction was minted from. */
+  interview_item_id?: string | null;
+  interview_record_id?: string | null;
 };
 
 /** Read the attested origin off a claim's raw_payload (written at mint by record-interview-correction). */
@@ -145,12 +157,14 @@ export function attestedOriginOf(rawPayload: unknown): AttestedOriginView | null
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
   return {
     origin: "interview_correction",
-    person_name: str(rp.person_name),
-    speaker_label: str(rp.speaker_label),
     attested_at: str(rp.attested_at),
-    item_raw_words: str(rp.item_raw_words),
+    interview_item_id: str(rp.interview_item_id),
+    interview_record_id: str(rp.interview_record_id),
   };
 }
+
+/** What interview_item_text returns: the raw words and the speaker, or null for a caller without the capability. */
+export type InterviewItemText = { raw_words: string | null; speaker: string | null };
 
 /** The frame for a client_attested claim; null for any other provenance (the caller renders what it
  *  rendered before). The expand shows the CLIENT'S OWN WORDS from the item, attributed to the person
@@ -167,24 +181,74 @@ export function attestedOriginOf(rawPayload: unknown): AttestedOriginView | null
  *    a date the client never spoke on. interviewed_at unset ⇒ render the name with NO date rather
  *    than substituting a date we do not have.
  */
+/**
+ *  U6-21 / U6-27 (signed 2026-11-10) — WHAT EACH READER GETS.
+ *
+ *  `text` is what interview_item_text returned: the raw words and the speaker for a caller holding
+ *  interview.readText on this company (sponsor by role, or an admin), and NULL for everyone else —
+ *  the function returns no row rather than an error, so there is nothing to catch and nothing to
+ *  explain.
+ *
+ *    with the capability    → "You told us · {name} · {date}", expand shows the client's own words
+ *    without the capability → S-U6-4 "You told us · {date}",   expand shows claim.statement
+ *
+ *  The no-capability form is a TRUE sentence, not a redaction notice: the client did tell us this, on
+ *  that date, and the statement in the expand is the operator's own wording, which was always safe to
+ *  show. A line announcing that a name is being withheld would tell the room there is a name.
+ */
 export function attestedOrigin(
   claim: { provenance?: string | null; raw_payload?: unknown; statement?: string | null } | null | undefined,
+  text?: InterviewItemText | null,
 ): InterviewOrigin | null {
   if (claim?.provenance !== "client_attested") return null;
   const o = attestedOriginOf(claim.raw_payload) ?? {};
-  const name = (o.person_name ?? "") || (o.speaker_label ?? "");
+  const name = (text?.speaker ?? "").trim();
   const date = formatInterviewDate(o.attested_at);
-  const head = name ? `You told us · ${name}` : "You told us";
+  const words = (text?.raw_words ?? "").trim();
+  const chip = name
+    ? (date ? S.attestedWithName(name, date) : `${S.youToldUs} · ${name}`)
+    : (date ? S.attestedDateOnly(date) : S.youToldUs);
   return {
     kind: "client_attested",
-    chip: date ? `${head} · ${date}` : head,
+    chip,
     attribution: name,
-    verbatim: (o.item_raw_words ?? String(claim.statement ?? "")).trim(),
+    verbatim: words || String(claim.statement ?? "").trim(),
   };
 }
 
+/**
+ * The tier-2 read (U6-27). One call per rendered chip, keyed by the claim's interview_item_id. A
+ * caller without interview.readText gets no row, so `text` stays null and the chip renders S-U6-4 —
+ * the component never has to know whether it holds the capability, which keeps the decision in the
+ * database and off the page.
+ */
+function useInterviewItemText(itemId: string | null | undefined): InterviewItemText | null {
+  const [text, setText] = useState<InterviewItemText | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setText(null);
+    if (!itemId) return;
+    void (async () => {
+      try {
+        const { data } = await (supabase as unknown as { rpc: (n: string, a: Record<string, unknown>, o?: { get?: boolean }) => Promise<{ data: unknown }> })
+          .rpc("interview_item_text", { p_item_id: itemId }, { get: true });
+        const row = Array.isArray(data) ? (data[0] as InterviewItemText | undefined) : null;
+        if (!cancelled && row) setText({ raw_words: row.raw_words ?? null, speaker: row.speaker ?? null });
+      } catch {
+        // A door that cannot be reached is a door that said no: `text` stays null and the chip
+        // renders S-U6-4. Failing CLOSED is the only safe direction here — the alternative would be
+        // a blip deciding whether a client sees a name.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [itemId]);
+  return text;
+}
+
 export function AttestedOriginChip({ claim }: { claim: { provenance?: string | null; raw_payload?: unknown; statement?: string | null } }) {
-  const origin = attestedOrigin(claim);
+  const itemId = attestedOriginOf(claim.raw_payload)?.interview_item_id ?? null;
+  const text = useInterviewItemText(itemId);
+  const origin = attestedOrigin(claim, text);
   if (!origin) return null;
   return (
     <details className="fr-ws-origin" data-fr-origin={origin.kind} data-testid="claim-origin">

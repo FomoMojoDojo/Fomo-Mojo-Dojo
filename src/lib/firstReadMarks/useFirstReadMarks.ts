@@ -33,7 +33,7 @@ export type LiveMark = {
 export type MarkWrite = { ok: true } | { ok: false; error: string };
 
 // deno-lint-ignore no-explicit-any
-type Loose = { from?: (t: string) => any; rpc?: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message?: string; code?: string } | null }> };
+type Loose = { from?: (t: string) => any; rpc?: (fn: string, args: Record<string, unknown>, opts?: { get?: boolean }) => Promise<{ data: unknown; error: { message?: string; code?: string } | null }> };
 const client = () => supabase as unknown as Loose;
 
 export const anchorId = (kind: string, key: string) => `${kind}|${key}`;
@@ -44,13 +44,24 @@ async function readLiveMarks(companyId: string): Promise<{ marks: LiveMark[]; fr
   const c = client();
   if (typeof c.from !== "function") return { marks: [], frozen: false };
   try {
-    const [{ data: co }, { data: rows }] = await Promise.all([
+    // U6-25 (2026-11-10): both reads go through the narrow doors, for every reader including the
+    // admin. `withdrawn_at IS NULL` is now the FUNCTION's predicate rather than this query's, and
+    // created_by / revisit_resolved_by / withdrawn_by (acting-admin uuids) are not returned at all.
+    // The ordering stays here: the function adds none, so "What we heard" sorts as it always has.
+    const [{ data: co }, { data: markRows }] = await Promise.all([
       c.from("companies").select("frozen").eq("id", companyId).maybeSingle(),
-      c.from("first_read_marks").select("id, company_id, kind, beat_key, anchor_kind, anchor_key, anchor_text, anchor_text_sha256, created_at, revisit_resolved_against, revisit_resolved_at").eq("company_id", companyId).is("withdrawn_at", null).order("created_at", { ascending: true }),
+      c.rpc("first_read_marks_client", { p_company_id: companyId }, { get: true }),
     ]);
+    const rows = (Array.isArray(markRows) ? [...markRows] : [])
+      .sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
     const marks = (Array.isArray(rows) ? rows : []) as Array<Omit<LiveMark, "version" | "note" | "disposition">>;
     if (marks.length === 0) return { marks: [], frozen: Boolean((co as { frozen?: boolean } | null)?.frozen) };
-    const { data: notes } = await c.from("first_read_mark_notes").select("mark_id, version, note, disposition").in("mark_id", marks.map((m) => m.id)).order("version", { ascending: false });
+    // Same door for the notes. It keys by COMPANY (membership lives on the parent mark) and already
+    // drops the notes of a withdrawn mark, so the id list is no longer the filter; the version sort
+    // stays here because the function adds none and `latest` below depends on it.
+    const { data: noteRows } = await c.rpc("first_read_mark_notes_client", { p_company_id: companyId }, { get: true });
+    const notes = (Array.isArray(noteRows) ? [...noteRows] : [])
+      .sort((a, b) => Number(b.version ?? 0) - Number(a.version ?? 0));
     const latest = new Map<string, { version: number; note: string; disposition: MarkDisposition | null }>();
     for (const n of (Array.isArray(notes) ? notes : []) as Array<{ mark_id: string; version: number; note: string | null; disposition: MarkDisposition | null }>) {
       if (!latest.has(n.mark_id)) latest.set(n.mark_id, { version: n.version, note: n.note ?? "", disposition: n.disposition ?? null });

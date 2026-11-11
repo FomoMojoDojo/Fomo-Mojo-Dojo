@@ -49,10 +49,42 @@ savepoint c2; select 'C2 '||public.correct_interview_speaker('$R_UP', 'client_st
 reset role; select set_config('request.jwt.claims', '', true);
 -- (c) no JWT at all (authenticated role, no claims)
 set role authenticated; savepoint c3; select 'C3 '||public.withdraw_interview_upload('$R_UP')::text; rollback to c3; reset role;
--- (h) the quote path: the RPC as the service role with the member as p_user_id, then the member reads it back
-select 'H2 quote record='||(select left(r.record_id::text,8) from public.record_interview_finding('$CO', '$NA', 'customer', 1, 'x', 'Minimize the guard', null, '{"speaker_role":"client_stakeholder","person_name":"Guard Person","journey_key":null,"interviewed_at":"2026-09-10T17:00:00Z","interviewer":"guard","consent_basis":"verbal","verbatim":"guard quote (rolled back)"}'::jsonb) r);
+-- ── (h) THE QUOTE PATH, under the two-tier law (U6-14, U6-25, U6-28; migration 20261110180000) ────
+--
+-- WHAT CHANGED. This check used to read "select count(*) from interview_records where person_name=..."
+-- as the non-admin and require 1 — i.e. it asserted that a non-admin reads the RECORD ITSELF, whole,
+-- verbatim column included. Member read, part 2 dropped "Users can view company interview_records"
+-- entirely, so that is now 0 by law, and the law it was replaced with is narrower in one direction
+-- and wider in the other:
+--
+--   tier 1  interview_people  — id, company_id, person_name, person_role, interviewed_at, for a
+--                               member, the company owner, THE RECORDS AUTHOR (U6-28) or an admin.
+--                               Any input_file_id. Never the text.
+--   tier 2  interview_text / interview_item_text — the verbatim, and the per-item speaker, ONLY to a
+--                               holder of interview.readText (sponsor by role, U6-19) or an admin.
+--
+-- SO THIS FIXTURE PROVES BOTH SIDES, and it has to, because $NA is inserted above as a SPONSOR on
+-- this throwaway company: a sponsor HOLDS the capability, so asserting a flat refusal for them would
+-- contradict the ruling rather than test it. H3c therefore requires the door to OPEN for the sponsor
+-- (non-vacuity: a door that refused everyone would pass a refusal-only check), and H3d demotes the
+-- same caller to observer in place and requires it to SHUT. The record id travels in a psql variable
+-- because the caller can no longer find the row by querying the table for it.
+reset role; select set_config('request.jwt.claims', '', true);
+select record_id as qid from public.record_interview_finding('$CO', '$NA', 'customer', 1, 'x', 'Minimize the guard', null, '{"speaker_role":"client_stakeholder","person_name":"Guard Person","journey_key":null,"interviewed_at":"2026-09-10T17:00:00Z","interviewer":"guard","consent_basis":"verbal","verbatim":"guard quote (rolled back)"}'::jsonb) \gset
+select 'H2 quote record='||left(:'qid',8);
 select set_config('request.jwt.claims', '{"sub":"$NA","role":"authenticated"}', true); set role authenticated;
-select 'H3 member reads own quote record='||count(*) from interview_records where person_name='Guard Person';
+-- tier 1 answers, and it is the AUTHOR arm that answers: created_by = p_user_id = \$NA.
+select 'H3 author via interview_people='||(select count(*) from public.interview_people(array['$CO'::uuid]) p where p.id = :'qid'::uuid and p.person_name = 'Guard Person');
+-- the table itself answers nothing, to this caller or any non-admin
+select 'H3b author direct table reads='||(select count(*) from public.interview_records where person_name='Guard Person');
+-- the sponsor door OPENS (the capability is held)
+select 'H3c sponsor interview_text chars='||coalesce((select length(verbatim) from public.interview_text(:'qid'::uuid))::text, '0');
+-- ...and the same caller demoted to observer is SHUT OUT of both tier-2 doors
+reset role; update company_members set role='observer' where company_id='$CO' and user_id='$NA'; set role authenticated;
+select 'H3d observer has_capability='||public.has_capability('$NA', 'interview.readText', '$CO')::text||' interview_text rows='||(select count(*) from public.interview_text(:'qid'::uuid))||' item_text rows='||(select count(*) from public.interview_item_text(:'qid'::uuid));
+-- tier 1 still answers the demoted caller: a name is not a quote
+select 'H3e observer via interview_people='||(select count(*) from public.interview_people(array['$CO'::uuid]) p where p.id = :'qid'::uuid);
+reset role; update company_members set role='sponsor' where company_id='$CO' and user_id='$NA'; set role authenticated;
 reset role;
 -- (i)–(n) as admin
 select set_config('request.jwt.claims', '{"sub":"$ADMIN","role":"authenticated"}', true); set role authenticated;
@@ -60,7 +92,16 @@ select 'I1 '||public.correct_interview_speaker('$R_UP', 'client_stakeholder')::t
 select 'I2 role='||speaker_role||' state='||market_state||' jk='||coalesce(journey_key,'null')||' basis_len='||jsonb_array_length(market_basis)||' history='||jsonb_array_length(speaker_history)||' from='||(speaker_history->0->>'from')||' to='||(speaker_history->0->>'to')||' by_ok='||((speaker_history->0->>'by')='$ADMIN')||' at_ok='||((speaker_history->0->>'at') is not null)||' identity_ok='||(content_identity=public.interview_content_identity(company_id, speaker_role, verbatim)) from interview_records where id='$R_UP';
 select 'J1 '||public.correct_interview_speaker('$R_UP', 'market_participant')::text;
 select 'J2 role='||speaker_role||' state='||market_state||' jk='||coalesce(journey_key,'null')||' basis_len='||jsonb_array_length(market_basis)||' history='||jsonb_array_length(speaker_history) from interview_records where id='$R_UP';
+-- R_UP3 is inserted HERE, after J1 has put R_UP back to market_participant — the order is load-bearing
+-- for (k), because a stakeholder row with this same text would collide with R_UP on insert at any
+-- earlier point. It is inserted AS THE OWNER: U6-26 (2026-11-10) revoked INSERT on interview_records
+-- from authenticated, and a GRANT is checked per ROLE, so an admin — who authenticates as the
+-- authenticated role too — is denied it just the same. No production path is affected: creation runs
+-- through the record-interview-upload edge function on the service role, and record_interview_finding
+-- is SECURITY DEFINER and inserts as its owner, which is why the (h) quote path above still works.
+reset role;
 insert into interview_records (id, company_id, speaker_role, verbatim, created_by, input_file_id, file_sha256, file_bytes, text_sha256, extraction_method, extraction_version, market_state, journey_key, market_basis) values ('$R_UP3', '$CO', 'client_stakeholder', 'guard transcript (rolled back)', '$ADMIN', '$F_INT3', repeat('e',64), 10, repeat('f',64), 'local_text_reader', 'v', 'per_item', null, '[{"kind":"original","result":"none"}]');
+set role authenticated;
 -- (k) collision: R_UP3 (stakeholder, SAME text as R_UP) → customer would equal the live identity of R_UP (customer again after J1)
 create temp table k_before as select row_to_json(r)::text as j from interview_records r where id='$R_UP3';
 savepoint k1; select 'K1 '||public.correct_interview_speaker('$R_UP3', 'market_participant')::text; rollback to k1;
@@ -91,7 +132,25 @@ chk "(c) member withdraw refused"     "withdraw_interview_upload: caller is not 
 chk "(c) member correct refused"      "correct_interview_speaker: caller is not an admin"
 chk "(c) no-JWT withdraw refused"     "withdraw_interview_upload: no authenticated caller"
 chk "(h) quote path as member works"  "H2 quote record="
-chk "(h) member reads back the quote record" "H3 member reads own quote record=1"
+# U6-28: tier 1 answers the record's AUTHOR; the table answers nobody; tier 2 opens for the sponsor
+# and shuts for the observer. Both sides asserted, so neither a leak nor a blanket refusal can pass.
+chk "(h) the author reads the record through interview_people" "H3 author via interview_people=1"
+chk "(h) the author reads NOTHING from interview_records directly" "H3b author direct table reads=0"
+chk "(h) the sponsor's tier-2 door opens on the text" "H3c sponsor interview_text chars=25"
+chk "(h) demoted to observer, both tier-2 doors shut" "H3d observer has_capability=false interview_text rows=0 item_text rows=0"
+chk "(h) tier 1 still answers the observer — a name is not a quote" "H3e observer via interview_people=1"
+
+# (h) TIER 1 CANNOT RETURN TEXT, from the catalogue rather than from a probe. The declared RETURNS
+# TABLE is the whole leak surface of a definer function: a column added to it is served to every
+# caller the body admits, with no policy in the way. Read here instead of provoking a parse error
+# inside the transaction above — a deliberate error there aborts it and takes every later check with
+# it. Asserted by WHAT IT RETURNS, not by what it does not: the five signed columns, exactly.
+PEOPLE_RESULT=$(docker exec -i "$PGC" psql -U postgres -d postgres -At -c "select pg_get_function_result('public.interview_people'::regproc)")
+if [ "$(echo "$PEOPLE_RESULT" | tr -d ' ')" = "TABLE(iduuid,company_iduuid,person_nametext,person_roletext,interviewed_attimestampwithtimezone)" ]; then
+  echo "  ok   (h) tier 1 returns exactly the five signed columns — no verbatim, no speaker_label, no created_by"
+else
+  echo "  FAIL (h) interview_people's RETURNS TABLE is not the five signed columns: $PEOPLE_RESULT"; fail=1
+fi
 chk "(i) customer→stakeholder: per_item, jk null, basis kept (2), history 1 {from,to,by,at}" "I2 role=client_stakeholder state=per_item jk=null basis_len=2 history=1 from=market_participant to=client_stakeholder by_ok=true at_ok=true identity_ok=true"
 chk "(j) stakeholder→customer: unplaced, override NOT re-applied, history 2" "J2 role=market_participant state=unplaced jk=null basis_len=2 history=2"
 chk "(k) collision → speaker_identity_collision"  "ERROR:  speaker_identity_collision"

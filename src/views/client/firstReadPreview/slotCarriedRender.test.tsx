@@ -5,6 +5,7 @@
 // rendered it raw — "In 1993 Edgewood established …" — so the two surfaces disagreed about one
 // sentence. These legs run the REAL hook over the real slot and the real carried block.
 import { describe, it, expect, vi } from "vitest";
+import { clientDoorRpc } from "@/lib/testing/clientDoors";
 import { renderHook, waitFor } from "@testing-library/react";
 
 const CO = "3dd2cfbb-0792-4bf1-9cd4-15db9646874b";
@@ -37,7 +38,8 @@ function fakeSupabase(tables: Record<string, Row[]>) {
     });
     return b;
   };
-  return { from, functions: { invoke: vi.fn() } };
+  // U6-25/U6-22/U6-14: the narrow doors answer from these same table fixtures.
+  return { from, rpc: clientDoorRpc(tables), functions: { invoke: vi.fn() } };
 }
 
 /** the slot object, kept by reference so store/render parity can be checked after */
@@ -59,7 +61,7 @@ const ledger = {
 
 let db = fakeSupabase({});
 vi.mock("@/integrations/supabase/client", () => ({
-  supabase: { from: (t: string) => db.from(t), functions: { invoke: vi.fn() } },
+  supabase: { from: (t: string) => db.from(t), rpc: (n: string, a?: Record<string, unknown>) => db.rpc(n, a), functions: { invoke: vi.fn() } },
   HAS_SUPABASE_CREDENTIALS: true,
   RESOLVED_SUPABASE_URL: "http://localhost",
 }));
