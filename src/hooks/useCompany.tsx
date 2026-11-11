@@ -70,32 +70,19 @@ interface CompanyCtx {
 
 const CompanyContext = createContext<CompanyCtx | undefined>(undefined);
 const PREFERRED_COMPANY_NAME = "cafe barra";
-const PUBLIC_CAFE_BARRA_FALLBACK: Company = {
-  // Use a UUID-shaped id so UUID-filtered queries fail gracefully (empty) instead of throwing DB cast errors.
-  id: "00000000-0000-0000-0000-000000000001",
-  name: "Cafe Barra",
-  website: "https://cafebarra.com",
-  created_by: "public",
-  created_at: new Date(0).toISOString(),
-  quarter: "Q2 2026",
-  archetype: "Founder",
-  mojo_score: 64,
-  potential_score: 78,
-  projected_score: 82,
-  evidence_status: "emerging",
-  evidence_note: "Public preview fallback company.",
-  last_scored_at: null,
-  area_scores_json: null,
-  public_source_filters_json: null,
-  program_phase: "outside_signals",
-  engagement_phase_set: true, // mock company behaves as operator-set
-  engagement_phase: "outside_signals",
-  excluded_signals_json: [],
-  selected_route_id: null,
-  selected_route_summary_json: null,
-  selected_route_updated_at: null,
-  engagement_started_at: null,
-};
+
+// U6-62 (2026-11-11) — THE PUBLIC FALLBACK COMPANY IS GONE. What stood here was a complete fake
+// company: a real client's name, website, three scores and a phase, handed to every caller who was
+// not an admin. It was never a preview of anything. `internal` is the default presentation mode, so
+// a visitor with no localStorage and no session got it on eleven routes, and a visitor with
+// "client" stored got the whole Decision Command Screen on it. U6-46 shut the routes; this removes
+// the thing they were showing.
+//
+// THE ID SURVIVES AND NOTHING ELSE DOES. The deleted installer PERSISTED this id to
+// `active_company_id`, so browsers still carry it today, and an unknown stored id must not become a
+// member's company. It is kept to RECOGNISE and DELETE a stored copy — there is no name, no
+// website, no score, and no company object anywhere for it to name. Nothing renders from it.
+const LEGACY_SENTINEL_COMPANY_ID = "00000000-0000-0000-0000-000000000001";
 
 // N4 (2026-09-26) — THE DEFAULT SKIPS FROZEN COMPANIES. The preferred name is "cafe barra", which
 // on the live fleet is CB1 — the frozen reference fixture. So a browser with no stored selection
@@ -138,11 +125,16 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const [fetchError, setFetchError] = useState<string | null>(null);
   // H3.3 (2026-09-09): the sentinel id could be PERSISTED by the old error branch, so it outlived
   // the network blip that produced it and kept sending First Read to "Company not found". Any stored
-  // copy is cleared on load. The literal lives in exactly one place (PUBLIC_CAFE_BARRA_FALLBACK
-  // above) and `active_company_id` is read/written only inside this hook, so this is the only door.
+  // copy is cleared on load. `active_company_id` is read/written only inside this hook, so this is
+  // the only door.
+  //
+  // U6-62: A STORED ID IS A CLAIM, NOT AN AUTHORITY. Clearing the sentinel is not what keeps a
+  // caller off a company they do not hold — the effect below does, by discarding any stored id that
+  // is not in the list the SERVER returned for this caller. This purge just stops a known-dead id
+  // from surviving in storage.
   const [activeId, setActiveId] = useState<string | null>(() => {
     const stored = safeLocalStorageGet('active_company_id');
-    if (stored === PUBLIC_CAFE_BARRA_FALLBACK.id) {
+    if (stored === LEGACY_SENTINEL_COMPANY_ID) {
       safeLocalStorageRemove('active_company_id');
       return null;
     }
@@ -168,30 +160,77 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const setFallbackPublicCompany = useCallback(() => {
-    setCompanies([PUBLIC_CAFE_BARRA_FALLBACK]);
-    const nextId = PUBLIC_CAFE_BARRA_FALLBACK.id;
-    setActiveId((current) => current ?? nextId);
-    if (!safeLocalStorageGet("active_company_id")) {
-      safeLocalStorageSet("active_company_id", nextId);
-    }
-    setLoading(false);
-  }, []);
-
   const fetchCompanies = useCallback(async (signal?: AbortSignal) => {
     if (authLoading) {
       setLoading(true);
       return;
     }
 
-    if (!user || !isAdmin) {
-      setFallbackPublicCompany();
-      setLoading(false);
-      return;
-    }
     const baseSelect =
       "id,name,website,created_by,created_at,frozen,fixture_hold,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json,industry_key,no_public_site";
     const extendedSelect = `${baseSelect},public_source_filters_json,program_phase,excluded_signals_json,selected_route_id,selected_route_summary_json,selected_route_updated_at,engagement_started_at`;
+
+    // U6 part 1 — NO SESSION, NO COMPANIES. The deleted branch answered this case with the fake
+    // company; the honest answer is an empty list. Every route that renders a company is behind a
+    // session (U6-46), so nothing downstream needs a stand-in, and a stored id is dropped here
+    // rather than left to point at a company this browser can no longer read.
+    if (!user) {
+      setCompanies([]);
+      setActiveId(null);
+      safeLocalStorageRemove("active_company_id");
+      setFetchError(null);
+      setLoading(false);
+      return;
+    }
+
+    // U6 part 1 — A MEMBER READS THEIR OWN COMPANIES, FROM THE SERVER.
+    //
+    // The query is `company_members` with the company embedded, not `companies` filtered: the
+    // membership row is the authority on what this account holds, and its own SELECT policy
+    // ("Users see own or admin all company_members", user_id = auth.uid()) means a member's query
+    // can only ever return their own rows. The `companies` policy carries a second arm,
+    // `created_by = auth.uid()`, which would hand a self-created company to a non-member — reading
+    // through the membership table means that arm cannot widen this list.
+    //
+    // ORDER IS MEMBERSHIP ORDER (U6-49): created_at DESCENDING, so the most recently assigned
+    // company is companies[0]. The landing resolver takes that order as given and does not re-sort,
+    // which is why it is applied here, on the only query that knows it.
+    if (!isAdmin) {
+      let mq = supabase
+        .from("company_members")
+        .select(`created_at,companies!inner(${extendedSelect})`)
+        .order("created_at", { ascending: false });
+      if (signal) mq = mq.abortSignal(signal) as typeof mq;
+      const mr = (await mq) as unknown as { data: Array<{ companies: unknown }> | null; error: any };
+      if (signal?.aborted || pageUnloadingRef.current || isAbortLikeError(mr.error)) return;
+      lastFetchAttemptsRef.current = { attempts: 1, retries: 0 };
+      if (mr.error) {
+        // U6-54: a refused or failed read is a FAILURE, never "you belong to nothing". S-U6-1 is
+        // reserved for an account the server said has no membership.
+        console.error("[companies] member fetch error:", mr.error);
+        setFetchError(mr.error.message || "companies fetch failed");
+        setLoading(false);
+        return;
+      }
+      setFetchError(null);
+      const seen = new Set<string>();
+      const own: Company[] = [];
+      for (const row of mr.data ?? []) {
+        const c = row?.companies as Company | null;
+        // Two memberships on one company (different roles) would list it twice; keep the first,
+        // which is the most recent by the ordering above.
+        if (!c?.id || seen.has(c.id)) continue;
+        seen.add(c.id);
+        own.push({
+          ...c,
+          engagement_phase: normalizeEngagementPhase(c.program_phase),
+          engagement_phase_set: c.program_phase != null,
+        });
+      }
+      setCompanies(own);
+      setLoading(false);
+      return;
+    }
 
     // The builder is REBUILT per attempt: a supabase query builder is a single-use thenable, so a
     // retry that re-awaited the same object would not re-issue the request.
@@ -278,7 +317,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     }));
     setCompanies(companies);
     setLoading(false);
-  }, [user, isAdmin, authLoading, setFallbackPublicCompany]);
+  }, [user, isAdmin, authLoading]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -293,17 +332,45 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     safeLocalStorageSet('active_company_id', id);
   };
 
+  // U6-62 — A STORED ID CANNOT SELECT A COMPANY. This reconciles the stored id against the list the
+  // SERVER returned for this caller: if it is not in that list it is discarded, whatever it names.
+  // That is what makes a stale id (a company the account was removed from) and a foreign id (one
+  // guessed or pasted, or left behind by the deleted fallback) both resolve to the caller's own
+  // company rather than to the stored one.
+  //
+  // IT WAITS FOR THE FETCH. `companies` is [] while loading, and acting then would wipe a perfectly
+  // good id on every reload. The old form returned early on an empty list, which also meant a
+  // signed-in account with NO companies kept its stored id forever — now it is cleared.
+  //
+  // A MEMBER'S DEFAULT IS MEMBERSHIP ORDER, not pickDefaultCompanyId: that picker prefers a company
+  // by NAME and skips frozen ones, which is the right answer for an operator choosing among the
+  // fleet and the wrong one for an account that holds exactly what it was assigned. companies[0] is
+  // the most recently assigned (U6-49), the same company the landing resolver sends them to.
   useEffect(() => {
-    if (companies.length === 0) return;
+    if (loading) return;
 
     const stillExists = activeId ? companies.some((company) => company.id === activeId) : false;
     if (stillExists) return;
 
-    const nextId = pickDefaultCompanyId(companies);
-    if (!nextId) return;
+    if (companies.length === 0) {
+      if (activeId !== null) {
+        setActiveId(null);
+        safeLocalStorageRemove('active_company_id');
+      }
+      return;
+    }
+
+    const nextId = isAdmin ? pickDefaultCompanyId(companies) : companies[0].id;
+    if (!nextId) {
+      if (activeId !== null) {
+        setActiveId(null);
+        safeLocalStorageRemove('active_company_id');
+      }
+      return;
+    }
     setActiveId(nextId);
     safeLocalStorageSet('active_company_id', nextId);
-  }, [companies, activeId]);
+  }, [companies, activeId, isAdmin, loading]);
 
   const defaultCompanyId = pickDefaultCompanyId(companies);
   const activeCompany =

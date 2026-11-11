@@ -31,6 +31,19 @@ const ELEVEN = [
 /** …plus "/", which had no auth check at all. */
 const TWELVE = [...ELEVEN, "/"] as const;
 
+// U6 part 1 (2026-11-11) — THE THREE ROUTES THE LANDING BUILD ADDED, on the same law. /start is the
+// post-sign-in resolver and the other two are a member's own pages: all three take a session, so a
+// signed-out visitor is redirected, and none of them may render a company. The two company-bearing
+// paths are given a REAL company id deliberately — a signed-out visitor pasting a valid id is the
+// case worth testing, not a 404.
+const LANDING_ROUTES = [
+  "/start",
+  "/preview/client-refine/first-read/3dd2cfbb-0792-4bf1-9cd4-15db9646874b",
+  "/preview/client-refine/diagnose/3dd2cfbb-0792-4bf1-9cd4-15db9646874b/home",
+] as const;
+
+const ALL_SIGNED_OUT = [...TWELVE, ...LANDING_ROUTES] as const;
+
 /** The fallback company's own strings (src/hooks/useCompany.tsx PUBLIC_CAFE_BARRA_FALLBACK). */
 const FALLBACK_STRINGS = ["Cafe Barra", "cafebarra.com"] as const;
 
@@ -48,7 +61,7 @@ async function probe(page: Page) {
 // Both presentation modes, because the hole behaved differently in each: internal mode rendered the
 // legacy page itself, client mode rendered the Decision screen at "/".
 for (const mode of ["internal", "client"] as const) {
-  test(`(a) signed out in ${mode} mode: all twelve redirect to /login and render no company`, async ({ page }) => {
+  test(`(a) signed out in ${mode} mode: all fifteen redirect to /login and render no company`, async ({ page }) => {
     test.setTimeout(240_000);
     const ctx = await page.context().browser()!.newContext({ storageState: NO_SESSION });
     const p = await ctx.newPage();
@@ -56,7 +69,7 @@ for (const mode of ["internal", "client"] as const) {
       await p.goto("/login", { waitUntil: "domcontentloaded", timeout: 120_000 });
       await p.evaluate((m) => { localStorage.clear(); localStorage.setItem("mojo.presentation.mode", m); }, mode);
 
-      for (const path of TWELVE) {
+      for (const path of ALL_SIGNED_OUT) {
         await p.goto(path, { waitUntil: "networkidle", timeout: 120_000 });
         const url = new URL(p.url());
         expect(url.pathname, `${path}: a signed-out visitor was not sent to sign in`).toBe("/login");
@@ -64,8 +77,13 @@ for (const mode of ["internal", "client"] as const) {
         // visitor to "/" first and "/" is what asks for a session, so the carry is "/" — still a
         // same-origin path, still never a host.
         const next = url.searchParams.get("next");
-        expect(next, `${path}: the carried path names an origin`).toMatch(/^\/(?!\/)/);
-        if (mode === "internal") expect(next, `${path}: the attempted path was not carried`).toBe(path);
+        // /start carries nothing on purpose: it is not a destination, it is the thing that picks one.
+        if (path === "/start") {
+          expect(next, "/start was carried as a deep link — it resolves, it is not a page").toBeNull();
+        } else {
+          expect(next, `${path}: the carried path names an origin`).toMatch(/^\/(?!\/)/);
+          if (mode === "internal") expect(next, `${path}: the attempted path was not carried`).toBe(path);
+        }
 
         const r = await probe(p);
         for (const s of FALLBACK_STRINGS) {
@@ -81,11 +99,13 @@ for (const mode of ["internal", "client"] as const) {
   });
 }
 
-test("(b) NON-VACUITY: the admin still reaches all twelve", async ({ page }) => {
+test("(b) NON-VACUITY: the admin still reaches all fifteen", async ({ page }) => {
   test.setTimeout(240_000);
-  for (const path of TWELVE) {
+  for (const path of ALL_SIGNED_OUT) {
     await page.goto(path, { waitUntil: "networkidle", timeout: 120_000 });
     const r = await probe(page);
+    // /start is a resolver: for an admin it REDIRECTS to the Front Door, so its final pathname is
+    // not itself. What matters is that the admin was not sent to sign in.
     expect(new URL(page.url()).pathname, `${path}: the admin was sent to sign in`).not.toBe("/login");
     expect(r.accessDenied, `${path}: the admin was refused on role`).toBe(0);
     expect(r.loginRequired, `${path}: the admin was asked to sign in`).toBe(0);

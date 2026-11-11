@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { HAS_SUPABASE_CREDENTIALS } from '@/integrations/supabase/client';
-import { CLIENT_REFINE_PREVIEW_ROUTE } from '@/lib/clientRefinePreview';
 import { carriedNextFrom } from '@/lib/authRedirect';
+import { startPathFor } from '@/lib/landing/landingResolver';
 import { LOGIN_STRINGS } from './loginStrings';
 
 const c = {
@@ -26,8 +26,9 @@ export default function Login() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
-  const { signIn, signUp } = useAuth();
+  // U6-58: no 'signup'. The mode existed because this page offered to create an account.
+  const [mode, setMode] = useState<'login' | 'forgot'>('login');
+  const { signIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -56,32 +57,18 @@ export default function Login() {
       return;
     }
 
-    if (mode === 'signup') {
-      const { error } = await signUp(email, password);
-      setLoading(false);
-      if (error) {
-        setError(error.message);
-      } else {
-        setSuccess('Check your email to confirm your account.');
-      }
-    } else {
-      const { error } = await signIn(email, password);
-      setLoading(false);
-      if (error) {
-        setError(error.message);
-      } else {
-        // The front door. /admin/companies is the legacy site now, and it was also the one path
-        // AdminGuard refuses to bounce — a non-admin landed on "Access Denied" instead of a surface.
-        // U6-55: honour the path the visitor was refused on, when one was carried and is safe.
-        // carriedNextFrom re-validates it here rather than trusting the query string.
-        //
-        // Without a carry this is unchanged. For an ADMIN that is the front door itself. For a
-        // NON-ADMIN it is still AdminGuard: client mode bounces to "/" (today the Decision screen
-        // on the fallback company), internal mode shows "Access Denied". The landing build
-        // (U6 part 1) is what gives a member somewhere of their own to go.
-        navigate(carriedNextFrom(location.search) ?? CLIENT_REFINE_PREVIEW_ROUTE);
-      }
+    const { error } = await signIn(email, password);
+    setLoading(false);
+    if (error) {
+      setError(error.message);
+      return;
     }
+    // U6-63: EVERY sign-in goes to /start, which is the one place that knows what this account
+    // holds. It used to go straight to the Front Door, which is an operator's page — a member
+    // arrived there and met AdminGuard. A carried deep link rides along and is honoured only if
+    // /start finds the account holds the company it names; carriedNextFrom re-validates it here
+    // rather than trusting the query string.
+    navigate(startPathFor(carriedNextFrom(location.search)));
   };
 
   return (
@@ -98,17 +85,17 @@ export default function Login() {
           <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-[12px] border shadow-sm" style={{ background: c.panel, borderColor: c.line }}>
             <span className="font-serif text-[22px] font-bold leading-none" style={{ color: c.charcoal }}>M</span>
           </div>
-          <span className="font-sans text-[15px] font-bold tracking-[0.08em] uppercase" style={{ color: c.charcoal }}>
-            MOJO MAP
+          {/* U6-59: the mark, and no description. The line that stood here — "Strategy workspace
+              access for company research, opportunity mapping, and internal review." — told a
+              client that the product they were invited to is an internal tool. */}
+          <span className="font-serif text-[20px]" style={{ color: c.charcoal }}>
+            {LOGIN_STRINGS.wordmark}
           </span>
-          <p className="mt-3 font-sans text-[14px] leading-[1.7]" style={{ color: c.secondary }}>
-            Strategy workspace access for company research, opportunity mapping, and internal review.
-          </p>
         </div>
 
         <div className="rounded-[24px] border p-6 shadow-sm" style={{ background: c.panel, borderColor: c.line }}>
           <h1 className="font-serif text-[24px] mb-1" style={{ color: c.charcoal }}>
-            {mode === 'login' ? LOGIN_STRINGS.heading : mode === 'signup' ? 'Create Account' : 'Reset Password'}
+            {mode === 'login' ? LOGIN_STRINGS.heading : 'Reset Password'}
           </h1>
           <p className="font-mono text-[11px] mb-5 uppercase tracking-wide" style={{ color: c.muted }}>
             {mode === 'forgot' ? 'Enter your email to reset' : LOGIN_STRINGS.subheading}
@@ -153,8 +140,8 @@ export default function Login() {
               style={{ background: c.charcoal, color: "#FAF7F6" }}
             >
               {loading
-                ? (mode === 'forgot' ? 'Sending…' : mode === 'login' ? 'Signing in…' : 'Creating account…')
-                : (mode === 'forgot' ? 'Send Reset Link' : mode === 'login' ? 'Sign In' : 'Sign Up')}
+                ? (mode === 'forgot' ? 'Sending…' : 'Signing in…')
+                : (mode === 'forgot' ? 'Send Reset Link' : 'Sign In')}
             </button>
           </form>
 
@@ -171,17 +158,22 @@ export default function Login() {
             </p>
           )}
 
-          <p className="mt-3 text-center font-mono text-[11px]" style={{ color: c.muted }}>
-            {mode === 'login' ? "Don't have an account?" : 'Back to'}{' '}
-            <button
-              type="button"
-              onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setSuccess(''); }}
-              className="hover:underline"
-              style={{ color: c.warm }}
-            >
-              {mode === 'login' ? 'Sign up' : 'Sign in'}
-            </button>
-          </p>
+          {/* U6-58: the "Don't have an account? Sign up" invitation is gone — accounts are created
+              by FomoMojoDojo (docs/operator-account-setup.md), not self-registered. What stays is
+              the way back from the reset form, which is not an account-creation control. */}
+          {mode === 'forgot' && (
+            <p className="mt-3 text-center font-mono text-[11px]" style={{ color: c.muted }}>
+              Back to{' '}
+              <button
+                type="button"
+                onClick={() => { setMode('login'); setError(''); setSuccess(''); }}
+                className="hover:underline"
+                style={{ color: c.warm }}
+              >
+                Sign in
+              </button>
+            </p>
+          )}
         </div>
       </div>
     </div>

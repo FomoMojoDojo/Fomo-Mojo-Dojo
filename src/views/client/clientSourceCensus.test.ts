@@ -35,6 +35,14 @@ const CLIENT_SOURCE_FILES = [
   "src/hooks/useRoutes.ts",
   "src/hooks/useOdiNeeds.ts",
   "src/lib/claims/useCompanyClaims.ts",
+  // U6 part 1 (2026-11-11) — the landing itself is a client-reachable surface now. /start decides
+  // where a member goes, and it decides from two reads; if either one is not member-readable the
+  // landing resolves on an admin's view of the world and sends a member to a page that then comes
+  // up empty. That is the census's whole subject, one step earlier than before.
+  "src/lib/landing/firstReadReady.ts",
+  // The member's own company list. Its member branch reads company_members with companies embedded,
+  // which is the read that decides what the gate will let them open.
+  "src/hooks/useCompany.tsx",
 ];
 
 /**
@@ -101,6 +109,9 @@ describe("U6-15 census: every client-page source is member-readable or accounted
     // the doors this work introduced must be among them, or the census is reading stale files
     expect([...functions]).toContain("findings_client");
     expect([...functions]).toContain("interview_people");
+    // U6 part 1: the landing's two reads are in the census, or it is reading stale files
+    expect([...tables]).toContain("first_read_sessions");
+    expect([...tables]).toContain("company_members");
   });
 
   it("every table read by a client page is member-readable, or on the operator-only list with a reason", () => {
@@ -110,7 +121,25 @@ describe("U6-15 census: every client-page source is member-readable or accounted
               (has_table_privilege('authenticated','public.'||quote_ident(cl.relname),'SELECT')
                and (not cl.relrowsecurity
                     or exists (select 1 from pg_policy p where p.polrelid=cl.oid and p.polcmd in ('r','*')
-                               and pg_get_expr(p.polqual,p.polrelid) ilike '%company_members%')))::text
+                               and (pg_get_expr(p.polqual,p.polrelid) ilike '%company_members%'
+                                    -- U6-71 (2026-11-11) — ONE TABLE, BY NAME, AND NOTHING ELSE.
+                                    --
+                                    -- company_members is the only source a client page reads that is
+                                    -- keyed on the CALLER rather than on a company, so it has no
+                                    -- company_members arm for the test above to find; without this
+                                    -- the census reports the membership table itself as member-blind,
+                                    -- which is the opposite of the truth.
+                                    --
+                                    -- It is matched BY NAME on purpose. The first version of this
+                                    -- accepted any policy matching '%user_id = auth.uid()%', which
+                                    -- would have silently admitted every future self-row table — and
+                                    -- a self-row policy is NOT the member read this census is about.
+                                    -- "The caller may see their own row" says nothing about whether a
+                                    -- COMPANY'S members may see the company's data, which is the only
+                                    -- question here. A second such table must be argued for
+                                    -- explicitly, not inherited from this exception.
+                                    or (cl.relname = 'company_members'
+                                        and pg_get_expr(p.polqual,p.polrelid) ilike '%user_id = auth.uid()%')))))::text
        from pg_class cl join pg_namespace ns on ns.oid=cl.relnamespace
        where ns.nspname='public' and cl.relkind in ('r','v')
          and cl.relname in (${[...tables].map((t) => `'${t}'`).join(",") || "''"});`,

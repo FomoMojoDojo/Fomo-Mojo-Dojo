@@ -8,6 +8,8 @@
 //
 // Verbatim, as signed. The parity test beside this file is what keeps them that way.
 export const LOGIN_STRINGS = {
+  /** U6-59 — the wordmark, with the mark. Was "MOJO MAP", letter-spaced and uppercased in CSS. */
+  wordmark: "MojoMap\u2122",
   /** S-U6-7 — the page heading, replacing 'Admin Login'. */
   heading: "Sign in to MojoMap™",
   /** S-U6-8 — the line under the heading, replacing 'CMS Access'. */

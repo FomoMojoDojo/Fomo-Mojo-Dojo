@@ -1,11 +1,9 @@
 import { Link, useLocation, Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { usePresentationMode } from '@/hooks/usePresentationMode';
 import { loginPathFor } from '@/lib/authRedirect';
 
 export default function AdminGuard({ children }: { children: React.ReactNode }) {
   const { user, isAdmin, loading } = useAuth();
-  const { mode } = usePresentationMode();
   const location = useLocation();
 
   if (loading) {
@@ -26,20 +24,24 @@ export default function AdminGuard({ children }: { children: React.ReactNode }) 
   if (!user) {
     return <Navigate to={loginPathFor(`${location.pathname}${location.search}`)} replace />;
   }
+  // U6 part 1 (2026-11-11) — THE CLIENT-MODE BOUNCE IS GONE, AND ITS REASON WITH IT.
+  //
+  // What stood here sent a non-admin in client presentation to "/" instead of refusing them, because
+  // in internal mode "/" redirected back into this guard and looped, and because "Access Denied" was
+  // a dead end with nowhere to go (2026-09-09). Both premises are now false: "/" sends a non-admin
+  // to /start, which resolves a real destination, and a member HAS somewhere of their own to be.
+  //
+  // IT HAD TO GO, not merely become unnecessary. A non-admin is always client presentation now
+  // (usePresentationMode), so the bounce would have fired for EVERY member on EVERY gated route —
+  // making the role refusal unreachable and collapsing the distinction U6-56 signed: no session is a
+  // redirect, a session without an admin row is a refusal in words. Measured 2026-11-11: with the
+  // bounce in place a signed-in non-admin on /legacy/routes ended at /start, and zz-admin-gate (v4)
+  // went red.
+  //
+  // WHERE A MEMBER IS SENT HOME INSTEAD, it is the ROUTE's decision and not this guard's: "/" and the
+  // Front Door, the two places an account arrives by default (U6-50). Everywhere else is an
+  // operator's tool and says so.
   if (!isAdmin) {
-    const attemptedPath = location.pathname;
-    // "/" is only a safe destination in CLIENT mode, where it renders the client decision screen.
-    // In internal mode "/" redirects to /preview/client-refine, which is behind this same guard —
-    // so bouncing a non-admin there loops forever. Found when login was repointed at the front door
-    // (2026-09-09): the census expected the bounce to fix the "Access Denied" dead end, and instead
-    // it would have walked every non-admin into that loop. The refusal page is the terminating answer.
-    const shouldBounceToClient =
-      !attemptedPath.startsWith("/admin") && mode === "client";
-
-    if (shouldBounceToClient) {
-      return <Navigate to="/" replace />;
-    }
-
     return (
       <div className="min-h-screen bg-ink flex items-center justify-center px-4">
         <div className="text-center max-w-md">

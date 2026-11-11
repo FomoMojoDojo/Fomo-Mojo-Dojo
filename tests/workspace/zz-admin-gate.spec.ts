@@ -26,6 +26,7 @@
 // was silently signed in as an admin. Both cases below pass an explicit EMPTY state.
 import { expect, test, type Page } from "playwright/test";
 import { COMPANY_ID } from "../../playwright.config";
+import { LANDING_STRINGS } from "../../src/lib/landing/landingStrings";
 
 type Sb = { auth: { signInWithPassword: (c: { email: string; password: string }) => Promise<{ data: { session: unknown }; error: { message?: string } | null }> } };
 
@@ -41,8 +42,13 @@ const PATHS = [
 /** Everything the refusal must NOT leave on screen, plus the refusal headings. */
 async function probe(page: Page) {
   return page.evaluate(() => ({
+    text: document.body.innerText.replace(/\s+/g, " "),
     accessDenied: Array.from(document.querySelectorAll("h1")).filter((h) => h.textContent?.trim() === "Access Denied").length,
     loginRequired: Array.from(document.querySelectorAll("h1")).filter((h) => h.textContent?.trim() === "Admin Login Required").length,
+    // U6-68: the member notices. A refusal a CLIENT reads, as opposed to an operator's "Access
+    // Denied" — the two are different answers to different questions and must not be conflated.
+    noCompanyNotice: document.querySelectorAll('[data-testid="notice-no-company"]').length,
+    cannotOpenNotice: document.querySelectorAll('[data-testid="notice-cannot-open"]').length,
     // the real pages' own furniture — each is unique to a surface the gate must not render
     companyRows: document.querySelectorAll('[data-testid^="front-door-company-"]').length,
     firstReadShell: document.querySelectorAll(".first-read").length,
@@ -71,16 +77,41 @@ test("(v1) a signed-in non-admin is refused on every client-refine surface, not 
     expect(signed, "the throwaway non-admin could not sign in").toEqual({ ok: true, error: null });
 
     for (const path of PATHS) {
-      await p.goto(path, { waitUntil: "domcontentloaded", timeout: 120_000 });
-      await p.waitForSelector("h1", { timeout: 60_000 });   // the refusal, not a fixed sleep
+      await p.goto(path, { waitUntil: "networkidle", timeout: 120_000 });
+      await p.waitForSelector('[data-testid="notice-no-company"]', { timeout: 60_000 });
       const r = await probe(p);
-      expect(r.accessDenied, `${path}: no Access Denied refusal`).toBe(1);
-      expect(r.loginRequired, `${path}: refused as signed-out, but this user has a session`).toBe(0);
+
+      // THE REFUSAL IS IN WORDS, AND IT IS THE CLIENT'S WORDS. This fixture holds no company at all,
+      // so S-U6-1 is the honest answer: there is nothing to send them to.
+      expect(r.text, `${path}: no S-U6-1 — a member was refused without being told anything`).toContain(LANDING_STRINGS.noCompany);
+      expect(r.noCompanyNotice, `${path}: the S-U6-1 notice did not render`).toBe(1);
+
+      // U6-68: "Access Denied" is an OPERATOR's refusal and must not reach a client surface. The two
+      // refusals stay distinct — see (v4) for the one that still says it, and why.
+      expect(r.accessDenied, `${path}: a client-refine surface showed the operator's "Access Denied"`).toBe(0);
+      expect(r.loginRequired, `${path}: the superseded "Admin Login Required" page is back`).toBe(0);
+
+      // UNCHANGED FROM BEFORE: nothing of the real page may render behind any of this. RLS gives this
+      // caller nothing, so a broken build renders these pages EMPTY and an empty page reads like a
+      // refusal — these are what stop that passing.
       expect(r.companyRows, `${path}: the front door's company rows rendered behind the gate`).toBe(0);
       expect(r.firstReadShell, `${path}: the First Read shell rendered behind the gate`).toBe(0);
       expect(r.diagnosePage, `${path}: the Diagnose page rendered behind the gate`).toBe(0);
       expect(r.operatorSwitch, `${path}: the operator switch rendered for a non-admin`).toBe(0);
       expect(r.operatorNodes, `${path}: an operator node rendered for a non-admin`).toBe(0);
+
+      // WHERE the refusal happens differs by route, and that difference is the point of U6-50.
+      const landed = new URL(p.url()).pathname;
+      if (path === PATHS[0]) {
+        // The Front Door is where an account ARRIVES by default — from a bookmark, the logo, an old
+        // link. A member is sent to their own landing rather than refused on the product's front page.
+        expect(landed, "the Front Door did not send a signed-in member to their landing").toBe("/start");
+      } else {
+        // A company-bearing URL was asked for deliberately. It is answered where it was asked, so the
+        // reader can see WHICH page was refused.
+        expect(landed, `${path}: refused by redirect instead of in place`).toBe(path);
+      }
+      expect(landed, `${path}: a signed-in non-admin was redirected as if signed out`).not.toBe("/login");
     }
   } finally {
     await ctx.close();
@@ -94,10 +125,15 @@ test("(v1) a signed-in non-admin is refused on every client-refine surface, not 
 // rendered to a signed-out visitor, so EVERY gated route now sends one to /login, members included,
 // and a page saying "sign in with an admin account" is the wrong answer on a client-facing URL.
 //
-// WHAT IT ASSERTS NOW. The same distinction, in the new shape. No session is a REDIRECT carrying the
-// attempted path; a session without an admin row is still the "Access Denied" page. The original
-// reason for separating them is unchanged and is restated here because it is easy to lose:
-// conflating the two would let a signed-in non-admin be read as merely signed out.
+// WHAT IT ASSERTS NOW (U6-68, 2026-11-11). The same distinction, in the shape the landing build left.
+// No session is a REDIRECT carrying the attempted path. A session without an admin row is NOT
+// redirected and IS told something — on these three client-refine surfaces that is S-U6-1, the
+// client's own words, because U6-50 made them the client's side of the product. "Access Denied" is
+// the operator's refusal and still exists: (v4) asserts it on /legacy/routes, in both presentation
+// modes, which is what keeps the two from collapsing into one.
+//
+// The original reason for separating them is unchanged and is restated here because it is easy to
+// lose: conflating the two would let a signed-in non-admin be read as merely signed out.
 //
 // BOTH HALVES LIVE IN THIS TEST ON PURPOSE. A version that only checked the signed-out redirect
 // would pass a build that redirected EVERYONE — including the non-admin who should see a role
@@ -132,12 +168,19 @@ test("(v2) no session is a redirect to sign-in; a non-admin session is still a r
     expect(signed, "the throwaway non-admin could not sign in").toEqual({ ok: true, error: null });
 
     for (const path of PATHS) {
-      await p.goto(path, { waitUntil: "domcontentloaded", timeout: 120_000 });
-      await p.waitForSelector("h1", { timeout: 60_000 });
+      await p.goto(path, { waitUntil: "networkidle", timeout: 120_000 });
+      await p.waitForSelector('[data-testid="notice-no-company"]', { timeout: 60_000 });
       const r = await probe(p);
+      // U6-68: THE DISTINCTION IS UNCHANGED; WHAT THE SECOND HALF LOOKS LIKE HAS CHANGED.
+      // A session without an admin row is still answered differently from no session at all — it is
+      // NOT redirected to /login, and it is told something in words. On a client-refine surface those
+      // words are S-U6-1 rather than "Access Denied", because these three pages are the client's side
+      // of the product. The operator's refusal still exists and is asserted in (v4).
       expect(new URL(p.url()).pathname, `${path}: a signed-in non-admin was redirected as if signed out`).not.toBe("/login");
-      expect(r.accessDenied, `${path}: a signed-in non-admin got no role refusal`).toBe(1);
+      expect(r.text, `${path}: a signed-in non-admin got no refusal in words`).toContain(LANDING_STRINGS.noCompany);
+      expect(r.noCompanyNotice, `${path}: the S-U6-1 notice did not render`).toBe(1);
       expect(r.loginRequired, `${path}: refused as signed-out, but this user has a session`).toBe(0);
+      expect(r.accessDenied, `${path}: the operator's "Access Denied" reached a client surface`).toBe(0);
       expect(r.companyRows + r.firstReadShell + r.diagnosePage, `${path}: a real surface rendered for a non-admin`).toBe(0);
     }
   } finally {
@@ -168,10 +211,24 @@ test("(v4) /legacy/routes refuses a signed-in non-admin and still opens for the 
     }, { email: email!, password: password! });
     expect(signed, "the throwaway non-admin could not sign in").toEqual({ ok: true, error: null });
 
-    await p.goto("/legacy/routes", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await p.waitForSelector("h1", { timeout: 60_000 });
-    const asClient = await probe(p);
-    expect(asClient.accessDenied, "/legacy/routes let a non-admin in").toBe(1);
+    // U6-68 (2026-11-11): IN BOTH PRESENTATION MODES, AND IN PLACE.
+    //
+    // This is the test that keeps the two refusals from collapsing into one. A non-admin is always
+    // client presentation now (derived from isAdmin), and both ClientModePathSync and an old bounce
+    // inside AdminGuard would have sent such a caller to "/" before any guard could answer — which
+    // made the role refusal unreachable for every member on every gated route. Measured 2026-11-11:
+    // with that bounce in place this route ended at /start. Asserting the PATHNAME is what catches a
+    // refusal that silently became a redirect; asserting both modes is what catches it coming back
+    // for client-mode callers only.
+    for (const mode of ["internal", "client"] as const) {
+      await p.evaluate((m) => localStorage.setItem("mojo.presentation.mode", m), mode);
+      await p.goto("/legacy/routes", { waitUntil: "networkidle", timeout: 120_000 });
+      await p.waitForSelector("h1", { timeout: 60_000 });
+      const asClient = await probe(p);
+      expect(asClient.accessDenied, `/legacy/routes let a non-admin in (${mode} mode)`).toBe(1);
+      expect(new URL(p.url()).pathname, `/legacy/routes refused a non-admin by REDIRECT (${mode} mode)`).toBe("/legacy/routes");
+      expect(asClient.noCompanyNotice + asClient.cannotOpenNotice, `/legacy/routes gave an operator's page a client notice (${mode} mode)`).toBe(0);
+    }
   } finally {
     await ctx.close();
   }

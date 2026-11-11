@@ -14,6 +14,7 @@ import {
   CLIENT_REFINE_PREVIEW_HOME_ROUTE,
   isClientRefinePreviewPath,
 } from "@/lib/clientRefinePreview";
+import { POST_SIGN_IN_ROUTE } from "@/lib/landing/landingResolver";
 
 const src = (p: string) => readFileSync(resolve(__dirname, "../../..", p), "utf8");
 
@@ -38,12 +39,17 @@ import Login from "@/pages/Login";
 beforeEach(() => { navigateSpy.mockClear(); signIn.mockClear(); });
 
 describe("login lands on the front door", () => {
-  it("a successful sign-in navigates to /preview/client-refine", async () => {
+  // U6-63 (signed 2026-11-11): sign-in now navigates to /start, the one place that knows what the
+  // account holds. The OUTCOME this line asserted — an operator ends up on the Front Door — is
+  // asserted in src/lib/landing/landingResolver.test.ts ("no carry → the Front Door"), because it is
+  // the resolver that decides it now. The second assertion is untouched: sign-in must never go to
+  // /admin/companies, which is the legacy site and the one path AdminGuard refuses to bounce.
+  it("a successful sign-in navigates to the post-sign-in route", async () => {
     const { container } = render(<Login />);
     fireEvent.change(container.querySelector('input[type="email"]')!, { target: { value: "a@b.co" } });
     fireEvent.change(container.querySelector('input[type="password"]')!, { target: { value: "pw" } });
     fireEvent.submit(container.querySelector("form")!);
-    await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith(CLIENT_REFINE_PREVIEW_ROUTE));
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith(POST_SIGN_IN_ROUTE));
     expect(navigateSpy).not.toHaveBeenCalledWith("/admin/companies");
   });
 

@@ -8,7 +8,10 @@ interface AuthCtx {
   isAdmin: boolean;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
+  // U6-58 (2026-11-11): signUp is GONE, not hidden. The control left /login and the auth service
+  // refuses enable_signup=false, but a function on this context is one import from a new caller —
+  // and the account that self-registers holds no company, so the product has nothing to show it.
+  // Accounts are created by an operator: docs/operator-account-setup.md.
   signOut: () => Promise<void>;
 }
 
@@ -55,6 +58,13 @@ function clearSupabaseStorage() {
       if (key.startsWith("sb-") || key.includes("supabase.auth")) keysToRemove.push(key);
     }
     keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+    // U6 part 1 — SIGN-OUT CLEARS THE TWO KEYS THAT OUTLIVE A SESSION. `active_company_id` names a
+    // company the next account on this browser may not hold, and `mojo.presentation.mode` would
+    // hand an operator's presentation to whoever signs in next. Neither is session storage, so
+    // neither was cleared, and both are read before a session exists.
+    for (const key of ["active_company_id", "mojo.presentation.mode"]) {
+      window.localStorage.removeItem(key);
+    }
   } catch {
     // Ignore storage cleanup issues.
   }
@@ -233,14 +243,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signUp = async (email: string, password: string) => {
-    if (!HAS_SUPABASE_CREDENTIALS) {
-      return { error: null };
-    }
-    const { error } = await supabase.auth.signUp({ email, password });
-    return { error: error as Error | null };
-  };
-
   const signOut = async () => {
     if (!HAS_SUPABASE_CREDENTIALS) {
       setUser(null);
@@ -262,7 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, isAdmin, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, session, isAdmin, loading, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

@@ -8,7 +8,10 @@ import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { CompanyProvider, useCompany } from "@/hooks/useCompany";
 import { PresentationModeProvider, usePresentationMode } from "@/hooks/usePresentationMode";
 import AdminGuard from "@/components/AdminGuard";
+import MemberCompanyGate from "@/components/MemberCompanyGate";
+import { MemberToLanding, SignedInRoute } from "@/components/SignedInRoute";
 import { loginPathFor } from "@/lib/authRedirect";
+import { POST_SIGN_IN_ROUTE, isMemberLandingPath } from "@/lib/landing/landingResolver";
 import AppErrorBoundary from "@/components/AppErrorBoundary";
 import MapView from "./views/MapView";
 import InputsView from "./views/Inputs";
@@ -23,6 +26,7 @@ import FMDStrategicField from "./views/FMDStrategicField";
 import FirstReadView from "./views/FirstReadView";
 import IntakeView from "./views/IntakeView";
 import Login from "./pages/Login";
+import StartRoute from "./pages/StartRoute";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminCompanies from "./pages/AdminCompanies";
 import AdminCompanyDetail from "./pages/AdminCompanyDetail";
@@ -106,30 +110,67 @@ function InternalViewOnlyRoute({ children }: { children: JSX.Element }) {
 // no auth check at all, so a signed-out visitor with mojo.presentation.mode="client" already stored
 // rendered the whole Decision Command Screen: measured 2026-11-10 with auth.getUser() returning null
 // and the page showing the fallback company's name, website and score.
+//
+// U6-50 (2026-11-11): a NON-ADMIN never reaches ClientDecisionSystemView. It is an operator's
+// rehearsal of the client story, and until this build it was also the one page a member landed on —
+// reading a company that was not theirs, because the fallback supplied one. A member goes to /start,
+// which resolves their own landing. The admin's two outcomes are untouched.
 function ModeAwareMapRoute() {
   const { mode } = usePresentationMode();
-  const { user, loading } = useAuth();
+  const { user, isAdmin, loading } = useAuth();
   const location = useLocation();
   if (loading) return null;
   if (!user) return <Navigate to={loginPathFor(`${location.pathname}${location.search}`)} replace />;
+  if (!isAdmin) return <Navigate to={POST_SIGN_IN_ROUTE} replace />;
   if (mode === "client") return <ClientDecisionSystemView />;
   return <Navigate to={CLIENT_REFINE_PREVIEW_ROUTE} replace />;
 }
 
+// U6 part 1 — THIS SYNC IS AN OPERATOR'S TOOL, AND IT NOW SAYS SO.
+//
+// It bounces every path to "/" in client mode. It is a GLOBAL effect, not a route guard, so it runs
+// before any guard can answer — and once a non-admin was forced into client presentation
+// (usePresentationMode, U6 part 1) that made it the strongest authority in the app for exactly the
+// people it was never written for. Measured 2026-11-11: a signed-in non-admin on /legacy/routes was
+// bounced to "/" instead of meeting AdminGuard, so the role refusal U6-56 requires to stay distinct
+// became unreachable for every member. It also swallowed both member landings, which with "/"
+// sending a member to /start made a redirect loop.
+//
+// SO IT APPLIES TO ADMINS ONLY. "Client mode" is an operator rehearsing the client story on one
+// page; a real member's doors are the route guards, which are stronger and legible in one place.
+// Nothing about an admin's behaviour changes — the isAdmin test is what keeps it that way.
+//
+// THE LANDING EXEMPTION STAYS, AND IT IS NOT FREE (U6-72, measured 2026-11-11). With the sync now
+// admin-only, the exemption can no longer be what saves a member — the isAdmin test above already
+// did that. What it still does is change TWO ROUTE FAMILIES for an ADMIN in client presentation:
+//
+//   /preview/client-refine/first-read/:id   at 3af07eb1 → bounced to "/"   now → stays
+//   /preview/client-refine/diagnose/:id/*   at 3af07eb1 → bounced to "/"   now → stays
+//   /preview/client-refine/workshop         at 3af07eb1 → bounced to "/"   now → bounced (control)
+//   /legacy/map                             at 3af07eb1 → bounced to "/"   now → bounced (control)
+//
+// That is the only admin behaviour this build changes, and it is kept deliberately: an operator in
+// client presentation is rehearsing what a client sees, and these two families are the only pages a
+// client has — bouncing an operator off the very screens they are reviewing was never the intent of
+// a "single-page experience" rule written before those screens existed. It is also the belt if this
+// sync is ever widened back to non-admins.
 function ClientModePathSync() {
   const { mode } = usePresentationMode();
+  const { isAdmin } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (mode !== "client") return;
+    if (!isAdmin) return; // a member is governed by the route guards, not by this
     if (location.pathname.startsWith("/admin")) return;
     if (location.pathname === "/login" || location.pathname === "/reset-password") return;
     if (location.pathname === CLIENT_VIEW_ROUTE) return; // client story surface is standalone
     if (isClientPhasePath(location.pathname)) return;
+    if (isMemberLandingPath(location.pathname)) return; // a member's own landing
     // Client mode is a single-page experience; always route to root.
     navigate("/", { replace: true });
-  }, [location.pathname, mode, navigate]);
+  }, [location.pathname, mode, navigate, isAdmin]);
 
   return null;
 }
@@ -170,36 +211,55 @@ function ClientPhaseAliasRoute({
   return null;
 }
 
+// U6 part 1 (2026-11-11): THE GUARD IS OUTSIDE THE MODE CHECK, as it is in InternalViewOnlyRoute.
+// The mode check used to come first, and once a signed-in non-admin was forced into client
+// presentation that bounced them to "/" BEFORE AdminGuard could refuse them — so three of the eleven
+// legacy routes stopped giving a role refusal and started redirecting, which is exactly the
+// conflation U6-56 forbids. Order restored: no session → redirect, wrong role → "Access Denied",
+// and only then does an ADMIN in client presentation get sent home.
 function ModeAwareFocusRoute() {
   const { mode } = usePresentationMode();
-  // U6-46: the legacy view is admin-only; the mode check alone never looked at the user.
-  return mode === "client" ? <Navigate to="/" replace /> : <AdminGuard><OpportunitiesView /></AdminGuard>;
+  return <AdminGuard>{mode === "client" ? <Navigate to="/" replace /> : <OpportunitiesView />}</AdminGuard>;
 }
 
+// U6 part 1 (2026-11-11): THE GUARD IS OUTSIDE THE MODE CHECK, as it is in InternalViewOnlyRoute.
+// The mode check used to come first, and once a signed-in non-admin was forced into client
+// presentation that bounced them to "/" BEFORE AdminGuard could refuse them — so three of the eleven
+// legacy routes stopped giving a role refusal and started redirecting, which is exactly the
+// conflation U6-56 forbids. Order restored: no session → redirect, wrong role → "Access Denied",
+// and only then does an ADMIN in client presentation get sent home.
 function ModeAwareScoreRoute() {
   const { mode } = usePresentationMode();
-  // U6-46: the legacy view is admin-only; the mode check alone never looked at the user.
-  return mode === "client" ? <Navigate to="/" replace /> : <AdminGuard><AnalyticsView /></AdminGuard>;
+  return <AdminGuard>{mode === "client" ? <Navigate to="/" replace /> : <AnalyticsView />}</AdminGuard>;
 }
 
+// U6 part 1 (2026-11-11): THE GUARD IS OUTSIDE THE MODE CHECK, as it is in InternalViewOnlyRoute.
+// The mode check used to come first, and once a signed-in non-admin was forced into client
+// presentation that bounced them to "/" BEFORE AdminGuard could refuse them — so three of the eleven
+// legacy routes stopped giving a role refusal and started redirecting, which is exactly the
+// conflation U6-56 forbids. Order restored: no session → redirect, wrong role → "Access Denied",
+// and only then does an ADMIN in client presentation get sent home.
 function ModeAwareStrategyRoute() {
   const { mode } = usePresentationMode();
-  // U6-46: the legacy view is admin-only; the mode check alone never looked at the user.
-  return mode === "client" ? <Navigate to="/" replace /> : <AdminGuard><StrategyView /></AdminGuard>;
+  return <AdminGuard>{mode === "client" ? <Navigate to="/" replace /> : <StrategyView />}</AdminGuard>;
 }
 
 function AdminModeRoute({ children }: { children: JSX.Element }) {
   return <AdminGuard>{children}</AdminGuard>;
 }
 
-// The front door — the bare path. Same double gate as every other client-refine surface.
+// The front door — the bare path. U6-50: a signed-in MEMBER who arrives here (a bookmark, the logo,
+// an old link) is sent to their own landing rather than shown "Access Denied" on the product's front
+// page. Every other client-refine surface keeps the admin-or-denied gate.
 function FrontDoorRoute() {
   return (
-    <AdminModeRoute>
-      <InternalViewOnlyRoute>
-        <FrontDoorView />
-      </InternalViewOnlyRoute>
-    </AdminModeRoute>
+    <MemberToLanding>
+      <AdminModeRoute>
+        <InternalViewOnlyRoute>
+          <FrontDoorView />
+        </InternalViewOnlyRoute>
+      </AdminModeRoute>
+    </MemberToLanding>
   );
 }
 
@@ -264,25 +324,32 @@ function ClientRefinePreviewExtractsRoute() {
   );
 }
 
-// DIAGNOSE FLOW (slice 1) — the same double gate as every sibling. The eleven screens are nested
-// inside the view's own <Routes>, so one element covers the family.
+// THE TWO MEMBER-REACHABLE FAMILIES (U6 part 1, 2026-11-11).
+//
+// These are the only two surfaces a client is sent to, and they are the two whose company comes from
+// the URL — which is why MemberCompanyGate can key on it. The gate replaces BOTH old wrappers:
+// AdminModeRoute would refuse the member outright, and InternalViewOnlyRoute would bounce them, since
+// a non-admin is always client presentation now.
+//
+// A SESSION IS STILL REQUIRED and is still the first thing checked, so a signed-out visitor is
+// redirected to /login carrying the path (U6-45) rather than meeting a membership refusal.
 function ClientRefinePreviewDiagnoseRoute() {
   return (
-    <AdminModeRoute>
-      <InternalViewOnlyRoute>
+    <SignedInRoute>
+      <MemberCompanyGate>
         <DiagnoseFlowView />
-      </InternalViewOnlyRoute>
-    </AdminModeRoute>
+      </MemberCompanyGate>
+    </SignedInRoute>
   );
 }
 
 function ClientRefinePreviewFirstReadRoute() {
   return (
-    <AdminModeRoute>
-      <InternalViewOnlyRoute>
+    <SignedInRoute>
+      <MemberCompanyGate>
         <FirstReadPreviewView />
-      </InternalViewOnlyRoute>
-    </AdminModeRoute>
+      </MemberCompanyGate>
+    </SignedInRoute>
   );
 }
 
@@ -419,6 +486,7 @@ const App = () => (
                 <Route path="/inputs" element={<Navigate to="/legacy/inputs" replace />} />
                 <Route path="/files" element={<Navigate to="/legacy/files" replace />} />
                 <Route path="/job-steps" element={<Navigate to="/legacy/job-steps" replace />} />
+                <Route path={POST_SIGN_IN_ROUTE} element={<StartRoute />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/admin" element={<AdminModeRoute><AdminDashboard /></AdminModeRoute>} />

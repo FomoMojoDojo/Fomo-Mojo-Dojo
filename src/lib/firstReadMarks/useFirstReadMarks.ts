@@ -40,26 +40,41 @@ export const anchorId = (kind: string, key: string) => `${kind}|${key}`;
 /** FM5: the note is optional — the client stores NULL for an empty one (the store refuses a blank string). */
 export const emptyToNull = (note: string | null | undefined): string | null => { const t = (note ?? "").trim(); return t.length ? t : null; };
 
-async function readLiveMarks(companyId: string): Promise<{ marks: LiveMark[]; frozen: boolean }> {
+// U6-54 (2026-11-11) — A FAILED READ IS A FAILURE, NOT AN EMPTY COMPANY.
+//
+// Both returns below used to be `{ marks: [], frozen: false }`, and the `catch` swallowed the reason.
+// "What we heard" then rendered its empty state — a signed sentence saying nothing stood out — over
+// however many marks the company actually holds. That is the same shape of lie the census found in
+// the Findings beat: the data and the explanation-of-no-data had different readers, so the page
+// stated a falsehood confidently. An error now travels with the result and the caller can say so.
+//
+// The missing-`.from` return stays empty WITHOUT an error on purpose: that is the vitest stub of the
+// view, not a failed read.
+async function readLiveMarks(companyId: string): Promise<{ marks: LiveMark[]; frozen: boolean; error: string | null }> {
   const c = client();
-  if (typeof c.from !== "function") return { marks: [], frozen: false };
+  if (typeof c.from !== "function") return { marks: [], frozen: false, error: null };
   try {
     // U6-25 (2026-11-10): both reads go through the narrow doors, for every reader including the
     // admin. `withdrawn_at IS NULL` is now the FUNCTION's predicate rather than this query's, and
     // created_by / revisit_resolved_by / withdrawn_by (acting-admin uuids) are not returned at all.
     // The ordering stays here: the function adds none, so "What we heard" sorts as it always has.
-    const [{ data: co }, { data: markRows }] = await Promise.all([
+    const [{ data: co, error: coError }, { data: markRows, error: marksError }] = await Promise.all([
       c.from("companies").select("frozen").eq("id", companyId).maybeSingle(),
       c.rpc("first_read_marks_client", { p_company_id: companyId }, { get: true }),
     ]);
+    // The MARKS read is the one that decides what the beat renders; a failed `companies` read only
+    // costs the frozen flag, so it is reported but does not blank the marks.
+    if (marksError) return { marks: [], frozen: false, error: rpcError(marksError) };
     const rows = (Array.isArray(markRows) ? [...markRows] : [])
       .sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
     const marks = (Array.isArray(rows) ? rows : []) as Array<Omit<LiveMark, "version" | "note" | "disposition">>;
-    if (marks.length === 0) return { marks: [], frozen: Boolean((co as { frozen?: boolean } | null)?.frozen) };
+    if (marks.length === 0) {
+      return { marks: [], frozen: Boolean((co as { frozen?: boolean } | null)?.frozen), error: coError ? rpcError(coError) : null };
+    }
     // Same door for the notes. It keys by COMPANY (membership lives on the parent mark) and already
     // drops the notes of a withdrawn mark, so the id list is no longer the filter; the version sort
     // stays here because the function adds none and `latest` below depends on it.
-    const { data: noteRows } = await c.rpc("first_read_mark_notes_client", { p_company_id: companyId }, { get: true });
+    const { data: noteRows, error: notesError } = await c.rpc("first_read_mark_notes_client", { p_company_id: companyId }, { get: true });
     const notes = (Array.isArray(noteRows) ? [...noteRows] : [])
       .sort((a, b) => Number(b.version ?? 0) - Number(a.version ?? 0));
     const latest = new Map<string, { version: number; note: string; disposition: MarkDisposition | null }>();
@@ -67,11 +82,14 @@ async function readLiveMarks(companyId: string): Promise<{ marks: LiveMark[]; fr
       if (!latest.has(n.mark_id)) latest.set(n.mark_id, { version: n.version, note: n.note ?? "", disposition: n.disposition ?? null });
     }
     return {
+      // A failed NOTES read is still a failure: the marks would render with every note missing,
+      // which reads as "nobody wrote anything" rather than "we could not load what they wrote".
+      error: notesError ? rpcError(notesError) : coError ? rpcError(coError) : null,
       frozen: Boolean((co as { frozen?: boolean } | null)?.frozen),
       marks: marks.map((m) => ({ ...m, version: latest.get(m.id)?.version ?? 1, note: latest.get(m.id)?.note ?? "", disposition: latest.get(m.id)?.disposition ?? null })),
     };
-  } catch {
-    return { marks: [], frozen: false };
+  } catch (thrown) {
+    return { marks: [], frozen: false, error: thrown instanceof Error ? thrown.message : "read_failed" };
   }
 }
 
@@ -81,16 +99,18 @@ export function useFirstReadMarks(companyId?: string | null) {
   const [marks, setMarks] = useState<LiveMark[]>([]);
   const [frozen, setFrozen] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  /** U6-54: non-null when the marks could not be read. Distinct from "read fine, found none". */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    if (!companyId) { setMarks([]); setFrozen(false); setLoaded(true); return; }
+    if (!companyId) { setMarks([]); setFrozen(false); setLoadError(null); setLoaded(true); return; }
     let cancelled = false;
     (async () => {
       const r = await readLiveMarks(companyId);
       if (cancelled || !alive.current) return;
-      setMarks(r.marks); setFrozen(r.frozen); setLoaded(true);
+      setMarks(r.marks); setFrozen(r.frozen); setLoadError(r.error); setLoaded(true);
     })();
     return () => { cancelled = true; };
   }, [companyId, tick]);
@@ -137,5 +157,5 @@ export function useFirstReadMarks(companyId?: string | null) {
     return { ok: true };
   }, [refetch]);
 
-  return { marks, byAnchor, frozen, loaded, refetch, create, append, keep, withdraw };
+  return { marks, byAnchor, frozen, loaded, loadError, refetch, create, append, keep, withdraw };
 }

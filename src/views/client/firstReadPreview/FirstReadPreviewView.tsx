@@ -401,13 +401,20 @@ export default function FirstReadPreviewView() {
     );
   }
 
-  if (error || !data.company) {
+  // U6-54 (2026-11-11): A FAILED MARKS READ JOINS THE EXISTING FAILURE BRANCH.
+  //
+  // `beats` is derived from marksStore.marks.length (line ~138), so a read that failed used to drop
+  // a beat from the rail and leave "What we heard" showing its empty state — the page quietly
+  // reshaped itself around a fault and told the reader nothing had been said. The page already has
+  // a way to say a read failed; a marks failure is a page failure and uses it.
+  const marksFailed = marksStore.loadError;
+  if (error || marksFailed || !data.company) {
     return (
       <div className="first-read">
         <div className="first-read-shell">
           <p className="fr-eyebrow">First read</p>
-          <p className="mt-4 text-sm font-light" style={{ color: "hsl(var(--fr-muted))" }}>
-            {error ?? "Company not found."}
+          <p className="mt-4 text-sm font-light" style={{ color: "hsl(var(--fr-muted))" }} data-testid="first-read-failed">
+            {error ?? (marksFailed ? "Something went wrong loading this read. Reload to try again." : "Company not found.")}
           </p>
         </div>
       </div>
