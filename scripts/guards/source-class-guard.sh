@@ -199,3 +199,4 @@ else
 fi
 
 if [ "$fails" = 0 ]; then echo "guard: PASS"; else echo "guard: RED ($fails check(s)) — see above"; fi
+[ "$fails" -eq 0 ]

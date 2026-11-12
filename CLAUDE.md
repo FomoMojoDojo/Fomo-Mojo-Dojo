@@ -201,7 +201,7 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
 
 ---
 
-## Baselines — the two that are easy to run wrong
+## Baselines — the three that are easy to run wrong
 
 - **tsc is `npx tsc -p tsconfig.app.json --noEmit` → 231 errors** (measured 2026-11-11; recorded as
   232 until then). The root `tsconfig.json` is solution-style (`"files": []` plus `references`), so a
@@ -212,6 +212,24 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   `supabase status`'s Authentication Keys panel is **not** accepted by the functions gateway: every
   terminal answers `401 {"msg":"Error: Missing authorization header"}`, which reads like a dead stack
   rather than a wrong key.
+- **The guard sweep is 43 GREEN / 4 RED of 47, and the FOUR standing REDs are named** (measured
+  2026-11-11, 47 guards, all three env files sourced; `interview-upload-path-guard` is excluded from
+  the session sweep by design (U6-38) and passes standalone):
+  - `network-guard` — `(n4) cannot read pf state without a password`; needs the read-only sudo entry
+    from `scripts/network/sudoers.mojomap-pf-readonly`.
+  - `diagnose-data-guard` — `(i) the live read-only check FAILED`.
+  - `excerpt-blanking-guard` — `step e6: plan ids ≠ SQL set: only_in_plan=0 only_in_sql=2`. The two
+    rows are Spectrum signals of 2026-10-22 that fall between the planner's `normalizeForHash` match
+    (`_shared/excerptBlanking.ts:183`) and the guard's cruder SQL `LIKE` (SP-F5).
+  - `source-class-guard` — `(c1) 73 of 87 current read(s) carry NO classes map in input_ledger`,
+    across 19 companies; the reads predate act 1a-4 and want regenerating.
+
+  **Read the printed verdict, not only the exit code.** Until 2026-11-11 `source-class-guard` printed
+  `guard: RED` and exited **0** — its verdict line was the file's last line, with no following status
+  line — so every exit-code sweep counted it GREEN and the baseline was recorded as 44 GREEN / 3 RED.
+  Fixed (SP-59); a sweep that keys on either signal now agrees. A guard that cannot go red in the
+  sweep is not a guard, so a sweep script should classify on BOTH: a zero exit **and** `GUARD OK` or
+  `guard: PASS` in the output.
 
 ---
 
