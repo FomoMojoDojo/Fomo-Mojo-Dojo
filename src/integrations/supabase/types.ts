@@ -1098,6 +1098,7 @@ export type Database = {
           struck_at: string | null
           struck_by: string | null
           struck_reason: string | null
+          subject_id: string | null
           topic: string | null
           triangulation_state: string
           updated_at: string
@@ -1125,6 +1126,7 @@ export type Database = {
           struck_at?: string | null
           struck_by?: string | null
           struck_reason?: string | null
+          subject_id?: string | null
           topic?: string | null
           triangulation_state?: string
           updated_at?: string
@@ -1152,11 +1154,19 @@ export type Database = {
           struck_at?: string | null
           struck_by?: string | null
           struck_reason?: string | null
+          subject_id?: string | null
           topic?: string | null
           triangulation_state?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "claims_subject_fkey"
+            columns: ["subject_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id", "company_id"]
+          },
           {
             foreignKeyName: "claims_company_id_fkey"
             columns: ["company_id"]
@@ -4407,6 +4417,7 @@ export type Database = {
           strategy_alignment: string | null
           strategy_alignment_evaluated_at: string | null
           strategy_alignment_reason: string | null
+          subject_id: string | null
           superseded_by_id: string | null
           superseded_reason: string | null
           tier: string
@@ -4451,6 +4462,7 @@ export type Database = {
           strategy_alignment?: string | null
           strategy_alignment_evaluated_at?: string | null
           strategy_alignment_reason?: string | null
+          subject_id?: string | null
           superseded_by_id?: string | null
           superseded_reason?: string | null
           tier?: string
@@ -4495,6 +4507,7 @@ export type Database = {
           strategy_alignment?: string | null
           strategy_alignment_evaluated_at?: string | null
           strategy_alignment_reason?: string | null
+          subject_id?: string | null
           superseded_by_id?: string | null
           superseded_reason?: string | null
           tier?: string
@@ -4503,6 +4516,13 @@ export type Database = {
           validation_state?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "odi_needs_subject_fkey"
+            columns: ["subject_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id", "company_id"]
+          },
           {
             foreignKeyName: "odi_needs_company_id_fkey"
             columns: ["company_id"]
@@ -5846,6 +5866,7 @@ export type Database = {
           source_type: string
           source_url: string | null
           structure_level: string
+          subject_id: string | null
           superseded_at: string | null
           superseded_by: string | null
           superseded_reason: string | null
@@ -5887,6 +5908,7 @@ export type Database = {
           source_type: string
           source_url?: string | null
           structure_level?: string
+          subject_id?: string | null
           superseded_at?: string | null
           superseded_by?: string | null
           superseded_reason?: string | null
@@ -5928,6 +5950,7 @@ export type Database = {
           source_type?: string
           source_url?: string | null
           structure_level?: string
+          subject_id?: string | null
           superseded_at?: string | null
           superseded_by?: string | null
           superseded_reason?: string | null
@@ -5939,6 +5962,13 @@ export type Database = {
           voice_class?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "signals_subject_fkey"
+            columns: ["subject_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id", "company_id"]
+          },
           {
             foreignKeyName: "signals_company_id_fkey"
             columns: ["company_id"]
@@ -6620,6 +6650,50 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "strategy_problem_statements_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subjects: {
+        Row: {
+          anchors: string[]
+          company_id: string
+          created_at: string
+          host: string | null
+          id: string
+          name: string
+          retired_at: string | null
+          role: string
+          updated_at: string
+        }
+        Insert: {
+          anchors?: string[]
+          company_id: string
+          created_at?: string
+          host?: string | null
+          id?: string
+          name: string
+          retired_at?: string | null
+          role: string
+          updated_at?: string
+        }
+        Update: {
+          anchors?: string[]
+          company_id?: string
+          created_at?: string
+          host?: string | null
+          id?: string
+          name?: string
+          retired_at?: string | null
+          role?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subjects_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
