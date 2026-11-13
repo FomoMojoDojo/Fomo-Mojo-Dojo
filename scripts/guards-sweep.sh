@@ -21,9 +21,10 @@
 #   source backups/fr-login.env && source backups/fr-nonadmin.env && source backups/fr-member.env \
 #     && bash scripts/guards-sweep.sh
 #
-# BASELINE (measured 2026-11-12, all three env files sourced): 43 GREEN / 4 RED of 47, the four
-# standing REDs being network-guard (n4, wants the read-only pf sudo entry), diagnose-data-guard (i),
-# excerpt-blanking-guard (e6) and source-class-guard (c1).
+# BASELINE (re-measured 2026-11-12 after slice A added caller-authz-guard): 44 GREEN / 4 RED of 48,
+# the four standing REDs being network-guard (n4, wants the read-only pf sudo entry),
+# diagnose-data-guard (i), excerpt-blanking-guard (e6) and source-class-guard (c1). It was
+# 43 / 4 of 47 before caller-authz-guard existed; the glob picks it up with no edit here.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 

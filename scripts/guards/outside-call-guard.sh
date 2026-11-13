@@ -33,16 +33,23 @@
 #        declined, on the worker, not merely in the source. Non-vacuity partner: a public-only
 #        throwaway still reaches the OUTSIDE lane and saves a real verdict with a score.
 #        Plant: PLANT=unrouted turns (b6) red on the restarted worker.
-#   (b8) SERVED WORKER, SP-132. A surface whose candidate rows are GONE (non-empty diff, empty
+#   (b8) SERVED WORKER, SP-133. A surface whose candidate rows are GONE (non-empty diff, empty
 #        content query) is never saved as 'withheld' — it holds no evidence to withhold, and at
 #        f21d1554 that case was assessed normally.
-#   (b7) SERVED WORKER, SP-107. The propose-route-changes path invoked with a NON-ADMIN member's JWT
-#        on the private throwaway: the response says the evidence was withheld and NO outside model
-#        call is recorded for that company. Non-vacuity partner: the public-only throwaway proceeds
-#        and a model_calls row appears. NOTE (b7 finding): propose-route-changes authenticates its
-#        caller NOT AT ALL — it builds a SERVICE-ROLE client and never reads Authorization — so the
-#        non-admin JWT is accepted exactly as any other bearer. That is the SP-107 exposure, and the
-#        check documents it rather than working around it.
+#   (b7) SERVED WORKER, SP-107, in two parts since slice A (2026-11-12). propose-route-changes now
+#        checks WHO IS CALLING first (SP-141), so the two refusals are separate facts and each is
+#        proven on its own:
+#        (b7-id)       a NON-ADMIN who is a member of ANOTHER company is refused on IDENTITY —
+#                      403 not_authorised — before any evidence question is reached. Until slice A
+#                      this function authenticated its caller NOT AT ALL: it built a service-role
+#                      client and never read Authorization, so that JWT was accepted like any other
+#                      bearer. caller-authz-guard owns the identity rule; this check holds the line
+#                      here, where the private evidence is.
+#        (b7-evidence) the EVIDENCE refusal is therefore proven with a caller who is ALLOWED to call
+#                      — the admin — who reaches the handler and is told the evidence was withheld,
+#                      with NO outside model call recorded for that company.
+#        Non-vacuity partner: the same admin on the public-only throwaway proceeds and a model_calls
+#        row appears.
 #
 # The served-worker checks WRITE fixture rows on two throwaway companies and delete them in an EXIT
 # trap. The non-vacuity partners make a real (cent-fraction) OpenAI call on a throwaway, which step 13
@@ -272,7 +279,7 @@ else
       OWNER=$(psqlq "select id::text from auth.users where lower(email)=lower('$FR_LOGIN_EMAIL') limit 1")
     fi
     if [ -z "$OWNER" ]; then
-      bad "(b6/b7) FR_LOGIN_EMAIL not set or no such account — source backups/fr-login.env; the served-worker half did not run (the operator's account is never used as a fixture owner)"
+      bad "(b6/b7) FR_LOGIN_EMAIL not set or no such account — source backups/fr-login.env; the served-worker half did not run (the fixture owner is the CC-owned test account from backups/fr-login.env; the operator's own login is never used here)"
     fi
     if [ -n "$OWNER" ]; then
     for c in "$PRIV|private-evidence" "$PUB|public-only"; do
@@ -318,7 +325,7 @@ else
       && ok "(b6) and no outside model call was recorded for that company" \
       || bad "(b6) $LEAK6 outside model call(s) recorded on the private throwaway"
 
-    # (b8) SP-132: a surface whose CANDIDATE ROWS ARE GONE must never be saved as 'withheld'.
+    # (b8) SP-133: a surface whose CANDIDATE ROWS ARE GONE must never be saved as 'withheld'.
     # newSignalIds is non-empty but the content query returns nothing — rows deleted or
     # relevance-flipped in between. There is no banked-row text in that prompt at all, so there is
     # nothing to withhold, and claiming private evidence would be a statement about rows we do not
@@ -353,7 +360,9 @@ else
       *) bad "(b6-nv) public-only evidence produced '$ROWP' — the outside lane is no longer reachable (vacuous guard)" ;;
     esac
 
-    # (b7) the propose-route-changes path as a NON-ADMIN member (SP-107)
+    # (b7-id) IDENTITY first (SP-141, slice A): a non-admin member of ANOTHER company is refused
+    # before any evidence question. The member fixture belongs to 66666666-…-6601 and to nothing
+    # else, so on this throwaway it holds no capability and must get 403 not_authorised.
     JWT_NA=""
     if [ -n "${MEMBER_EMAIL:-}" ] && [ -n "${MEMBER_PASSWORD:-}" ]; then
       JWT_NA=$(curl -s -m 30 -X POST "$AUTH_URL/token?grant_type=password" \
@@ -362,20 +371,39 @@ else
         | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).access_token||"")}catch(e){process.stdout.write("")}})')
     fi
     if [ -z "$JWT_NA" ]; then
-      bad "(b7) MEMBER_EMAIL/MEMBER_PASSWORD not set or login failed — source backups/fr-member.env; the SP-107 check did not run"
+      bad "(b7-id) MEMBER_EMAIL/MEMBER_PASSWORD not set or login failed — source backups/fr-member.env; the identity check did not run"
     else
-      B7=$(invoke propose-route-changes "$JWT_NA" "{\"route_id\":\"$ROUTE_PRIV\",\"company_id\":\"$PRIV\"}")
-      if echo "$B7" | grep -q '"skipped":true' && echo "$B7" | grep -q 'not cleared for an outside model'; then
-        ok "(b7) a NON-ADMIN caller on private evidence is refused by name, on the worker"
+      B7I=$(invoke propose-route-changes "$JWT_NA" "{\"route_id\":\"$ROUTE_PRIV\",\"company_id\":\"$PRIV\"}")
+      if echo "$B7I" | grep -q '"not_authorised"'; then
+        ok "(b7-id) a non-admin member of another company is refused on IDENTITY, on the worker"
       else
-        bad "(b7) non-admin propose-route-changes on private evidence did not refuse: $(echo "$B7" | head -c 160)"
+        bad "(b7-id) propose-route-changes did not refuse a non-member on identity: $(echo "$B7I" | head -c 160)"
+      fi
+    fi
+
+    # (b7-evidence) the EVIDENCE refusal, proven with a caller who is ALLOWED to call (the admin).
+    JWT_AD=""
+    if [ -n "${FR_LOGIN_EMAIL:-}" ] && [ -n "${FR_LOGIN_PASSWORD:-}" ]; then
+      JWT_AD=$(curl -s -m 30 -X POST "$AUTH_URL/token?grant_type=password" \
+        -H "apikey: $ANONK" -H 'Content-Type: application/json' \
+        -d "{\"email\":\"$FR_LOGIN_EMAIL\",\"password\":\"$FR_LOGIN_PASSWORD\"}" \
+        | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).access_token||"")}catch(e){process.stdout.write("")}})')
+    fi
+    if [ -z "$JWT_AD" ]; then
+      bad "(b7-evidence) FR_LOGIN_EMAIL/FR_LOGIN_PASSWORD not set or login failed — source backups/fr-login.env; the SP-107 check did not run"
+    else
+      B7=$(invoke propose-route-changes "$JWT_AD" "{\"route_id\":\"$ROUTE_PRIV\",\"company_id\":\"$PRIV\"}")
+      if echo "$B7" | grep -q '"skipped":true' && echo "$B7" | grep -q 'not cleared for an outside model'; then
+        ok "(b7-evidence) an ALLOWED caller on private evidence is refused by name, on the worker"
+      else
+        bad "(b7-evidence) admin propose-route-changes on private evidence did not refuse: $(echo "$B7" | head -c 160)"
       fi
       LEAK7=$(psqlq "select count(*) from public.model_calls where company_id='$PRIV' and provider in ('openai','anthropic')")
       [ "${LEAK7:-1}" = "0" ] \
-        && ok "(b7) and still no outside model call recorded for that company" \
-        || bad "(b7) $LEAK7 outside model call(s) recorded on the private throwaway"
+        && ok "(b7-evidence) and still no outside model call recorded for that company" \
+        || bad "(b7-evidence) $LEAK7 outside model call(s) recorded on the private throwaway"
 
-      B7N=$(invoke propose-route-changes "$JWT_NA" "{\"route_id\":\"$ROUTE_PUB\",\"company_id\":\"$PUB\"}")
+      B7N=$(invoke propose-route-changes "$JWT_AD" "{\"route_id\":\"$ROUTE_PUB\",\"company_id\":\"$PUB\"}")
       CALLS=$(psqlq "select count(*) from public.model_calls where company_id='$PUB' and provider='openai' and call_site='propose-route-changes'")
       if [ "${CALLS:-0}" -ge 1 ] && ! echo "$B7N" | grep -q 'not cleared for an outside model'; then
         ok "(b7-nv) public-only evidence still reaches the outside lane ($CALLS ledgered call(s))"

@@ -31,6 +31,7 @@ import { anchorsToPromptBlock, getIndustryStepAnchors, inferStandardMarketCatego
 import { JTBD_ODI_CHECKPOINTS } from "../_shared/jtbdProcess.ts";
 import { type NormStep, validateSubsetOfEight } from "../generate-normative-jobmap/logic.ts";
 import { meansViolations, RULES_VERSION, TAXONOMY_VERSION } from "./rules.ts";
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -224,6 +225,12 @@ async function generateForIndustry(ollamaUrl: string, genModel: string, judgeMod
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  // ── SP-141 / SP-150: WHO IS CALLING, before any row is read or written. ADMIN ONLY (SP-153).
+  // The gateway accepts the publishable anon key, so it identifies nobody; this is the boundary.
+  // A trusted internal caller (x-internal-call pair, or a bare service-role bearer — SP-151) passes.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
   try {
     const { industry_key, industry_keys, force, dry_run } = await req.json();
     const keys: string[] = Array.isArray(industry_keys) ? industry_keys.map(String) : (industry_key ? [String(industry_key)] : []);

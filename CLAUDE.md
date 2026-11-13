@@ -142,6 +142,15 @@ These files are long — search within them rather than reading top-to-bottom:
   against the 364 baseline and has NOT been re-measured since; expect 486/18/0 but do not treat it
   as measured.
 
+- **SP-F32 filed (2026-11-13) — `g-home-parity` is pinned to a LIVE company's data.** Its fixture
+  `tests/workspace/fixtures/home-dom-before_20260918.txt` is a byte-for-byte snapshot of the home DOM
+  for Edgewood (`3dd2cfbb-0792-4bf1-9cd4-15db9646874b` — the `active_company_id` carried in
+  `backups/fr-state.json`), so **any data act on that company turns the spec RED with no code change
+  at all**. It has now been re-pinned for that reason three times, most recently on 2026-11-13 after
+  SP-105's 13-row `signal_band` correction moved the team signal count `TEAM 42 → 55`. A RED here is
+  read as a data change until proved otherwise: diff the one line, name the act, re-pin. The fix is to
+  point the spec at a throwaway fixture company rather than a real one; filed, not fixed.
+
 - **Known flakes (R35, 2026-10-19)** — each passes alone on rerun; a single failure of one of these in a full run
   is read as the flake, re-run that spec file alone, and the baseline stands:
   - `tests/workspace/x4-inputs-interview-inference.spec.ts` — route-mock race: `route.fulfill` on a disposed route
@@ -226,9 +235,10 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   helper `diagnose-data-guard` invokes, never an independent member) — classifies on BOTH the exit
   code and the printed verdict, and puts `~/.deno/bin` on PATH, because `interview-parser-guard` runs
   `deno test` bare and reads RED without it for no code reason. Source the three env files first.
-- **The guard sweep is 43 GREEN / 4 RED of 47, and the FOUR standing REDs are named** (measured
-  2026-11-11, 47 guards, all three env files sourced; `interview-upload-path-guard` is excluded from
-  the session sweep by design (U6-38) and passes standalone):
+- **The guard sweep is 44 GREEN / 4 RED of 48, and the FOUR standing REDs are named** (re-measured
+  2026-11-12 after slice A added `caller-authz-guard`; was 43 / 4 of 47 before it, all three
+  env files sourced; `interview-upload-path-guard` is excluded from the session sweep by
+  design (U6-38) and passes standalone):
   - `network-guard` — `(n4) cannot read pf state without a password`; needs the read-only sudo entry
     from `scripts/network/sudoers.mojomap-pf-readonly`.
   - `diagnose-data-guard` — `(i) the live read-only check FAILED`.
@@ -244,6 +254,42 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   Fixed (SP-59); a sweep that keys on either signal now agrees. A guard that cannot go red in the
   sweep is not a guard, so a sweep script should classify on BOTH: a zero exit **and** `GUARD OK` or
   `guard: PASS` in the output.
+
+---
+
+## OPEN BEFORE THE FIRST OUTSIDE LOGIN (SP-163, SP-165 — 2026-11-12)
+
+**54 of the 93 edge functions still have no caller check.** Slice A gated 32 (the eleven of SP-143
+plus `research-company` plus Group 4's 20) and 7 were already authorised in-function
+(`council-review`, `import-intake-submissions`, `infer-interview-market`, `interview-parser`, `maps`,
+`generate-deep-dive`, `publish-release-note`). The remaining 54 are Groups 1, 2 and 3 and the
+class-B functions — deferred to slices B and C, **not cancelled**.
+
+Until those land, two things stay as they are:
+- **no account for anyone outside FMD** (SP-121), and
+- **the function gateway is not exposed beyond the tailnet** (SP-148).
+
+That is load-bearing, because the gateway IS already served to every tailnet member at
+`https://mojomap.tail7b863b.ts.net:8443/functions/v1`, and the publishable anon key reaches an
+ungated handler. Measured 2026-11-12: `public-companies` returned 200 and the full company list to
+the anon key alone, on localhost and over the tailnet.
+
+Where to look:
+- `bash scripts/guards/caller-authz-guard.sh` — prints `gated / not-yet-gated / unaccounted` on
+  every run and names each deferred function with its group. It does **not** fail because the list
+  is non-empty (SP-164); it fails if a function is on neither set, so a NEW function cannot be added
+  without either a caller check or a named deferral.
+- `~/dev/_diagnose-shots/2026-11-12/ingest/authz-census.md` Part 2 — the verdict for all 93, the
+  proposed rule per group, and the measured gateway reachability.
+
+- **SP-F31 filed (2026-11-13) — `public.has_capability()` grants neither `structure.route.generate`
+  nor `structure.opportunity.generate`.** Those two strings live only in `src/lib/capabilities.ts`
+  (`CLIENT_BUNDLES`, where Decision-Owner holds them); the SECURITY DEFINER function knows five caps
+  and neither is among them. So the member arm of `propose-route-changes` and
+  `propose-opportunity-changes` refuses a Decision-Owner today, and both are admin-only in practice.
+  Slice A reused `has_capability` per SP-142 rather than changing the grant or duplicating the client
+  mapping into the edge runtime. `caller-authz-guard` check (d4) pins the present answer (`f`) and
+  goes RED on purpose if the grant is ever extended. Filed, not fixed.
 
 ---
 

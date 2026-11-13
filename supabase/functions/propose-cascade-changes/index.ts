@@ -31,6 +31,7 @@ import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate
 import { isExternalAdmissibleNeed } from "../_shared/externalProvenance.ts";
 import { isSubjectExternallyAdmissible } from "../_shared/externalProvenance.ts";   // E4c (2026-11-07)
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -175,6 +176,12 @@ function snapshotsAreIdentical(a: Record<string, unknown>, b: Record<string, unk
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // ── SP-141 / SP-150: WHO IS CALLING, before any row is read or written. ADMIN ONLY (SP-153).
+  // The gateway accepts the publishable anon key, so it identifies nobody; this is the boundary.
+  // A trusted internal caller (x-internal-call pair, or a bare service-role bearer — SP-151) passes.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
 
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return jsonResponse({ error: "OPENAI_API_KEY not configured" }, 500);

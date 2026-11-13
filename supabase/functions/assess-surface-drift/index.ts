@@ -25,6 +25,7 @@ import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";  
 // signals were selected with no band/voice/provenance filter and sent to OpenAI unconditionally —
 // the measured Option B exposure of 2026-07-28 (4 calls, 60 upload-derived signals).
 import { resolveModel, signalProvenance, EXTERNAL_JUDGE } from "../_shared/modelRouter.ts";
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -656,6 +657,12 @@ async function assessOpportunities(
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // ── SP-141 / SP-150: WHO IS CALLING, before any row is read or written. ADMIN ONLY (SP-153).
+  // The gateway accepts the publishable anon key, so it identifies nobody; this is the boundary.
+  // A trusted internal caller (x-internal-call pair, or a bare service-role bearer — SP-151) passes.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
 
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return jsonResponse({ error: "OPENAI_API_KEY not configured" }, 500);

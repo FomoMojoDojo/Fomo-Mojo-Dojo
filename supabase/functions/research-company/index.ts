@@ -73,6 +73,7 @@ import {
 } from "../../../src/lib/routeLanguage.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // Q5 (2026-11-06)
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 // ── Q5 (ruling, 2026-11-06): THE SPEND LEDGER ───────────────────────────────────────────────────
 // research-company made every one of its OpenAI calls off-ledger: Edgewood holds 4,000+ model_calls
@@ -5115,6 +5116,12 @@ async function runFinalizer(opts: {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  // ── SP-141 / SP-150: WHO IS CALLING, before any row is read or written. ADMIN ONLY (SP-153).
+  // The gateway accepts the publishable anon key, so it identifies nobody; this is the boundary.
+  // A trusted internal caller (x-internal-call pair, or a bare service-role bearer — SP-151) passes.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
+
   try {
     console.log("[research-company] method", req.method);
 
@@ -7824,7 +7831,14 @@ Deno.serve(async (req) => {
     // -------------------------
     // 8b) Invoke leaf functions (cascade + positioning) — always runs; dry_run forwarded
     // -------------------------
-    const authorizationHeader = req.headers.get("Authorization") ?? "";
+    // SP-152 — AN ORCHESTRATOR AUTHORISES ONCE. Until this slice these two leaf calls forwarded the
+    // browser's own Authorization header, so each leaf re-judged the same human and the chain only
+    // worked while a live session existed. The human caller is judged ONCE, at this function's own
+    // admin gate above; the leaves are now reached as a trusted internal caller (SP-151) — the
+    // service-role bearer plus the shared internal marker, the same pair run-agent-flow:993 uses for
+    // public-baseline. No borrowed browser JWT travels downward.
+    const leafAuthorization = `Bearer ${serviceRoleKey}`;
+    const leafInternalHeader = Deno.env.get("INTERNAL_CALL_SECRET") ?? "";
     // One run, one snapshot, every surface: forward the RESOLVED baseline run id (pinned or
     // defaulted — both cases, since newest-non-weak can change between orchestrator
     // resolution and leaf execution) so the leaves build from the same snapshot the spine
@@ -7840,7 +7854,7 @@ Deno.serve(async (req) => {
     const [cascadeInvokeResult, positioningInvokeResult] = await Promise.all([
       supabase.functions.invoke("refresh-cascade", {
         body: { company_id, skip_lock: true, dry_run, baseline_run_id: resolvedBaselineRunId },
-        headers: { Authorization: authorizationHeader },
+        headers: { Authorization: leafAuthorization, "x-internal-call": leafInternalHeader },
       }).catch((err: unknown) => {
         console.error("[research-company] refresh-cascade invoke error:", err);
         return { data: null, error: err };
@@ -7856,7 +7870,7 @@ Deno.serve(async (req) => {
           known_tensions: knownTensions,
           claim_provenance: claimProvenance,
         },
-        headers: { Authorization: authorizationHeader },
+        headers: { Authorization: leafAuthorization, "x-internal-call": leafInternalHeader },
       }).catch((err: unknown) => {
         console.error("[research-company] refresh-positioning invoke error:", err);
         return { data: null, error: err };

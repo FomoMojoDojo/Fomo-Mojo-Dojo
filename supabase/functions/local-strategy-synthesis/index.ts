@@ -28,6 +28,7 @@ import { buildCompetitorMarketBrief } from "../_shared/contextBuilders.ts";
 import { fireCascadeReconcile } from "../_shared/cascadeReconcileTrigger.ts";
 import { loadContributingDocs } from "../_shared/uploadCorpus.ts";
 import { assertCorpusVoiceClassified } from "../_shared/corpusVoiceGate.ts";
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -207,6 +208,12 @@ function normalizeDeclaredCanvas(raw: Record<string, unknown>) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  // ── SP-141 / SP-150: WHO IS CALLING, before any row is read or written. ADMIN ONLY (SP-153).
+  // The gateway accepts the publishable anon key, so it identifies nobody; this is the boundary.
+  // A trusted internal caller (x-internal-call pair, or a bare service-role bearer — SP-151) passes.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";

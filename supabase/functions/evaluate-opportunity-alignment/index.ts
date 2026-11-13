@@ -15,6 +15,7 @@ import { gateSubjectForExternal, gateSubjectForLocal } from "../_shared/driftExt
 import { judgeOpportunityAlignmentLocal } from "../_shared/localAlignmentJudge.ts";
 import { optionBDoor } from "../_shared/optionBDoor.ts";
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 // 4f-6 (F9): the one refusal for a company-held need reaching a market-framed judgement.
 export const NEED_IS_COMPANY_HELD = "This need is held by the company, not a market — there is no market to align it to.";
@@ -47,6 +48,12 @@ const alignmentSchema = {
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // ── SP-141 / SP-150: WHO IS CALLING, before any row is read or written. ADMIN ONLY (SP-153).
+  // The gateway accepts the publishable anon key, so it identifies nobody; this is the boundary.
+  // A trusted internal caller (x-internal-call pair, or a bare service-role bearer — SP-151) passes.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
 
   // Read but DON'T require yet — the local (declared) lane needs no OpenAI key.
   // The external path guards on it just before its callOpenAIJSON.

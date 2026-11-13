@@ -39,6 +39,7 @@ import {
   RUN_KIND,
   type MarketOptionCandidate,
 } from "../_shared/marketOptionSynthesis.ts";
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -61,6 +62,12 @@ function json(body: unknown, status = 200) {
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  // ── SP-141 / SP-150: WHO IS CALLING, before any row is read or written. ADMIN ONLY (SP-153).
+  // The gateway accepts the publishable anon key, so it identifies nobody; this is the boundary.
+  // A trusted internal caller (x-internal-call pair, or a bare service-role bearer — SP-151) passes.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
 
   try {
     const { company_id, write, plan, revise, collapse, recover, supersede, candidates, run_target } = await req.json();

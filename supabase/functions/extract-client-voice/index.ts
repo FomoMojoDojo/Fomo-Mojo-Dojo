@@ -18,6 +18,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { contentIdentity } from "../_shared/contentIdentity.ts";
 import { admitClientVoice } from "../_shared/clientVoiceGuard.ts";
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 const nowIso = () => new Date().toISOString();
 const corsHeaders = {
@@ -80,6 +81,12 @@ async function callModel(system: string, user: string): Promise<Record<string, u
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // ── SP-141 / SP-150: WHO IS CALLING, before any row is read or written. ADMIN ONLY (SP-153).
+  // The gateway accepts the publishable anon key, so it identifies nobody; this is the boundary.
+  // A trusted internal caller (x-internal-call pair, or a bare service-role bearer — SP-151) passes.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
   const startedAt = Date.now();
   try {
     const body = await req.json().catch(() => ({}));

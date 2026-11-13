@@ -16,6 +16,7 @@ import { judgeRouteAlignmentLocal } from "../_shared/localRouteAlignmentJudge.ts
 import { FROZEN_COMPANY_IDS } from "../_shared/frozenCompanies.ts";
 import { optionBDoor } from "../_shared/optionBDoor.ts";
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -45,6 +46,12 @@ const alignmentSchema = {
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // ── SP-141 / SP-150: WHO IS CALLING, before any row is read or written. ADMIN ONLY (SP-153).
+  // The gateway accepts the publishable anon key, so it identifies nobody; this is the boundary.
+  // A trusted internal caller (x-internal-call pair, or a bare service-role bearer — SP-151) passes.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
 
   // Read but DON'T require yet — the local (internal-route) lane needs no OpenAI key.
   // The external path guards on it just before its callOpenAIJSON.

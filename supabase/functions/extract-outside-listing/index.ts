@@ -4,12 +4,19 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { runListingRegen } from "../_shared/listingRegen.ts";
 import { requireRunId } from "../_shared/outsideRecrawlReview.ts";
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // ── SP-141 / SP-150: WHO IS CALLING, before any row is read or written. ADMIN ONLY (SP-153).
+  // The gateway accepts the publishable anon key, so it identifies nobody; this is the boundary.
+  // A trusted internal caller (x-internal-call pair, or a bare service-role bearer — SP-151) passes.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
   try {
     const body = await req.json().catch(() => ({}));
     const company_id = String(body.company_id ?? "");

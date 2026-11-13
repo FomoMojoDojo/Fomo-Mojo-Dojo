@@ -16,6 +16,7 @@ import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate
 import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 import { resolveModel, signalProvenance, isPublicProvenance } from "../_shared/modelRouter.ts";   // SP-100 (2026-11-12)
+import { capabilityRefusal, identifyCaller } from "../_shared/callerGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -131,6 +132,11 @@ function snapshotsAreIdentical(a: Record<string, unknown>, b: Record<string, unk
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
+  // ── SP-141 / SP-150 step 1: WHO IS CALLING. The gateway accepts the publishable anon key, which
+  // identifies nobody, so this is the boundary. 401 no_user before anything else is read.
+  const caller = await identifyCaller(req, corsHeaders);
+  if (caller instanceof Response) return caller;
+
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return jsonResponse({ error: "OPENAI_API_KEY not configured" }, 500);
 
@@ -147,6 +153,13 @@ Deno.serve(async (req: Request) => {
 
   const { route_id, company_id } = body;
   if (!route_id || !company_id) return jsonResponse({ error: "route_id and company_id are required" }, 400);
+
+  // ── SP-150 step 4: authorise THIS caller for THIS company — admin, or a member of it holding
+  // structure.route.generate (SP-154). Admin and trusted-internal callers pass. The refusal is
+  // identical whether or not the company exists (SP-144): has_capability is asked either way and
+  // the company row is never selected to find out.
+  const authzRefused = await capabilityRefusal(caller, corsHeaders, "structure.route.generate", company_id);
+  if (authzRefused) return authzRefused;
 
   const db = createClient(supabaseUrl, supabaseKey);
 

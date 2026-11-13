@@ -18,6 +18,7 @@ import { loadCorrectionItem } from "../_shared/interviewItems.ts";
 import {
   AUDIT_COMPONENT, CORRECTION_STATEMENT, correctionClaimFor, existingClaimIdFor, reversalSqlFor,
 } from "../_shared/interviewCorrection.ts";
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,6 +32,12 @@ const CB1_FROZEN_ID = "58b2b15b-0000-0000-0000-000000000000";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // ── SP-141 / SP-150: WHO IS CALLING, before any row is read or written. ADMIN ONLY (SP-153).
+  // The gateway accepts the publishable anon key, so it identifies nobody; this is the boundary.
+  // A trusted internal caller (x-internal-call pair, or a bare service-role bearer — SP-151) passes.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
   try {
     const body = await req.json().catch(() => ({}));
     const company_id = String(body?.company_id ?? "").trim();
