@@ -70,10 +70,31 @@ describe("recordModelCall inserts one row per call", () => {
     expect(first.run_id).toBeNull();
   });
 
+  // SP-177 (2026-11-13): the fixture was the string "run-uuid", which is not a uuid. model_calls.run_id
+  // is `uuid` with an FK to long_runner_runs(id), so that value could never have reached the column —
+  // the stand-in made the test pass on behaviour the database would reject.
+  const RUN_UUID = "7f2cfb01-ab6c-4b6c-9ffc-0c99b678dcae";
+
   it("carries the run id when the site has one", async () => {
     const s = sbSpy();
-    await recordModelCall(s.client, { companyId: "co1", runId: "run-uuid", callSite: "generate-open-questions", usage: openaiRecord("gpt-4.1-mini", USAGE) });
-    expect((s.rows[0] as Record<string, unknown>).run_id).toBe("run-uuid");
+    await recordModelCall(s.client, { companyId: "co1", runId: RUN_UUID, callSite: "generate-open-questions", usage: openaiRecord("gpt-4.1-mini", USAGE) });
+    expect((s.rows[0] as Record<string, unknown>).run_id).toBe(RUN_UUID);
+  });
+
+  // SP-F9: research-company passed String(baselineRun.id) — a public_baseline_runs BIGINT — so every
+  // insert failed the uuid cast and the function wrote NO ledger rows at all, silently, because this
+  // writer degrades to a log line by design. The spend was real; the record never existed.
+  it("stores a non-uuid run id as NULL, and the cost row still lands (SP-F9)", async () => {
+    const s = sbSpy();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const ok = await recordModelCall(s.client, { companyId: "co1", runId: "18657", callSite: "research-company:inputs", usage: openaiRecord("gpt-4.1-mini", USAGE) });
+    expect(ok).toBe(true);                     // a gap in attribution beats a missing cost row
+    const row = s.rows[0] as Record<string, unknown>;
+    expect(row.run_id).toBeNull();
+    expect(row.call_site).toBe("research-company:inputs");
+    expect(Number(row.usd)).toBeGreaterThan(0);
+    expect(warn).toHaveBeenCalled();           // and it is loud, not swallowed
+    warn.mockRestore();
   });
 
   it("refuses to write without a company (nothing to attribute the spend to)", async () => {

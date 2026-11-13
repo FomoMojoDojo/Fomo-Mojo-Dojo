@@ -56,8 +56,33 @@ export function openaiRecordsByModel(usageByModel: ReadonlyMap<string, OpenAIUsa
 type SupabaseLike = { from: (t: string) => any };
 
 /**
+ * SP-F9 / SP-177 (2026-11-13): model_calls.run_id is `uuid` and carries a FOREIGN KEY to
+ * long_runner_runs(id). research-company passed `String(baselineRun.id)` — a
+ * public_baseline_runs.id, which is a **bigint** — so every insert failed the uuid cast and the
+ * function wrote NO ledger rows at all, silently, because this writer degrades to a log line by
+ * design. The spend was real; the record was not.
+ *
+ * So the attribution field is validated HERE, at the one writer, and a value that cannot be a
+ * run_id is dropped to NULL rather than taking the whole row down with it. That ordering is
+ * deliberate and matches this module's standing rule: a gap in attribution is strictly better than
+ * a missing cost row, and a missing cost row is what a rejected insert produces.
+ */
+export function normalizeRunId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!UUID_RE.test(trimmed)) return null;
+  return trimmed;
+}
+
+// Canonical 8-4-4-4-12 hex form. Deliberately not accepting a braced or urn: spelling: the column is
+// written by our own code, so a value in any other shape is a bug to surface, not a format to absorb.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
  * Insert one model_calls row. Resolves to true on success, false on any failure — never throws.
- * `runId` is the long_runner_runs row that incurred the call, or null when the site has none.
+ * `runId` is the long_runner_runs row that incurred the call, or null when the site has none. A
+ * value that is not a uuid is stored as NULL and logged (SP-177) — never passed through to fail the
+ * insert, and never silently turned into something it is not.
  */
 export async function recordModelCall(
   supabase: SupabaseLike,
@@ -73,9 +98,16 @@ export async function recordModelCall(
 ): Promise<boolean> {
   try {
     if (!args.companyId) return false;
+    const runId = normalizeRunId(args.runId);
+    if (args.runId != null && runId === null) {
+      // Loud, because this is the shape of the SP-F9 bug: the row still lands, with no attribution.
+      console.warn(
+        `[model-calls] ${args.callSite}: run_id is not a uuid, storing NULL (run_id must be a long_runner_runs id)`,
+      );
+    }
     const { error } = await supabase.from("model_calls").insert({
       company_id: args.companyId,
-      run_id: args.runId ?? null,
+      run_id: runId,
       call_site: args.callSite,
       provider: args.usage.provider,
       model: args.usage.model,

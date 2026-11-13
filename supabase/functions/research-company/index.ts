@@ -5933,7 +5933,13 @@ Deno.serve(async (req) => {
     const makeUsageLedger = (stage: string): UsageHook => (usedModel, usage) =>
       void recordModelCall(supabase as unknown as { from: (t: string) => any }, {
         companyId: String(company_id),
-        runId: baselineRun?.id != null ? String(baselineRun.id) : null,
+        // SP-F9 / SP-177: this was `String(baselineRun.id)`. model_calls.run_id is uuid with an FK to
+        // long_runner_runs(id); baselineRun is a public_baseline_runs row whose id is a BIGINT, so
+        // every insert failed the uuid cast and this function wrote no ledger rows at all. There is
+        // no long_runner_runs id in scope here, and no column on model_calls holds a baseline run
+        // id, so the honest value is NULL — the stage is already carried by call_site below, and
+        // the run is joinable through public_baseline_runs.company_id + created_at.
+        runId: null,
         callSite: `research-company:${stage}`,
         usage: openaiRecord(usedModel, usage),
       });
