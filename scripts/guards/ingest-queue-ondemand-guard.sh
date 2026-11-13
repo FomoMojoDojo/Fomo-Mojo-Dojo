@@ -298,6 +298,70 @@ OVERLAPS=$(psqlq "select count(*) from public.file_proposals a join public.file_
                          || bad "(s5) $OVERLAPS overlapping pair(s) — the runs were not serial"
 psqlq "select '     order: '||string_agg(file_name||' '||coalesce(to_char(processing_started_at,'HH24:MI:SS'),'-')||'→'||coalesce(to_char(processing_completed_at,'HH24:MI:SS'),'-'), '  ' order by processing_started_at) from public.file_proposals where company_id='$HELDCO';"
 
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+echo "══ PART F (SP-227): a write step that FAILS ends the row failed, never ready ══"
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# The one arm that cannot be proven read-only: the row must be analyzed for real, and the write step
+# must then throw. dify-analyze-file carries a forced-failure door keyed on a marker in the file name
+# (guard-only, costs nothing) so the failure arm is exercised end to end rather than argued.
+F_FID=$(psqlq "select gen_random_uuid()::text;")
+F_PATH="$HELDCO/iq-forcefail-$F_FID.pdf"
+node scripts/guards/fixtures/make-paged-pdf.mjs "$WORK/forcefail.pdf" 2 >/dev/null 2>&1
+curl -s -o /dev/null -X POST "$STORAGE/input-files/$F_PATH" -H "Authorization: Bearer $SRK" \
+     -H "Content-Type: application/pdf" --data-binary "@$WORK/forcefail.pdf"
+node -e '
+  const fs=require("node:fs");
+  const b64=fs.readFileSync(process.argv[1]).toString("base64");
+  fetch("http://127.0.0.1:8789/extract",{method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({file_name:"f.pdf",file_type:"application/pdf",content_base64:b64})})
+    .then(r=>r.json()).then(j=>fs.writeFileSync(process.argv[2], String(j.text||"")))
+    .catch(()=>fs.writeFileSync(process.argv[2],""));
+' "$WORK/forcefail.pdf" "$WORK/forcefail.txt" 2>/dev/null
+curl -s -o /dev/null -X POST "$STORAGE/input-files/$F_PATH.extracted.txt" -H "Authorization: Bearer $SRK" \
+     -H "Content-Type: text/plain" --data-binary "@$WORK/forcefail.txt"
+psqlx "insert into public.input_files (id, input_id, file_name, file_type, file_path, uploaded_at)
+       values ('$F_FID','$S_INPUT_ID','iq-forcefail.pdf','application/pdf','$F_PATH', now());"
+curl -s -m 180 -o /dev/null -X POST "http://127.0.0.1:54321/functions/v1/classify-upload-voice" \
+     -H "Authorization: Bearer $SRK" -H 'content-type: application/json' \
+     -d "{\"company_id\":\"$HELDCO\",\"input_file_id\":\"$F_FID\"}"
+# the marker travels on the PROPOSAL's file_name, which is what the write step reads
+F_PID=$(psql_insert_id "insert into public.file_proposals (company_id, file_id, file_name, source_type, summary, signal_type, status, processing_state)
+        values ('$HELDCO','$F_FID','__iq_force_ingest_failure__ iq-forcefail.pdf','uploaded_file','Analysis queued.','document','pending','queued')")
+[ -n "$F_PID" ] && ok "(f1) a real, voice-classified file is queued with the forced-failure marker" \
+               || bad "(f1) could not queue the forced-failure fixture"
+
+if [ -n "$F_PID" ]; then
+  echo "     waiting for the starter to run it and the write step to throw"
+  F_STATE=""; F_SAW_READY=0
+  for i in $(seq 1 160); do
+    F_STATE=$(psqlq "select processing_state from public.file_proposals where id='$F_PID';")
+    [ "$F_STATE" = ready ] && F_SAW_READY=1
+    { [ "$F_STATE" = ready ] || [ "$F_STATE" = failed ]; } && break
+    sleep 3
+  done
+  [ "$F_STATE" = failed ] \
+    && ok "(f2) SP-227: the row ends FAILED, not ready, because the write step threw" \
+    || bad "(f2) the row ended '$F_STATE' — a failing write step must not leave the row ready"
+  [ "$F_SAW_READY" = 0 ] \
+    && ok "(f2) and it was NEVER observed 'ready' at any point — the state never led the write step" \
+    || bad "(f2) the row read 'ready' before failing: the ordering is not what SP-227 requires"
+  F_CODE=$(psqlq "select coalesce(processing_error_code,'<null>')||'|'||coalesce(processing_error,'<null>') from public.file_proposals where id='$F_PID';")
+  [ "$F_CODE" = "ingest_failed|<null>" ] \
+    && ok "(f3) the code is stored and processing_error is NULL, so the client reads no code (SP-212)" \
+    || bad "(f3) expected 'ingest_failed|<null>', row reads '$F_CODE'"
+  [ "$(psqlq "select count(*) from public.ingest_single_flight where proposal_id='$F_PID';")" = 0 ] \
+    && ok "(f4) and the lock was released, so a failed write step does not wedge the queue" \
+    || bad "(f4) the lock is still held after the write step failed (SP-227)"
+  # non-vacuity: no signals were minted for it, which is what the failure means
+  F_SIG=$(psqlq "select count(*) from public.signals where source_id::text='$F_PID';")
+  [ "${F_SIG:-0}" = 0 ] \
+    && ok "(f5) no signals were minted — the failure is real, not cosmetic" \
+    || bad "(f5) $F_SIG signal(s) exist for a row whose write step threw"
+fi
+# part F teardown rides the EXIT trap for file_proposals/verdicts; its storage objects go here
+curl -s -X DELETE "$STORAGE/input-files/$F_PATH" -H "Authorization: Bearer $SRK" -o /dev/null
+curl -s -X DELETE "$STORAGE/input-files/$F_PATH.extracted.txt" -H "Authorization: Bearer $SRK" -o /dev/null
+
 echo "── leaving the fixtures as found ──"
 AFTER_FILES=$(psqlq "select count(*) from public.input_files f join public.inputs i on i.id=f.input_id where i.company_id='$MEMCO';")
 # the cleanup trap removes part M's row; report what the count WILL be

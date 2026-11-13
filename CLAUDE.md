@@ -151,12 +151,34 @@ These files are long — search within them rather than reading top-to-bottom:
   read as a data change until proved otherwise: diff the one line, name the act, re-pin. The fix is to
   point the spec at a throwaway fixture company rather than a real one; filed, not fixed.
 
-- **Known flakes (R35, 2026-10-19)** — each passes alone on rerun; a single failure of one of these in a full run
-  is read as the flake, re-run that spec file alone, and the baseline stands:
-  - `tests/workspace/x4-inputs-interview-inference.spec.ts` — route-mock race: `route.fulfill` on a disposed route
-    when the page navigates before the mock answers.
-  - `tests/workspace/c-arrows.spec.ts` (ArrowRight from /strategy cycles Base only) — keypress timing: one
-    ArrowRight registers twice, so the visited-path list repeats a workspace route.
+- **Known flakes (R35, restated BY MECHANISM 2026-11-13 under SP-252; first written 2026-10-19)** —
+  a flake is recognised by its mechanism, never by a list of spec names. A list of names is a list of
+  the specs that happened to flake first, and it reads a fourth instance of a known race as a
+  regression.
+
+  **The route-mock race.** A Playwright failure is read as this flake ONLY when ALL THREE hold:
+  - **(a)** the error is `route.fulfill` on a **disposed response** — i.e.
+    `route.fulfill: Fetch response has been disposed`, raised from a `route.fulfill({ response: res })`
+    after `res` was already consumed by `await res.text()`;
+  - **(b)** the commit under test changes **no file under `src/` or `tests/`**; and
+  - **(c)** the spec **passes when re-run alone**.
+
+  All three, measured, or it is a FAILURE — not a flake. No spec is pre-forgiven and none is excluded:
+  **twelve** specs share the consumed-response pattern (`d-jobmap-stage`, `i-opportunities`,
+  `m-inputs-actions`, `m4-inputs-completion`, `n-jobmap-actions`, `n2-jobmap-market-door`,
+  `o-opportunities-actions`, `p-routes-actions`, `s-jobmap-interview-frame`, `x2-inputs-interview`,
+  `x3-inputs-interview-controls`, `x4-inputs-interview-inference`), so any of them can raise it.
+  Observed in `x4-inputs-interview-inference` (2026-10-19) and in `x2-inputs-interview.spec.ts:194`
+  (2026-11-13, I-2 part A: failed in `[reduced]` while the SAME test passed in `[motion]`, no `src/`
+  or `tests/` file in the commit, 8 passed on solo re-run — all three held).
+  **SP-F42 filed: fix the class rather than name its instances** — fulfil from the parsed rows
+  (`route.fulfill({ json: rows })`), never from the response already drained by `await res.text()`.
+  Until that lands, the three conditions are the test.
+
+  **Two other flakes, each with its own mechanism** — the three conditions above do NOT apply to
+  them, because they are not that race:
+  - `tests/workspace/c-arrows.spec.ts` (ArrowRight from /strategy cycles Base only) — keypress timing:
+    one ArrowRight registers twice, so the visited-path list repeats a workspace route. Passes alone.
   - `scripts/guards/completion-sweep-guard.sh` (SP-136, 2026-11-12) — **a GUARD, not a spec, and flaky
     against the clock.** Its `posts` check counts rows landing in `net._http_response` inside its own
     window (`:61-62`) and expects exactly 3. `cron.job` jobid 2 is scheduled `* * * * *` running

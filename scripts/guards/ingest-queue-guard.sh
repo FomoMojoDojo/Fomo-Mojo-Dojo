@@ -414,6 +414,145 @@ else
   fi
 fi
 
+echo "── (q16) SP-227..SP-230: the Part A entry conditions ──"
+# SP-227, static: 'ready' is written only after the write step, and a throw ends the row failed.
+W16="supabase/functions/dify-analyze-file/index.ts"
+if grep -q 'processing_error_code: "ingest_failed"' "$W16" \
+   && grep -q 'await ingestDifyProposalSignals({' "$W16" \
+   && [ "$(grep -c 'processing_state: "ready"' "$W16")" -ge 1 ]; then
+  # the ORDER is the property: the claim must no longer carry 'ready', and the ready write must come
+  # after the ingest call. Line numbers, because that is what ordering means.
+  CLAIM_LINE=$(grep -n 'is("processing_completed_at", null)' "$W16" | head -1 | cut -d: -f1)
+  INGEST_LINE=$(grep -n 'await ingestDifyProposalSignals({' "$W16" | head -1 | cut -d: -f1)
+  READY_LINE=$(grep -n 'processing_state: "ready"' "$W16" | head -1 | cut -d: -f1)
+  if [ -n "$CLAIM_LINE" ] && [ -n "$INGEST_LINE" ] && [ -n "$READY_LINE" ] \
+     && [ "$CLAIM_LINE" -lt "$INGEST_LINE" ] && [ "$INGEST_LINE" -lt "$READY_LINE" ]; then
+    ok "(q16a) SP-227: claim (line $CLAIM_LINE) → write step (line $INGEST_LINE) → ready (line $READY_LINE), in that order"
+  else
+    bad "(q16a) SP-227 ordering not provable: claim=$CLAIM_LINE ingest=$INGEST_LINE ready=$READY_LINE"
+  fi
+else
+  bad "(q16a) SP-227: no ingest_failed arm, or the write step is missing"
+fi
+# the claim must not be the ready write any more, or two writers could both run the side effects
+if grep -A6 'is("processing_completed_at", null)' "$W16" | grep -q 'processing_state: "ready"'; then
+  bad "(q16a) the claim still writes 'ready' — the state would again precede the write step"
+else
+  ok "(q16a) the claim is taken on processing_completed_at, not on the move to ready"
+fi
+
+# SP-228: the column exists, is constrained to the two values, and is never rendered
+MOS=$(psqlq "select pg_get_constraintdef(oid) from pg_constraint where conrelid='public.file_proposals'::regclass and conname='check_minting_origin_state';")
+echo "$MOS" | grep -q "resolved" && echo "$MOS" | grep -q "uncertain" \
+  && ok "(q16b) SP-228: minting_origin_state admits only resolved/uncertain (or NULL)" \
+  || bad "(q16b) SP-228: the minting_origin_state constraint is missing or wrong: '$MOS'"
+if grep -rq "minting_origin_state" --include="*.tsx" src/ 2>/dev/null; then
+  bad "(q16b) minting_origin_state reaches a .tsx surface — it is machine-readable and must not be rendered"
+else
+  ok "(q16b) and no surface renders it (SP-228)"
+fi
+
+# SP-229: the reconcile looks only at rows with a run in flight
+CMP=$(psqlq "select pg_get_functiondef(p.oid) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='sweep_file_proposal_completion';")
+if echo "$CMP" | grep -q "and p.processing_state = 'running'"; then
+  ok "(q16c) SP-229: the reconcile selects 'running' only — a waiting row cannot fill its LIMIT"
+else
+  bad "(q16c) SP-229: the reconcile still selects queued rows, so a backlog can crowd out a stuck run"
+fi
+# and the 24h ceiling must STILL cover queued, or a row that never starts is never closed
+if echo "$CMP" | grep -q "processing_state in ('queued', 'running')"; then
+  ok "(q16c) and the 24-hour ceiling still covers queued rows — a row that never starts is still closed"
+else
+  bad "(q16c) the ceiling no longer covers queued rows: a row that never starts would sit for ever"
+fi
+
+# SP-230: one voice refusal per file, proven on the held fixture
+if [ -n "${CO:-}" ] && [ -n "${OWNER:-}" ]; then
+  VR="4f000000-0000-4000-8000-00000000d001"
+  psqlx "delete from public.file_proposals where file_id='$VR';"
+  psqlx "insert into public.file_proposals (company_id, file_id, processing_state, processing_error_code)
+         values ('$CO','$VR','failed','voice_not_classified');"
+  if psql_refused "insert into public.file_proposals (company_id, file_id, processing_state, processing_error_code)
+                   values ('$CO','$VR','failed','voice_not_classified');"; then
+    ok "(q16d) SP-230: a SECOND voice refusal for one file is refused by the key — one row, not two"
+  else
+    bad "(q16d) SP-230: two voice_not_classified rows for one file were accepted"
+  fi
+  # non-vacuity: a DIFFERENT failure code on the same file is still allowed, so the index is narrow
+  if psqlx "insert into public.file_proposals (company_id, file_id, processing_state, processing_error_code)
+            values ('$CO','$VR','failed','ingest_failed');"; then
+    ok "(q16d) and a different failure code on the same file is still allowed — the index is narrow"
+  else
+    bad "(q16d) the index is too broad: it blocks unrelated failures on the same file"
+  fi
+  psqlx "delete from public.file_proposals where file_id='$VR';"
+else
+  bad "(q16d) no held fixture company in scope — SP-230 was not exercised"
+fi
+
+echo "── (q17) SP-247: the forced-failure door needs a HELD company, not just a marker ──"
+# Static first: the door must read fixture_hold, and the throw must sit inside that branch.
+if grep -q 'forced-failure marker IGNORED' "$W16" \
+   && grep -B8 'forced ingest failure (guard marker on held fixture' "$W16" | grep -q 'select("fixture_hold")'; then
+  ok "(q17) the door reads companies.fixture_hold and throws only when a hold is present"
+else
+  bad "(q17) the forced-failure door is not gated on fixture_hold — a real document named unhelpfully could trip it"
+fi
+# Behavioural, read-only, and NON-VACUOUS: the same marker, two companies, one held and one not.
+# The predicate the door applies is exactly "does this company carry a hold", so it is evaluated here
+# against both, rather than invoking a writer (D4) to find out.
+if [ -n "${CO:-}" ]; then
+  HELD_Q=$(psqlq "select coalesce(fixture_hold,'') <> '' from public.companies where id='$CO';")
+  UNHELD_ID=$(psqlq "select id::text from public.companies where coalesce(fixture_hold,'') = '' order by created_at limit 1;")
+  UNHELD_Q=$(psqlq "select coalesce(fixture_hold,'') <> '' from public.companies where id='$UNHELD_ID';")
+  if [ "$HELD_Q" = "t" ] && [ "$UNHELD_Q" = "f" ]; then
+    ok "(q17) the door's own predicate is TRUE for the held fixture and FALSE for a real company — the marker alone does nothing"
+  else
+    bad "(q17) the hold predicate did not separate the two: held=$HELD_Q unheld=$UNHELD_Q (unheld id '$UNHELD_ID')"
+  fi
+  [ -n "$UNHELD_ID" ] || bad "(q17) no unheld company exists to test the negative against — the check would be vacuous"
+else
+  bad "(q17) no held fixture company in scope — SP-247 was not exercised"
+fi
+
+echo "── (q18) SP-248: a claim taken and never finished ends failed, not 'Analyzing…' for a day ──"
+CMP2=$(psqlq "select pg_get_functiondef(p.oid) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='sweep_file_proposal_completion';")
+echo "$CMP2" | grep -q "processing_completed_at < now() - interval '15 minutes'" \
+  && ok "(q18) the completion sweep fails a row whose claim has been held 15 minutes" \
+  || bad "(q18) no 15-minute claim-stall clause — a dead worker would leave the row running for 24 h"
+echo "$CMP2" | grep -q "processing_error_code = 'ingest_failed'" \
+  && ok "(q18) and it uses the same machine-readable code as the in-function failure arm" \
+  || bad "(q18) the stalled-claim close-out writes no ingest_failed code"
+echo "$CMP2" | grep -q "and p.processing_completed_at is null" \
+  && ok "(q18) the reconcile skips a row whose claim is already taken — a sync cannot advance one" \
+  || bad "(q18) the reconcile still posts for rows with a taken claim, which cannot progress"
+# behavioural, on the held fixture: a stalled row is closed and its lock freed
+if [ -n "${CO:-}" ]; then
+  SPID=$(psql_insert_id "insert into public.file_proposals (company_id, processing_state, processing_completed_at)
+         values ('$CO','running', now() - interval '20 minutes')")
+  psqlx "delete from public.ingest_single_flight;"
+  psqlx "insert into public.ingest_single_flight (lock_key, proposal_id, company_id, expires_at)
+         values ('file_analysis','$SPID','$CO', now() + interval '30 minutes');"
+  BEFORE_S=$(psqlq "select processing_state from public.file_proposals where id='$SPID';")
+  psqlx "select public.sweep_file_proposal_completion();"
+  AFTER_S=$(psqlq "select processing_state||'|'||coalesce(processing_error_code,'<null>')||'|'||coalesce(processing_error,'<null>') from public.file_proposals where id='$SPID';")
+  { [ "$BEFORE_S" = "running" ] && [ "$AFTER_S" = "failed|ingest_failed|<null>" ]; } \
+    && ok "(q18) a 20-minute-old taken claim went running → failed|ingest_failed|<null>" \
+    || bad "(q18) stalled claim: before='$BEFORE_S' after='$AFTER_S', expected running then failed|ingest_failed|<null>"
+  [ "$(psqlq "select count(*) from public.ingest_single_flight where proposal_id='$SPID';")" = 0 ] \
+    && ok "(q18) and its lock was freed in the same pass — the queue moves on" \
+    || bad "(q18) the stalled row's lock survived the sweep"
+  # non-vacuity: a FRESH taken claim is left alone
+  FPID=$(psql_insert_id "insert into public.file_proposals (company_id, processing_state, processing_completed_at)
+         values ('$CO','running', now() - interval '1 minute')")
+  psqlx "select public.sweep_file_proposal_completion();"
+  [ "$(psqlq "select processing_state from public.file_proposals where id='$FPID';")" = "running" ] \
+    && ok "(q18) a one-minute-old claim is NOT touched — the clause is a ceiling, not a reaper" \
+    || bad "(q18) a fresh in-flight claim was failed, which would kill live analyses"
+  psqlx "delete from public.file_proposals where id='$SPID';"
+  psqlx "delete from public.file_proposals where id='$FPID';"
+fi
+
 echo "── (q15) SP-218: the sweeps are not callable with the publishable anon key ──"
 if [ -z "${ANONK:-}" ]; then
   ANONK=$(npx supabase status --output env 2>/dev/null | sed -n 's/^ANON_KEY="\(.*\)"$/\1/p')

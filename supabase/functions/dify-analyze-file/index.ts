@@ -632,16 +632,20 @@ async function persistDifyResult(params: {
       confidence,
       confidence_reason: confidenceReason,
       questions_to_verify: questionsToVerify,
-      processing_state: "ready",
       processing_error: null,
+      // SP-227: the row is NOT marked ready here. It is marked ready only after the write step below
+      // has actually written the signals and claims — see the end of this function.
       processing_completed_at: new Date().toISOString(),
     })
     .eq("id", proposalId)
     .neq("status", "rejected")
-    // CLAIM (completion sweep, 2026-09-13): the ready write is atomic on the row still being in flight.
-    // The worker's monitor, a page's sync poll and the pg_cron sweep can all reach a finished run; only
-    // the writer whose update matched runs the side effects below (signal ingest, score snapshot).
+    // CLAIM (completion sweep, 2026-09-13; re-seated by SP-227): exactly one writer may run the side
+    // effects below. That used to be decided by the move to 'ready'; now that 'ready' comes later, the
+    // claim is taken on processing_completed_at, which is NULL for precisely as long as the row is in
+    // flight. The worker's monitor, a page's sync poll and the pg_cron sweep can all reach a finished
+    // run — the one whose update matches is still the only one that proceeds.
     .in("processing_state", ["queued", "running"])
+    .is("processing_completed_at", null)
     .select("id");
   // SP-189: a finished run frees the queue immediately. Placed before the side effects below so a
   // failure in signal ingest or the score snapshot cannot strand the lock behind it.
@@ -677,15 +681,22 @@ async function persistDifyResult(params: {
     // claims are minted from its AUTHORSHIP + SUBJECT (doc_voice_verdicts), classified on demand when the
     // document has no sha-matched verdict. Intake rows are the client's own answers and carry no document.
     let origin: { authorship: "client" | "us" | "third_party" | "uncertain"; subject: "this_company" | "the_sector" | "uncertain" } | null = null;
+    // SP-228 (closes SP-F37): the BAND stays conservative either way, but the row must say which of
+    // the two happened — a voice that was established, or one that never could be.
+    let mintingOriginState: "resolved" | "uncertain" | null = null;
     if (effectiveSourceType !== "intake") {
       const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
       const fileId = String((proposalRow as { file_id?: unknown }).file_id ?? "").trim();
       if (fileId && isLocalClassifierUrl(ollamaUrl)) {
         const resolved = await resolveUploadOrigin(supabase as unknown as { from: (t: string) => any; storage: any }, companyId, fileId, { ollamaUrl, model: Deno.env.get("OLLAMA_MODEL") ?? undefined });
         origin = { authorship: resolved.authorship, subject: resolved.subject };
+        // A classifier that answered 'uncertain' is still an answer ABOUT this document; a classifier
+        // that never ran is not. Only the second is recorded as 'uncertain' on the row.
+        mintingOriginState = "resolved";
         console.log("[dify-analyze-file] upload origin:", JSON.stringify({ proposalId, fileId, ...origin, source: resolved.source }));
       } else {
         origin = { authorship: "uncertain", subject: "uncertain" };
+        mintingOriginState = "uncertain";
         console.warn("[dify-analyze-file] upload origin unresolved (no file id or non-local classifier) → uncertain:", proposalId);
       }
     }
@@ -695,24 +706,91 @@ async function persistDifyResult(params: {
     const sidecarText = sidecar?.text ?? null;
     if (effectiveSourceType !== "intake" && !sidecarText) console.warn("[dify-analyze-file] no sidecar basis for the excerpt guard:", proposalId);
     const analysisVersion = Number((proposalRow as { analysis_version?: unknown }).analysis_version ?? 1) || 1;
-    await ingestDifyProposalSignals({
-      supabase,
-      companyId,
-      proposalId,
-      origin,
-      sourceType: effectiveSourceType,
-      sourceTitle: String(proposalRow.file_name ?? "Dify proposal"),
-      summary,
-      evidence,
-      contradictions,
-      frameworkResults,
-      questionsToVerify,
-      rawPayload: structuredOutputs,
-      analysisVersion,
-      sourceText: sidecarText,
-      sourceFilePath: sidecar?.filePath ?? null,
-    });
-    await snapshotMojoScore(supabase, companyId);
+    // ── SP-227 (closes SP-F38): 'ready' MEANS the signals and claims were written ─────────────────
+    //
+    // This step used to run AFTER the row had already been set 'ready'. If it threw — a constraint, a
+    // revoked policy, an excerpt-guard error — the row still read 'ready' and a reader could not tell
+    // "analyzed and ingested" from "analyzed, ingest threw". The state is now decided by the outcome.
+    //
+    // THE FORCED-FAILURE DOOR exists for the on-demand guard (SP-227's proof on the served worker):
+    // a proposal whose file_name carries the marker below makes the write step throw deliberately.
+    // It is gated on a non-production marker, costs nothing, and is the only honest way to exercise
+    // the failure arm end to end without corrupting a real row.
+    // read once: every access to this row's fields goes through the file's existing loose-shape
+    // idiom, and a second direct access would add another instance of its createClient mismatch
+    const rowFileName = String((proposalRow as { file_name?: unknown }).file_name ?? "");
+    try {
+      // SP-247: the door fires ONLY on a company that carries fixture_hold. A marker in a file name
+      // on a real company does nothing at all — the hold is the authority, not the name, so this
+      // cannot be triggered by a document someone happens to have named unhelpfully.
+      if (rowFileName.includes("__iq_force_ingest_failure__")) {
+        const { data: holdRow } = await supabase
+          .from("companies")
+          .select("fixture_hold")
+          .eq("id", companyId)
+          .maybeSingle();
+        const held = String((holdRow as { fixture_hold?: unknown } | null)?.fixture_hold ?? "").trim();
+        if (held) {
+          throw new Error(`forced ingest failure (guard marker on held fixture ${held})`);
+        }
+        console.warn("[dify-analyze-file] forced-failure marker IGNORED — company is not a held fixture:", companyId);
+      }
+      await ingestDifyProposalSignals({
+        supabase,
+        companyId,
+        proposalId,
+        origin,
+        sourceType: effectiveSourceType,
+        sourceTitle: rowFileName || "Dify proposal",
+        summary,
+        evidence,
+        contradictions,
+        frameworkResults,
+        questionsToVerify,
+        rawPayload: structuredOutputs,
+        analysisVersion,
+        sourceText: sidecarText,
+        sourceFilePath: sidecar?.filePath ?? null,
+      });
+      await snapshotMojoScore(supabase, companyId);
+    } catch (ingestError) {
+      const detail = String((ingestError as Error)?.message ?? ingestError);
+      console.error("[dify-analyze-file] write step FAILED, row ends failed not ready:", proposalId, detail);
+      // SP-212: the code is stored, processing_error stays NULL, so the client reads the existing
+      // "Analysis failed" wording with no code and no dangling colon.
+      await (supabase as unknown as { from: (t: string) => any }).from("file_proposals").update({
+        processing_state: "failed",
+        processing_error: null,
+        processing_error_code: "ingest_failed",
+        minting_origin_state: mintingOriginState,
+        processing_completed_at: new Date().toISOString(),
+      }).eq("id", proposalId);
+      // and the queue moves on (SP-189). Released already before the side effects; released again
+      // here because a lock that outlives its row is the one failure this slice cannot afford.
+      await releaseIngestLock(supabase as unknown as { from: (t: string) => any }, proposalId);
+      console.log("[dify-analyze-file] proposal failed at the write step, id:", proposalId);
+      return;
+    }
+
+    // The write step is done, so — and only so — the row is ready (SP-227), carrying the record of
+    // whether its voice was ever established (SP-228).
+    await (supabase as unknown as { from: (t: string) => any }).from("file_proposals").update({
+      processing_state: "ready",
+      processing_error: null,
+      processing_error_code: null,
+      minting_origin_state: mintingOriginState,
+    }).eq("id", proposalId).neq("status", "rejected");
+  } else {
+    // No company on the row means there is no minting step to succeed or fail, so there is nothing
+    // for 'ready' to be a claim about — but the row must still reach a terminal state rather than
+    // sitting in 'running' for ever. (file_proposals.company_id is NOT NULL, so this is the
+    // unreadable-row case, not a normal one.)
+    console.warn("[dify-analyze-file] no company on the row; marking ready with no minting step:", proposalId);
+    await (supabase as unknown as { from: (t: string) => any }).from("file_proposals").update({
+      processing_state: "ready",
+      processing_error: null,
+      processing_error_code: null,
+    }).eq("id", proposalId).neq("status", "rejected");
   }
 
   console.log("[dify-analyze-file] proposal updated, id:", proposalId);
@@ -1472,7 +1550,12 @@ serve(async (req) => {
         }));
         // SP-212: the code is stored; processing_error stays NULL so the client reads the existing
         // "Analysis failed" wording with no code and no dangling colon.
-        await supabase.from("file_proposals").insert({
+        //
+        // SP-230 (closes SP-F40): two callers racing for the same file both reach this insert, and the
+        // partial unique index file_proposals_one_voice_refusal_per_file admits ONE. The loser's
+        // unique violation is not an error to report — the record it wanted already exists — so it is
+        // logged and swallowed. One file, one voice refusal, whoever got there first.
+        const { error: refusalInsertError } = await supabase.from("file_proposals").insert({
           company_id: companyId,
           file_id: fileId,
           file_name: fileName ?? "",
@@ -1485,6 +1568,14 @@ serve(async (req) => {
           processing_error_code: "voice_not_classified",
           processing_completed_at: new Date().toISOString(),
         });
+        if (refusalInsertError) {
+          // 23505 is unique_violation: another caller recorded the same refusal first.
+          const isDuplicate = String((refusalInsertError as { code?: unknown }).code ?? "") === "23505";
+          console.log(
+            `[dify-analyze-file] voice refusal insert ${isDuplicate ? "already recorded by another caller" : "FAILED"}:`,
+            refusalInsertError.message,
+          );
+        }
         return new Response(
           JSON.stringify({ ok: false, error: "voice_not_classified" }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
