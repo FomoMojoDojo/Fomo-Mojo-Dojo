@@ -21,8 +21,9 @@
 #   source backups/fr-login.env && source backups/fr-nonadmin.env && source backups/fr-member.env \
 #     && bash scripts/guards-sweep.sh
 #
-# BASELINE (re-measured 2026-11-13 after Part B added ingest-partial-honesty-guard): 45 GREEN /
-# 4 RED of 49, the four standing REDs being network-guard (n4, wants the read-only pf sudo entry),
+# BASELINE (re-measured 2026-11-13 after I-1 added ingest-queue-guard): 46 GREEN / 4 RED of 50.
+# Part B's ingest-partial-honesty-guard made it 45 / 4 of 49. The four standing REDs are
+# network-guard (n4, wants the read-only pf sudo entry),
 # diagnose-data-guard (i), excerpt-blanking-guard (e6) and source-class-guard (c1). It was
 # 44 / 4 of 48 with caller-authz-guard and 43 / 4 of 47 before either; the glob picks each new guard
 # up with no edit here. NOTE: scripts/guards/fixtures/ holds generators, not guards, and is not
@@ -41,6 +42,12 @@ is_excluded() {
     # SP-135: a helper that diagnose-data-guard invokes, never an independent sweep member — running
     # it here double-counts that guard's own failure as a second RED.
     diagnose-data-check.sh) return 0 ;;
+    # SP-185b: the on-demand half of the ingest-queue proof. It uploads real files and lets the
+    # server run REAL local analyses on them, one after another, so it takes many minutes and burns
+    # local model time — far outside a session sweep's budget. Its fast sibling,
+    # ingest-queue-guard.sh, is IN the sweep and covers the static, SQL and caller-gate halves.
+    # Run this one by hand:  bash scripts/guards/ingest-queue-ondemand-guard.sh
+    ingest-queue-ondemand-guard.sh) return 0 ;;
     *) return 1 ;;
   esac
 }

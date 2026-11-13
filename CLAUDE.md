@@ -264,6 +264,15 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
 
   The remedy for the gap is that same insert with `'20261112130000'`. **Not done here** — it is
   outside Part B and belongs to whoever signs for that migration.
+- **SP-F35 filed (2026-11-13) — a baseline on company B can start while a file analysis runs on
+  company A.** Both are heavy local jobs, and nothing excludes that one pair. I-1 closes every case
+  it controls: the file-analysis starter yields to any `company_run_locks` row anywhere, and a running
+  analysis takes its own company's lock so a baseline or research run on THAT company is refused by
+  the mechanism those functions already respect. What remains is cross-company, because
+  `public-baseline` and `research-company` check only their own company's lock and
+  `company_run_locks`' primary key is `(company_id)` alone. Closing it means a fleet-wide check inside
+  `public-baseline`'s acquisition — **ruled OUT of I-1 by SP-188, which also forbids touching
+  `public-baseline` for it.** Filed, not fixed.
 - **SP-F34 filed (2026-11-13) — `src/integrations/supabase/types.ts` is ~1275 lines STALE.** A fresh
   `npx supabase gen types typescript --local` produces 8685 lines against the committed 7410, because
   tables added over recent slices (`claim_delta_rule_refusal_audit` among them) were never
@@ -282,11 +291,14 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
 
 ## OPEN BEFORE THE FIRST OUTSIDE LOGIN (SP-163, SP-165 — 2026-11-12)
 
-**54 of the 93 edge functions still have no caller check.** Slice A gated 32 (the eleven of SP-143
-plus `research-company` plus Group 4's 20) and 7 were already authorised in-function
+**53 of the 93 edge functions still have no caller check.** Slice A gated 32 (the eleven of SP-143
+plus `research-company` plus Group 4's 20), I-1 added `dify-analyze-file` (SP-179 — the browser no
+longer starts an analysis, so it is admin + trusted-internal only), and 7 were already authorised
+in-function
 (`council-review`, `import-intake-submissions`, `infer-interview-market`, `interview-parser`, `maps`,
 `generate-deep-dive`, `publish-release-note`). The remaining 54 are Groups 1, 2 and 3 and the
-class-B functions — deferred to slices B and C, **not cancelled**.
+class-B functions — deferred to slices B and C, **not cancelled**. The guard's expected counts are
+33 gated / 53 not-yet-gated; they move together with this paragraph.
 
 Until those land, two things stay as they are:
 - **no account for anyone outside FMD** (SP-121), and

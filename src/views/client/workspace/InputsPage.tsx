@@ -306,6 +306,12 @@ export default function InputsPage() {
                     // SP-93/SP-94: rendered as a SIBLING of the state cell below, not inside one of
                     // its branches, so the line appears whichever state the row is in.
                     const partialRead = fileProposalPartialReadText(proposal);
+                    // SP-178: a finished row can be re-queued. Rendered as a sibling of the state
+                    // cell rather than inside its branches, so it sits beside "View analysis →"
+                    // instead of replacing it. Admin only for now (SP-179).
+                    const canReanalyse = Boolean(
+                      proposal && (proposal.processing_state === "ready" || proposal.processing_state === "failed"),
+                    );
                     const reviewable = Boolean(proposal && proposal.processing_state === "ready" && proposal.status === "pending");
                     const row = toSourceRow(f, areas);
                     return (
@@ -398,6 +404,12 @@ export default function InputsPage() {
                                 {WORKSPACE_STRINGS.viewAnalysis}
                               </button>
                             ) : badge ? <Chip tone={badge.tone}>{badge.label}</Chip> : null}
+                            {/* SP-178: re-queue a finished analysis. The same call the "Run analysis" fallback makes, so it creates the same queued row — the server starts it. */}
+                            {canReanalyse && gated ? (
+                              <button type="button" className="fr-ws-control fr-mono" disabled={analyzingId === f.id} onClick={() => { void analyze(f); }} {...{ [OPERATOR_MARK.attr]: "analyze-again" }} data-testid="inputs-analyze-again">
+                                {analyzingId === f.id ? WORKSPACE_STRINGS.analyzing : WORKSPACE_STRINGS.analyzeAgain}
+                              </button>
+                            ) : null}
                             {/* SP-94 (S-ING-1): a partial read says so. "Analysis ready" never stands alone on a document whose later pages were never opened. */}
                             {partialRead ? (
                               <span className="fr-ws-analysis-partial fr-mono" data-testid="inputs-analysis-partial">{partialRead}</span>

@@ -68,7 +68,8 @@ extract-client-voice extract-outside-listing generate-declared-markets
 generate-first-read-stated-problem generate-market-options generate-normative-consistency
 generate-read-slots generate-reference-jobmap local-strategy-synthesis public-companies
 recapture-findings recompute-validation-state record-check-outcome record-interview-correction
-restamp-aggregator-self-voice retype-own-words supersede-old-client-voice"
+restamp-aggregator-self-voice retype-own-words supersede-old-client-voice
+dify-analyze-file"
 # The lists above are written multi-line for legibility; collapse them to a single space-separated
 # line, because the `case " $GATED_FNS " in *" $f "*)` membership test below matches on SPACES and a
 # newline separator makes every function at a line boundary read as "not in the set".
@@ -94,7 +95,7 @@ not_yet_gated() {
       echo "group 3 — script/guard-invoked, slice B" ;;
     # GROUP 1 — UI-invoked (slice C)
     analyze-file|analyze-social-signal|check-mojo-analysis|classify-upload-voice|\
-    compute-featured-defaults|dify-analyze-file|feed-first-read-corrections|\
+    compute-featured-defaults|feed-first-read-corrections|\
     generate-first-read-proposal|generate-leg-tests|generate-market-hypothesis|\
     generate-open-questions|generate-route-conditions|generate-route-legs|\
     generate-signal-recurrence|generate-step-conditions|generate-step-opportunities|\
@@ -168,10 +169,10 @@ echo "  gated: $gated_seen   already authorised: $already   not-yet-gated: $defe
 TOTAL=$((gated_seen + already + deferred + unaccounted))
 [ "$TOTAL" = 93 ] && ok "(f) every one of the $TOTAL function directories is classified" \
   || bad "(f) classified $TOTAL function(s), expected 93"
-[ "$deferred" = 54 ] && ok "(f) the not-yet-gated list is the expected 54 (slices B and C)" \
-  || bad "(f) the not-yet-gated list is $deferred, expected 54 — update the list and CLAUDE.md together"
-[ "$gated_seen" = 32 ] && ok "(f) all 32 slice-A functions accounted for" \
-  || bad "(f) expected 32 gated functions, counted $gated_seen"
+[ "$deferred" = 53 ] && ok "(f) the not-yet-gated list is the expected 53 (slices B and C)" \
+  || bad "(f) the not-yet-gated list is $deferred, expected 53 — update the list and CLAUDE.md together"
+[ "$gated_seen" = 33 ] && ok "(f) all 33 gated functions accounted for (slice A's 32 + dify-analyze-file, I-1)" \
+  || bad "(f) expected 33 gated functions, counted $gated_seen"
 [ "$unaccounted" = 0 ] && ok "(f) every function is on exactly one of the two sets" \
   || bad "(f) $unaccounted function(s) on neither set"
 note "(f) slices B and C are DEFERRED (SP-163): $deferred function(s) still carry no caller check."

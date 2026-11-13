@@ -1,4 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { adminOnlyGate } from "../_shared/callerGate.ts";
+import { isTrustedInternal } from "../_shared/callerAuthz.ts";
+import { normalizeForHash, sha256Hex } from "../_shared/contentIdentity.ts";
 import { encodeBlobBase64, parserRequestBody } from "../_shared/base64.ts";
 import { fileTooLargeBody, isOverCap, MAX_ANALYSIS_FILE_BYTES, storageObjectSize } from "../_shared/fileSizeGuard.ts";
 import { interviewFenceForFile, interviewFileRefusalBody } from "../_shared/uploadCorpus.ts";
@@ -411,8 +414,75 @@ function extractDifyPayload(difyResult: Record<string, unknown>) {
   return { outputs, workflowStatus, workflowError };
 }
 
+/**
+ * Release the fleet-wide single-flight lock for this proposal (SP-180, SP-189).
+ *
+ * Called on EVERY terminal path, so the next queued file starts within the minute instead of waiting
+ * out the 30-minute TTL. The TTL stays as the backstop for a worker that dies without reaching any
+ * path at all, and sweep_file_proposal_completion frees a lock whose row is no longer live — three
+ * independent ways out, because a wedged queue is the failure this slice exists to prevent.
+ *
+ * Scoped by proposal_id on purpose: a lock taken for a DIFFERENT row must never be released here,
+ * or a late-finishing run would free the lock out from under the run that currently holds it.
+ */
+// deno-lint-ignore no-explicit-any
+async function releaseIngestLock(supabase: { from: (t: string) => any }, proposalId: string) {
+  const { error } = await supabase
+    .from("ingest_single_flight")
+    .delete()
+    .eq("lock_key", "file_analysis")
+    .eq("proposal_id", proposalId);
+  // Never fatal: the lock expires on its own, and failing the analysis over its bookkeeping is worse.
+  if (error) console.warn("[dify-analyze-file] lock release failed (non-fatal):", error.message);
+}
+
+/**
+ * The Dify request body, built in ONE place (SP-219).
+ *
+ * I-1 gave this function a second entry point — mode:"start", for a row the server claimed — and a
+ * second hand-written copy of this body would be free to drift from the one the upload path has always
+ * sent. The five fields SP-219 names are fixed here and cannot differ between callers:
+ * journey_key, enabled_frameworks, user, response_mode and trigger_type.
+ *
+ * Two fields are necessarily RE-DERIVED per caller and are therefore parameters, not constants:
+ *   file_url   the upload path signs the file it just downloaded; the start door must sign it AGAIN,
+ *              because the body carries a 15-minute URL and the starter usually runs after it expired.
+ *   file_text  the upload path passes its own fresh parser extraction; the start door passes the
+ *              upload SIDECAR, which is also the basis the E4 excerpt guard uses. Same parser, same
+ *              document — recorded in I1-review.md rather than left for a reader to notice.
+ */
+function buildDifyRequestBody(args: {
+  fileUrl: string;
+  fileName: string;
+  fileText: string;
+  sourceType: string;
+  companyId: string;
+}): PersistContext["difyRequestBody"] {
+  return {
+    inputs: {
+      file_url:     args.fileUrl,
+      file_name:    args.fileName,
+      file_text:    args.fileText,
+      source_type:  args.sourceType,
+      enabled_frameworks: JSON.stringify([
+        "april_dunford",
+        "jtbd",
+        "odi",
+        "strategy_cascade",
+        "teresa_torres",
+      ]),
+      company_id:   args.companyId,
+      trigger_type: "file_analysis",
+      journey_key:  "customer",
+    },
+    response_mode: "streaming",
+    user: "system",
+  };
+}
+
 async function markProposalFailed(params: {
-  supabase: ReturnType<typeof createClient>;
+  // deno-lint-ignore no-explicit-any
+  supabase: { from: (t: string) => any };
   proposalId: string;
   summary: string;
   error: string;
@@ -425,6 +495,9 @@ async function markProposalFailed(params: {
     processing_error: error,
     processing_completed_at: new Date().toISOString(),
   }).eq("id", proposalId).neq("status", "rejected").in("processing_state", ["queued", "running"]);
+  // SP-189: a failed run must not keep the queue. Released whether or not the update above matched —
+  // if another writer already finished the row, the lock is stale either way.
+  await releaseIngestLock(supabase as unknown as { from: (t: string) => any }, proposalId);
 }
 
 async function persistDifyResult(params: {
@@ -570,6 +643,9 @@ async function persistDifyResult(params: {
     // the writer whose update matched runs the side effects below (signal ingest, score snapshot).
     .in("processing_state", ["queued", "running"])
     .select("id");
+  // SP-189: a finished run frees the queue immediately. Placed before the side effects below so a
+  // failure in signal ingest or the score snapshot cannot strand the lock behind it.
+  await releaseIngestLock(supabase as unknown as { from: (t: string) => any }, proposalId);
 
   if (updateError) {
     console.log("[dify-analyze-file] update error:", updateError.message);
@@ -977,6 +1053,25 @@ async function startDifyRun(params: PersistContext) {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  // ── SP-141 / SP-150 / SP-179: WHO IS CALLING, before any row is read or written. ADMIN ONLY.
+  // I-1 moved the start of an analysis to the server (cron job sweep-file-proposal-start), so the
+  // browser no longer calls this function for a new upload at all. The cron poster presents the
+  // service-role bearer, which SP-151 admits as a trusted internal caller; "Analyse again" from the
+  // UI stays an admin action. The gateway accepts the publishable anon key, so it identifies nobody.
+  const callerRefused = await adminOnlyGate(req, corsHeaders);
+  if (callerRefused) return callerRefused;
+
+  // SP-209/SP-211: WHICH admitted caller this is decides whether the exact voice check applies.
+  // The cron enqueue is a trusted internal caller and is held to the sha-matched verdict; a browser
+  // "Run analysis" is a human choosing to analyse this document and behaves exactly as before I-1.
+  // isTrustedInternal is pure — no I/O — so this costs no second caller resolution.
+  const trustedInternalCall = isTrustedInternal({
+    authHeader: req.headers.get("Authorization"),
+    presentedSecret: req.headers.get("x-internal-call"),
+    internalSecret: Deno.env.get("INTERNAL_CALL_SECRET") ?? "",
+    serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+  });
+
   try {
     const body = await req.json() as {
       mode?: string;
@@ -1054,6 +1149,149 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
+
+    // ── mode: "start" (SP-178, SP-179) — begin the run for a row sweep_file_proposal_start claimed.
+    //
+    // WHY A NEW DOOR. "sync" RECONCILES a run that already exists; it reads the Dify run id off the
+    // row and polls it. It cannot begin one, so posting "sync" at a freshly queued row returns
+    // "queued" and does nothing — the lock would be held for its whole TTL for no work. This door
+    // starts the workflow for a row that is still waiting.
+    //
+    // WHY IT REBUILDS THE REQUEST RATHER THAN REPLAYING IT. The Dify body carries a 15-minute signed
+    // URL. By the time the starter runs, the URL minted during the upload may well be dead, so the
+    // body is rebuilt here: a FRESH signed URL, and the extracted text from the upload sidecar (the
+    // same basis the excerpt guard uses). Storing the old body would have shipped an expiring URL.
+    if (mode === "start") {
+      if (!requestedProposalId) {
+        return new Response(
+          JSON.stringify({ error: "Missing required field: proposalId" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const { data: row } = await supabase
+        .from("file_proposals")
+        .select("id, company_id, file_id, file_name, source_type, status, processing_state, dify_workflow_run_id")
+        .eq("id", requestedProposalId)
+        .maybeSingle();
+
+      if (!row) {
+        // Nothing to start, and nothing to hold the queue for.
+        await releaseIngestLock(supabase as unknown as { from: (t: string) => any }, requestedProposalId);
+        return new Response(
+          JSON.stringify({ ok: false, error: "proposal_not_found", state: null }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const r = row as Record<string, unknown>;
+      const startable = r.status !== "rejected"
+        && r.processing_state === "queued"
+        && !String(r.dify_workflow_run_id ?? "").trim();
+      if (!startable) {
+        // Idempotent: a second start for the same row is a no-op, not a second workflow. This is the
+        // case SP-180 cares about — two posts, one run — and it is enforced again here, after the
+        // lock, because the row's own state is the authority (SP-183).
+        await releaseIngestLock(supabase as unknown as { from: (t: string) => any }, String(r.id));
+        console.log("[dify-analyze-file] start: not startable", JSON.stringify({
+          proposalId: r.id, state: r.processing_state, status: r.status, hasRunId: !!r.dify_workflow_run_id,
+        }));
+        return new Response(
+          JSON.stringify({ ok: true, started: false, state: r.processing_state }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      // SP-180: THE DOOR HONOURS THE LOCK TOO, not just the starter.
+      //
+      // Without this the lock would live only in sweep_file_proposal_start, and a direct post of
+      // mode:"start" for a second queued row would begin a second concurrent analysis — the exact
+      // thing "a lock that cannot be bypassed" forbids. The starter always claims before it posts,
+      // so a legitimate call always holds its claim; anything else is refused without starting.
+      const { data: claim } = await supabase
+        .from("ingest_single_flight")
+        .select("proposal_id")
+        .eq("lock_key", "file_analysis")
+        .maybeSingle();
+      if (String((claim as { proposal_id?: unknown } | null)?.proposal_id ?? "") !== String(r.id)) {
+        console.log("[dify-analyze-file] start refused: not the claimed row", JSON.stringify({
+          proposalId: r.id, claimed: (claim as { proposal_id?: unknown } | null)?.proposal_id ?? null,
+        }));
+        return new Response(
+          JSON.stringify({ ok: false, error: "not_claimed", state: r.processing_state }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const sidecar = await loadUploadSidecar(
+        supabase as unknown as { from: (t: string) => any; storage: any },
+        r.file_id as string | null,
+      );
+      if (!sidecar?.filePath) {
+        await markProposalFailed({
+          supabase,
+          proposalId: String(r.id),
+          summary: "Could not start analysis",
+          error: "No upload sidecar for this file, so neither its text nor its storage path could be resolved.",
+        });
+        return new Response(
+          JSON.stringify({ ok: false, error: "no_sidecar", state: "failed" }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const { data: freshSigned, error: freshSignError } = await supabase.storage
+        .from("input-files")
+        .createSignedUrl(sidecar.filePath, 900);
+      if (freshSignError || !freshSigned?.signedUrl) {
+        await markProposalFailed({
+          supabase,
+          proposalId: String(r.id),
+          summary: "Could not start analysis",
+          error: `Could not sign the stored file: ${freshSignError?.message ?? "no signedUrl"}`,
+        });
+        return new Response(
+          JSON.stringify({ ok: false, error: "sign_failed", state: "failed" }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const startBody = buildDifyRequestBody({
+        fileUrl: freshSigned.signedUrl,
+        fileName: String(r.file_name ?? ""),
+        fileText: sidecar.text,
+        sourceType: String(r.source_type ?? ""),
+        companyId: String(r.company_id ?? ""),
+      });
+
+      try {
+        const started = await startDifyRun({
+          supabase,
+          difyApiKey: DIFY_API_KEY,
+          difyBaseUrl: DIFY_API_BASE_URL,
+          difyRequestBody: startBody,
+          proposalId: String(r.id),
+          sourceType: String(r.source_type ?? ""),
+        });
+        console.log("[dify-analyze-file] start: workflow started", JSON.stringify(started));
+        return new Response(
+          JSON.stringify({ ok: true, started: true, state: "running" }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      } catch (error) {
+        // markProposalFailed releases the lock, so a failure to start advances the queue (SP-181).
+        await markProposalFailed({
+          supabase,
+          proposalId: String(r.id),
+          summary: "Failed to start Dify workflow",
+          error: String((error as Error)?.message ?? error),
+        });
+        return new Response(
+          JSON.stringify({ ok: false, error: "start_failed", state: "failed" }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+    }
 
     if (mode === "sync") {
       if (!requestedProposalId) {
@@ -1182,26 +1420,13 @@ serve(async (req) => {
 
     // Build request body matching the Dify Start node variables:
     // company_id (required), trigger_type, journey_key (required), file_url, file_name, file_text, source_type, enabled_frameworks
-    const difyRequestBody: PersistContext["difyRequestBody"] = {
-      inputs: {
-        file_url:     signedData.signedUrl,
-        file_name:    fileName ?? "",
-        file_text:    fileText,
-        source_type:  sourceType ?? "",
-        enabled_frameworks: JSON.stringify([
-          "april_dunford",
-          "jtbd",
-          "odi",
-          "strategy_cascade",
-          "teresa_torres",
-        ]),
-        company_id:   companyId,
-        trigger_type: "file_analysis",
-        journey_key:  "customer",
-      },
-      response_mode: "streaming",
-      user: "system",
-    };
+    const difyRequestBody = buildDifyRequestBody({
+      fileUrl: signedData.signedUrl,
+      fileName: fileName ?? "",
+      fileText,
+      sourceType: sourceType ?? "",
+      companyId,
+    });
     console.log("[dify-analyze-file] request body:", JSON.stringify({
       ...difyRequestBody,
       inputs: {
@@ -1210,6 +1435,62 @@ serve(async (req) => {
         file_text: `[${fileText.length} chars]`,
       },
     }));
+
+    // ── SP-209/SP-210: THE EXACT VOICE GATE, on a trusted internal call ───────────────────────────
+    //
+    // The enqueue sweep can only pre-filter on "some verdict exists for this file": content_sha is
+    // sha256(normalizeForHash(full sidecar text)) computed by contentIdentity.ts, over a storage
+    // object Postgres cannot read, and uploadCorpus.ts forbids a second authority for it. So the
+    // exact question is asked HERE, with the sidecar in hand and through that same authority.
+    //
+    // The basis is the SIDECAR, byte for byte as uploadCorpus derives it — the whitespace collapse
+    // before normalizeForHash included — because a sha taken over anything else would not be the sha
+    // the classifier recorded, and a mismatch would read as "unclassified" for every document.
+    //
+    // SP-210: the refusal writes the failed row IMMEDIATELY. It does not cycle through SP-193's three
+    // attempts, because re-posting cannot make a verdict appear — only classify-upload-voice can.
+    if (trustedInternalCall) {
+      const voiceSidecar = await loadUploadSidecar(
+        supabase as unknown as { from: (t: string) => any; storage: any },
+        fileId,
+      );
+      const voiceText = (voiceSidecar?.text ?? "").replace(/\s+/g, " ").trim();
+      const currentSha = voiceText ? await sha256Hex(normalizeForHash(voiceText)) : "";
+      let shaMatched = false;
+      if (currentSha) {
+        const { data: verdictRows } = await supabase
+          .from("doc_voice_verdicts")
+          .select("content_sha")
+          .eq("input_file_id", fileId)
+          .eq("content_sha", currentSha)
+          .limit(1);
+        shaMatched = Array.isArray(verdictRows) && verdictRows.length > 0;
+      }
+      if (!shaMatched) {
+        console.log("[dify-analyze-file] refused voice_not_classified:", JSON.stringify({
+          fileId, hasSidecar: !!voiceSidecar, shaPrefix: currentSha.slice(0, 12),
+        }));
+        // SP-212: the code is stored; processing_error stays NULL so the client reads the existing
+        // "Analysis failed" wording with no code and no dangling colon.
+        await supabase.from("file_proposals").insert({
+          company_id: companyId,
+          file_id: fileId,
+          file_name: fileName ?? "",
+          source_type: sourceType ?? "uploaded_file",
+          summary: "Could not start analysis",
+          signal_type: "document",
+          status: "pending",
+          processing_state: "failed",
+          processing_error: null,
+          processing_error_code: "voice_not_classified",
+          processing_completed_at: new Date().toISOString(),
+        });
+        return new Response(
+          JSON.stringify({ ok: false, error: "voice_not_classified" }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+    }
 
     // Insert as a new proposal immediately so the UI gets a stable record while
     // the long-running Dify workflow completes in the background.
@@ -1268,25 +1549,19 @@ serve(async (req) => {
     console.log("[dify-analyze-file] proposal inserted, id:", (inserted as Record<string, unknown>)?.id);
 
     const insertedProposalId = String((inserted as Record<string, unknown>)?.id ?? "");
-    try {
-      const started = await startDifyRun({
-        supabase,
-        difyApiKey: DIFY_API_KEY,
-        difyBaseUrl: DIFY_API_BASE_URL,
-        difyRequestBody,
-        proposalId: insertedProposalId,
-        sourceType: sourceType ?? "",
-      });
-      console.log("[dify-analyze-file] workflow started:", JSON.stringify(started));
-    } catch (error) {
-      await markProposalFailed({
-        supabase,
-        proposalId: insertedProposalId,
-        summary: "Failed to start Dify workflow",
-        error: String((error as Error)?.message ?? error),
-      });
-      throw error;
-    }
+
+    // ── SP-178, SP-180, SP-182: THE UPLOAD DOES NOT START THE RUN.
+    //
+    // This is the whole slice in one deletion. Until now the same request that inserted the row went
+    // straight on to start the Dify workflow, which meant: the row was 'queued' for milliseconds and
+    // the label never described a waiting file (SP-182); three uploads started three concurrent
+    // analyses on a 256 MB worker and one local model (SP-180); and nothing started at all unless a
+    // browser made the call, so closing the tab lost the work (SP-178).
+    //
+    // The row is now left 'queued' and the server picks it up: cron job sweep-file-proposal-start
+    // takes the oldest waiting row, wins the fleet-wide lock, and posts mode:"start" above. Nobody
+    // clicks, nobody waits between files, and exactly one analysis runs at a time.
+    console.log("[dify-analyze-file] queued, not started — the server starts it:", insertedProposalId);
 
     return new Response(
       JSON.stringify({ queued: true, proposal: inserted }),

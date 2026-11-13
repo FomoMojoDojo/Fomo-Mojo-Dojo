@@ -17,6 +17,21 @@ describe("Job Map register — Tier 1 (signed by use, 2026-09-11)", () => {
   });
 });
 
+describe("Ingest queue — the re-queue control (signed 2026-11-13, SP-178 as corrected by SP-215)", () => {
+  it("byte-identical, in the American spelling SP-215 signed", () => {
+    // SP-178 first wrote "Analyse again"; SP-215 corrected it to match "Analyzing…" beside it.
+    expect(WORKSPACE_STRINGS.analyzeAgain).toBe("Analyze again");
+  });
+  it("the fallback wording it sits beside is unchanged — I-1 replaced nothing (SP-194)", () => {
+    expect(WORKSPACE_STRINGS.runAnalysis).toBe("Run analysis");
+    expect(WORKSPACE_STRINGS.analysisReady).toBe("Analysis ready");
+  });
+  it("there is exactly ONE re-queue spelling in the register — a stray 'Analyse again' would fail here", () => {
+    const values = Object.values(WORKSPACE_STRINGS) as string[];
+    expect(values.filter((v) => /analy[sz]e\s+again/i.test(v))).toEqual(["Analyze again"]);
+  });
+});
+
 describe("Job Map register — market door (signed 2026-09-15, item 2, R2)", () => {
   it("the three new strings, byte-identical", () => {
     expect(WORKSPACE_STRINGS.generateJobMap).toBe("Generate job map");

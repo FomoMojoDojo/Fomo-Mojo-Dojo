@@ -202,6 +202,16 @@ export const WORKSPACE_STRINGS = {
   analysisReady: "Analysis ready",
   reviewProposal: "Review proposal",
   runAnalysis: "Run analysis",
+  /**
+   * SP-178, corrected by SP-215 (2026-11-13): I-1 made analysis start by itself, so the control on a
+   * FINISHED row is no longer "run" but "run again" — it re-queues the same file. SP-178 first wrote
+   * "Analyse again"; SP-215 records that as the reviewer's slip and signs the AMERICAN spelling, which
+   * matches "Analyzing…" and "Run analysis" beside it. SP-183 forbids a new string in this slice and
+   * this is not one — it is the ruling's own word, respelled by the ruling that followed it.
+   * "Run analysis" stays, as the fallback that creates the same queued row when nothing has yet
+   * been analysed (SP-194).
+   */
+  analyzeAgain: "Analyze again",
   // ── Inputs Tier 1 controls — existing InputsTab strings (signed by use) ──
   analyzing: "Analyzing…",
   /** Existing (InputsTab failed-run control), signed 2026-09-12. The size refusal sentence lives in src/lib/fileTooLarge.ts. */
