@@ -44,7 +44,7 @@ const PROPOSAL: FileProposalRow = {
   id: "prop-1", company_id: "c1", file_id: "file-1", file_name: FILE.file_name, source_type: "uploaded_file",
   summary: "The document outlines a strategic review session.", evidence: ["Funds it on a shoestring."], signal_type: "document", framework_results: [],
   suggested_areas: ["job_map"], candidate_positioning_updates: [], candidate_job_steps: [], candidate_needs: [{ desired_outcome: "A structured approach.", importance: 0, satisfaction: 0 }],
-  candidate_outcomes: [], possible_gaps: [], possible_routes: [], experiments_to_run: [], contradictions: [], confidence: "medium", confidence_reason: "", analysis_version: 1, extraction_chars: null, extraction_images: null, extraction_pages: null, questions_to_verify: [],
+  candidate_outcomes: [], possible_gaps: [], possible_routes: [], experiments_to_run: [], contradictions: [], confidence: "medium", confidence_reason: "", analysis_version: 1, extraction_chars: null, extraction_images: null, extraction_pages: null, pages_read: null, pages_total: null, chars_total: null, questions_to_verify: [],
   status: "accepted", processing_state: "ready", processing_error: null, processing_started_at: null, processing_completed_at: "2026-07-16T17:05:00Z",
   applied_areas: ["jobmap", "odi"], created_at: "2026-07-16T17:00:00Z", reviewed_at: "2026-07-16T17:08:04Z",
 };

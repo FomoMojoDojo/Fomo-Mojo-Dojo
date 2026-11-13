@@ -42,7 +42,7 @@ const ACCEPTED: FileProposalRow = {
     { title: "Structured fundraising", why_this_could_matter: "Funding gap.", linked_opportunity: "Fund the work", evidence: "Underfunded.", confidence: "medium" },
   ],
   experiments_to_run: [], contradictions: [], confidence: "medium",
-  confidence_reason: "Detailed insights but no timelines or budgets.", analysis_version: 1, extraction_chars: null, extraction_images: null, extraction_pages: null, questions_to_verify: [],
+  confidence_reason: "Detailed insights but no timelines or budgets.", analysis_version: 1, extraction_chars: null, extraction_images: null, extraction_pages: null, pages_read: null, pages_total: null, chars_total: null, questions_to_verify: [],
   status: "accepted", processing_state: "ready", processing_error: null,
   processing_started_at: "2026-07-16T17:00:00Z", processing_completed_at: "2026-07-16T17:05:00Z",
   applied_areas: ["jobmap", "odi", "strategy", "routes"], created_at: "2026-07-16T17:00:00Z", reviewed_at: "2026-07-16T17:08:04.105+00:00",

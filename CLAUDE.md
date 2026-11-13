@@ -235,10 +235,11 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   helper `diagnose-data-guard` invokes, never an independent member) — classifies on BOTH the exit
   code and the printed verdict, and puts `~/.deno/bin` on PATH, because `interview-parser-guard` runs
   `deno test` bare and reads RED without it for no code reason. Source the three env files first.
-- **The guard sweep is 44 GREEN / 4 RED of 48, and the FOUR standing REDs are named** (re-measured
-  2026-11-12 after slice A added `caller-authz-guard`; was 43 / 4 of 47 before it, all three
-  env files sourced; `interview-upload-path-guard` is excluded from the session sweep by
-  design (U6-38) and passes standalone):
+- **The guard sweep is 45 GREEN / 4 RED of 49, and the FOUR standing REDs are named** (re-measured
+  2026-11-13 after Part B added `ingest-partial-honesty-guard`; was 44 / 4 of 48 with
+  `caller-authz-guard` and 43 / 4 of 47 before either, all three env files sourced;
+  `interview-upload-path-guard` is excluded from the session sweep by design (U6-38) and passes
+  standalone):
   - `network-guard` — `(n4) cannot read pf state without a password`; needs the read-only sudo entry
     from `scripts/network/sudoers.mojomap-pf-readonly`.
   - `diagnose-data-guard` — `(i) the live read-only check FAILED`.
@@ -247,6 +248,28 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
     (`_shared/excerptBlanking.ts:183`) and the guard's cruder SQL `LIKE` (SP-F5).
   - `source-class-guard` — `(c1) 73 of 87 current read(s) carry NO classes map in input_ledger`,
     across 19 companies; the reads predate act 1a-4 and want regenerating.
+
+- **SP-F33 filed (2026-11-13) — `supabase migration up` is BROKEN on this stack, and it predates
+  Part B.** `supabase/migrations/20261112130000_drift_state_withheld.sql` is committed (in
+  `07bbc30b`) and its SQL **is** applied — both constraints sit on `surface_drift_assessments` — but
+  it carries no row in `supabase_migrations.schema_migrations`, so the CLI still thinks it is
+  pending. `migration up` would re-apply it and fail on `add constraint check_withheld_has_no_score`,
+  which already exists. Until that row is written, apply a new migration by hand and record it:
+
+  ```bash
+  docker exec -i supabase_db_dzlgyxcvuwiulgifbmew psql -U postgres -v ON_ERROR_STOP=1 < supabase/migrations/<file>.sql
+  docker exec supabase_db_dzlgyxcvuwiulgifbmew psql -U postgres \
+    -c "insert into supabase_migrations.schema_migrations(version) values ('<version>') on conflict do nothing;"
+  ```
+
+  The remedy for the gap is that same insert with `'20261112130000'`. **Not done here** — it is
+  outside Part B and belongs to whoever signs for that migration.
+- **SP-F34 filed (2026-11-13) — `src/integrations/supabase/types.ts` is ~1275 lines STALE.** A fresh
+  `npx supabase gen types typescript --local` produces 8685 lines against the committed 7410, because
+  tables added over recent slices (`claim_delta_rule_refusal_audit` among them) were never
+  regenerated into it. So a column is added to that file BY HAND, as Part B added
+  `file_proposals.pages_read / pages_total / chars_total`; a wholesale regeneration is a large,
+  separate act that would bury any slice it rode along with. Do not run it as a side effect.
 
   **Read the printed verdict, not only the exit code.** Until 2026-11-11 `source-class-guard` printed
   `guard: RED` and exited **0** — its verdict line was the file's last line, with no following status
@@ -358,6 +381,17 @@ worker is up (400 on `{}`).
 **Planted failures on served code** (R46): a plant in a served function counts as RED only when the run made
 AFTER that `docker restart` shows it; restore the file (md5-identical), restart again, and the GREEN run is the
 one after the second restart. A plant run without the restart proves nothing — it exercises the old module.
+
+**The LOCAL PARSER obeys the same rule** (2026-11-13). `scripts/local-parser-server.mjs` runs as a plain
+node process on 127.0.0.1:8789, so it too keeps the module it booted with: an edit is live only after the
+process is restarted (`pkill -f local-parser-server` then `nohup node scripts/local-parser-server.mjs &`).
+`ingest-partial-honesty-guard` check (p2) exists for this — it compares the SERVED `versions.server`
+against the constant in the file and goes RED on a stale worker rather than quietly testing the old one.
+Two further traps, both met on 2026-11-13: `scripts/plant.sh restore` REMOVES its saved copy, so a second
+plant on the same file needs its own `save` first (otherwise `restore` answers `no saved copy` and the
+plant stays in the tree); and because that `restore` failure short-circuits an `&&` chain, the old parser
+is left listening and the replacement dies on `EADDRINUSE` — check the restart's log line, not just that
+the command was issued.
 
 **Never probe `restamp-aggregator-self-voice` with `{}`** (2026-09-21). Its body is `{ dry_run: true (DEFAULT),
 company_id? }`, so an empty body is a valid all-companies dry run: it loads every unfrozen company's outside-voice

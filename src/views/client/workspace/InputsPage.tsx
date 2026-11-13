@@ -54,7 +54,7 @@ import { canChangeSpeaker, canInferMarket, lastRunFailed, lastRunFoundNoMajority
 import { INTERVIEW_UPLOAD_STRINGS, type InterviewSpeakerRole } from "@/lib/interviewUploadStrings";
 import { readAreaSupportTags } from "@/lib/fileTags";
 import FileUploadDialog from "@/components/FileUploadDialog";
-import { DeleteConfirmPanel, ProposalReviewPanel, fileProposalProcessingBadgeText, proposalPriority, type FoundationArea, type SourceRow } from "@/views/client/workshop/inputsShared";
+import { DeleteConfirmPanel, ProposalReviewPanel, fileProposalProcessingBadgeText, fileProposalPartialReadText, proposalPriority, type FoundationArea, type SourceRow } from "@/views/client/workshop/inputsShared";
 import { Chip, type ChipTone } from "@/views/client/firstReadPreview/primitives";
 import { useOperatorControls } from "@/views/client/firstReadPreview/operatorControls";
 import { OPERATOR_MARK } from "@/views/client/firstReadPreview/operatorStrings";
@@ -303,6 +303,9 @@ export default function InputsPage() {
                     const areas = areasOf(f);
                     const proposal = proposalByFile.get(f.id);
                     const badge = readyStatus(proposal);
+                    // SP-93/SP-94: rendered as a SIBLING of the state cell below, not inside one of
+                    // its branches, so the line appears whichever state the row is in.
+                    const partialRead = fileProposalPartialReadText(proposal);
                     const reviewable = Boolean(proposal && proposal.processing_state === "ready" && proposal.status === "pending");
                     const row = toSourceRow(f, areas);
                     return (
@@ -395,6 +398,10 @@ export default function InputsPage() {
                                 {WORKSPACE_STRINGS.viewAnalysis}
                               </button>
                             ) : badge ? <Chip tone={badge.tone}>{badge.label}</Chip> : null}
+                            {/* SP-94 (S-ING-1): a partial read says so. "Analysis ready" never stands alone on a document whose later pages were never opened. */}
+                            {partialRead ? (
+                              <span className="fr-ws-analysis-partial fr-mono" data-testid="inputs-analysis-partial">{partialRead}</span>
+                            ) : null}
                             {/* Ruling 9 (2026-09-14): Dify's proposal-level confidence, visible before the panel is opened. Same string as the panel chip. */}
                             {proposal && proposal.processing_state === "ready" && proposal.confidence ? (
                               <span className="fr-ws-analysis-confidence fr-mono" data-testid="inputs-analysis-confidence" data-fr-confidence={proposal.confidence}>{proposal.confidence} confidence</span>

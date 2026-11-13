@@ -21,10 +21,12 @@
 #   source backups/fr-login.env && source backups/fr-nonadmin.env && source backups/fr-member.env \
 #     && bash scripts/guards-sweep.sh
 #
-# BASELINE (re-measured 2026-11-12 after slice A added caller-authz-guard): 44 GREEN / 4 RED of 48,
-# the four standing REDs being network-guard (n4, wants the read-only pf sudo entry),
+# BASELINE (re-measured 2026-11-13 after Part B added ingest-partial-honesty-guard): 45 GREEN /
+# 4 RED of 49, the four standing REDs being network-guard (n4, wants the read-only pf sudo entry),
 # diagnose-data-guard (i), excerpt-blanking-guard (e6) and source-class-guard (c1). It was
-# 43 / 4 of 47 before caller-authz-guard existed; the glob picks it up with no edit here.
+# 44 / 4 of 48 with caller-authz-guard and 43 / 4 of 47 before either; the glob picks each new guard
+# up with no edit here. NOTE: scripts/guards/fixtures/ holds generators, not guards, and is not
+# swept — the glob is one level deep on purpose.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 

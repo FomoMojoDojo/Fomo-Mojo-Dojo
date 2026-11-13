@@ -131,7 +131,22 @@ async function extractTextViaLocalParser(params: {
   const source = typeof data?.source === "string" ? data.source : "local_parser";
   // EXTRACTION SHAPE (ruling 8, 2026-09-14): what the parser read and did not read, carried onto the proposal.
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-  return { text, source, images: num(data?.images) ?? 0, pages: num(data?.pages) };
+  // SP-93 (2026-11-13): pages_read is what the parser OPENED, pages_total what the document has.
+  // They are one fact, so an answer that knows only one of them is treated as knowing neither —
+  // a lone total is exactly the half-truth this slice exists to remove, and the stored pair carries
+  // a CHECK that forbids it. `pages` stays the document's count, as extraction_pages always meant.
+  const pagesRead = num(data?.pages_read);
+  const pagesTotal = num(data?.pages_total);
+  const pairKnown = pagesRead !== null && pagesTotal !== null && pagesRead <= pagesTotal;
+  return {
+    text,
+    source,
+    images: num(data?.images) ?? 0,
+    pages: num(data?.pages),
+    pagesRead: pairKnown ? pagesRead : null,
+    pagesTotal: pairKnown ? pagesTotal : null,
+    charsTotal: num(data?.chars_total),
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1117,7 +1132,14 @@ serve(async (req) => {
 
     let fileText = "";
     // Extraction shape (ruling 8): persisted on the proposal so an image-borne document is visibly thin.
-    let extraction: { images: number; pages: number | null; source: string } = { images: 0, pages: null, source: "local_text_reader" };
+    let extraction: {
+      images: number;
+      pages: number | null;
+      source: string;
+      pagesRead: number | null;
+      pagesTotal: number | null;
+      charsTotal: number | null;
+    } = { images: 0, pages: null, source: "local_text_reader", pagesRead: null, pagesTotal: null, charsTotal: null };
     try {
       const ext = extensionFromName(fileName ?? "");
       const normalizedType = String(fileType || downloaded.type || "").toLowerCase();
@@ -1136,12 +1158,20 @@ serve(async (req) => {
           blob: downloaded,
         });
         fileText = parsed.text;
-        extraction = { images: parsed.images, pages: parsed.pages, source: parsed.source };
+        extraction = {
+          images: parsed.images,
+          pages: parsed.pages,
+          source: parsed.source,
+          pagesRead: parsed.pagesRead,
+          pagesTotal: parsed.pagesTotal,
+          charsTotal: parsed.charsTotal,
+        };
       }
     } catch (extractError) {
       console.log("[dify-analyze-file] extraction error:", String((extractError as Error)?.message ?? extractError));
       fileText = "";
-      extraction = { images: 0, pages: null, source: "local_parser_error" };
+      // A failed extraction knows nothing about pages, and says nothing rather than zero.
+      extraction = { images: 0, pages: null, source: "local_parser_error", pagesRead: null, pagesTotal: null, charsTotal: null };
     }
 
     console.log("[dify-analyze-file] extracted file_text length:", fileText.length, "shape:", JSON.stringify({ chars: fileText.length, ...extraction }));
@@ -1218,6 +1248,11 @@ serve(async (req) => {
         extraction_images:   extraction.images,
         extraction_pages:    extraction.pages,
         extraction_source:   extraction.source,
+        // SP-93: what the read COVERED, beside what the document holds. Null for a format with no
+        // pages and for a failed extraction; never guessed from the other.
+        pages_read:          extraction.pagesRead,
+        pages_total:         extraction.pagesTotal,
+        chars_total:         extraction.charsTotal ?? fileText.length,
       })
       .select()
       .single();

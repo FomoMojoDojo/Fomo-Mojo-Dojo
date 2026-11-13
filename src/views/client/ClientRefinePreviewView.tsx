@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
+import { fileProposalPartialReadText } from "@/views/client/workshop/inputsShared";
 import { engagementDayFrom } from "@/lib/engagementDay";
 import { isFrozenCompany } from "@/lib/frozenCompanies";
 import { useAuth } from "@/hooks/useAuth";
@@ -369,7 +370,10 @@ export default function ClientRefinePreviewView() {
     if (prevAnalysisRunning.current && !analysisRunning) {
       const latest = fileProposals[0];
       if (latest?.processing_state === "ready") {
-        toast.success("Analysis complete — diagnostic updated.");
+        // SP-94: "Analysis complete" on a document whose pages 31+ were never opened is the silent
+        // partial. S-ING-1 rides with the toast rather than a second, unsigned wording.
+        const partialRead = fileProposalPartialReadText(latest);
+        toast.success("Analysis complete — diagnostic updated.", partialRead ? { description: partialRead } : undefined);
         captureMovementSnapshotRef.current?.();
       } else if (latest?.processing_state === "failed") {
         toast.error("Analysis failed. Check the pipeline and try again.");

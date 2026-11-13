@@ -2664,6 +2664,9 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-withdraw-confirm .fr-ws-control[data-fr-tone="danger"] { color: hsl(var(--fr-bad)); border-color: hsl(var(--fr-bad) / 0.5); }
 .fr-ws-table-actions .fr-ws-control { max-width: 11rem; text-align: left; line-height: 1.35; }
 /* Ruling 9 (2026-09-14): Dify's proposal-level confidence beside the analysis control — selector-only mapping to existing tokens. */
+/* S-ING-1 (SP-94): a partial read, stated under whatever state the row shows. Warn-toned, because
+   it qualifies a result the reader would otherwise take as covering the whole document. */
+.fr-ws-table-analysis .fr-ws-analysis-partial { display: block; margin-top: 4px; font-size: 9px; letter-spacing: 0.04em; color: hsl(var(--fr-warn)); }
 .fr-ws-table-analysis .fr-ws-analysis-confidence { display: block; margin-top: 4px; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: hsl(var(--fr-muted)); }
 .fr-ws-table-analysis .fr-ws-analysis-confidence[data-fr-confidence="low"] { color: hsl(var(--fr-bad)); }
 .fr-ws-table-analysis .fr-ws-analysis-confidence[data-fr-confidence="medium"] { color: hsl(var(--fr-warn)); }

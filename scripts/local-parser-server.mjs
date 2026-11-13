@@ -13,7 +13,9 @@ const PORT = Number(process.env.LOCAL_PARSER_PORT || 8789);
 // extraction_version — { server, pdfjs, mammoth } read once from the installed packages.
 const require = createRequire(import.meta.url);
 const PARSER_VERSIONS = Object.freeze({
-  server: "local-parser-server-2026-09-19",
+  // bumped for SP-93: the response shape gained pages_read / pages_total / chars_total, so a
+  // stored extraction_version distinguishes a record that could say "partial" from one that could not
+  server: "local-parser-server-2026-11-13",
   pdfjs: (() => { try { return String(require("pdfjs-dist/package.json").version); } catch { return "unknown"; } })(),
   mammoth: (() => { try { return String(require("mammoth/package.json").version); } catch { return "unknown"; } })(),
 });
@@ -51,15 +53,23 @@ function normalizeText(text, maxChars = 120_000) {
 // is then distinguishable from a two-sentence one downstream.
 const IMAGE_OPS = new Set(["paintImageXObject", "paintImageXObjectRepeat", "paintJpegXObject", "paintInlineImageXObject", "paintImageMaskXObject"]);
 
+// SP-93 (2026-11-12): the 30-page cap STAYS for now. Lifting it before chunking exists would turn
+// documents that analyse today into documents that fail. What changes here is that the read stops
+// hiding behind the document's own page count: this extraction reports pages_read (what it opened)
+// beside pages_total (what the document has), and every surface that shows the analysis says so
+// when they differ. Removing the cap belongs to the chunking slice, not this one.
+const PDF_PAGE_CAP = 30;
+
 async function extractPdfText(buffer) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const task = pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true });
   const doc = await task.promise;
-  const pageCount = Math.min(doc.numPages, 30);
+  const pagesTotal = doc.numPages;
+  const pagesRead = Math.min(pagesTotal, PDF_PAGE_CAP);
   const chunks = [];
   let images = 0;
   const opNames = new Map(Object.entries(pdfjs.OPS).map(([name, code]) => [code, name]));
-  for (let page = 1; page <= pageCount; page += 1) {
+  for (let page = 1; page <= pagesRead; page += 1) {
     const p = await doc.getPage(page);
     const content = await p.getTextContent();
     const text = content.items
@@ -74,7 +84,10 @@ async function extractPdfText(buffer) {
       // image count is best-effort; text extraction is the authority
     }
   }
-  return { text: normalizeText(chunks.join("\n\n")), images, pages: doc.numPages };
+  // Was `pages: doc.numPages` — the DOCUMENT's count returned beside text covering only the first
+  // PDF_PAGE_CAP of them, so a 77-page filing recorded "77 pages" for a 30-page read (SP-93).
+  const joined = chunks.join("\n\n");
+  return { text: normalizeText(joined), images, pagesRead, pagesTotal, charsTotal: joined.length };
 }
 
 async function extractDocxText(buffer) {
@@ -86,14 +99,32 @@ async function extractDocxText(buffer) {
   } catch {
     // not a readable package: mammoth already parsed the text; image count unknown → 0
   }
-  return { text: normalizeText(result.value || ""), images, pages: null };
+  const raw = String(result.value || "");
+  return { text: normalizeText(raw), images, pagesRead: null, pagesTotal: null, charsTotal: raw.length };
 }
 
 async function extractText({ fileName, fileType, contentBase64 }) {
   const buffer = Buffer.from(String(contentBase64 || ""), "base64");
   const ext = extensionFromName(fileName);
   const normalizedType = String(fileType || "").toLowerCase();
-  const shaped = (text, source, images = 0, pages = null) => ({ text, source, chars: text.length, images, pages, versions: PARSER_VERSIONS });
+  // SP-93: the shape says what was READ and what EXISTS, separately.
+  //   chars        — characters in the `text` field, i.e. after normalizeText's 120k cap
+  //   chars_total  — characters before that cap, over the pages this read opened
+  //   pages_read   — pages this extraction opened (null where the format has no pages)
+  //   pages_total  — pages the document has (null likewise)
+  //   pages        — retained, and now EXPLICITLY the document's count: it is what the stored
+  //                  extraction_pages column has always meant, so old rows keep their meaning
+  const shaped = ({ text, source, images = 0, pagesRead = null, pagesTotal = null, charsTotal = null }) => ({
+    text,
+    source,
+    chars: text.length,
+    chars_total: charsTotal ?? text.length,
+    images,
+    pages: pagesTotal,
+    pages_read: pagesRead,
+    pages_total: pagesTotal,
+    versions: PARSER_VERSIONS,
+  });
 
   const isText =
     normalizedType.startsWith("text/") ||
@@ -101,23 +132,24 @@ async function extractText({ fileName, fileType, contentBase64 }) {
     normalizedType.includes("csv") ||
     ["txt", "csv", "md", "json", "xml", "yaml", "yml", "toml", "vtt", "srt"].includes(ext);
   if (isText) {
-    return shaped(normalizeText(buffer.toString("utf8")), "local_text_reader");
+    const raw = buffer.toString("utf8");
+    return shaped({ text: normalizeText(raw), source: "local_text_reader", charsTotal: raw.length });
   }
 
   const isPdf = normalizedType.includes("pdf") || ext === "pdf";
   if (isPdf) {
-    const { text, images, pages } = await extractPdfText(buffer);
-    return shaped(text, "local_parser_pdfjs", images, pages);
+    const { text, images, pagesRead, pagesTotal, charsTotal } = await extractPdfText(buffer);
+    return shaped({ text, source: "local_parser_pdfjs", images, pagesRead, pagesTotal, charsTotal });
   }
 
   const isDocx =
     normalizedType.includes("officedocument.wordprocessingml.document") || ext === "docx";
   if (isDocx) {
-    const { text, images, pages } = await extractDocxText(buffer);
-    return shaped(text, "local_parser_mammoth", images, pages);
+    const { text, images, pagesRead, pagesTotal, charsTotal } = await extractDocxText(buffer);
+    return shaped({ text, source: "local_parser_mammoth", images, pagesRead, pagesTotal, charsTotal });
   }
 
-  return shaped("", "unsupported");
+  return shaped({ text: "", source: "unsupported", charsTotal: 0 });
 }
 
 function jsonResponse(res, status, body) {

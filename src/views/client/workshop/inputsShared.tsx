@@ -5,6 +5,7 @@
 import { useState, useEffect, type Dispatch, type SetStateAction } from "react";
 import type { FileProposalRow } from "@/hooks/useFileProposals";
 import { formatAnalysisVersion, formatExtractionShape } from "@/lib/fileAnalysis";
+import { isPartialRead, partialReadLine } from "@/lib/ingest/ingestStrings";
 import { isInternalFileTag, makeAreaSupportTag } from "@/lib/fileTags";
 
 export const WORKSHOP_TAGS = [
@@ -170,6 +171,17 @@ export function fileProposalProcessingBadgeText(proposal: FileProposalRow): stri
     default:
       return "Analysis ready";
   }
+}
+
+/**
+ * S-ING-1 for this proposal, or null when the read was whole or is unknown (SP-93, SP-94).
+ * Every surface that shows a file or its analysis renders this beside whatever state it shows, so
+ * "Analysis ready" never stands alone on a document whose later pages were never opened.
+ */
+export function fileProposalPartialReadText(proposal: FileProposalRow | null | undefined): string | null {
+  if (!proposal) return null;
+  if (!isPartialRead(proposal.pages_read, proposal.pages_total)) return null;
+  return partialReadLine(proposal.pages_read as number, proposal.pages_total as number);
 }
 
 export function fileProposalReviewCountsText(proposal: FileProposalRow): string {

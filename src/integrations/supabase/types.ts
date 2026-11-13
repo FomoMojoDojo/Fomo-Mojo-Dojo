@@ -1941,6 +1941,7 @@ export type Database = {
           candidate_needs: Json
           candidate_outcomes: Json
           candidate_positioning_updates: Json
+          chars_total: number | null
           company_id: string
           confidence: string
           confidence_reason: string
@@ -1958,6 +1959,8 @@ export type Database = {
           file_name: string
           framework_results: Json
           id: string
+          pages_read: number | null
+          pages_total: number | null
           possible_gaps: Json
           possible_routes: Json
           processing_completed_at: string | null
@@ -1980,6 +1983,7 @@ export type Database = {
           candidate_needs?: Json
           candidate_outcomes?: Json
           candidate_positioning_updates?: Json
+          chars_total?: number | null
           company_id: string
           confidence?: string
           confidence_reason?: string
@@ -1997,6 +2001,8 @@ export type Database = {
           file_name?: string
           framework_results?: Json
           id?: string
+          pages_read?: number | null
+          pages_total?: number | null
           possible_gaps?: Json
           possible_routes?: Json
           processing_completed_at?: string | null
@@ -2019,6 +2025,7 @@ export type Database = {
           candidate_needs?: Json
           candidate_outcomes?: Json
           candidate_positioning_updates?: Json
+          chars_total?: number | null
           company_id?: string
           confidence?: string
           confidence_reason?: string
@@ -2036,6 +2043,8 @@ export type Database = {
           file_name?: string
           framework_results?: Json
           id?: string
+          pages_read?: number | null
+          pages_total?: number | null
           possible_gaps?: Json
           possible_routes?: Json
           processing_completed_at?: string | null

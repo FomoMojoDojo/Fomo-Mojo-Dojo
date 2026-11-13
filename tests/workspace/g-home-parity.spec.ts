@@ -9,6 +9,12 @@
 // Re-pinned 2026-09-18 (later) after the operator's resolve of Edgewood's frontier bet c7bfc5cc (integrity_runs 1538,
 // 23:01 UTC — after the pin above): find_primary_finding now returns observation f0fff520, so the three THE NEXT TURN
 // lines changed; every other line byte-identical (PUBLIC 129 · TEAM 42 unchanged).
+// Re-pinned 2026-10-20 after Edgewood b3 (c7263655) — commit 4bc1eb67, which recorded the cause in
+// its commit message only; noted here for the same reason the three notes above exist.
+// Re-pinned 2026-11-13 (commit 7558d7a9) after SP-105's data act: 13 Edgewood signals had their
+// signal_band corrected to 'organization', so the team signal count moved TEAM 42 → 55. 42 + 13 = 55,
+// and every other line was byte-identical. SP-F32 is filed on the underlying problem — this fixture
+// pins a LIVE company's data, so any data act on Edgewood turns this spec RED with no code change.
 import fs from "node:fs";
 import { expect, test } from "playwright/test";
 import { HOME_DOM_BASELINE } from "../../playwright.config";

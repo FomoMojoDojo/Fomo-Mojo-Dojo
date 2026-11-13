@@ -94,7 +94,13 @@ export interface FileProposalRow {
   /** Extraction shape (ruling 8): what the parser read / did not read. null on proposals from before the stamp. */
   extraction_chars: number | null;
   extraction_images: number | null;
+  /** The DOCUMENT's page count, as it has always meant. What the read COVERED is pages_read. */
   extraction_pages: number | null;
+  // SP-93 (2026-11-13): what the read covered, beside what the document holds. NULL on rows written
+  // before that date — their truth was never recorded — and NULL where the format has no pages.
+  pages_read: number | null;
+  pages_total: number | null;
+  chars_total: number | null;
   questions_to_verify: string[];
   status: 'pending' | 'accepted' | 'rejected';
   processing_state: 'queued' | 'running' | 'ready' | 'failed';
