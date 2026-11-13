@@ -31,7 +31,7 @@ async function judge(newStatements: string[], oldBatch: Array<{ i: number; text:
   const user = `CURRENT SITE VOICE (new statements):\n${newStatements.map((s) => `- ${s}`).join("\n")}\n\nOLD STATEMENTS:\n${oldBatch.map((o) => `${o.i}: ${o.text}`).join("\n")}`;
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: MODEL, temperature: 0, response_format: { type: "json_object" }, messages: [{ role: "system", content: JUDGE_SYSTEM }, { role: "user", content: user }] }),
+    body: JSON.stringify({ model: MODEL, temperature: 0, store: false /* SP-103 */, response_format: { type: "json_object" }, messages: [{ role: "system", content: JUDGE_SYSTEM }, { role: "user", content: user }] }),
   });
   if (!resp.ok) throw new Error(`judge ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
   const data = await resp.json();

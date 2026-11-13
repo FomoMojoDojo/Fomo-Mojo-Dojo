@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { DRIFT_STRINGS, isWithheld } from "./driftStrings";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useDriftAssessment, type DriftAssessment, type DriftAssessmentSignal } from "@/hooks/useDriftAssessment";
 import { useCapability } from "@/hooks/useCapability";
@@ -116,11 +117,14 @@ function PanelBody({
   }
 
   const isMaterial = assessment.drift_state === "material_drift";
+  // SP-112: a withheld assessment has no verdict and no score. It gets the signed sentence that says
+  // why, and the score row below renders an em dash rather than calling toFixed on NULL.
+  const withheld = isWithheld(assessment.drift_state);
   const isAccepted = !!assessment.accepted_as_aligned_at;
   const signals = (assessment.assessment_basis?.new_signals ?? []) as DriftAssessmentSignal[];
 
-  const stateColor = isMaterial ? "#c47039" : "#b09000";
-  const stateLabel = isMaterial ? "Material drift" : "Slight drift";
+  const stateColor = withheld ? "#9a9a9a" : isMaterial ? "#c47039" : "#b09000";
+  const stateLabel = withheld ? DRIFT_STRINGS.withheldLabel : isMaterial ? "Material drift" : "Slight drift";
 
   async function handleAccept() {
     if (!canReview) return; // governance.drift.review
@@ -216,6 +220,11 @@ function PanelBody({
               ? assessment.drift_score.toFixed(2)
               : "—"}
           </p>
+          {withheld && (
+            <p style={{ fontSize: 12, color: "#8a9a94", margin: "6px 0 0", lineHeight: 1.5 }}>
+              {DRIFT_STRINGS.withheldDetail}
+            </p>
+          )}
         </div>
       </div>
 

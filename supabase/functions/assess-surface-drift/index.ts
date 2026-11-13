@@ -20,6 +20,11 @@ import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { gateStrategyArtifactsForExternal } from "../_shared/strategyArtifactGate.ts";
 import { gateDriftSurfacesForExternal } from "../_shared/driftExternalGate.ts";
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
+// CONTAINMENT (SP-100, 2026-11-12): the evidence block is routed by the provenance of EVERY signal
+// whose text enters the prompt. One non-public row forces the whole call local. Before this, the
+// signals were selected with no band/voice/provenance filter and sent to OpenAI unconditionally —
+// the measured Option B exposure of 2026-07-28 (4 calls, 60 upload-derived signals).
+import { resolveModel, signalProvenance, EXTERNAL_JUDGE } from "../_shared/modelRouter.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -172,6 +177,9 @@ type SignalRow = {
   topic: string | null;
   signal_band: string | null;
   evidence_type: string | null;
+  // SP-100: voice_class is load-bearing, not display. signalProvenance(band, voice) is the router's
+  // provenance for a signal; an unselected column reads undefined and would resolve non-public.
+  voice_class: string | null;
 };
 
 function formatSignalForPrompt(s: SignalRow, index: number): string {
@@ -189,7 +197,8 @@ type AssessmentPayload = {
   company_id: string;
   surface_type: string;
   surface_id: string;
-  drift_score: number;
+  /** NULL only for drift_state 'withheld' — enforced by check_withheld_has_no_score. */
+  drift_score: number | null;
   drift_state: string;
   llm_confirmation: string | null;
   assessment_basis: unknown;
@@ -259,7 +268,7 @@ async function assessSurface(
   const candidateIds = newSignalIds.slice(0, 30);
   const { data: signalRows, error: sigErr } = await supabase
     .from("signals")
-    .select("id, claim_text, evidence_excerpt, topic, signal_band, evidence_type")
+    .select("id, claim_text, evidence_excerpt, topic, signal_band, evidence_type, voice_class")
     .in("id", candidateIds);
 
   if (sigErr) {
@@ -275,33 +284,115 @@ async function assessSurface(
   const signalBlock = signals.map(formatSignalForPrompt).join("\n\n");
   const userText = `SURFACE CONTENT:\n${surfaceText}\n\nNEW SIGNALS (${signals.length}):\n${signalBlock}`;
 
+  // ── THE ROUTER (SP-100, 2026-11-12) ─────────────────────────────────────────
+  // The provenance of every signal whose claim_text or evidence_excerpt is in `signalBlock`, and
+  // nothing else. signalProvenance returns null for any non-outside band (so an uploaded document's
+  // `organization` signal is non-public) and for an outside-band row whose voice is analysis/NULL.
+  // resolveModel then sends the call external ONLY when every one of them is public; one non-public,
+  // unknown or NULL row forces the whole call local, and an empty set is fail-closed to local.
+  // SP-126 / SP-132: THE ZERO-CANDIDATE PATH IS NOT A WITHHELD CASE.
+  // `newSignalIds` was non-empty (the fast path above returned otherwise), but the content query can
+  // still come back empty — rows deleted or relevance-flipped between the id query and this one. With
+  // no candidate rows there is no banked-row text in the prompt at all, only surface text the artifact
+  // gate has already cleared, so there is nothing to withhold. Left to the router this would resolve
+  // LOCAL (an empty input set is fail-closed, resolveModel.ts:70) and the surface would be saved
+  // 'withheld' — claiming evidence it does not have. Behave exactly as at f21d1554: assess it.
+  const zeroCandidates = signals.length === 0;
+  const signalProvenances = signals.map((s) => signalProvenance(s.signal_band, s.voice_class));
+  const choice = resolveModel({
+    role: "judge",
+    inputs: signalProvenances.map((provenance) => ({ provenance })),
+  });
+  const nonPublicCount = signalProvenances.filter((p) => p == null).length;
+  console.log(
+    `[assess-surface-drift] ${surfaceType}/${surfaceId}: router → ${choice.provider} (${choice.model}); ` +
+    `${signals.length} signal(s), ${nonPublicCount} non-public`,
+  );
+
+  // SP-F15: what was sent is recorded on EVERY path, including a failed call — a call that threw
+  // still put the text in a request. Previously the failure path wrote an integrity row with no
+  // candidate ids, which is how the 2026-07-16 call became unestablishable.
+  // SP-124: the reason is a CODE, and it must be TRUE of the rows actually in hand. A non-outside
+  // band means the row's origin is the company's own material (an uploaded document, an intake
+  // note); everything else that reaches here is outside-band with voice `analysis` or NULL — our
+  // own reading of a public source, which is not a private document and must not be described as one.
+  const hasNonOutsideBand = signals.some((s) => String(s.signal_band ?? "") !== "outside");
+  const withheldReason = hasNonOutsideBand ? "private_evidence" : "unlabelled_evidence";
+  const sentBasis = {
+    new_signals: newSignalIds,
+    top_candidates: candidateIds,
+    routed_to: choice.provider,
+    routed_model: choice.model,
+    signals_non_public: nonPublicCount,
+  };
+
+  // WITHHELD (SP-104, SP-108): the router says local, and this function has no local lane — every
+  // routed site injects a local caller it already owned, and this one never had one. Rather than
+  // write a second local client, the MODEL STEP IS WITHHELD: no outside call, no local call, and a
+  // row that says so. 'withheld' carries no score (check_withheld_has_no_score), because 0 would
+  // read as "no drift" and that is a verdict nobody made.
+  if (!zeroCandidates && choice.provider !== "external_openai") {
+    console.log(
+      `[assess-surface-drift] ${surfaceType}/${surfaceId}: WITHHELD (${withheldReason}) — ` +
+      `${nonPublicCount} non-public signal(s) of ${signals.length}; no model call made`,
+    );
+    await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+      company_id: companyId, component: "drift_scan", surface_type: surfaceType, surface_id: surfaceId,
+      status: "completed", examined: signals.length, admitted: 0,
+      excluded_by_rule: { ...sentBasis, withheld: withheldReason },
+    });
+    await upsertAssessment(supabase, {
+      company_id: companyId,
+      surface_type: surfaceType,
+      surface_id: surfaceId,
+      drift_score: null,
+      drift_state: "withheld",
+      llm_confirmation: "withheld: evidence not cleared for an outside model",
+      assessment_basis: { ...sentBasis, withheld: withheldReason },
+      last_assessed_at: new Date().toISOString(),
+      // Not a drift finding, so it does not clear prior operator state the way an alerting
+      // assessment does — but it is also not the aligned case, so it is not silently acceptable.
+    });
+    return { surfaceId, drift_state: "withheld" };
+  }
+
+  // The model for the external call. SP-125: role "judge" on the external lane resolves to
+  // EXTERNAL_JUDGE, which is "gpt-4.1-mini" — the literal this function used at f21d1554, so neither
+  // the judge nor its cost changes. On the ZERO-CANDIDATE path (SP-126) the router fail-closed to
+  // local with an empty input set, so `choice.model` would be llama3:70b there; the judge model is
+  // named explicitly so an empty-evidence assessment is billed and judged exactly as it was before.
+  const judgeModel = zeroCandidates ? EXTERNAL_JUDGE : choice.model;
+
   let llmResult: { drift_state: string; score: number; reason: string };
   try {
-    llmResult = await callOpenAIJSON({
-      apiKey,
-      model: "gpt-4.1-mini",
-      schemaName: "drift_assessment",
-      // E4d (ruling, 2026-11-07): one model_calls row per outside call. This function wrote NONE —
-      // Q5 was scoped to research-company and the three evaluate-*, so every call it has ever
-      // made is absent from the ledger. The hook fires per HTTP response, before parsing.
-      onUsage: (usedModel, usage) =>
-        void recordModelCall(supabase as unknown as { from: (t: string) => any }, {
-          companyId: String(companyId),
-          callSite: "assess-surface-drift",
-          usage: openaiRecord(usedModel, usage),
-        }),
-      schema: driftSchema,
-      systemText: DRIFT_SYSTEM_PROMPT,
-      userText,
-      maxOutputTokens: 400,
-      temperature: 0.1,
-    }) as { drift_state: string; score: number; reason: string };
+    {
+      llmResult = await callOpenAIJSON({
+        apiKey,
+        model: judgeModel,
+        schemaName: "drift_assessment",
+        // E4d (ruling, 2026-11-07): one model_calls row per outside call. This function wrote NONE —
+        // Q5 was scoped to research-company and the three evaluate-*, so every call it has ever
+        // made is absent from the ledger. The hook fires per HTTP response, before parsing.
+        onUsage: (usedModel, usage) =>
+          void recordModelCall(supabase as unknown as { from: (t: string) => any }, {
+            companyId: String(companyId),
+            callSite: "assess-surface-drift",
+            usage: openaiRecord(usedModel, usage),
+          }),
+        schema: driftSchema,
+        systemText: DRIFT_SYSTEM_PROMPT,
+        userText,
+        maxOutputTokens: 400,
+        temperature: 0.1,
+      }) as { drift_state: string; score: number; reason: string };
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[assess-surface-drift] ${surfaceType}/${surfaceId}: LLM error: ${message}`);
     await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
       company_id: companyId, component: "drift_scan", surface_type: surfaceType, surface_id: surfaceId,
       status: "failed", error: `LLM: ${message}`, examined: signals.length,
+      excluded_by_rule: sentBasis,
     });
     return null;
   }
@@ -312,6 +403,7 @@ async function assessSurface(
     await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
       company_id: companyId, component: "drift_scan", surface_type: surfaceType, surface_id: surfaceId,
       status: "failed", error: `invalid drift_state from model: ${llmResult.drift_state}`, examined: signals.length,
+      excluded_by_rule: sentBasis,
     });
     return null;
   }
@@ -325,10 +417,7 @@ async function assessSurface(
     drift_score: llmResult.score,
     drift_state: llmResult.drift_state,
     llm_confirmation: llmResult.reason,
-    assessment_basis: {
-      new_signals: newSignalIds,
-      top_candidates: candidateIds,
-    },
+    assessment_basis: sentBasis,
     last_assessed_at: new Date().toISOString(),
     // Per-assessment acceptance law (operator-signed at the integrity gate; same fix
     // as reconcile-market-definition): "I accept this" is a judgment about THAT

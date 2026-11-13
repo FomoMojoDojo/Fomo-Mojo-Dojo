@@ -198,6 +198,10 @@ async function callOpenAIJSON(opts: {
     model: activeModel,
     temperature,
     max_output_tokens: outputBudget,
+    // SP-103 (2026-11-12): retention is never left to the provider default. /v1/responses defaults
+    // store:true, so every request this client has ever sent was retained server-side and visible in
+    // the API organisation's logs — never an explicit choice anywhere in the code. Stated here.
+    store: false,
     input: [
       {
         role: "system",

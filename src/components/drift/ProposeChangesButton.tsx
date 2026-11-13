@@ -1,4 +1,5 @@
 import { differenceInDays, formatDistanceToNow, parseISO } from "date-fns";
+import { DRIFT_STRINGS, isWithheld } from "./driftStrings";
 import { useDriftAssessment } from "@/hooks/useDriftAssessment";
 import { useIntegrityRecord } from "@/hooks/useIntegrityRecord";
 
@@ -44,8 +45,13 @@ export default function ProposeChangesButton({
   // Latest drift_scan execution record for THIS surface (record-scope law: surface-keyed).
   const driftIntegrity = useIntegrityRecord(null, "drift_scan", surfaceId ?? null);
 
+  // SP-113: a withheld assessment is NO DRIFT KNOWN — not drift, and not the reassurance that
+  // "no drift was detected" either, because nothing was detected or ruled out. It therefore offers
+  // nothing: hasDrift stays false, so the control is disabled exactly as it is for an unassessed
+  // surface, and the reassurance branch below is not allowed to claim a clean check.
+  const withheld = isWithheld(assessment?.drift_state);
   const driftState =
-    !assessment || assessment.accepted_as_aligned_at
+    !assessment || assessment.accepted_as_aligned_at || withheld
       ? ("none" as const)
       : assessment.drift_state === "material_drift"
         ? ("material" as const)
@@ -73,6 +79,10 @@ export default function ProposeChangesButton({
       statusTone = "attention";
     } else if (!assessment) {
       statusText = "Not yet checked";
+    } else if (withheld) {
+      // SP-116: say why there is nothing to offer. Without this the panel was silent on a withheld
+      // surface — indistinguishable from a surface nobody has looked at.
+      statusText = DRIFT_STRINGS.withheldDetail;
     } else if (assessment.drift_state === "aligned" || assessment.accepted_as_aligned_at) {
       const assessedAt = assessment.last_assessed_at ? parseISO(assessment.last_assessed_at) : null;
       const daysOld = assessedAt ? differenceInDays(new Date(), assessedAt) : null;

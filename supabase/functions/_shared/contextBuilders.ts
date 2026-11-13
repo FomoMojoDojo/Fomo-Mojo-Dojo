@@ -347,6 +347,18 @@ function buildOpportunityBrief(opportunities: unknown): string {
   }).join("\n");
 }
 
+// SP-95 / SP-100 (2026-11-12): THE INPUT BRIEF CARRIES NO AUTHORED TEXT.
+//
+// `inputs.description` and `inputs.why_it_matters` are per-company authored content — 206 distinct
+// descriptions across 18 input_keys on the fleet, so not a shared template — and they reach an
+// OUTSIDE model from four functions that all build their context here: propose-cascade-changes,
+// propose-positioning-changes, refresh-cascade and refresh-positioning. The `inputs` table has no
+// provenance column, so no admissibility test can clear a row of it; under SP-86 (private is the
+// default) the text is therefore withheld, exactly as council-review withholds the same two fields.
+//
+// Gated HERE, at the one shared builder, rather than in each caller: a per-function copy of this
+// rule is a rule that drifts. What still travels is the row's IDENTITY — which slot in a fixed
+// 18-key taxonomy exists, under which group, and whether it has been filled — which quotes nothing.
 function buildInputBrief(inputs: unknown): string {
   const items = Array.isArray(inputs) ? inputs : [];
   return items.map((input, index) => {
@@ -357,7 +369,8 @@ function buildInputBrief(inputs: unknown): string {
       description?: string;
       why_it_matters?: string;
     };
-    return `${index + 1}. ${entry.input_key || "unknown"} | ${entry.input_label || "Untitled"} | ${entry.sub_group || "unknown"} | ${entry.description || "No description"} | why: ${entry.why_it_matters || "No rationale"}`;
+    const filled = String(entry.description ?? "").trim().length > 0 ? "filled" : "empty";
+    return `${index + 1}. ${entry.input_key || "unknown"} | ${entry.input_label || "Untitled"} | ${entry.sub_group || "unknown"} | ${filled} (client text withheld)`;
   }).join("\n");
 }
 

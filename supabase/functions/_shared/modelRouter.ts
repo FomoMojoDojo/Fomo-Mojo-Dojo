@@ -121,6 +121,8 @@ export async function callOpenAIJson(opts: {
       body: JSON.stringify({
         model: opts.model,
         temperature: opts.temperature ?? 0.2,
+        // SP-103 (2026-11-12): never leave retention to the provider default.
+        store: false,
         // Best-effort determinism (OpenAI honors seed when set); the relevance backstop passes 42.
         ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
         ...(opts.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),

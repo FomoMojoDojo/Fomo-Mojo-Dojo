@@ -63,6 +63,7 @@ async function callModel(system: string, user: string): Promise<Record<string, u
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
           model, temperature: 0, response_format: { type: "json_object" },
+          store: false,   // SP-103 (2026-11-12)
           messages: [{ role: "system", content: system }, { role: "user", content: user }],
         }),
       });

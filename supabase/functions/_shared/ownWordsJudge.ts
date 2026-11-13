@@ -59,6 +59,9 @@ export async function callModel(system: string, user: string): Promise<Record<st
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
           model, temperature: 0,
+          // SP-103 (2026-11-12): explicit on the external branch only — the local Ollama shim is
+          // not an OpenAI organisation and has no retention to disclaim.
+          ...(USE_LOCAL ? {} : { store: false }),
           response_format: { type: "json_object" },
           messages: [{ role: "system", content: system }, { role: "user", content: user }],
         }),

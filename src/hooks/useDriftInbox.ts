@@ -7,8 +7,12 @@ export type DriftInboxItem = DriftAssessment & {
   surface_navigation_path: string;
 };
 
-export type InboxFilter = "all" | "new" | "material" | "slight";
+// SP-113: 'withheld' is its OWN category — not folded into material or slight, and not "all" minus
+// the two. An assessment we declined to make is a distinct thing to look at.
+export type InboxFilter = "all" | "new" | "material" | "slight" | "withheld";
 export type InboxSort = "severity" | "recency" | "surface_type";
+
+import { isWithheld } from "@/components/drift/driftStrings";
 
 const WORKSHOP = "/preview/client-refine/workshop";
 const ROUTES = "/preview/client-refine/routes";
@@ -17,6 +21,9 @@ const SEVERITY_ORDER: Record<string, number> = {
   material_drift: 0,
   slight_drift: 1,
   aligned: 2,
+  // SP-113: sorted LAST. A withheld row is not a severity — ranking it among them (the old
+  // `?? 2` default put it level with aligned) made it read as a graded finding.
+  withheld: 3,
 };
 
 function navPath(surfaceType: string): string {
@@ -160,6 +167,7 @@ export function useDriftInbox(
     if (filter === "new") filtered = filtered.filter((i) => !i.operator_seen_at);
     else if (filter === "material") filtered = filtered.filter((i) => i.drift_state === "material_drift");
     else if (filter === "slight") filtered = filtered.filter((i) => i.drift_state === "slight_drift");
+    else if (filter === "withheld") filtered = filtered.filter((i) => isWithheld(i.drift_state));
 
     const sorted = [...filtered];
     if (sort === "severity") {
@@ -176,6 +184,9 @@ export function useDriftInbox(
   const totalUnresolved = allItems.length;
   const materialCount = allItems.filter((i) => i.drift_state === "material_drift").length;
   const slightCount = allItems.filter((i) => i.drift_state === "slight_drift").length;
+  // SP-113: counted on its own. It is in neither drift count, and the inbox query already excludes
+  // 'aligned', so it is in neither bucket by construction rather than by omission.
+  const withheldCount = allItems.filter((i) => isWithheld(i.drift_state)).length;
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
@@ -250,6 +261,7 @@ export function useDriftInbox(
     totalUnresolved,
     materialCount,
     slightCount,
+    withheldCount,
     lastFullScanAt,
     isLoading,
     error,

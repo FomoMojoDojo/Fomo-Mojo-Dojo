@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { DRIFT_STRINGS, isWithheld } from "@/components/drift/driftStrings";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { formatDistanceToNow, parseISO } from "date-fns";
@@ -26,6 +27,7 @@ const INK_QUIET = "rgba(17,17,17,0.55)";
 const HAIRLINE = "rgba(17,17,17,0.08)";
 const MATERIAL_COLOR = "#c45c00";
 const SLIGHT_COLOR = "#b08800";
+const WITHHELD_COLOR = "#9a9a9a";   // SP-112: neutral — not a severity colour
 const NEW_COLOR = "#3a6ea8";
 const PAGE_BG = "#f9f9f7";
 
@@ -38,7 +40,8 @@ function timeAgo(iso: string): string {
 }
 
 function SeverityDot({ state }: { state: string }) {
-  const color = state === "material_drift" ? MATERIAL_COLOR : SLIGHT_COLOR;
+  // SP-112: a withheld row is not a severity. Neutral grey, never the slight-drift amber.
+  const color = isWithheld(state) ? WITHHELD_COLOR : state === "material_drift" ? MATERIAL_COLOR : SLIGHT_COLOR;
   return (
     <span
       style={{
@@ -146,8 +149,10 @@ function DriftInboxRow({
               NEW
             </span>
           )}
-          <span style={{ fontFamily: MONO, fontSize: 9, color: item.drift_state === "material_drift" ? MATERIAL_COLOR : SLIGHT_COLOR, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            {item.drift_state === "material_drift" ? "material drift" : "slight drift"}
+          <span style={{ fontFamily: MONO, fontSize: 9, color: isWithheld(item.drift_state) ? WITHHELD_COLOR : item.drift_state === "material_drift" ? MATERIAL_COLOR : SLIGHT_COLOR, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            {isWithheld(item.drift_state)
+              ? DRIFT_STRINGS.withheldLabel
+              : item.drift_state === "material_drift" ? "material drift" : "slight drift"}
           </span>
         </div>
 
@@ -314,6 +319,7 @@ export default function DriftInboxView() {
     totalUnresolved,
     materialCount,
     slightCount,
+    withheldCount,
     lastFullScanAt,
     isLoading,
     error,
@@ -430,6 +436,9 @@ export default function DriftInboxView() {
             <FilterChip label="New" count={newCount} active={filter === "new"} onClick={() => setFilter("new")} />
             <FilterChip label="Material" count={materialCount} active={filter === "material"} onClick={() => setFilter("material")} />
             <FilterChip label="Slight" count={slightCount} active={filter === "slight"} onClick={() => setFilter("slight")} />
+            {/* SP-117: 'withheld' is its own category — after Slight, labelled with the signed
+                S-DRIFT-1 so the chip and the row read the same words. */}
+            <FilterChip label={DRIFT_STRINGS.withheldLabel} count={withheldCount} active={filter === "withheld"} onClick={() => setFilter("withheld")} />
           </div>
         </div>
 

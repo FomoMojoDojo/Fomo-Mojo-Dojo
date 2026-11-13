@@ -148,6 +148,15 @@ These files are long — search within them rather than reading top-to-bottom:
     when the page navigates before the mock answers.
   - `tests/workspace/c-arrows.spec.ts` (ArrowRight from /strategy cycles Base only) — keypress timing: one
     ArrowRight registers twice, so the visited-path list repeats a workspace route.
+  - `scripts/guards/completion-sweep-guard.sh` (SP-136, 2026-11-12) — **a GUARD, not a spec, and flaky
+    against the clock.** Its `posts` check counts rows landing in `net._http_response` inside its own
+    window (`:61-62`) and expects exactly 3. `cron.job` jobid 2 is scheduled `* * * * *` running
+    `SELECT public.sweep_file_proposal_completion()` — the function under test — so when the guard's
+    window straddles a minute boundary it counts the scheduler's own sync as a fourth and fails with
+    `expected 3 sync responses (A, C1, C2), saw 4`. Measured 2026-11-12: its own three responses shared
+    one timestamp (…:28:59.781195) and the fourth landed at …:29:00.011419, on the tick. It passes
+    standalone; a single failure of it in a sweep is read as this flake and the baseline stands.
+    SP-F26 filed: the check should pin to its OWN request ids rather than counting a time window.
 
 ### Guard fixtures — the two non-admin accounts (2026-09-27)
 
@@ -212,6 +221,11 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   `supabase status`'s Authentication Keys panel is **not** accepted by the functions gateway: every
   terminal answers `401 {"msg":"Error: Missing authorization header"}`, which reads like a dead stack
   rather than a wrong key.
+- **The sweep has a runner: `bash scripts/guards-sweep.sh`** (SP-135, 2026-11-12). It excludes two
+  files BY NAME — `interview-upload-path-guard.sh` (U6-38, by design) and `diagnose-data-check.sh` (a
+  helper `diagnose-data-guard` invokes, never an independent member) — classifies on BOTH the exit
+  code and the printed verdict, and puts `~/.deno/bin` on PATH, because `interview-parser-guard` runs
+  `deno test` bare and reads RED without it for no code reason. Source the three env files first.
 - **The guard sweep is 43 GREEN / 4 RED of 47, and the FOUR standing REDs are named** (measured
   2026-11-11, 47 guards, all three env files sourced; `interview-upload-path-guard` is excluded from
   the session sweep by design (U6-38) and passes standalone):

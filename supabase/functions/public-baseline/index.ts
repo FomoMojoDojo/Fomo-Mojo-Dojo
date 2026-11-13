@@ -1611,6 +1611,8 @@ async function callOpenAI(opts: {
 
   const buildBody = (activeModel: string) => ({
     model: activeModel,
+    // SP-103 (2026-11-12): retention never left to the provider default.
+    store: false,
     input: [
       {
         role: "system",

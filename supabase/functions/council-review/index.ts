@@ -1445,6 +1445,18 @@ Deno.serve(async (req) => {
     if (authError || !userRes?.user) return jsonResponse({ error: "Unauthorized" }, 401);
     const userId = userRes.user.id;
 
+    // SP-106 (2026-11-12): ADMIN ONLY, enforced HERE and not only by the route.
+    // Every surface that can fire this sits behind AdminModeRoute today, but the run control
+    // (CouncilPanel.tsx:472) carries no capability gate of its own — it is `disabled={running}` and
+    // nothing else. A route wrapper is not an authorisation boundary: the function is callable
+    // directly with any signed-in user's JWT. Refused by name, before any row is read.
+    const { data: adminRoles, error: adminRoleErr } = await serviceClient
+      .from("user_roles").select("role").eq("user_id", userId).eq("role", "admin").limit(1);
+    if (adminRoleErr) return jsonResponse({ error: "Failed to verify admin role." }, 500);
+    if (!Array.isArray(adminRoles) || adminRoles.length === 0) {
+      return jsonResponse({ error: "not_admin", message: "Only an admin can run a council review — nothing was run." }, 403);
+    }
+
     const body = await req.json().catch(() => ({}));
     const companyId = asText(body?.company_id, "");
     const councilKey = normalizeCouncilKey(body?.council_key);
@@ -1593,35 +1605,33 @@ Deno.serve(async (req) => {
     const maybeStale = (row: Record<string, unknown>) =>
       latestExclusionAt && artifactIsStale(row) ? { stale_due_to_excluded_signals: true } : {};
 
+    // STEP 10 / SP-95 (2026-11-12): `inputs` rows and their uploaded-file metadata are CLIENT
+    // MATERIAL and are withheld from this payload, by the same rule odi_needs already pass below.
+    //
+    // Why withheld wholesale rather than filtered: the admissibility test reads a row's provenance,
+    // and NEITHER table has one. `inputs` carries no provenance column; `input_files` carries no
+    // public mark and no source URL (those are the ingest slice's columns and do not exist yet).
+    // Under SP-86 PRIVATE IS THE DEFAULT, a file with no recorded public mark is private — so a
+    // file name, its type, and the operator's description of the input it answers are all private
+    // material, and none of them may travel. 79 such file-name sends went to OpenAI on this path
+    // before this change.
+    //
+    // What remains is the row's IDENTITY and shape — input_key, group, counts — which name a slot
+    // in a fixed taxonomy rather than quoting anything the client wrote or uploaded.
+    const inputsWithheldExternal = inputs.length;
+    const inputFilesWithheldExternal = inputs.reduce((n, item) => {
+      const files = (item as Record<string, unknown>).input_files;
+      return n + (Array.isArray(files) ? files.length : 0);
+    }, 0);
     const normalizedInputs = inputs.map((item) => {
       const row = item as Record<string, unknown>;
-      const files = Array.isArray(row.input_files) ? row.input_files as Record<string, unknown>[] : [];
       return {
-        ...pick(row, [
-          "id",
-          "input_key",
-          "label",
-          "description",
-          "group_key",
-          "sub_group",
-          "done",
-          "completion",
-          "frameworks_used",
-          "context_summary",
-          "source_tier",
-          "updated_at",
-          "created_at",
-        ]),
-        input_files: files.slice(0, 12).map((file) => pick(file, [
-          "id",
-          "file_name",
-          "file_type",
-          "tags",
-          "uploaded_at",
-        ])),
+        ...pick(row, ["id", "input_key", "group_key", "sub_group", "completeness", "status"]),
+        // the client's own words about this input, and every uploaded file's name, are withheld
+        description_withheld: true,
+        input_files_withheld: Array.isArray(row.input_files) ? (row.input_files as unknown[]).length : 0,
       };
     });
-
     // Gate 0 (2026-09-16): odi_needs rows enter the council context ONLY when their provenance is
 
     // external-admissible (the ONE predicate); everything else — internal, NULL, unknown — is
@@ -1745,7 +1755,12 @@ Deno.serve(async (req) => {
         strategic_problems: contextPayload.strategic_problems.length,
         strategy_assumptions: contextPayload.strategy_assumptions.length,
         inputs: contextPayload.inputs.length,
-        input_files: contextPayload.inputs.reduce((sum, row) => sum + ((row.input_files?.length as number) || 0), 0),
+        // Step 10 (2026-11-12): no input_files metadata is in the payload any more, so the count
+        // of what travelled is zero and the count of what was WITHHELD is recorded instead —
+        // the same shape as needs_withheld_external below, so a run is auditable either way.
+        input_files: 0,
+        inputs_withheld_external: inputsWithheldExternal,
+        input_files_withheld_external: inputFilesWithheldExternal,
         job_steps: contextPayload.job_steps.length,
         odi_market_definitions: contextPayload.odi_market_definitions.length,
         odi_needs: contextPayload.odi_needs.length,

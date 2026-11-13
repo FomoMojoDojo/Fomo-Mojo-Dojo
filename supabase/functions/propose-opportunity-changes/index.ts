@@ -15,6 +15,7 @@ import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
+import { resolveModel, signalProvenance, isPublicProvenance } from "../_shared/modelRouter.ts";   // SP-100 (2026-11-12)
 
 // 4f-6 (F9): the one refusal for a company-held need reaching a market-framed proposal.
 export const OPP_IS_COMPANY_HELD = "This need is held by the company, not a market — an opportunity proposal needs a market.";
@@ -176,12 +177,62 @@ Deno.serve(async (req: Request) => {
   // --- Fetch active signals (narrowed to company; limit 20) ---
   const { data: signalRows } = await db
     .from("signals")
-    .select("claim_text, evidence_excerpt, topic, signal_band")
+    .select("claim_text, evidence_excerpt, topic, signal_band, voice_class")
     .eq("company_id", company_id)
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const signals = Array.isArray(signalRows) ? signalRows : [];
+  // ── THE EVIDENCE BLOCK IS GATED (SP-100, 2026-11-12) ───────────────────────
+  // Before this, the 20 most recent signals of the company went into the prompt with no band,
+  // voice or provenance filter — `signal_band` was selected and used only as a label — and
+  // callOpenAIJSON sent them unconditionally. The subject gate above protected the ROUTE; the
+  // evidence rode along beside it. Now every row whose claim_text or evidence_excerpt travels
+  // must carry a public provenance of its own, by the same signalProvenance the router reads.
+  // Non-public rows (an uploaded document's `organization` signal, our own `analysis` voice) are
+  // WITHHELD from the prompt and counted, exactly as odi_needs are withheld on the council path.
+  const signalsAll = Array.isArray(signalRows) ? signalRows : [];
+  const signals = signalsAll.filter((row) => {
+    const r = row as { signal_band?: string | null; voice_class?: string | null };
+    return isPublicProvenance(signalProvenance(r.signal_band, r.voice_class));
+  });
+  const signalsWithheld = signalsAll.length - signals.length;
+  if (signalsWithheld > 0) {
+    console.log(
+      `[propose-opportunity-changes] evidence gate: ${signalsWithheld} of ${signalsAll.length} signal(s) withheld ` +
+      `(non-public provenance); ${signals.length} sent`,
+    );
+  }
+  // Defence in depth: the retained set is what the router sees, so an empty set is fail-closed and
+  // a mislabelled row that slipped the filter would still force the call local — where this
+  // function has no lane, so it refuses rather than sending.
+  const evidenceChoice = resolveModel({
+    role: "judge",
+    inputs: signals.map((row) => {
+      const r = row as { signal_band?: string | null; voice_class?: string | null };
+      return { provenance: signalProvenance(r.signal_band, r.voice_class) };
+    }),
+  });
+  // A proposal built on an EMPTY evidence block, when evidence exists but may not travel, is a
+  // silent partial: it reads as "there was nothing to go on" when the truth is "there was something
+  // we are not allowed to send". So the refusal fires when withholding emptied the block, and also
+  // (defence in depth) if a retained row somehow resolves non-public. When SOME public rows remain,
+  // the call proceeds on those and the response states how many were withheld.
+  if (signalsWithheld > 0 && signals.length === 0) {
+    return jsonResponse({
+      skipped: true,
+      reason: "evidence withheld — not cleared for an outside model",
+      signals_withheld: signalsWithheld,
+      signals_sent: 0,
+    });
+  }
+  if (signals.length > 0 && evidenceChoice.provider !== "external_openai") {
+    return jsonResponse({
+      skipped: true,
+      reason: "evidence withheld — not cleared for an outside model",
+      signals_withheld: signalsWithheld,
+      signals_sent: signals.length,
+    });
+  }
   const signalsBrief = signals.length > 0
     ? signals.map((s, i) => {
         const entry = s as Record<string, unknown>;

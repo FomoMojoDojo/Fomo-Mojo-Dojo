@@ -596,14 +596,6 @@ function buildKnownTensionsBrief(knownTensions: unknown): string {
     .join("\n");
 }
 
-type UploadedEvidenceInputRow = {
-  id?: string | null;
-  input_key?: string | null;
-  input_label?: string | null;
-  description?: string | null;
-  why_it_matters?: string | null;
-};
-
 /** Gate B (A1): does the company hold an interview upload (a flagged file or a transcript record)? Fails closed. */
 async function companyHasInterviewUploads(supabase: { from: (t: string) => any }, companyId: string): Promise<boolean> {
   try {
@@ -621,10 +613,6 @@ async function companyHasInterviewUploads(supabase: { from: (t: string) => any }
 
 type UploadedEvidenceFileRow = {
   input_id?: string | null;
-  file_name?: string | null;
-  file_path?: string | null;
-  tags?: string[] | null;
-  uploaded_at?: string | null;
   is_interview?: boolean | null;
 };
 
@@ -641,31 +629,38 @@ async function buildUploadedEvidenceContext(args: {
   supabase: ReturnType<typeof createClient>;
   companyId: string;
 }) {
-  const { supabase, companyId } = args;
-
-  const { data: inputRows, error: inputErr } = await supabase
+  // SP-F17 / step 11 (2026-11-12): THE `.brief` BUILDER IS GONE, and with it the sidecar reads.
+  //
+  // What it used to do: download every non-interview upload's `<path>.extracted.txt` sidecar, take a
+  // 210-character excerpt of the document text, and assemble a `brief` of up to six such excerpts
+  // with their file names — under a comment that said this context "reaches an EXTERNAL model".
+  //
+  // It never did. `.brief` was consumed nowhere: the only live use of this function's result is
+  // `.fileCount`, which drives `deriveEvidenceLevel` and the run ledger. So the private text was
+  // fetched into the same scope as the twelve OpenAI prompts below, held there, and dropped — and a
+  // stale comment invited the next person to wire the two together with one line.
+  //
+  // Option B is unchanged and is now true by construction rather than by accident: uploaded and
+  // internal evidence is the LOCAL pipeline's domain, and this function cannot reach a document's
+  // text at all. Only the COUNT of files crosses into this function, and a count quotes nothing.
+  const { data: inputRows, error: inputErr } = await args.supabase
     .from("inputs")
-    .select("id,input_key,input_label,description,why_it_matters")
-    .eq("company_id", companyId)
+    .select("id")
+    .eq("company_id", args.companyId)
     .limit(240);
 
   if (inputErr) {
     console.log("[research-company] uploaded evidence input fetch error:", inputErr.message);
   }
 
-  const inputs = (Array.isArray(inputRows) ? inputRows : []) as UploadedEvidenceInputRow[];
-  const inputById = new Map<string, UploadedEvidenceInputRow>();
-  for (const row of inputs) {
-    const id = String(row?.id || "").trim();
-    if (!id) continue;
-    inputById.set(id, row);
-  }
+  const inputIds = ((Array.isArray(inputRows) ? inputRows : []) as Array<{ id?: string | null }>)
+    .map((row) => String(row?.id || "").trim())
+    .filter(Boolean);
 
-  const inputIds = Array.from(inputById.keys());
   const { data: fileRows, error: filesErr } = inputIds.length > 0
-    ? await supabase
+    ? await args.supabase
         .from("input_files")
-        .select("input_id,file_name,file_path,tags,uploaded_at,is_interview")
+        .select("input_id,is_interview")
         .in("input_id", inputIds)
         .order("uploaded_at", { ascending: false })
         .limit(120)
@@ -675,77 +670,21 @@ async function buildUploadedEvidenceContext(args: {
     console.log("[research-company] uploaded evidence file fetch error:", filesErr.message);
   }
 
-  // Gate B (A1, 2026-09-19): this context reaches an EXTERNAL model — an interview transcript's row (its
-  // name, tags, any sidecar snippet) is never part of it. Keyed on the file flag (input_files.is_interview).
-  const files = ((Array.isArray(fileRows) ? fileRows : []) as UploadedEvidenceFileRow[]).filter((f) => f?.is_interview !== true);
-  const fileCount = files.length;
+  // Gate B (A1, 2026-09-19) still keys on the file flag: an interview upload is not evidence of the
+  // company's own making and never counts here. (The cold start also refuses outright for a company
+  // holding one — see the 409 `company_has_interview_uploads` before the lock.)
+  const files = ((Array.isArray(fileRows) ? fileRows : []) as UploadedEvidenceFileRow[])
+    .filter((f) => f?.is_interview !== true);
 
   const inputCoverage = new Set<string>();
-  const tagCounts = new Map<string, number>();
   for (const file of files) {
     const inputId = String(file?.input_id || "").trim();
     if (inputId) inputCoverage.add(inputId);
-    const tags = Array.isArray(file?.tags) ? file.tags : [];
-    for (const tag of tags) {
-      const normalized = String(tag || "").trim();
-      if (!normalized) continue;
-      tagCounts.set(normalized, (tagCounts.get(normalized) ?? 0) + 1);
-    }
   }
-
-  const topTags = Array.from(tagCounts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-    .map(([tag]) => tag);
-
-  const sampleRows = files.slice(0, 6);
-  const sampleLines: string[] = [];
-  for (let index = 0; index < sampleRows.length; index++) {
-    const file = sampleRows[index];
-    const inputMeta = inputById.get(String(file?.input_id || "").trim());
-    const inputKey = String(inputMeta?.input_key || "").trim();
-    const inputLabel = String(inputMeta?.input_label || "").trim();
-    const inputHint = compactSnippet(inputMeta?.description || inputMeta?.why_it_matters || "", 90);
-    const tags = Array.isArray(file?.tags) ? file.tags.map((tag) => String(tag || "").trim()).filter(Boolean) : [];
-    let extractedSnippet = "";
-    const filePath = String(file?.file_path || "").trim();
-
-    if (filePath) {
-      const sidecarPath = `${filePath}.extracted.txt`;
-      const { data: sidecar, error: sidecarErr } = await supabase.storage.from("input-files").download(sidecarPath);
-      if (!sidecarErr && sidecar) {
-        try {
-          extractedSnippet = compactSnippet(await sidecar.text(), 210);
-        } catch {
-          extractedSnippet = "";
-        }
-      }
-    }
-
-    const row = [
-      `${index + 1}. ${String(file?.file_name || "uploaded_file")}`,
-      `input=${inputKey || inputLabel || "unknown"}`,
-      tags.length ? `tags=${tags.slice(0, 4).join(", ")}` : "tags=none",
-      inputHint ? `hint=${inputHint}` : "",
-      extractedSnippet ? `excerpt=${extractedSnippet}` : "",
-    ]
-      .filter(Boolean)
-      .join(" | ");
-    sampleLines.push(row);
-  }
-
-  const briefParts = [
-    fileCount > 0
-      ? `Uploaded company evidence: ${fileCount} file(s) mapped across ${inputCoverage.size} input area(s).`
-      : "Uploaded company evidence: none.",
-    topTags.length > 0 ? `Top uploaded tags: ${topTags.join(", ")}` : "",
-    sampleLines.length > 0 ? `Uploaded evidence samples:\n${sampleLines.join("\n")}` : "",
-  ].filter(Boolean);
 
   return {
-    fileCount,
+    fileCount: files.length,
     inputCoverageCount: inputCoverage.size,
-    brief: briefParts.join("\n\n").slice(0, 6000),
   };
 }
 
@@ -2995,6 +2934,8 @@ async function callOpenAIJSON(opts: {
     model: activeModel,
     temperature,
     max_output_tokens: outputBudget,
+    // SP-103 (2026-11-12): retention never left to the provider default.
+    store: false,
     input: [
       {
         role: "system",
@@ -5808,10 +5749,12 @@ Deno.serve(async (req) => {
       required: ["inputs"],
     };
 
-    // OPTION B (Phase 1): research-company is PUBLIC-ONLY. The uploaded/internal evidence
-    // (uploadedEvidenceContext.brief) NEVER enters the OpenAI pool — the internal layer and
-    // the public-vs-internal reconciliation are the local pipeline's domain. Public baseline
-    // is the sole evidence context here, regardless of researchContextMode.
+    // OPTION B (Phase 1): research-company is PUBLIC-ONLY. Uploaded/internal evidence never enters
+    // the OpenAI pool — the internal layer and the public-vs-internal reconciliation are the local
+    // pipeline's domain. Public baseline is the sole evidence context here, regardless of
+    // researchContextMode. Since 2026-11-12 this holds by construction: the uploaded-evidence
+    // context carries a COUNT and nothing else (see buildUploadedEvidenceContext), so there is no
+    // document text in this scope to leak into a prompt.
     const baselineContextIntro = "Public baseline context:";
 
     // B2.2a residual closed: the deep-rebuild path judges with the same memory the leaf

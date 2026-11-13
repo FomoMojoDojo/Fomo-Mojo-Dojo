@@ -1,7 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-export type DriftState = "aligned" | "slight_drift" | "material_drift";
+// 'withheld' (SP-108, 2026-11-12): the assessment was DECLINED, not made — the surface's new
+// evidence held a non-public row, so no outside model judged it and there is no verdict. It is
+// neither aligned nor drift, and it carries NO score (check_withheld_has_no_score).
+export type DriftState = "aligned" | "slight_drift" | "material_drift" | "withheld";
 
 export type DriftAssessmentSignal = {
   signal_id: string;
@@ -18,7 +21,8 @@ export type DriftAssessment = {
   company_id: string;
   surface_type: string;
   surface_id: string;
-  drift_score: number;
+  /** NULL exactly when drift_state is 'withheld' — enforced by check_withheld_has_no_score. */
+  drift_score: number | null;
   drift_state: DriftState;
   llm_confirmation: string | null;
   assessment_basis: DriftAssessmentBasis | null;
