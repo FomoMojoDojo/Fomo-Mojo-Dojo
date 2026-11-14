@@ -10,7 +10,7 @@
 // switch away from and back to the chosen customer set.
 import { expect, test, type Page, type Route } from "playwright/test";
 import { COMPANY_ID } from "../../playwright.config";
-import { openWorkspace } from "./helpers";
+import { fulfilledFrom, openWorkspace } from "./helpers";
 
 type Captured = { method: string; url: string; body: unknown };
 const SUPABASE = /\/(rest|storage|functions)\/v1\//;
@@ -45,14 +45,14 @@ async function guardWrites(page: Page, state: GuardState): Promise<Captured[]> {
       if (/\/rest\/v1\/odi_needs\?/.test(url) && (state.plantReviewOnFirstNeed || state.reviewed.size > 0)) {
         const res = await route.fetch();
         let rows: Array<Record<string, unknown>> = [];
-        try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+        const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
         if (state.plantReviewOnFirstNeed && rows.length > 0 && !state.plantedNeedId) state.plantedNeedId = String(rows[0].id);
         const out = rows.map((r) => {
           if (state.reviewed.has(String(r.id))) return { ...r, dependency_state: "fresh" };
           if (state.plantedNeedId && String(r.id) === state.plantedNeedId) return { ...r, dependency_state: "needs_review" };
           return r;
         });
-        return route.fulfill({ response: res, body: JSON.stringify(out), headers: { ...res.headers(), "content-type": "application/json" } });
+        return route.fulfill(fulfilledFrom(res, JSON.stringify(out)));
       }
       return route.continue();
     }

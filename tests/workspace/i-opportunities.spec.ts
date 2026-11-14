@@ -3,7 +3,7 @@
 // opportunity_score ≥ 10, 14 declared at confidence 0.95). The plant is a test-only path: the
 // odi_needs REST response is rewritten in flight (page.route) — never a DB write.
 import { expect, test, type Page } from "playwright/test";
-import { openWorkspace } from "./helpers";
+import { fulfilledFrom, openWorkspace } from "./helpers";
 
 type NeedRow = { id: string; desired_outcome: string; provenance_type?: string | null; opportunity_score?: number | null };
 
@@ -14,7 +14,7 @@ async function plantLowRow(page: Page): Promise<{ planted: () => NeedRow | null 
     const res = await route.fetch();
     const body = await res.text();
     let rows: unknown;
-    try { rows = JSON.parse(body); } catch { return route.fulfill({ response: res, body }); }
+    try { rows = JSON.parse(body); } catch { return route.fulfill(fulfilledFrom(res, body, false)); }
     if (Array.isArray(rows)) {
       const target = planted ?? (rows as NeedRow[]).find((r) => r.provenance_type === "public_research" && (r.opportunity_score ?? 0) >= 10) ?? null;
       if (target) {
@@ -22,7 +22,7 @@ async function plantLowRow(page: Page): Promise<{ planted: () => NeedRow | null 
         rows = (rows as NeedRow[]).map((r) => (r.id === target.id ? { ...r, opportunity_score: 3 } : r));
       }
     }
-    await route.fulfill({ response: res, body: JSON.stringify(rows), headers: { ...res.headers(), "content-type": "application/json" } });
+    await route.fulfill(fulfilledFrom(res, JSON.stringify(rows)));
   });
   return { planted: () => planted };
 }

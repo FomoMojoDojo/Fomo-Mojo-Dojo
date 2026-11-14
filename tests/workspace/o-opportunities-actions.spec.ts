@@ -15,7 +15,7 @@
 // NeedsOrgPanel.lift.test.tsx and DriftDetailPanel.gate.test.tsx against the same gates.
 import { expect, test, type Page, type Route } from "playwright/test";
 import { COMPANY_ID } from "../../playwright.config";
-import { openWorkspace } from "./helpers";
+import { fulfilledFrom, openWorkspace } from "./helpers";
 
 type Captured = { method: string; url: string; body: unknown };
 type NeedRow = { id: string; desired_outcome: string; odi_canonical_statement?: string | null; provenance_type?: string | null };
@@ -94,9 +94,9 @@ async function guardWrites(page: Page, plants: Plants = {}): Promise<Guard> {
       if (/\/rest\/v1\/odi_needs\?/.test(url) && /select=\*/.test(url)) {
         const res = await route.fetch();
         let rows: NeedRow[] = [];
-        try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+        const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
         if (rows.length) needs = rows;
-        return route.fulfill({ response: res, body: JSON.stringify(rows), headers: { ...res.headers(), "content-type": "application/json" } });
+        return route.fulfill(fulfilledFrom(res, JSON.stringify(rows)));
       }
       if (/\/rest\/v1\/surface_proposals\?/.test(url) && /surface_type=eq\.opportunity/.test(url) && /status=eq\.pending/.test(url)) {
         const rows: unknown[] = [];
@@ -117,10 +117,10 @@ async function guardWrites(page: Page, plants: Plants = {}): Promise<Guard> {
       if (plants.phaseFlow && /\/rest\/v1\/companies\?/.test(url)) {
         const res = await route.fetch();
         let rows: unknown;
-        try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+        const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
         const patch = (r: Record<string, unknown>) => (r.id === COMPANY_ID ? { ...r, program_phase: "flow" } : r);
         const out = Array.isArray(rows) ? rows.map((r) => patch(r as Record<string, unknown>)) : patch(rows as Record<string, unknown>);
-        return route.fulfill({ response: res, body: JSON.stringify(out), headers: { ...res.headers(), "content-type": "application/json" } });
+        return route.fulfill(fulfilledFrom(res, JSON.stringify(out)));
       }
       return route.continue();
     }

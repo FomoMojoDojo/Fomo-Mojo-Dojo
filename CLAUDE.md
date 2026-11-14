@@ -156,24 +156,19 @@ These files are long — search within them rather than reading top-to-bottom:
   the specs that happened to flake first, and it reads a fourth instance of a known race as a
   regression.
 
-  **The route-mock race.** A Playwright failure is read as this flake ONLY when ALL THREE hold:
-  - **(a)** the error is `route.fulfill` on a **disposed response** — i.e.
-    `route.fulfill: Fetch response has been disposed`, raised from a `route.fulfill({ response: res })`
-    after `res` was already consumed by `await res.text()`;
-  - **(b)** the commit under test changes **no file under `src/` or `tests/`**; and
-  - **(c)** the spec **passes when re-run alone**.
-
-  All three, measured, or it is a FAILURE — not a flake. No spec is pre-forgiven and none is excluded:
-  **twelve** specs share the consumed-response pattern (`d-jobmap-stage`, `i-opportunities`,
+  **The route-mock race — FIXED (SP-F42, BRIEF-17 commit 1, 2026-11-13). A recurrence is a FAILURE,
+  never a flake.** The twelve specs that shared the pattern (`d-jobmap-stage`, `i-opportunities`,
   `m-inputs-actions`, `m4-inputs-completion`, `n-jobmap-actions`, `n2-jobmap-market-door`,
   `o-opportunities-actions`, `p-routes-actions`, `s-jobmap-interview-frame`, `x2-inputs-interview`,
-  `x3-inputs-interview-controls`, `x4-inputs-interview-inference`), so any of them can raise it.
-  Observed in `x4-inputs-interview-inference` (2026-10-19) and in `x2-inputs-interview.spec.ts:194`
-  (2026-11-13, I-2 part A: failed in `[reduced]` while the SAME test passed in `[motion]`, no `src/`
-  or `tests/` file in the commit, 8 passed on solo re-run — all three held).
-  **SP-F42 filed: fix the class rather than name its instances** — fulfil from the parsed rows
-  (`route.fulfill({ json: rows })`), never from the response already drained by `await res.text()`.
-  Until that lands, the three conditions are the test.
+  `x3-inputs-interview-controls`, `x4-inputs-interview-inference`) used to `route.fulfill({ response:
+  res })` after draining `res` with `await res.text()`, and raised `route.fulfill: Fetch response has
+  been disposed` when the page moved on first (observed 2026-10-19 in `x4`, 2026-11-13 in `x2:194`).
+  Every one of them now fulfils from what was already read — status, headers and the body the spec
+  built — through `fulfilledFrom(res, body)` in `tests/workspace/helpers.ts`; no spec's assertions
+  changed. Proved by 3 runs of all twelve in both projects with 0 failures
+  (`~/dev/_diagnose-shots/2026-11-13/ingest/F42-review.md`). **The SP-252 three conditions no longer
+  forgive anything**: a `Fetch response has been disposed` in any spec is a real failure to fix, and a
+  new spec must not fulfil from a drained `APIResponse` (`grep -rn "response: res" tests/` is empty).
 
   **Two other flakes, each with its own mechanism** — the three conditions above do NOT apply to
   them, because they are not that race:

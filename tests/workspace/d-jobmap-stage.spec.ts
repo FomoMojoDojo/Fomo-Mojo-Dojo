@@ -1,7 +1,7 @@
 // (d) Job Map: choosing a later stage sets data-fr-stage="fwd", an earlier one "back", and the keyed
 // wrapper remounts; the stage list marks the current stage.
 import { expect, test } from "playwright/test";
-import { openWorkspace } from "./helpers";
+import { fulfilledFrom, openWorkspace } from "./helpers";
 
 test("job map stage direction and remount", async ({ page }) => {
   await openWorkspace(page, "job-map");
@@ -39,13 +39,13 @@ test("job map 'N High' count drops by one for a planted non-High row in the curr
   await page.route(/\/rest\/v1\/odi_needs/, async (route) => {
     const res = await route.fetch();
     let rows: unknown = null;
-    try { rows = JSON.parse(await res.text()); } catch { /* not json */ }
+    const resText = await res.text(); try { rows = JSON.parse(resText); } catch { /* not json */ }
     if (Array.isArray(rows)) {
       type R = { id: string; step_number: number; provenance_type?: string | null; opportunity_score?: number | null };
       const t = (rows as R[]).find((r) => r.id === plantedId) ?? (rows as R[]).find((r) => String(r.step_number) === String(currentStep) && r.provenance_type === "public_research" && (r.opportunity_score ?? 0) >= 10);
       if (t) { plantedId = t.id; rows = (rows as R[]).map((r) => (r.id === t.id ? { ...r, opportunity_score: 3 } : r)); }
     }
-    await route.fulfill({ response: res, body: JSON.stringify(rows), headers: { ...res.headers(), "content-type": "application/json" } });
+    await route.fulfill(fulfilledFrom(res, JSON.stringify(rows)));
   });
   await openWorkspace(page, "job-map");
   test.skip(plantedId === null, "no public_research High row on the current stage to plant");

@@ -9,7 +9,7 @@
 //      the page-side poll is gated; the server-side sweep is what completes an unwatched run
 // Vacuity: with the hook's `enabled` forced false on the page, a fails (no post, no transition).
 import { expect, test, type Page, type Route } from "playwright/test";
-import { openWorkspace } from "./helpers";
+import { fulfilledFrom, openWorkspace } from "./helpers";
 
 type Captured = { method: string; url: string; body: unknown };
 const SUPABASE = /\/(rest|storage|functions)\/v1\//;
@@ -25,13 +25,13 @@ async function plant(page: Page): Promise<{ captured: Captured[]; state: { synce
       if (/\/rest\/v1\/file_proposals\?/.test(url)) {
         const res = await route.fetch();
         let rows: Array<Record<string, unknown>> = [];
-        try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+        const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
         const filesRes = await page.request.get(url.replace(/\/file_proposals\?.*$/, `/input_files?select=id,file_name&file_name=eq.${encodeURIComponent(TARGET_FILE)}`), { headers: req.headers() });
         const files = (await filesRes.json()) as Array<{ id: string }>;
         const fileId = files[0]?.id;
         const base = rows[0] ?? {};
         const planted = { ...base, id: PLANT_ID, file_id: fileId, file_name: TARGET_FILE, status: "pending", summary: "Planted analysis summary for the completion proof.", evidence: [], framework_results: [], suggested_areas: [], candidate_positioning_updates: [], candidate_job_steps: [], candidate_needs: [], candidate_outcomes: [], possible_gaps: [], possible_routes: [], experiments_to_run: [], contradictions: [], questions_to_verify: [], confidence: "medium", applied_areas: [], reviewed_at: null, processing_error: null, dify_workflow_run_id: "planted-run", processing_state: state.synced ? "ready" : "running", processing_started_at: new Date(Date.now() - 60_000).toISOString(), processing_completed_at: state.synced ? new Date().toISOString() : null, created_at: new Date(Date.now() - 60_000).toISOString() };
-        return route.fulfill({ response: res, body: JSON.stringify([planted, ...rows]), headers: { ...res.headers(), "content-type": "application/json" } });
+        return route.fulfill(fulfilledFrom(res, JSON.stringify([planted, ...rows])));
       }
       return route.continue();
     }

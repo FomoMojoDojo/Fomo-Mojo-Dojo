@@ -11,7 +11,7 @@
 // Capability-false negatives are NOT drivable here (local admin bypass) — see RoutesOrgPanel.lift.test.tsx.
 import { expect, test, type Page, type Route } from "playwright/test";
 import { COMPANY_ID } from "../../playwright.config";
-import { openWorkspace } from "./helpers";
+import { fulfilledFrom, openWorkspace } from "./helpers";
 
 type Captured = { method: string; url: string; body: unknown };
 const SUPABASE = /\/(rest|storage|functions)\/v1\//;
@@ -37,7 +37,7 @@ async function guardWrites(page: Page, plants: Plants = {}): Promise<Guard> {
       if (/\/rest\/v1\/companies\?/.test(url) && (echo || plants.phaseFlow)) {
         const res = await route.fetch();
         let rows: unknown;
-        try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+        const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
         const patch = (r: Record<string, unknown>) => {
           if (r.id !== COMPANY_ID) return r;
           const out = { ...r };
@@ -50,7 +50,7 @@ async function guardWrites(page: Page, plants: Plants = {}): Promise<Guard> {
           return out;
         };
         const out = Array.isArray(rows) ? rows.map((r) => patch(r as Record<string, unknown>)) : patch(rows as Record<string, unknown>);
-        return route.fulfill({ response: res, body: JSON.stringify(out), headers: { ...res.headers(), "content-type": "application/json" } });
+        return route.fulfill(fulfilledFrom(res, JSON.stringify(out)));
       }
       if (/\/rest\/v1\/surface_drift_assessments\?/.test(url)) {
         // Record the real assessment id per surface so the Accept proof can name it. A read still in
@@ -63,7 +63,7 @@ async function guardWrites(page: Page, plants: Plants = {}): Promise<Guard> {
             const first = Array.isArray(row) ? row[0] : row;
             if (first?.id && first.surface_id) state.assessmentIds.set(first.surface_id, first.id);
           } catch { /* 406 no-row */ }
-          return await route.fulfill({ response: res, body: text });
+          return await route.fulfill(fulfilledFrom(res, text, false));
         } catch (err) {
           // The teardown race the comment above describes arrives under TWO names: Playwright says
           // "Target page, context or browser has been closed" when the page goes first, and

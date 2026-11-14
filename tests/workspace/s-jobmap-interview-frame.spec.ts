@@ -5,7 +5,7 @@
 // person's name absent from the market row's DOM, the quote on expand, and every other row untouched.
 import { expect, test, type Page, type Route } from "playwright/test";
 import { COMPANY_ID } from "../../playwright.config";
-import { openWorkspace } from "./helpers";
+import { fulfilledFrom, openWorkspace } from "./helpers";
 
 const SUPABASE = /\/(rest|storage|functions)\/v1\//;
 const CHOICE_READ = /\/rest\/v1\/operator_primary_selection\?.*domain=eq\.job_step_set/;
@@ -34,9 +34,9 @@ async function guard(page: Page, state: { captured: string[] }) {
       if (KEYED_NEEDS.test(url) && method === "GET") {
         const res = await route.fetch();
         let rows: Array<Record<string, unknown>> = [];
-        try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+        const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
         const key = new URL(url).searchParams.get("journey_key")!.replace(/^eq\./, "");
-        return route.fulfill({ response: res, body: JSON.stringify([...rows, ...fixtureRows(key)]), headers: { ...res.headers(), "content-type": "application/json" } });
+        return route.fulfill(fulfilledFrom(res, JSON.stringify([...rows, ...fixtureRows(key)])));
       }
       return route.continue();
     }

@@ -10,7 +10,7 @@
 // 2 only because Edgewood's five TEST-* interview files were archived at that moment (restored 15:19 UTC that day).
 import { expect, test, type Page, type Route } from "playwright/test";
 import { COMPANY_ID } from "../../playwright.config";
-import { openWorkspace } from "./helpers";
+import { fulfilledFrom, openWorkspace } from "./helpers";
 
 const PLANTED_FILES = [
   { id: "fixture-iv-1", file_name: "fixture-interview-customer.txt", file_type: "text/plain", file_path: "x/fixture-interview-customer.txt", tags: [], uploaded_at: "2026-09-20T12:00:00Z", archived_at: null, archive_reason: null, archive_source: null, is_interview: true },
@@ -35,16 +35,16 @@ async function guard(page: Page, opts: { collision?: boolean } = {}): Promise<Ca
       try {
         if (/\/rest\/v1\/input_files\?/.test(url) && !/archived_at=not\.is\.null/.test(url)) {
           const res = await route.fetch(); let rows: Array<Record<string, unknown>> = [];
-          try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+          const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
           const inputId = String(rows[0]?.input_id ?? "");
           for (const r of rows) if (r.archived_at == null && r.is_interview === true) live.interviewFiles.add(String(r.id));
-          return route.fulfill({ response: res, body: JSON.stringify([...PLANTED_FILES.map((f) => ({ ...f, input_id: inputId })), ...rows]), headers: { ...res.headers(), "content-type": "application/json" } });
+          return route.fulfill(fulfilledFrom(res, JSON.stringify([...PLANTED_FILES.map((f) => ({ ...f, input_id: inputId })), ...rows])));
         }
         if (/\/rest\/v1\/interview_records\?/.test(url)) {
           const res = await route.fetch(); let rows: Array<Record<string, unknown>> = [];
-          try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+          const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
           for (const r of rows) if (r.retracted_at != null && r.input_file_id != null) live.retractedFileIds.add(String(r.input_file_id));
-          return route.fulfill({ response: res, body: JSON.stringify([...rows, ...PLANTED_RECORDS]), headers: { ...res.headers(), "content-type": "application/json" } });
+          return route.fulfill(fulfilledFrom(res, JSON.stringify([...rows, ...PLANTED_RECORDS])));
         }
       } catch { return; }
       return route.continue();

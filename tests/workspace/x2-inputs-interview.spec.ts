@@ -15,7 +15,7 @@
 import { expect, test, type Page, type Route } from "playwright/test";
 import { createHash } from "node:crypto";
 import { COMPANY_ID } from "../../playwright.config";
-import { openWorkspace } from "./helpers";
+import { fulfilledFrom, openWorkspace } from "./helpers";
 
 type Captured = { method: string; url: string; body: unknown };
 const SUPABASE = /\/(rest|storage|functions)\/v1\//;
@@ -33,13 +33,13 @@ async function guard(page: Page, planted: Planted): Promise<Captured[]> {
       try {
         if (planted.file && /\/rest\/v1\/input_files\?/.test(url) && !/archived_at=not\.is\.null/.test(url)) {
           const res = await route.fetch(); let rows: Array<Record<string, unknown>> = [];
-          try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
-          return route.fulfill({ response: res, body: JSON.stringify([...rows, planted.file]), headers: { ...res.headers(), "content-type": "application/json" } });
+          const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
+          return route.fulfill(fulfilledFrom(res, JSON.stringify([...rows, planted.file])));
         }
         if (planted.record && /\/rest\/v1\/interview_records\?/.test(url)) {
           const res = await route.fetch(); let rows: Array<Record<string, unknown>> = [];
-          try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
-          return route.fulfill({ response: res, body: JSON.stringify([...rows, planted.record]), headers: { ...res.headers(), "content-type": "application/json" } });
+          const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
+          return route.fulfill(fulfilledFrom(res, JSON.stringify([...rows, planted.record])));
         }
       } catch { return; }
       return route.continue();

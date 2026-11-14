@@ -4,7 +4,7 @@
 // functions. Reads pass through to the real fixture (Edgewood), with one exception noted per test.
 import { expect, test, type Page, type Route } from "playwright/test";
 import path from "node:path";
-import { openWorkspace } from "./helpers";
+import { fulfilledFrom, openWorkspace } from "./helpers";
 
 type Captured = { method: string; url: string; body: unknown };
 const SUPABASE = /\/(rest|storage|functions)\/v1\//;
@@ -23,11 +23,11 @@ async function guardWrites(page: Page, state: { archived: Set<string> }): Promis
         // The archived list is filtered server-side; fetch it unfiltered so the mock-archived rows exist.
         const res = await route.fetch(wantArchived ? { url: url.replace(/&?archived_at=not\.is\.null/, "") } : undefined);
         let rows: Array<Record<string, unknown>> = [];
-        try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+        const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
         const out = rows
           .map((r) => (state.archived.has(String(r.id)) ? { ...r, archived_at: "2026-09-11T00:00:00Z" } : r))
           .filter((r) => (wantArchived ? r.archived_at != null : r.archived_at == null));
-        return route.fulfill({ response: res, body: JSON.stringify(out), headers: { ...res.headers(), "content-type": "application/json" } });
+        return route.fulfill(fulfilledFrom(res, JSON.stringify(out)));
       }
       return route.continue();
     }
@@ -124,9 +124,9 @@ test("d. filters narrow the table on a mixed-type response and restore on All", 
     if (route.request().method() !== "GET") return route.continue();
     const res = await route.fetch();
     let rows: Array<Record<string, unknown>> = [];
-    try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+    const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
     if (rows.length > 1) rows = rows.map((r, i) => (i === 0 ? { ...r, tags: [...((r.tags as string[]) ?? []), "Intake"] } : r));
-    await route.fulfill({ response: res, body: JSON.stringify(rows), headers: { ...res.headers(), "content-type": "application/json" } });
+    await route.fulfill(fulfilledFrom(res, JSON.stringify(rows)));
   });
   await openWorkspace(page, "inputs");
   await operatorOn(page);

@@ -20,7 +20,7 @@
 //   (u9) a page load never offers M1 before its first planned-rows read has answered (a slow read → no M1, then M1).
 import { expect, test, type Page, type Route } from "playwright/test";
 import { COMPANY_ID } from "../../playwright.config";
-import { openWorkspace } from "./helpers";
+import { fulfilledFrom, openWorkspace } from "./helpers";
 
 const FIXTURE_TEXT = "FIXTURE TRANSCRIPT (not a real interview).\nSpeaker A: a throwaway line.\nSpeaker B: another throwaway line.\n";
 const REASON = "FIXTURE-REASON-NEVER-ON-SCREEN";
@@ -44,14 +44,14 @@ async function guard(page: Page, planted: Planted, infer: InferStub, opts: { fai
       try {
         if (/\/rest\/v1\/input_files\?/.test(url) && !/archived_at=not\.is\.null/.test(url)) {
           const res = await route.fetch(); let rows: Array<Record<string, unknown>> = [];
-          try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
+          const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
           const inputId = String(rows[0]?.input_id ?? "");
-          return route.fulfill({ response: res, body: JSON.stringify([...PLANTED_FILES.map((f) => ({ ...f, input_id: inputId })), ...rows]), headers: { ...res.headers(), "content-type": "application/json" } });
+          return route.fulfill(fulfilledFrom(res, JSON.stringify([...PLANTED_FILES.map((f) => ({ ...f, input_id: inputId })), ...rows])));
         }
         if (/\/rest\/v1\/interview_records\?/.test(url)) {
           const res = await route.fetch(); let rows: Array<Record<string, unknown>> = [];
-          try { rows = JSON.parse(await res.text()); } catch { return route.fulfill({ response: res }); }
-          return route.fulfill({ response: res, body: JSON.stringify([...rows, ...planted.records]), headers: { ...res.headers(), "content-type": "application/json" } });
+          const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
+          return route.fulfill(fulfilledFrom(res, JSON.stringify([...rows, ...planted.records])));
         }
         if (/\/rest\/v1\/integrity_runs\?/.test(url) && /component=eq\.interview_market_inference/.test(url)) {
           if (opts.runsDelayMs) { await new Promise((r) => setTimeout(r, opts.runsDelayMs)); opts.runsDelayMs = 0; } // only the FIRST read is slow

@@ -1,4 +1,4 @@
-import { expect, type Page } from "playwright/test";
+import { expect, type APIResponse, type Page } from "playwright/test";
 import { execFileSync } from "node:child_process";
 import { COMPANY_ID } from "../../playwright.config";
 
@@ -69,4 +69,21 @@ export function plantInterviewRecord(columns: Record<string, SqlValue>): string 
   const id = psql(`insert into interview_records (${names}) values (${values}) returning id`);
   expect(id, `plantInterviewRecord returned no id for ${names}`).toMatch(/^[0-9a-f-]{36}$/);
   return id;
+}
+
+/**
+ * SP-F42: the fulfil options for a mocked read, built from what was already read off the fetched
+ * response — its status, its headers and the body the spec passes in — never from the APIResponse
+ * itself. Fulfilling with the fetched response object after `await res.text()` made Playwright go
+ * back to the drained response, and when the page had moved on it threw
+ * `route.fulfill: Fetch response has been disposed` (R35, the route-mock race).
+ * content-length and content-encoding describe the upstream bytes, not this body, so they are dropped.
+ * `json` (the default) marks the body application/json; pass false to keep the upstream content type.
+ */
+export function fulfilledFrom(res: APIResponse, body: string, json = true): { status: number; headers: Record<string, string>; body: string } {
+  const headers: Record<string, string> = { ...res.headers() };
+  delete headers["content-length"];
+  delete headers["content-encoding"];
+  if (json) headers["content-type"] = "application/json";
+  return { status: res.status(), headers, body };
 }
