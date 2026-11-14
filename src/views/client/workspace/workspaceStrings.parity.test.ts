@@ -61,3 +61,22 @@ describe("Market — S-MKT-1 (signed 2026-11-14, SP-300)", () => {
     expect(page).not.toContain("Not enough evidence yet to say");
   });
 });
+
+describe("Positioning — S-POS-1 (signed 2026-11-13, BRIEF-17 SP-329)", () => {
+  it("byte-identical", () => {
+    expect(WORKSPACE_STRINGS.positioningOutsideDisagree).toBe("Where outside voices disagree");
+  });
+  it("every surface renders it from the register and carries no copy of its own", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    for (const rel of [
+      "../workshop/tabs/PositioningOrgPanel.tsx",
+      "../workshop/tabs/ComparePanel.tsx",
+      "../../Positioning/index.tsx",
+    ]) {
+      const src = readFileSync(join(__dirname, rel), "utf8");
+      expect(src, rel).toContain("WORKSPACE_STRINGS.positioningOutsideDisagree");
+      expect(src, rel).not.toContain("Where outside voices disagree");
+    }
+  });
+});

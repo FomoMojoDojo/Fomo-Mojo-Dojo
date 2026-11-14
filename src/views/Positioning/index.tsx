@@ -38,6 +38,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
+import { contradictedAttributes, isContradictedAttribute } from "@/lib/attributeVerdict";
+import { WORKSPACE_STRINGS } from "@/views/client/workspace/workspaceNav";
 
 const c = {
   bg: "#faf7f6",
@@ -505,9 +507,12 @@ function AttributesBlock({
   };
 
   if (Array.isArray(items) && items.length > 0) {
+    // SP-329: a contradicted attribute is skipped here — by position, so every index the suggestion
+    // handlers and highlights use still names the same stored attribute — and listed under S-POS-1.
+    const disagreements = contradictedAttributes(items);
     return (
       <div className="space-y-0">
-        {items.map((item, index) => (
+        {items.map((item, index) => isContradictedAttribute(item) ? null : (
           <OptionCard
             key={item.id || `attr-${index}`}
             title={item.name}
@@ -525,6 +530,20 @@ function AttributesBlock({
             saving={saving}
           />
         ))}
+        {disagreements.length > 0 && (
+          <div data-testid="positioning-outside-disagree" className="pt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">{WORKSPACE_STRINGS.positioningOutsideDisagree}</p>
+            {disagreements.map((item, index) => (
+              <OptionCard
+                key={item.id || `disagree-${index}`}
+                title={item.name}
+                detail={item.description || ""}
+                accent={META.unique_attributes.accent}
+                highlighted={false}
+              />
+            ))}
+          </div>
+        )}
       </div>
     );
   }

@@ -96,7 +96,7 @@ function normalizeItems(value: unknown): PositioningItem[] {
       ).trim();
       if (!name) return null;
       const evidenceStatus =
-        entry?.evidence_status === "corroborated" || entry?.evidence_status === "self_reported" || entry?.evidence_status === "declared"
+        entry?.evidence_status === "corroborated" || entry?.evidence_status === "self_reported" || entry?.evidence_status === "declared" || entry?.evidence_status === "contradicted"
           ? entry.evidence_status
           : undefined;
       return {

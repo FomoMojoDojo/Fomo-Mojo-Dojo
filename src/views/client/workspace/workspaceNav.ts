@@ -173,6 +173,9 @@ export const WORKSPACE_STRINGS = {
   /** S-MKT-1 (signed 2026-11-14, SP-300) — shown under "What they are hiring for" in place of the canned
    *  jtbdFromJourneyTitle default-branch sentence, which rests on no evidence (SP-F46). */
   marketNotEnoughEvidence: "Not enough evidence yet to say what this market is hiring for.",
+  /** S-POS-1 (signed 2026-11-13, BRIEF-17 SP-329) — heading of the separate positioning list that holds
+   *  the attributes the judge found `contradicted`; they never render under "What makes you different". */
+  positioningOutsideDisagree: "Where outside voices disagree",
   customerTensionsMapped: "Customer tensions mapped",
   // ── No public site (2026-09-16) — DRAFT pending the operator's signature at screenshot ──
   /** Add-Client checkbox label (given by the operator). */

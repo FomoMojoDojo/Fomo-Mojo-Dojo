@@ -430,6 +430,72 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── SP-332 (BRIEF-17): JUDGE ONLY — re-run the attribute judge on the STORED canvas ──────────
+    // Regenerates nothing: the stored attributes are judged against the same evidence a full refresh
+    // would use (pinned baseline + store supplement), and only each attribute's evidence_status and
+    // basis_urls are written back. The canvas must pass the same external gate as a full refresh —
+    // an operator-edited or non-public canvas is refused, never sent (SP-323).
+    if ((body as Record<string, unknown>)?.judge_only === true) {
+      const { data: canvasRow } = await supabase
+        .from("positioning_canvases")
+        .select("id, unique_attributes_json, artifact_role, provenance_type, operator_edited_at")
+        .eq("company_id", company_id)
+        .eq("artifact_role", "market_read")
+        .eq("source_direction_key", "")
+        .maybeSingle();
+      if (!canvasRow) return jsonResponse({ error: "no_canvas" }, 404);
+      const canvasGate = await gateStrategyArtifactForExternal({
+        supabase: supabase as unknown as { from: (t: string) => any },
+        companyId: String(company_id),
+        artifact: canvasRow as { artifact_role?: string | null; provenance_type?: string | null; operator_edited_at?: string | null },
+        artifactKind: "positioning_canvas",
+        consumer: "refresh-positioning:judge_only",
+      });
+      if (!canvasGate.admissible) return jsonResponse({ status: "withheld", reason: "canvas_not_externally_admissible" }, 409);
+      const storedAttrs: Array<Record<string, unknown>> = Array.isArray((canvasRow as { unique_attributes_json?: unknown }).unique_attributes_json)
+        ? ((canvasRow as { unique_attributes_json: Array<Record<string, unknown>> }).unique_attributes_json)
+        : [];
+      if (dry_run) return jsonResponse({ status: "dry_run", judge_only: true, attributes: storedAttrs.length });
+      const verdicts = await judgeAttributeEvidence({
+        apiKey: openaiKey,
+        model: openaiModel,
+        baselineResultJson,
+        attributes: storedAttrs as Array<{ name?: string; description?: string }>,
+        companyWebsite: website,
+        supabase,
+        companyId: company_id,
+        supplement: storeSupplement,
+        runRef: baselineRun?.id != null ? String(baselineRun.id) : null,
+        onUsage: (usedModel, usage) =>
+          void recordModelCall(supabase as unknown as { from: (t: string) => any }, {
+            companyId: String(company_id),
+            callSite: "refresh-positioning:judge_only",
+            usage: openaiRecord(usedModel, usage),
+          }),
+      });
+      const verdictAt = new Map(verdicts.map((v) => [v.index, v]));
+      const judgedAttrs = storedAttrs.map((attribute, index) => ({
+        ...attribute,
+        evidence_status: verdictAt.get(index)?.evidence_status ?? "self_reported",
+        basis_urls: verdictAt.get(index)?.basis_urls ?? [],
+      }));
+      const { error: judgedErr } = await supabase
+        .from("positioning_canvases")
+        .update({ unique_attributes_json: judgedAttrs, updated_at: new Date().toISOString() })
+        .eq("id", (canvasRow as { id: string }).id);
+      if (judgedErr) return jsonResponse({ error: "judge_write_failed", detail: judgedErr.message }, 500);
+      const tally = (status: string) => judgedAttrs.filter((a) => a.evidence_status === status).length;
+      return jsonResponse({
+        status: "ok",
+        judge_only: true,
+        canvas_id: (canvasRow as { id: string }).id,
+        verdicts: judgedAttrs.map((a, index) => ({ index, evidence_status: a.evidence_status, citations: (a.basis_urls as string[]).length })),
+        corroborated: tally("corroborated"),
+        self_reported: tally("self_reported"),
+        contradicted: tally("contradicted"),
+      });
+    }
+
     // --- Claim provenance: orchestrator-provided, else self-derived (standalone runs) ---
     // The tagged brief is what shapes the gen toward qualified claims; without it a
     // standalone refresh would regenerate from an untagged brief and re-overclaim.
@@ -614,6 +680,7 @@ Deno.serve(async (req) => {
         total: uniqueAttributes.length,
         corroborated: uniqueAttributes.filter((a) => a.evidence_status === "corroborated").length,
         self_reported: uniqueAttributes.filter((a) => a.evidence_status === "self_reported").length,
+        contradicted: uniqueAttributes.filter((a) => a.evidence_status === "contradicted").length,
         disagreements: disagreements.length,
         disagreement_detail: disagreements,
       });

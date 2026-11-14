@@ -4,6 +4,7 @@ import { useReadState } from "@/hooks/useAsyncRead";
 import { ActData } from "@/components/client-view/story/ActData";
 import type { PositioningItem } from "@/lib/types";
 import ActDefinition from "@/components/client-view/story/ActDefinition";
+import { strengthAttributes } from "@/lib/attributeVerdict";
 
 /*
  * MPD-3 — Act B: the positioning we can see (Outside MovementShell, INFERRED
@@ -86,7 +87,8 @@ export default function PositionAct({ bare = false }: { bare?: boolean } = {}) {
       {!bare && <p className="cvs-act-eyebrow">{EYEBROW}</p>}
       <ActData state={canvasState} loading={<p className="cvs-hero-empty">Reading your positioning…</p>}>
         {(item) => {
-          const attrs = item?.unique_attributes ?? [];
+          // SP-329: a contradicted attribute never appears among the differentiators, in any group.
+          const attrs = strengthAttributes(item?.unique_attributes);
           // Leak guard: ONLY an exact 'corroborated' verdict may read as outside-backed.
           // Everything that is neither corroborated nor self_reported (undefined/absent,
           // or any unexpected value) falls to "not yet checked" — never to yours-to-prove.

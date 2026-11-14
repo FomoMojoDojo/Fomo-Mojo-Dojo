@@ -26,6 +26,7 @@ import {
   MAX_FRAMEWORK_ATTEMPTS,
 } from "../_shared/frameworkRetry.ts";
 import { retireEarlierAnalysesOfFile } from "../_shared/retireProposals.ts";
+import { queueCandidatesForAnalysis } from "../_shared/candidateQueue.ts";
 import { FILE_ANALYSIS_VERSION } from "../../../src/lib/fileAnalysis.ts";
 
 const corsHeaders = {
@@ -1277,11 +1278,30 @@ async function supersedeEarlierAnalyses(args: {
 }): Promise<void> {
   try {
     const r = await retireEarlierAnalysesOfFile(args.supabase as never, args.companyId, args.fileId, args.proposalId);
-    if (r.proposals > 0) {
+    if (r.proposals > 0 || r.queue_rows > 0) {
       console.log("[dify-analyze-file] SP-301: earlier analyses superseded", JSON.stringify({ proposalId: args.proposalId, ...r }));
     }
   } catch (error) {
     console.warn("[dify-analyze-file] SP-301: supersede of earlier analyses FAILED; they stay live until the next analysis:",
+      args.proposalId, String((error as Error)?.message ?? error));
+  }
+}
+
+// ── SP-324 (BRIEF-17): the live analysis's candidates go to the review queue ─────────────────────
+// After minting and after the earlier analyses stand down, so the items can name the signals they rest
+// on and only the live analysis queues. Same failure policy as above: the analysis is complete and
+// correct whether or not its candidates were queued, and queueing is idempotent, so a missed queue is
+// filled by running it again — it never fails the analysis.
+async function queueAnalysisCandidates(args: {
+  supabase: { from: (t: string) => any };
+  companyId: string;
+  proposalId: string;
+}): Promise<void> {
+  try {
+    const r = await queueCandidatesForAnalysis(args.supabase, args.companyId, args.proposalId);
+    console.log("[dify-analyze-file] SP-324: candidates queued", JSON.stringify({ proposalId: args.proposalId, ...r }));
+  } catch (error) {
+    console.warn("[dify-analyze-file] SP-324: queueing candidates FAILED; the analysis stands:",
       args.proposalId, String((error as Error)?.message ?? error));
   }
 }
@@ -1592,6 +1612,11 @@ async function persistDifyResult(params: {
       supabase: supabase as unknown as { from: (t: string) => any; rpc?: any },
       companyId,
       fileId: String((proposalRow as { file_id?: unknown }).file_id ?? "").trim(),
+      proposalId,
+    });
+    await queueAnalysisCandidates({
+      supabase: supabase as unknown as { from: (t: string) => any },
+      companyId,
       proposalId,
     });
   } else {

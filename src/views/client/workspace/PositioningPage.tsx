@@ -9,11 +9,13 @@ import { WorkspaceAbsent } from "./absent";
 import { NumberedCells } from "./readBands";
 import { ReadBand, WorkspaceReadPage } from "./WorkspaceReadPage";
 import { WORKSPACE_STRINGS } from "./workspaceNav";
+import { strengthAttributes } from "@/lib/attributeVerdict";
 
 export default function PositioningPage() {
   const { activeCompany } = useCompany();
   const { item, loading } = usePositioningCanvas(activeCompany?.id);
-  const points = item?.unique_attributes.filter((p) => p.name?.trim()).map((p) => ({ title: p.name, body: p.description?.trim() || null })) ?? [];
+  // SP-329: a contradicted attribute is not something that holds the position up.
+  const points = strengthAttributes(item?.unique_attributes).filter((p) => p.name?.trim()).map((p) => ({ title: p.name, body: p.description?.trim() || null })) ?? [];
   const audience = item?.best_fit_customers?.trim() || null;
   const alternatives = item?.competitive_alternatives.map((a) => a.name).filter((n) => n?.trim()) ?? [];
   const oldTag = item?.current_tagline?.trim() || null;

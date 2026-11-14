@@ -4,6 +4,7 @@ import { ArrowLeft, Building2, Globe } from "lucide-react";
 import { useCompany } from "@/hooks/useCompany";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import CompanyFilesPanel from "@/components/admin/CompanyFilesPanel";
+import CandidateReviewQueue from "@/components/admin/CandidateReviewQueue";
 import TopNav from "@/components/layout/TopNav";
 
 const c = {
@@ -163,6 +164,7 @@ export default function AdminCompanyFiles() {
         </section>
 
         <CompanyFilesPanel companyId={company.id} companyName={company.name} mode="full" />
+        <CandidateReviewQueue companyId={company.id} />
       </div>
     </div>
   );

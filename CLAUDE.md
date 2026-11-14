@@ -252,8 +252,9 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   helper `diagnose-data-guard` invokes, never an independent member) — classifies on BOTH the exit
   code and the printed verdict, and puts `~/.deno/bin` on PATH, because `interview-parser-guard` runs
   `deno test` bare and reads RED without it for no code reason. Source the three env files first.
-- **The guard sweep is 49 GREEN / 4 RED of 53, and the FOUR standing REDs are named** (re-measured
-  2026-11-14 after SP-301 added `reanalysis-supersede-guard`; 48 / 4 of 52 after I-2 added
+- **The guard sweep is 51 GREEN / 4 RED of 55, and the FOUR standing REDs are named** (re-measured
+  2026-11-14 after BRIEF-17 commit 2 added `candidate-queue-guard` and `strengths-contradicted-guard`;
+  49 / 4 of 53 after SP-301 added `reanalysis-supersede-guard`; 48 / 4 of 52 after I-2 added
   `ingest-chunking-guard` and `ingest-merge-guard`; was 46 / 4 of 50 after
   I-1, 45 / 4 of 49 after Part B added `ingest-partial-honesty-guard`, 44 / 4 of 48 with
   `caller-authz-guard` and 43 / 4 of 47 before either, all three env files sourced;
@@ -334,12 +335,41 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   hard-codes that row as "No outside data", so no gap badge can appear. Measured: Charter item 04;
   3 companies have an item whose cited evidence carries a negative sentiment (a floor — sentiment is
   recorded on ~12% of outside signals).
+  **Addressed (BRIEF-17 commit 2, SP-328..SP-330):** the attribute judge is three-valued, sharing the
+  claim judge's one `contradictedDefinition()` plus "the attribute is itself a negative pattern";
+  `contradicted` needs a valid citation like `corroborated`. A contradicted attribute never renders in
+  any "What makes you different" list (`src/lib/attributeVerdict.ts`, every reader routed through it —
+  `strengths-contradicted-guard`); the positioning panels list it under S-POS-1 "Where outside voices
+  disagree"; ComparePanel reads the judged state. Charter's re-judge (2026-11-14): item 04 →
+  `contradicted` (4 citations), the other three stay `corroborated`. `refresh-positioning {judge_only:
+  true}` re-judges a stored canvas without regenerating it, ledgered as `refresh-positioning:judge_only`.
 
 - **SP-F48 filed (2026-11-14) — no step moves a file proposal's candidate needs, job steps, routes or
   positioning updates into the map.** They are stored on the `file_proposals` row for display only.
   Accepting the proposal (`acceptFileProposal`, `src/hooks/useInputActions.ts`) writes the file's tags
   and the proposal's `status` / `applied_areas` and nothing else. Only signals and claims reach the map,
   automatically, at persist.
+  **Addressed (BRIEF-17 commit 2, SP-324..SP-327):** when the live analysis of a file is `ready`, each
+  candidate is queued `pending` in `surface_proposals` (`candidate_need | _job_step | _outcome | _route |
+  _positioning`, `current_state` NULL) naming the analysis and the signals its evidence came from
+  (`_shared/candidateQueue.ts`, no model call); a re-analysis supersedes the older analysis's PENDING
+  rows only. A candidate reaches the map only through `public.accept_candidate_proposal()` (SECURITY
+  INVOKER, admin-only, need / job step / outcome): a `file_derived` row with its evidence ids and
+  `evidence_voice`, and a need gets NO `service_state` from it. Route and positioning candidates can be
+  reviewed and rejected but have no accept yet. The operator's queue is on /admin/companies/:id/files.
+  Guard: `candidate-queue-guard` (q4 asserts fleet-wide that no map row rests on an unaccepted proposal).
+
+- **FINDING (BRIEF-17, 2026-11-14) — an uploaded THIRD-PARTY document's signals read as PUBLIC to the
+  router.** `signalProvenance(band, voice)` (`src/lib/modelRouter/resolveModel.ts:59`) sees only band +
+  voice, and the upload voice gate mints a document it classes `third_party` as `outside` /
+  `outside_voice_about_client`. So a private uploaded file's signals pass as `public_observed`, and any
+  router consumer would admit them to an outside model. Measured: 27 live signals on 2 companies
+  (Charter 19, from its 10-Q). No outside call has carried them on Charter (its last outside call,
+  2026-11-12 16:10, predates the 10-Q's signals). `reconcile-map-evidence` labels every uploaded signal
+  non-public; the router itself is unchanged. Wants a ruling.
+  On Charter the 10-Q was classed `third_party` by the classifier; SP-321 ruled the filings are Charter's
+  own voice, so an operator override row (`doc_voice_verdicts` `6cfbf94a`, `client_voice`) now records
+  that. Its 19 existing signals keep their stored band until the file is next analysed (no re-mint).
 
 - **SP-F49 filed (2026-11-14) — re-analysing a file leaves the earlier analysis's signals and claims
   live.** Each analysis inserts a new proposal and mints afresh without superseding the previous

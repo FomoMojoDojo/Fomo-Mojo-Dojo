@@ -107,7 +107,7 @@ TS
       && ok "(r2) the older proposal row itself is unchanged — kept as a record (SP-310)" || bad "(r2) the older proposal row was changed"
     [ "$(q "select count(*) from provenance_remints where proposal_id='$OLD' and kind='retirement' and reason='$REASON';")" = "1" ] \
       && ok "(r2) one retirement ledger row records the decision" || bad "(r2) no retirement ledger row"
-    echo "$OUT" | grep -q '"second":{"proposals":0,"signals":0,"claims_struck":0}' \
+    echo "$OUT" | grep -q '"second":{"proposals":0,"signals":0,"claims_struck":0,"queue_rows":0}' \
       && ok "(r2) a second run changes nothing — idempotent" || bad "(r2) a second run changed something: $OUT"
   fi
   # Teardown: this run's children, each in its own statement. The company stays, HELD (E2). Claims and

@@ -15,6 +15,8 @@ import {
   OutsideSignalItems,
   AnnotatableQuestionList,
 } from "../primitives";
+import { contradictedAttributes, strengthAttributes, withContradicted } from "@/lib/attributeVerdict";
+import { WORKSPACE_STRINGS } from "@/views/client/workspace/workspaceNav";
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
@@ -71,6 +73,59 @@ function CmpOutsideValue({ value }: { value: string | null | undefined }) {
   return text
     ? <div className="crpv-ws-readonly">{text}</div>
     : <div className="crpv-ws-cmp-none">No outside data</div>;
+}
+
+// SP-330 (BRIEF-17): the differentiators row's outside cell shows what the attribute judge found,
+// per attribute, instead of a hard-coded "No outside data". Contradicted attributes are grouped under
+// S-POS-1 and never listed as strengths. Labels other than S-POS-1 are operator-only: this panel is
+// reached only through the admin workshop route.
+const ATTRIBUTE_VERDICT_LABEL: Record<string, string> = {
+  corroborated: "Echoed by outside voices",
+  self_reported: "Yours to prove",
+  declared: "Declared",
+};
+const ATTRIBUTE_NOT_CHECKED = "Not checked yet";
+
+export function attributesAlignment(items: PositioningItem[]): GapAlignment | undefined {
+  if (!items.some((i) => i.evidence_status)) return undefined;
+  if (items.some((i) => i.evidence_status === "contradicted")) return "gap";
+  if (items.some((i) => i.evidence_status !== "corroborated")) return "drift";
+  return "aligned";
+}
+
+export function AttributeVerdictCell({ items }: { items: PositioningItem[] }) {
+  if (!items.length) return <div className="crpv-ws-cmp-none">No outside data</div>;
+  const strengths = strengthAttributes(items);
+  const disagree = contradictedAttributes(items);
+  return (
+    <div data-testid="compare-attribute-verdicts">
+      {strengths.length > 0 && (
+        <div className="crpv-ws-readonly-list">
+          {strengths.map((item) => (
+            <div key={item.id} className="crpv-ws-outside-item" data-testid="compare-attribute-strength">
+              <span className="crpv-ws-outside-bullet">·</span>
+              <span className="crpv-ws-outside-text">
+                {item.name} — {ATTRIBUTE_VERDICT_LABEL[item.evidence_status ?? ""] ?? ATTRIBUTE_NOT_CHECKED}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {disagree.length > 0 && (
+        <div data-testid="compare-attribute-disagree">
+          <label className="crpv-ws-label">{WORKSPACE_STRINGS.positioningOutsideDisagree}</label>
+          <div className="crpv-ws-readonly-list">
+            {disagree.map((item) => (
+              <div key={item.id} className="crpv-ws-outside-item">
+                <span className="crpv-ws-outside-bullet">·</span>
+                <span className="crpv-ws-outside-text">{item.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── StrategyCompare ──────────────────────────────────────────────────────────
@@ -264,12 +319,13 @@ export function PositioningCompare({
       />
       <CompareFieldRow
         label="What makes you different"
-        outsideCell={<div className="crpv-ws-cmp-none">No outside data</div>}
+        alignment={attributesAlignment(canvas?.unique_attributes ?? [])}
+        outsideCell={<AttributeVerdictCell items={canvas?.unique_attributes ?? []} />}
         orgCell={
           <ListEditor
             label="What makes you different"
-            items={canvas?.unique_attributes ?? []}
-            onSave={async (items) => { await updateItemsField("unique_attributes_json", items); flash("attributes"); }}
+            items={strengthAttributes(canvas?.unique_attributes)}
+            onSave={async (items) => { await updateItemsField("unique_attributes_json", withContradicted(items, canvas?.unique_attributes)); flash("attributes"); }}
             addPlaceholder="Add a differentiator…"
             isSaved={savedField === "attributes"}
           />

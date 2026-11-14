@@ -14,6 +14,7 @@
 // writes no ledger row. dry_run computes and reports every step and writes nothing.
 import { claimsWhollyBackedBy, isRetirementReason } from "../../../src/lib/retirementPlan.ts";
 import { snapshotMojoScore } from "./snapshotMojoScore.ts";
+import { retirePendingCandidates } from "./candidateQueue.ts";
 
 type Sb = { from: (t: string) => any; rpc: (fn: string, args: Record<string, unknown>) => any };
 
@@ -222,8 +223,8 @@ export async function retireEarlierAnalysesOfFile(
   companyId: string,
   fileId: string,
   keepProposalId: string,
-): Promise<{ proposals: number; signals: number; claims_struck: number }> {
-  const none = { proposals: 0, signals: 0, claims_struck: 0 };
+): Promise<{ proposals: number; signals: number; claims_struck: number; queue_rows: number }> {
+  const none = { proposals: 0, signals: 0, claims_struck: 0, queue_rows: 0 };
   if (!fileId || !keepProposalId) return none;
   const { data, error } = await supabase
     .from("file_proposals").select("id")
@@ -231,9 +232,13 @@ export async function retireEarlierAnalysesOfFile(
   if (error) throw new Error(`earlier analyses lookup failed: ${error.message}`);
   const earlier = ((data ?? []) as Array<{ id: unknown }>).map((r) => String(r.id));
   if (!earlier.length) return none;
+  // SP-325 (BRIEF-17): the earlier analyses' still-pending review-queue rows stand down too — every
+  // earlier analysis, including one whose signals were already retired. Accepted and rejected rows
+  // are the operator's decisions and are never touched.
+  const queueRows = await retirePendingCandidates(supabase, companyId, earlier, keepProposalId);
   const plans = await planRetirement(supabase, companyId, earlier, REANALYSIS_REASON);
   const toRetire = plans.filter((p) => p.change === "retire");
-  if (!toRetire.length) return none;
+  if (!toRetire.length) return { ...none, queue_rows: queueRows };
   const applied = await applyRetirement(supabase, companyId, toRetire, {
     reason: REANALYSIS_REASON,
     actor: REANALYSIS_ACTOR,
@@ -243,5 +248,6 @@ export async function retireEarlierAnalysesOfFile(
     proposals: applied.length,
     signals: applied.reduce((n, a) => n + a.superseded, 0),
     claims_struck: applied.reduce((n, a) => n + a.struck, 0),
+    queue_rows: queueRows,
   };
 }

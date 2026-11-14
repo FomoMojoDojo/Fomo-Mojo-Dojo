@@ -203,7 +203,9 @@ export interface PositioningItem {
   // evidence, the company's own claim not yet echoed outside, or a declared-direction
   // claim (Gate 3b — cites no public sources by definition). Absent on items that
   // predate verification and on operator-added items.
-  evidence_status?: "corroborated" | "self_reported" | "declared";
+  // SP-328 (BRIEF-17): `contradicted` — independent evidence cuts against the attribute, or the
+  // attribute is itself a negative pattern. Never rendered as a strength (src/lib/attributeVerdict.ts).
+  evidence_status?: "corroborated" | "self_reported" | "declared" | "contradicted";
   basis_urls?: string[];
 }
 

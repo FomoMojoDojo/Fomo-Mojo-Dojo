@@ -10,6 +10,12 @@
 
 import { ANALYSIS_VOICE, isAnalysisRow } from "./voiceLabel.ts";
 import { callOpenAIJSON as sharedCallOpenAIJSON } from "./openaiClient.ts";
+
+// SP-328 (BRIEF-17): the ONE definition of `contradicted`, shared by the claim judge and the attribute
+// judge so the two can never drift apart. The attribute judge adds one clause of its own (below).
+function contradictedDefinition(subject: "claim" | "attribute"): string {
+  return `- contradicted: independent evidence cuts against the ${subject}'s core fact.`;
+}
 import { isOwnHostSet, loadConfirmedRelatedEntities, ownHostMatchHost, ownHostsFor, type OwnHostSet } from "./ownHosts.ts";
 import { buildClientCorpus, resolveSyndication, resolveSyndicationDurable, type ClientCorpus } from "./syndication.ts";
 import { buildStoreSupplementBrief, type StoreSupplement } from "./storeSupplement.ts";
@@ -24,6 +30,7 @@ type CallJson = (opts: {
   userText: string;
   maxOutputTokens?: number;
   temperature?: number;
+  onUsage?: (model: string, usage: { prompt_tokens: number; completion_tokens: number } | null) => void | Promise<void>;
 }) => Promise<any>;
 
 type ClaimProvenanceEntry = {
@@ -374,7 +381,7 @@ async function deriveClaimProvenance(opts: {
     `Return ONLY valid JSON matching the schema. No prose.\n` +
     `For each company self-claim, decide from the independent evidence ONLY:\n` +
     `- corroborated: at least one independent item attests the claim's core fact (even with different wording). basis_urls MUST cite the attesting independent item URL(s).\n` +
-    `- contradicted: independent evidence cuts against the claim's core fact.\n` +
+    `${contradictedDefinition("claim")}\n` +
     `- uncorroborated: no independent item speaks to the claim either way.\n` +
     `Judge the claim's core fact, not its exact phrasing. Never treat the company's own pages or profiles as corroboration.\n` +
     `Echo each ledger claim with its given ledger_index; claims found only in the alignment summary get ledger_index null.\n`;
@@ -423,7 +430,7 @@ async function deriveClaimProvenance(opts: {
 
 type AttributeEvidenceVerdict = {
   index: number;
-  evidence_status: "corroborated" | "self_reported";
+  evidence_status: "corroborated" | "self_reported" | "contradicted";
   basis_urls: string[];
 };
 
@@ -440,7 +447,7 @@ const attributeEvidenceSchema = {
         additionalProperties: false,
         properties: {
           index: { type: "integer" },
-          evidence_status: { type: "string", enum: ["corroborated", "self_reported"] },
+          evidence_status: { type: "string", enum: ["corroborated", "self_reported", "contradicted"] },
           basis_urls: { type: "array", items: { type: "string" } },
         },
         required: ["index", "evidence_status", "basis_urls"],
@@ -463,6 +470,8 @@ async function judgeAttributeEvidence(opts: {
   // B2.2a: prebuilt store supplement (see deriveClaimProvenance).
   supplement?: StoreSupplement | null;
   runRef?: string | null;
+  // BRIEF-17: lets a caller ledger this call in model_calls (the judge-only re-run does).
+  onUsage?: (model: string, usage: { prompt_tokens: number; completion_tokens: number } | null) => void | Promise<void>;
 }): Promise<AttributeEvidenceVerdict[]> {
   const callJson = opts.callJson ?? sharedCallOpenAIJSON;
   if (!opts.attributes.length) {
@@ -569,18 +578,20 @@ async function judgeAttributeEvidence(opts: {
     `For each attribute, decide from the independent evidence ONLY:\n` +
     `- corroborated: at least one independent item attests the attribute's core fact (even with different wording). basis_urls MUST cite the attesting independent item URL(s). The cited item must attest the SPECIFIC fact claimed, not merely mention the company.\n` +
     `- self_reported: no independent item attests the attribute's core fact — it exists only as the company's own description of itself.\n` +
+    `${contradictedDefinition("attribute")} ALSO contradicted: the attribute is itself a negative pattern about the company (a recurring complaint, a failure, a weakness) rather than a strength — evidence that it happens does not make it a differentiator. basis_urls MUST cite the independent item URL(s) that cut against it or attest the negative pattern.\n` +
     `Judge the core fact, not the phrasing. Never treat the company's own pages, profiles, or self-descriptions as corroboration.\n` +
     `Echo every attribute with its given index.\n`;
 
   const result = await callJson({
     apiKey: opts.apiKey,
     model: opts.model,
-    schemaName: "mojo_attribute_evidence_v1",
+    schemaName: "mojo_attribute_evidence_v2",
     schema: attributeEvidenceSchema,
     systemText,
     userText,
     maxOutputTokens: 1000,
     temperature: 0.1,
+    ...(opts.onUsage ? { onUsage: opts.onUsage } : {}),
   });
 
   const rows: any[] = Array.isArray(result?.attributes) ? result.attributes : [];
@@ -599,8 +610,13 @@ async function judgeAttributeEvidence(opts: {
       const basis = Array.from(new Set<string>(rawBasis.filter((url: string) => independentUrls.has(url))));
       const rejected = rawBasis.filter((url: string) => !independentUrls.has(url));
       if (rejected.length > 0) rejectedCitations.push({ index: row.index as number, rejected });
-      let status = row?.evidence_status === "corroborated" ? "corroborated" : "self_reported";
-      if (status === "corroborated" && basis.length === 0) status = "self_reported";
+      // SP-328: three values. `contradicted` must be earned exactly like `corroborated` — a verdict
+      // left without a valid citation downgrades to self_reported, never the other way.
+      let status: AttributeEvidenceVerdict["evidence_status"] =
+        row?.evidence_status === "corroborated" ? "corroborated"
+        : row?.evidence_status === "contradicted" ? "contradicted"
+        : "self_reported";
+      if (status !== "self_reported" && basis.length === 0) status = "self_reported";
       return {
         index: row.index as number,
         evidence_status: status as AttributeEvidenceVerdict["evidence_status"],
@@ -621,6 +637,7 @@ async function judgeAttributeEvidence(opts: {
       examined: opts.attributes.length,
       admitted: verdicts.filter((v) => v.evidence_status === "corroborated").length,
       excluded_by_rule: {
+        contradicted: verdicts.filter((v) => v.evidence_status === "contradicted").length,
         class_admitted_ledger: independentItems.length,
         syndicated_excluded_ledger: ledgerGateA.excludedSyndicated,
         unresolved_ledger: ledgerGateA.unresolved,

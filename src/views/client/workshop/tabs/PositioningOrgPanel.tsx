@@ -8,7 +8,7 @@ import { alignmentOf } from "../helpers";
 import { useAuth } from "@/hooks/useAuth";
 import { useCapability } from "@/hooks/useCapability";
 import SurfaceEducationTrigger from "@/components/surface-education/SurfaceEducationTrigger";
-import { SectionHeader, ListEditor, StatementField } from "../primitives";
+import { SectionHeader, ListEditor, StatementField, ReadonlyList } from "../primitives";
 import PositioningInspectPanel from "@/views/Positioning/PositioningInspectPanel";
 import { SignalBasisChip, type SignalBasis } from "@/components/design-system/SignalBasisChip";
 import InlineTextEdit from "@/components/inline-edit/InlineTextEdit";
@@ -18,6 +18,8 @@ import { useIntegrityRecord } from "@/hooks/useIntegrityRecord";
 import { IntegrityEmptyState } from "@/components/design-system/IntegrityEmptyState";
 import ProposeChangesButton from "@/components/drift/ProposeChangesButton";
 import type { EngagementPhase } from "@/lib/engagementPhase";
+import { contradictedAttributes, strengthAttributes, withContradicted } from "@/lib/attributeVerdict";
+import { WORKSPACE_STRINGS } from "@/views/client/workspace/workspaceNav";
 import {
   getCategoryHighlightWords,
   getOutcomeHighlightPhrases,
@@ -421,7 +423,10 @@ export default function PositioningOrgPanel({
   // ── Hierarchy layout ───────────────────────────────────────────────────────
   if (hasHierarchy) {
     const competitors     = canvas.competitive_alternatives;
-    const differentiators = canvas.unique_attributes;
+    // SP-329: the strengths list never carries a contradicted attribute; edits keep it in storage.
+    const allAttributes   = canvas.unique_attributes;
+    const differentiators = strengthAttributes(allAttributes);
+    const disagreements   = contradictedAttributes(allAttributes);
     const [valueBefore, valueSignal] = canvas.value_for_customer
       ? splitValueText(canvas.value_for_customer) : ["", ""];
     const showTagline = !!(canvas.current_tagline && canvas.proposed_tagline);
@@ -605,11 +610,11 @@ export default function PositioningOrgPanel({
                     )}
                   </div>
                   <div style={{ paddingTop: 3 }}>
-                    {xBtn(() => removeItem("unique_attributes_json", differentiators, item.id))}
+                    {xBtn(() => removeItem("unique_attributes_json", allAttributes, item.id))}
                   </div>
                 </div>
               ))}
-              <HPos_AddRow placeholder="Add a differentiator…" gridFirstCol="80px" onAdd={(name) => addItem("unique_attributes_json", differentiators, name)} />
+              <HPos_AddRow placeholder="Add a differentiator…" gridFirstCol="80px" onAdd={(name) => addItem("unique_attributes_json", allAttributes, name)} />
               {differentiators.some((item) => item.evidence_status === "self_reported") && (
                 <p style={{ fontFamily: P.sans, fontSize: 13, color: "rgba(17,17,17,0.55)", lineHeight: 1.6, margin: "14px 0 0", maxWidth: 560 }}>
                   Unmarked claims are echoed by outside voices. The ones marked yours to prove are differentiators you've claimed that the market isn't repeating yet — earning public proof for them is part of the work.
@@ -617,6 +622,23 @@ export default function PositioningOrgPanel({
               )}
             </div>
           </div>
+
+          {/* S-POS-1 — the contradicted attributes, never in the strengths list above (SP-329) */}
+          {disagreements.length > 0 && (
+            <div style={{ marginBottom: 52 }} data-testid="positioning-outside-disagree">
+              <HPos_SectionHeader number="02b" label={WORKSPACE_STRINGS.positioningOutsideDisagree} />
+              <div>
+                {disagreements.map((item, idx) => (
+                  <div key={item.id} data-testid="positioning-outside-disagree-item" style={{ borderTop: idx === 0 ? `1px solid ${P.hairlineFaint}` : "none", borderBottom: `1px solid ${P.hairlineFaint}`, padding: "18px 0" }}>
+                    <p style={{ fontFamily: P.sans, fontSize: 18, fontWeight: 600, color: P.ink, margin: "0 0 4px", lineHeight: 1.25, letterSpacing: "-0.01em" }}>{item.name}</p>
+                    {item.description && (
+                      <p style={{ fontFamily: P.sans, fontSize: 14, color: "rgba(17,17,17,0.7)", margin: 0, lineHeight: 1.55, maxWidth: 520 }}>{item.description}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* § 03 — THE REAL VALUE YOU DELIVER (keystone stripe) */}
           {canvas.value_for_customer && (
@@ -871,8 +893,8 @@ export default function PositioningOrgPanel({
 
       <ListEditor
         label="What makes you different"
-        items={canvas.unique_attributes}
-        onSave={async (items) => { await updateItemsField("unique_attributes_json", items); flash("attributes"); }}
+        items={strengthAttributes(canvas.unique_attributes)}
+        onSave={async (items) => { await updateItemsField("unique_attributes_json", withContradicted(items, canvas.unique_attributes)); flash("attributes"); }}
         addPlaceholder="Add a differentiator…"
         isSaved={savedField === "attributes"}
         listWarning={attrHasVague ? {
@@ -883,10 +905,16 @@ export default function PositioningOrgPanel({
         warningWords={attrWarningWords}
         warningTooltip="Hard to defend vs competitors"
       />
-      {canvas.unique_attributes.some((item) => item.evidence_status === "self_reported") && (
+      {strengthAttributes(canvas.unique_attributes).some((item) => item.evidence_status === "self_reported") && (
         <p style={{ fontSize: 13, color: "#7a8a85", lineHeight: 1.6, margin: "-8px 0 20px" }}>
           Unmarked claims are echoed by outside voices. The ones marked yours to prove are differentiators you've claimed that the market isn't repeating yet — earning public proof for them is part of the work.
         </p>
+      )}
+      {/* S-POS-1 — the contradicted attributes, never in the strengths list above (SP-329) */}
+      {contradictedAttributes(canvas.unique_attributes).length > 0 && (
+        <div data-testid="positioning-outside-disagree">
+          <ReadonlyList label={WORKSPACE_STRINGS.positioningOutsideDisagree} items={contradictedAttributes(canvas.unique_attributes).map((item) => item.description ? `${item.name} — ${item.description}` : item.name)} />
+        </div>
       )}
 
       <StatementField
