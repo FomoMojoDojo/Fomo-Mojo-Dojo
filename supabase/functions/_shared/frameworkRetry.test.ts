@@ -41,3 +41,20 @@ Deno.test("the budget is ONE retry, and the code is ours rather than the vendor'
   // A reader must be able to tell "ran out of time twice" from "the document could not be read".
   assert(!FRAMEWORK_TIMEOUT_CODE.includes("ingest"));
 });
+
+import {
+  FRAMEWORK_TRUNCATED_CODE, FRAMEWORK_TRUNCATED_MARKER, isFrameworkOutputTruncated,
+} from "./frameworkRetry.ts";
+
+Deno.test("SP-294: the Code node's truncation marker is recognised — and is NOT a clock", () => {
+  const thrown = `${FRAMEWORK_TRUNCATED_MARKER}: the Adjudication answer is not a complete JSON object (24173 chars); it was most likely cut by the node output limit`;
+  assert(isFrameworkOutputTruncated(thrown));
+  // Deterministic at temperature 0: retrying would cut at the same place. It must not earn SP-278's retry.
+  assertEquals(isTimeCeilingFailure("failed", thrown), false);
+  assertEquals(FRAMEWORK_TRUNCATED_CODE, "framework_output_truncated");
+});
+
+Deno.test("SP-294: an ordinary failure is not mistaken for a truncation", () => {
+  assertEquals(isFrameworkOutputTruncated("[models] Bad Request: invalid model parameter"), false);
+  assertEquals(isFrameworkOutputTruncated(""), false);
+});

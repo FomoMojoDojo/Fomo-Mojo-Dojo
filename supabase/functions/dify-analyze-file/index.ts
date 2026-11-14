@@ -22,7 +22,8 @@ import {
 import { modelStamp, resolveModel } from "../_shared/modelRouter.ts";
 import { recordModelCall } from "../_shared/recordModelCall.ts";
 import {
-  FRAMEWORK_TIMEOUT_CODE, isTimeCeilingFailure, MAX_FRAMEWORK_ATTEMPTS,
+  FRAMEWORK_TIMEOUT_CODE, FRAMEWORK_TRUNCATED_CODE, isFrameworkOutputTruncated, isTimeCeilingFailure,
+  MAX_FRAMEWORK_ATTEMPTS,
 } from "../_shared/frameworkRetry.ts";
 import { FILE_ANALYSIS_VERSION } from "../../../src/lib/fileAnalysis.ts";
 
@@ -1800,6 +1801,15 @@ async function syncDifyRun(params: {
 
   if (workflowStatus !== "succeeded") {
     const detail = workflowError || `Dify workflow ${workflowStatus}`;
+    // SP-294: the Adjudication output backstop fired and the Code node refused the cut answer. A real
+    // code, and NO retry — at temperature 0 the same input is cut at the same place every time.
+    if (isFrameworkOutputTruncated(String(detail))) {
+      await (supabase as unknown as { from: (t: string) => any })
+        .from("file_proposals").update({ processing_error_code: FRAMEWORK_TRUNCATED_CODE })
+        .eq("id", proposalId).neq("status", "rejected");
+      await markProposalFailed({ supabase, proposalId, summary: detail, error: detail });
+      return { state: "failed" };
+    }
     // SP-278: a TIME CEILING earns one retry over the banked extracts. Anything else fails now.
     if (isTimeCeilingFailure(String(workflowStatus), String(detail))) {
       const retried = await retryFrameworkPass({

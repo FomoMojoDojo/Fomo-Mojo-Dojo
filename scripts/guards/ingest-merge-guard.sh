@@ -278,6 +278,62 @@ else
   bad "(m5) windowExtract.test.ts FAILED"
 fi
 
+echo "── (m6) F43 / SP-292 / SP-304 / SP-308: the LIVE workflow's Adjudication is bounded, and must name all five frameworks ──"
+# WHY. The hand-off budget above bounds what the framework pass READS. What it WRITES was unbounded
+# until F43: Adjudication had no output limit and no schema, and emitted 4,747-9,478 tokens. F43 put a
+# JSON schema on it — and the first version capped every list but let framework_results be a LIST, so
+# under grammar-constrained decoding the model closed it after ONE framework on both real Charter
+# filings (32 finding signals -> 4). SP-304 made it an OBJECT with the five frameworks as REQUIRED
+# keys, so the grammar must emit each exactly once. This reads the schema of whatever workflow
+# apps.workflow_id points at NOW, so a rollback or a hand edit in the Dify console turns it red.
+#
+# Read-only against Dify's own database. No model, no write.
+DIFYDB="${DIFY_DB_CONTAINER:-docker-db_postgres-1}"
+LIVE_SCHEMA=$(docker exec -i "$DIFYDB" psql -U postgres -d dify -At -c "
+  select graph from workflows where id = (select workflow_id from apps where id='2b694256-d03d-4e2f-a0ae-8a0e666f3c38');" 2>/dev/null \
+  | python3 -c "
+import json, sys
+g = json.load(sys.stdin)
+adj = [n['data'] for n in g['nodes'] if n['data'].get('title') == 'Adjudication'][0]
+cp = adj['model'].get('completion_params', {})
+print(json.dumps({'json_schema': cp.get('json_schema', ''), 'num_predict': cp.get('num_predict'), 'temperature': cp.get('temperature')}))
+" 2>/dev/null)
+if [ -z "$LIVE_SCHEMA" ]; then
+  bad "(m6) could not read the live Dify workflow — the output bound was not checked"
+else
+  M6=$(echo "$LIVE_SCHEMA" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+out = {'has_schema': bool(d['json_schema']), 'num_predict': d['num_predict']}
+if d['json_schema']:
+    s = json.loads(d['json_schema']); p = s['properties']; fr = p.get('framework_results', {})
+    FIVE = ['april_dunford', 'jtbd', 'odi', 'strategy_cascade', 'teresa_torres']
+    out['fr_is_object'] = fr.get('type') == 'object'
+    out['fr_requires_five'] = sorted(fr.get('required', [])) == sorted(FIVE)
+    out['fr_each_capped_4'] = all(fr.get('properties', {}).get(k, {}).get('maxItems') == 4 for k in FIVE)
+    caps = {'evidence': 5, 'candidate_positioning_updates': 3, 'candidate_job_steps': 6,
+            'candidate_needs': 8, 'candidate_outcomes': 4, 'possible_routes': 3}
+    out['list_caps_ok'] = all(p.get(k, {}).get('maxItems') == v for k, v in caps.items())
+    out['no_min_items'] = 'minItems' not in d['json_schema']
+print(json.dumps(out))
+")
+  echo "     $M6"
+  val() { echo "$M6" | python3 -c "import json,sys; print(json.load(sys.stdin).get('$1'))"; }
+  [ "$(val has_schema)" = "True" ] && ok "(m6) the live Adjudication node carries a JSON schema (SP-292)" \
+    || bad "(m6) the live Adjudication node has NO schema — its output is unbounded again"
+  [ "$(val fr_is_object)" = "True" ] && [ "$(val fr_requires_five)" = "True" ] \
+    && ok "(m6) SP-304: framework_results is an object that REQUIRES all five frameworks — the grammar must emit each" \
+    || bad "(m6) framework_results does not require all five frameworks — the model can stop after one (the F43 v1 collapse)"
+  [ "$(val fr_each_capped_4)" = "True" ] && ok "(m6) each framework is capped at 4 findings (SP-292)" \
+    || bad "(m6) a framework's findings are not capped at 4"
+  [ "$(val list_caps_ok)" = "True" ] && ok "(m6) the candidate-list caps are the signed ones (SP-292)" \
+    || bad "(m6) a candidate-list cap differs from SP-292"
+  [ "$(val no_min_items)" = "True" ] && ok "(m6) SP-305: no list carries a minimum — nothing forces the model to invent items" \
+    || bad "(m6) a minItems appeared in the schema (SP-305 forbids it)"
+  [ "$(val num_predict)" = "6300" ] && ok "(m6) the output backstop is num_predict 6,300 (SP-294)" \
+    || bad "(m6) num_predict is $(val num_predict), not the signed 6,300"
+fi
+
 echo "  -- $oks ok / $fails FAIL --"
 if [ "$fails" = 0 ]; then echo "guard: PASS"; else echo "guard: RED ($fails check(s)) — see above"; fi
 [ "$fails" -eq 0 ]

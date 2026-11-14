@@ -300,6 +300,51 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   The fix is to BOUND the node's output, in the Dify workflow, not to tune the input. Until then a
   long document's analysis time cannot be predicted and can exceed the plugin ceiling without warning.
   Out of scope for I-2 (SP-280); the hand-off budget stays 10,000 until this is addressed (SP-281).
+  **Being addressed by F43 (SP-292..SP-296)**: a JSON schema with per-section caps on the node,
+  num_predict 6,300 as a backstop, and a Code node that fails loudly on a cut answer. The Dify workflow
+  is now version `8f608002…` (`file_analysis_v2 · F43`); the previous `01ae1e3a…` is untouched, so
+  rollback is one re-point of `apps.workflow_id`. Before/after exports are in `backups/F43-dify-*.json`.
+
+- **SP-F44 filed (2026-11-14) — on the SP-270 acceptance run of the Charter 10-Q, the E4 excerpt
+  guard blanked 16 of the 35 minted signals' excerpts** (proposal `1c09906e…`; 2 of 29 and 1 of 36 on
+  the two earlier filing runs). A blanked excerpt means a framework finding's quoted `evidence` was
+  not a verbatim substring of the sidecar, so the signal was kept as interpretation-only. Whether the
+  cause is the merged-extract hand-off (the framework pass quotes the extract, not the document),
+  re-paraphrasing in Adjudication, or something else is not established. Investigate after I-3 (SP-297).
+
+- **SP-F45 filed (2026-11-14) — the six framework nodes run at temperature 0.7, so the same document
+  yields different findings on every run.** Measured on the Charter 10-Q: JTBD 5 → 11 → 16 findings
+  across runs of near-identical input; Adjudication (temperature 0) inherits the swing as its input.
+  Setting them to 0 would remove the run-to-run variance, not the magnitude, and would change the
+  nodes' character. **An operator decision; no change made** (SP-298).
+
+- **SP-F46 filed (2026-11-14) — 9 companies render a canned "What they are hiring for" sentence
+  that rests on no evidence.** `research-company`'s `jtbdFromJourneyTitle()` (`:3269`) falls through to
+  a fixed default branch ("…want to move from defining outcomes to executing and monitoring progress…
+  less risk and rework") whenever the audience parsed from the OpenAI-generated journey title matches
+  none of four keyword lists. The row is `internal_inferred`, `unvalidated`, with no source ref. 9 of
+  27 companies with a live market definition render it (all real, none held). `isGenericJtbdStatement`
+  already detects it and the admin JobSteps view blanks it; the client `MarketPage.tsx` never asks.
+  Trace: `~/dev/_diagnose-shots/2026-11-13/ingest/job-statement-trace.md`.
+
+- **SP-F47 filed (2026-11-14) — the differentiator judge cannot say "contradicted", and nothing checks
+  polarity, so a customer-complaint pattern reads as a corroborated strength.** `judgeAttributeEvidence`
+  (`_shared/claimProvenance.ts:453`) is two-valued, `corroborated | self_reported`; complaints that
+  attest a fact make it `corroborated`. The claim judge in the same file is three-valued and has
+  `contradicted`; it is not used for `positioning_canvases.unique_attributes_json`. The compare view
+  hard-codes that row as "No outside data", so no gap badge can appear. Measured: Charter item 04;
+  3 companies have an item whose cited evidence carries a negative sentiment (a floor — sentiment is
+  recorded on ~12% of outside signals).
+
+- **SP-F48 filed (2026-11-14) — no step moves a file proposal's candidate needs, job steps, routes or
+  positioning updates into the map.** They are stored on the `file_proposals` row for display only.
+  Accepting the proposal (`acceptFileProposal`, `src/hooks/useInputActions.ts`) writes the file's tags
+  and the proposal's `status` / `applied_areas` and nothing else. Only signals and claims reach the map,
+  automatically, at persist.
+
+- **SP-F49 filed (2026-11-14) — re-analysing a file leaves the earlier analysis's signals and claims
+  live.** Each analysis inserts a new proposal and mints afresh without superseding the previous
+  proposal's rows: the Charter 10-Q analysed twice left 29 + 35 = 64 live signals from one document.
 
 - **SP-F35 filed (2026-11-13) — a baseline on company B can start while a file analysis runs on
   company A.** Both are heavy local jobs, and nothing excludes that one pair. I-1 closes every case
@@ -325,6 +370,14 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   `guard: PASS` in the output.
 
 ---
+
+## Dify workflows — rule 1a (signed 2026-09-14)
+
+The committed DSLs in `supabase/dify-workflows/` ARE the live Dify workflows (file analysis →
+`mojomap-file-analysis.v2.yml`; mojo analysis → `mojomap-mojo-analysis.v1.yml`), and
+`dify-workflow-guard` fails the sweep if a live graph differs from its committed file. Rollback is the
+pointer flip in `scripts/dify-workflows/rollback_file_analysis.py`.
+- **A workflow is published ONLY from the committed file through `scripts/dify-workflows/publish_file_analysis.py`, never by direct SQL** (SP-311 — F43 v1/v2 were first published by inserting `workflows` rows, which left the committed DSL behind what ran until the sweep caught it).
 
 ## OPEN BEFORE THE FIRST OUTSIDE LOGIN (SP-163, SP-165 — 2026-11-12)
 

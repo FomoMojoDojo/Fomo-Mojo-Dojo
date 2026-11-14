@@ -39,3 +39,20 @@ export const MAX_FRAMEWORK_ATTEMPTS = 2;
 
 /** The code a document carries when the budget is spent — not the raw vendor string. */
 export const FRAMEWORK_TIMEOUT_CODE = "framework_timeout";
+
+// ── SP-294: THE OUTPUT BACKSTOP, AND WHAT A FIRING MEANS (F43 — 2026-11-14) ─────────────────────
+//
+// Adjudication's output is bounded by a JSON schema (SP-292) and backstopped by num_predict 6,300
+// (SP-294) — set above the schema's worst case, so it fires only if the schema's enforcement fails.
+// A firing cuts the answer mid-JSON. The workflow's Code node now THROWS on an unparseable answer
+// with the marker below; before F43 it silently turned every section into [] and the analysis
+// "succeeded" with nothing in it.
+//
+// It is NOT a clock, so it earns no SP-278 retry: at temperature 0 the same input is cut at the same
+// place every time. It ends the document failed, with its own code.
+export const FRAMEWORK_TRUNCATED_MARKER = "ADJUDICATION_OUTPUT_UNPARSEABLE";
+export const FRAMEWORK_TRUNCATED_CODE = "framework_output_truncated";
+
+export function isFrameworkOutputTruncated(error: string): boolean {
+  return String(error ?? "").includes(FRAMEWORK_TRUNCATED_MARKER);
+}

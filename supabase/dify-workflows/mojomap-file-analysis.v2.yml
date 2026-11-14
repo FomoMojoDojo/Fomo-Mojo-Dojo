@@ -242,7 +242,8 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              json_schema: ''
+              json_schema: '{"type":"object","properties":{"summary":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"},"maxItems":5},"framework_results":{"type":"object","properties":{"april_dunford":{"type":"array","maxItems":4,"items":{"type":"object","properties":{"claim":{"type":"string"},"evidence":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]},"mojo_area":{"type":"string"},"risk_if_ignored":{"type":"string"},"suggested_update":{"type":"string"}},"required":["claim","evidence","confidence","mojo_area","risk_if_ignored","suggested_update"],"additionalProperties":false}},"jtbd":{"type":"array","maxItems":4,"items":{"type":"object","properties":{"claim":{"type":"string"},"evidence":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]},"mojo_area":{"type":"string"},"risk_if_ignored":{"type":"string"},"suggested_update":{"type":"string"}},"required":["claim","evidence","confidence","mojo_area","risk_if_ignored","suggested_update"],"additionalProperties":false}},"odi":{"type":"array","maxItems":4,"items":{"type":"object","properties":{"claim":{"type":"string"},"evidence":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]},"mojo_area":{"type":"string"},"risk_if_ignored":{"type":"string"},"suggested_update":{"type":"string"}},"required":["claim","evidence","confidence","mojo_area","risk_if_ignored","suggested_update"],"additionalProperties":false}},"strategy_cascade":{"type":"array","maxItems":4,"items":{"type":"object","properties":{"claim":{"type":"string"},"evidence":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]},"mojo_area":{"type":"string"},"risk_if_ignored":{"type":"string"},"suggested_update":{"type":"string"}},"required":["claim","evidence","confidence","mojo_area","risk_if_ignored","suggested_update"],"additionalProperties":false}},"teresa_torres":{"type":"array","maxItems":4,"items":{"type":"object","properties":{"claim":{"type":"string"},"evidence":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]},"mojo_area":{"type":"string"},"risk_if_ignored":{"type":"string"},"suggested_update":{"type":"string"}},"required":["claim","evidence","confidence","mojo_area","risk_if_ignored","suggested_update"],"additionalProperties":false}}},"required":["april_dunford","jtbd","odi","strategy_cascade","teresa_torres"],"additionalProperties":false},"suggested_areas":{"type":"array","maxItems":5,"items":{"type":"string","enum":["positioning","job_map","opportunities","strategy","routes"]}},"candidate_positioning_updates":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"field":{"type":"string","enum":["target_customer","category","alternatives","unique_attributes","value","proof"]},"current_issue":{"type":"string"},"suggested_update":{"type":"string"},"evidence":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]}},"required":["field","current_issue","suggested_update","evidence","confidence"],"additionalProperties":false}},"candidate_job_steps":{"type":"array","maxItems":6,"items":{"type":"object","properties":{"step_label":{"type":"string"},"step_description":{"type":"string"},"evidence":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]}},"required":["step_label","step_description","evidence","confidence"],"additionalProperties":false}},"candidate_needs":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"desired_outcome":{"type":"string"},"importance":{"type":"number"},"satisfaction":{"type":"number"},"evidence":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]}},"required":["desired_outcome","importance","satisfaction","evidence","confidence"],"additionalProperties":false}},"candidate_outcomes":{"type":"array","maxItems":4,"items":{"type":"object","properties":{"outcome":{"type":"string"},"related_opportunities":{"type":"array","items":{"type":"string"}},"evidence":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]}},"required":["outcome","related_opportunities","evidence","confidence"],"additionalProperties":false}},"possible_routes":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"title":{"type":"string"},"why_this_could_matter":{"type":"string"},"linked_opportunity":{"type":"string"},"evidence":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]}},"required":["title","why_this_could_matter","linked_opportunity","evidence","confidence"],"additionalProperties":false}},"experiments_to_run":{"type":"array","items":{"type":"object","properties":{"experiment":{"type":"string"},"what_it_tests":{"type":"string"},"evidence":{"type":"string"}},"required":["experiment","what_it_tests","evidence"],"additionalProperties":false}},"contradictions":{"type":"array","items":{"type":"object","properties":{"claim":{"type":"string"},"conflicts_with":{"type":"string"},"evidence":{"type":"string"}},"required":["claim","conflicts_with","evidence"],"additionalProperties":false}},"questions_to_verify":{"type":"array","items":{"type":"string"}},"confidence":{"type":"string","enum":["high","medium","low"]},"confidence_reason":{"type":"string"}},"required":["summary","evidence","framework_results","suggested_areas","candidate_positioning_updates","candidate_job_steps","candidate_needs","candidate_outcomes","possible_routes","experiments_to_run","contradictions","questions_to_verify","confidence","confidence_reason"],"additionalProperties":false}'
+              num_predict: 6300
               temperature: 0
             mode: chat
             name: qwen2.5:14b-instruct
@@ -268,7 +269,7 @@ workflow:
                 Return only valid JSON.
             - id: dea866da-0621-4051-82b2-9e406e573dd3
               role: user
-              text: |
+              text: |-
                 Uploaded file name:
                 {{#1777861850698.file_name#}}
                 Uploaded file content:
@@ -529,6 +530,18 @@ workflow:
                 ["string"]
 
                 Return only JSON. No markdown. No explanation outside JSON.
+
+                OUTPUT LIMITS (enforced by the response schema — anything beyond them cannot be emitted):
+                - framework_results: an OBJECT with exactly these five keys — april_dunford, jtbd, odi, strategy_cascade,
+                  teresa_torres — each a list of at most 4 findings for that framework
+                - evidence: at most 5
+                - candidate_positioning_updates: at most 3
+                - candidate_job_steps: at most 6
+                - candidate_needs: at most 8
+                - candidate_outcomes: at most 4
+                - possible_routes: at most 3
+                When more items qualify than a limit allows, keep the ones with the strongest, most specific evidence.
+                Output compact JSON on a single line: no newlines, no indentation.
           selected: false
           title: Adjudication
           type: llm
@@ -708,7 +721,27 @@ workflow:
             }
 
             function main({ arg1 }) {
-              const data = typeof arg1 === "string" ? (parseJson(arg1) || {}) : (arg1 || {});
+              // F43 / SP-294: an answer that does not parse is a FAILED analysis, never an empty one. Before this,
+              // parseJson returned the raw string on failure and every section silently became [] — a truncated
+              // answer read as a document with nothing in it. The marker is matched by dify-analyze-file.
+              let data = arg1 || {};
+              if (typeof arg1 === "string") {
+                const parsed = parseJson(arg1);
+                if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                  throw new Error("ADJUDICATION_OUTPUT_UNPARSEABLE: the Adjudication answer is not a complete JSON object ("
+                    + String(arg1).length + " chars); it was most likely cut by the node output limit");
+                }
+                data = parsed;
+              }
+              // SP-304: Adjudication now answers framework_results as an OBJECT keyed by the five frameworks
+              // (the schema REQUIRES all five, so the grammar must emit each exactly once). Downstream — this
+              // node's normalisation, the End node, dify-analyze-file and minting — reads a LIST of
+              // { framework, findings }, so it is converted back here and nothing past this point changes.
+              if (data && data.framework_results && typeof data.framework_results === "object"
+                  && !Array.isArray(data.framework_results)) {
+                data.framework_results = Object.entries(data.framework_results)
+                  .map(([framework, findings]) => ({ framework, findings: Array.isArray(findings) ? findings : [] }));
+              }
 
               const summary = String(data.summary || "").trim();
               const evidence = asStringArray(data.evidence);
