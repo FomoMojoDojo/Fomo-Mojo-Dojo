@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
-import { fileProposalPartialReadText } from "@/views/client/workshop/inputsShared";
+import { fileProposalBudgetInfoText, fileProposalPartialReadText, fileProposalSectionsText } from "@/views/client/workshop/inputsShared";
 import { engagementDayFrom } from "@/lib/engagementDay";
 import { isFrozenCompany } from "@/lib/frozenCompanies";
 import { useAuth } from "@/hooks/useAuth";
@@ -372,8 +372,14 @@ export default function ClientRefinePreviewView() {
       if (latest?.processing_state === "ready") {
         // SP-94: "Analysis complete" on a document whose pages 31+ were never opened is the silent
         // partial. S-ING-1 rides with the toast rather than a second, unsigned wording.
-        const partialRead = fileProposalPartialReadText(latest);
-        toast.success("Analysis complete — diagnostic updated.", partialRead ? { description: partialRead } : undefined);
+        // SP-94, SP-244, SP-260: one description slot, so the order is the order of seriousness —
+        // what could not be read (S-ING-1, then S-ING-3/4) before what was read in full and
+        // interpreted in part (S-ING-5). A toast cannot carry an icon, so S-ING-5 appears here as its
+        // text: the same signed string, in the only form this surface has.
+        const note = fileProposalPartialReadText(latest)
+          ?? fileProposalSectionsText(latest)
+          ?? fileProposalBudgetInfoText(latest);
+        toast.success("Analysis complete — diagnostic updated.", note ? { description: note } : undefined);
         captureMovementSnapshotRef.current?.();
       } else if (latest?.processing_state === "failed") {
         toast.error("Analysis failed. Check the pipeline and try again.");

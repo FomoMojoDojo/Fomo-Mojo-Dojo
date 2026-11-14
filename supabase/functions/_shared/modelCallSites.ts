@@ -32,6 +32,11 @@ export const MODEL_CALL_SITES: readonly ModelCallSite[] = [
   { site: "own-words-judge", provider: "openai", role: "own-words keep/kind judge (birth + retype)", captured: true },
   // Gate B 2b (2026-09-21): the first local site that reads prompt_eval_count / eval_count — one row per window, usd NULL.
   { site: "infer-interview-market", provider: "ollama", role: "interview market inference (one call per transcript window)", captured: true },
+  // SP-235 (2026-11-13): per-window document extraction — one row per WINDOW of a chunked document,
+  // routed through resolveModel with the document's own provenance (non-public ⇒ local, by the
+  // router's decision rather than by a flag). usd NULL: a local call costs no money, and a 0 would
+  // claim a price was computed.
+  { site: "ingest-window-extract", provider: "ollama", role: "document window extraction (one call per window)", captured: true },
 
   // ── not captured: the transports never read usage. A later gate. ──
   { site: "ollama-local-judges", provider: "ollama", role: "all local generators and judges", captured: false, note: "prompt_eval_count/eval_count not read by any local transport" },

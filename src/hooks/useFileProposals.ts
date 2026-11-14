@@ -101,6 +101,19 @@ export interface FileProposalRow {
   pages_read: number | null;
   pages_total: number | null;
   chars_total: number | null;
+  /** SP-231: true when the 400,000-character cap dropped text. NOT chars_total vs extraction_chars —
+   *  those also differ by whitespace compaction, which loses nothing. */
+  chars_capped: boolean | null;
+  // SP-244 (2026-11-13): the windows this document was split into, and how they ended. All three or
+  // none; a one-window document shows NO section counts (S-ING-2/S-ING-3 need m > 1).
+  sections_total: number | null;
+  sections_ready: number | null;
+  sections_failed: number | null;
+  // SP-257: what extraction found, and how much of it the framework pass read within the SP-255
+  // budget. items_interpreted < items_extracted is NOT partial — every section was read and every
+  // section contributed (SP-256) — it shows as an info icon (S-ING-5).
+  items_extracted: number | null;
+  items_interpreted: number | null;
   questions_to_verify: string[];
   status: 'pending' | 'accepted' | 'rejected';
   processing_state: 'queued' | 'running' | 'ready' | 'failed';

@@ -54,7 +54,7 @@ import { canChangeSpeaker, canInferMarket, lastRunFailed, lastRunFoundNoMajority
 import { INTERVIEW_UPLOAD_STRINGS, type InterviewSpeakerRole } from "@/lib/interviewUploadStrings";
 import { readAreaSupportTags } from "@/lib/fileTags";
 import FileUploadDialog from "@/components/FileUploadDialog";
-import { DeleteConfirmPanel, ProposalReviewPanel, fileProposalProcessingBadgeText, fileProposalPartialReadText, proposalPriority, type FoundationArea, type SourceRow } from "@/views/client/workshop/inputsShared";
+import { DeleteConfirmPanel, FileProposalReadyInfoIcon, ProposalReviewPanel, fileProposalProcessingBadgeText, fileProposalPartialReadText, fileProposalSectionsText, proposalPriority, type FoundationArea, type SourceRow } from "@/views/client/workshop/inputsShared";
 import { Chip, type ChipTone } from "@/views/client/firstReadPreview/primitives";
 import { useOperatorControls } from "@/views/client/firstReadPreview/operatorControls";
 import { OPERATOR_MARK } from "@/views/client/firstReadPreview/operatorStrings";
@@ -306,6 +306,10 @@ export default function InputsPage() {
                     // SP-93/SP-94: rendered as a SIBLING of the state cell below, not inside one of
                     // its branches, so the line appears whichever state the row is in.
                     const partialRead = fileProposalPartialReadText(proposal);
+                    // SP-244 (S-ING-2/3/4): progress while a multi-section document runs, and what
+                    // could not be read once it is done. A sibling of the state cell for the same
+                    // reason the partial-read line is one.
+                    const sectionsText = fileProposalSectionsText(proposal);
                     // SP-178: a finished row can be re-queued. Rendered as a sibling of the state
                     // cell rather than inside its branches, so it sits beside "View analysis →"
                     // instead of replacing it. Admin only for now (SP-179).
@@ -404,6 +408,11 @@ export default function InputsPage() {
                                 {WORKSPACE_STRINGS.viewAnalysis}
                               </button>
                             ) : badge ? <Chip tone={badge.tone}>{badge.label}</Chip> : null}
+                            {/* SP-260 (S-ING-5): a long document read in full and interpreted in part
+                                discloses that beside the ready badge, as an INFO icon in neutral
+                                styling — never the warning style, which belongs to what could not be
+                                read. The helper returns null unless the row's counts say so. */}
+                            <FileProposalReadyInfoIcon proposal={proposal} />
                             {/* SP-178: re-queue a finished analysis. The same call the "Run analysis" fallback makes, so it creates the same queued row — the server starts it. */}
                             {canReanalyse && gated ? (
                               <button type="button" className="fr-ws-control fr-mono" disabled={analyzingId === f.id} onClick={() => { void analyze(f); }} {...{ [OPERATOR_MARK.attr]: "analyze-again" }} data-testid="inputs-analyze-again">
@@ -413,6 +422,11 @@ export default function InputsPage() {
                             {/* SP-94 (S-ING-1): a partial read says so. "Analysis ready" never stands alone on a document whose later pages were never opened. */}
                             {partialRead ? (
                               <span className="fr-ws-analysis-partial fr-mono" data-testid="inputs-analysis-partial">{partialRead}</span>
+                            ) : null}
+                            {/* SP-244: the same warning styling as the partial-read line, because these
+                                three strings describe the same kind of thing — something unread. */}
+                            {sectionsText ? (
+                              <span className="fr-ws-analysis-partial fr-mono" data-testid="inputs-analysis-sections">{sectionsText}</span>
                             ) : null}
                             {/* Ruling 9 (2026-09-14): Dify's proposal-level confidence, visible before the panel is opened. Same string as the panel chip. */}
                             {proposal && proposal.processing_state === "ready" && proposal.confidence ? (

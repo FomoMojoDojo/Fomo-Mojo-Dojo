@@ -42,11 +42,26 @@ if grep -q 'mode === "start"' "$W"; then
 else
   bad "(q1) no mode:\"start\" door in dify-analyze-file — the starter would post at a reconciler"
 fi
-# The deletion IS the slice: the upload request must not call startDifyRun any more.
-if grep -q 'queued, not started' "$W" && [ "$(grep -c 'await startDifyRun(' "$W")" = "1" ]; then
-  ok "(q1) exactly one startDifyRun call site remains, and it is the start door"
+# The deletion IS the slice: the UPLOAD REQUEST must not call startDifyRun any more.
+#
+# This used to assert "exactly ONE call site", which was exact while the start door was the only
+# lawful one. SP-238 added a second: the LAST window step of a chunked document launches the framework
+# pass over the merged extract. Counting call sites would now fail for a lawful reason, and raising
+# the count to 2 would stop the check from noticing a third added in the upload path — which is the
+# only thing SP-178 and SP-182 forbid. So the check asserts the PROPERTY instead: every call site
+# lies inside a mode door, i.e. above the line where the upload path begins.
+UPLOAD_AT=$(grep -n 'Missing required fields: fileId, filePath, companyId' "$W" | head -1 | cut -d: -f1)
+START_LINES=$(grep -n 'await startDifyRun(' "$W" | cut -d: -f1)
+if [ -z "$UPLOAD_AT" ] || [ -z "$START_LINES" ]; then
+  bad "(q1) could not locate the upload path or any startDifyRun call — the check did not run"
 else
-  bad "(q1) startDifyRun is called $(grep -c 'await startDifyRun(' "$W") time(s) — the upload path must not start a run (SP-178, SP-182)"
+  LATE=0
+  for L in $START_LINES; do [ "$L" -gt "$UPLOAD_AT" ] && LATE=$((LATE+1)); done
+  if grep -q 'queued, not started' "$W" && [ "$LATE" = "0" ]; then
+    ok "(q1) every startDifyRun call site ($(echo "$START_LINES" | wc -l | tr -d ' ') of them) is inside a mode door; the upload path starts nothing"
+  else
+    bad "(q1) $LATE startDifyRun call(s) sit in the upload path (below line $UPLOAD_AT) — it must not start a run (SP-178, SP-182)"
+  fi
 fi
 if grep -q 'await adminOnlyGate(req, corsHeaders)' "$W"; then
   ok "(q1) dify-analyze-file decides who is calling, in-function (SP-179)"
@@ -527,10 +542,28 @@ echo "$CMP2" | grep -q "and p.processing_completed_at is null" \
   && ok "(q18) the reconcile skips a row whose claim is already taken — a sync cannot advance one" \
   || bad "(q18) the reconcile still posts for rows with a taken claim, which cannot progress"
 # behavioural, on the held fixture: a stalled row is closed and its lock freed
-if [ -n "${CO:-}" ]; then
+# A GUARD NEVER TAKES A LOCK IT DID NOT CREATE.
+#
+# This block used to run an UNSCOPED `delete from ingest_single_flight` so it could install its own
+# fixture lock. The lock table's primary key is a CONSTANT, so there is only ever one row and deleting
+# "whatever is there" was the only way to get the slot — and on 2026-11-13 that broke a LIVE analysis:
+# the Charter 10-Q lost its claim at window 10 of 17 and every chained step answered 409 thereafter.
+# A guard that corrupts the thing it is checking is worse than no guard, and the same rule the network
+# guards carry ("a guard never leaves a listener running") applies to a lock.
+#
+# So: if the lock belongs to a row on a company that is NOT our held fixture, the behavioural half is
+# SKIPPED and says so loudly. A skipped check in a sweep is a known gap; breaking a real document is
+# not a gap but damage. When nothing is in flight there is no lock, the slot is free, and the check
+# runs exactly as before — which is every sweep run that matters.
+LOCK_OWNER=$(psqlq "select coalesce(company_id::text,'') from public.ingest_single_flight limit 1;")
+if [ -n "$LOCK_OWNER" ] && [ "$LOCK_OWNER" != "${CO:-}" ]; then
+  echo "  SKIP (q18) an analysis is in flight on company $LOCK_OWNER — refusing to take its lock."
+  echo "       Re-run this guard when nothing is in flight to exercise the behavioural half."
+elif [ -n "${CO:-}" ]; then
   SPID=$(psql_insert_id "insert into public.file_proposals (company_id, processing_state, processing_completed_at)
          values ('$CO','running', now() - interval '20 minutes')")
-  psqlx "delete from public.ingest_single_flight;"
+  # Scoped to OUR fixture company: the only lock this guard may ever remove is one of its own.
+  psqlx "delete from public.ingest_single_flight where company_id='$CO';"
   psqlx "insert into public.ingest_single_flight (lock_key, proposal_id, company_id, expires_at)
          values ('file_analysis','$SPID','$CO', now() + interval '30 minutes');"
   BEFORE_S=$(psqlq "select processing_state from public.file_proposals where id='$SPID';")
@@ -579,6 +612,78 @@ else
     *)  bad "(q15) the service role got $SCODE — the revoke went too far" ;;
   esac
 fi
+
+echo "── (q19) SP-240: a LOST window chain is recovered by the sweep that already exists ──"
+# WHY THIS CHECK. The completion sweep posts {"mode":"sync"} and nothing else, and a chunked document
+# mid-windows has NO dify_workflow_run_id — the framework pass has not started. So a plain sync read a
+# NULL run id and did nothing: a dropped self-post would leave the row `running` until the 24-hour
+# ceiling. "Analyzing…" for a day, which is the failure SP-248 closed for a dying WRITER and this
+# would have reopened for a dying CHAIN.
+#
+# D4: the recovery is not INVOKED here — dify-analyze-file writes rows and calls a model. What is
+# checked is (a) the door carries the resume clause, and (b) the reconcile's own predicate really does
+# select a row in that shape, so the recovery post reaches it. Both read-only.
+if grep -q 'resumed: "window_chain"' "$W" && grep -q 'chainWindowStep(requestedProposalId)' "$W"; then
+  ok "(q19) the sync door resumes a stalled window chain instead of polling a run that does not exist"
+else
+  bad "(q19) the sync door has no window-chain resume — a lost self-post would strand the document (SP-240)"
+fi
+# It must resume ONLY when there is something to resume: a row whose framework pass has started is a
+# sync, not a chain.
+if grep -q '!String(sr.dify_workflow_run_id ?? "")' "$W" && grep -qE '\.in\("status", \["pending", "running"\]\)' "$W"; then
+  ok "(q19) and only for a running row with no Dify run and windows still waiting"
+else
+  bad "(q19) the resume is not conditioned on a NULL dify run id and waiting chunk rows"
+fi
+# No new cron job and no second post body: completion-sweep-guard must keep its subject (the reason
+# I-1 gave the starter its own function rather than widening jobid 2).
+SWEEPBODY=$(psqlq "select pg_get_functiondef(oid) from pg_proc where proname='sweep_file_proposal_completion';" | grep -c "'mode', 'sync'")
+if [ "${SWEEPBODY:-0}" -ge 1 ]; then
+  ok "(q19) the sweep still posts only mode:sync — its subject is unchanged"
+else
+  bad "(q19) the completion sweep's post body changed; completion-sweep-guard's subject moved with it"
+fi
+# (b) the reconcile's predicate, exercised read-only on whatever the stack holds: a chunked row that
+# is running, unclaimed and has waiting windows is exactly what the sweep selects.
+RECON=$(psqlq "select count(*) from public.file_proposals p
+               where p.status <> 'rejected' and p.processing_state = 'running'
+                 and p.processing_completed_at is null
+                 and exists (select 1 from public.file_proposal_chunks c
+                              where c.proposal_id = p.id and c.status in ('pending','running'));")
+if [ -n "$RECON" ]; then
+  ok "(q19) the reconcile predicate evaluates against chunked rows (${RECON} in that shape right now)"
+else
+  bad "(q19) could not evaluate the reconcile predicate against file_proposal_chunks"
+fi
+
+echo "── (q20) SP-264: a guard mutates ONLY rows it created ──"
+# The rule this guard's own defect produced. It is checked HERE, in the sweep, because a standing rule
+# with nothing checking it decays — and because the defect was mine: q18 ran an unscoped
+# `delete from ingest_single_flight` and broke a live analysis.
+#
+# The scan covers EVERY script under scripts/guards, not only this one.
+SCAN_OUT=$(python3 scripts/guards/fixtures/scan-guard-scoping.py scripts/guards 2>&1)
+SCAN_RC=$?
+echo "     $(echo "$SCAN_OUT" | tail -1)"
+if [ "$SCAN_RC" = "0" ]; then
+  ok "(q20) no guard carries an unscoped delete/update on a shared table"
+else
+  bad "(q20) a guard mutates rows it did not create:"
+  echo "$SCAN_OUT" | grep '^UNSCOPED' | sed 's/^/       /'
+fi
+# Non-vacuity: the scanner must be able to FIND one. A planted unscoped statement in a temporary
+# directory proves the scan is a scan and not an `exit 0`.
+SCAN_TMP=$(mktemp -d)
+# The verb is passed as a printf ARGUMENT, not written literally: a literal unscoped delete in THIS
+# file is exactly what the scanner looks for, and it found it — q20 went RED on its own plant the
+# first time the sweep ran it over the whole directory.
+printf '#!/usr/bin/env bash\npsqlx "%s from public.ingest_single_flight;"\n' "delete" > "$SCAN_TMP/planted-guard.sh"
+if python3 scripts/guards/fixtures/scan-guard-scoping.py "$SCAN_TMP" >/dev/null 2>&1; then
+  bad "(q20) the scanner passed a planted unscoped delete — it cannot go red"
+else
+  ok "(q20) and the scanner DOES catch a planted unscoped delete — the check can go red"
+fi
+rm -rf "$SCAN_TMP"
 
 if [ "$fails" = 0 ]; then echo "guard: PASS"; else echo "guard: RED ($fails check(s)) — see above"; fi
 [ "$fails" -eq 0 ]

@@ -1942,6 +1942,15 @@ export type Database = {
           candidate_outcomes: Json
           candidate_positioning_updates: Json
           chars_total: number | null
+          chars_capped: boolean | null
+          framework_attempts: number
+          parser_version: string | null
+          sidecar_sha: string | null
+          items_extracted: number | null
+          items_interpreted: number | null
+          sections_failed: number | null
+          sections_ready: number | null
+          sections_total: number | null
           company_id: string
           confidence: string
           confidence_reason: string
@@ -1984,6 +1993,15 @@ export type Database = {
           candidate_outcomes?: Json
           candidate_positioning_updates?: Json
           chars_total?: number | null
+          chars_capped?: boolean | null
+          framework_attempts?: number
+          parser_version?: string | null
+          sidecar_sha?: string | null
+          items_extracted?: number | null
+          items_interpreted?: number | null
+          sections_failed?: number | null
+          sections_ready?: number | null
+          sections_total?: number | null
           company_id: string
           confidence?: string
           confidence_reason?: string
@@ -2026,6 +2044,15 @@ export type Database = {
           candidate_outcomes?: Json
           candidate_positioning_updates?: Json
           chars_total?: number | null
+          chars_capped?: boolean | null
+          framework_attempts?: number
+          parser_version?: string | null
+          sidecar_sha?: string | null
+          items_extracted?: number | null
+          items_interpreted?: number | null
+          sections_failed?: number | null
+          sections_ready?: number | null
+          sections_total?: number | null
           company_id?: string
           confidence?: string
           confidence_reason?: string

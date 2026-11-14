@@ -46,16 +46,26 @@ psqlq() { docker exec -i "$DB" psql -U postgres -At -c "$1" 2>/dev/null; }
 psqlx() { docker exec -i "$DB" psql -U postgres -v ON_ERROR_STOP=1 -q -c "$1" >/dev/null 2>&1; }
 # a statement EXPECTED to be refused: success is the failure
 psql_refused() { docker exec -i "$DB" psql -U postgres -v ON_ERROR_STOP=1 -q -c "$1" >/dev/null 2>&1 && return 1 || return 0; }
+# INSERT ... RETURNING through `psql -At -c` prints the value AND the "INSERT 0 1" status line, so a
+# bare capture is two lines and fails as a uuid in the next statement — silently. Wrapping in a CTE
+# makes the id the only result row. (The same trap cost three false FAILs in ingest-queue-guard.)
+psql_insert_id() { psqlq "with ins as ($1 returning id) select id from ins;"; }
 
 WORK="$(mktemp -d)"
 cleanup_work() { rm -rf "$WORK"; }
 trap cleanup_work EXIT
 
-echo "── (p1) the cap is named, and the document's count is no longer returned as the read's ──"
-if grep -qE '^const PDF_PAGE_CAP = [0-9]+;' "$PARSER" && grep -q 'SP-93' "$PARSER"; then
-  ok "(p1) PDF_PAGE_CAP is a named constant and the file cites SP-93"
+echo "── (p1) one cap, 400,000 characters, and nothing written into the text ──"
+# The NAME may survive in a comment recording its removal; a live const or use is the failure.
+if grep -nE 'PDF_PAGE_CAP' "$PARSER" | grep -vE '^[0-9]+: *(//|\*)' | grep -q .; then
+  bad "(p1) PDF_PAGE_CAP is still live in $PARSER — SP-231 removed the page cap"
 else
-  bad "(p1) the 30-page cap is not a named constant citing SP-93 in $PARSER"
+  ok "(p1) no page cap survives in the parser"
+fi
+if grep -q 'const TEXT_CHAR_CAP = 350_000;' "$PARSER"; then
+  ok "(p1) the one remaining cap is 350,000 characters (SP-231, SP-267)"
+else
+  bad "(p1) TEXT_CHAR_CAP is not 400_000 in $PARSER"
 fi
 # comment lines are excluded on purpose: the file KEEPS a comment recording what the old return was,
 # and a guard that cannot tell code from the note explaining it is a guard that reads its own prose
@@ -64,10 +74,28 @@ if grep -nE 'pages:[[:space:]]*doc\.numPages' "$PARSER" | grep -qvE '^[0-9]+: *(
 else
   ok "(p1) the bare 'pages: doc.numPages' return is gone"
 fi
+# The marker used to be appended INTO the document body, where it could be windowed and quoted back
+# as an evidence excerpt, and where nothing reading the row could see it.
+if grep -nE '\[truncated\]' "$PARSER" | grep -vE '^[0-9]+: *(//|\*)' | grep -q .; then
+  bad "(p1) the parser still writes [truncated] into the extracted text"
+else
+  ok "(p1) nothing is appended to the extracted text; the cap is reported on the shape"
+fi
+if grep -q 'chars_capped: charsCapped' "$PARSER"; then
+  ok "(p1) the response shape carries chars_capped as its own fact"
+else
+  bad "(p1) the parser does not report chars_capped (SP-231)"
+fi
 if grep -q 'pages_read' "$PARSER" && grep -q 'pages_total' "$PARSER" && grep -q 'chars_total' "$PARSER"; then
-  ok "(p1) the response shape carries pages_read, pages_total and chars_total"
+  ok "(p1) and still carries pages_read, pages_total and chars_total"
 else
   bad "(p1) the parser response shape is missing one of pages_read / pages_total / chars_total"
+fi
+# SP-231: inferring the cap from the counts is WRONG, because compaction also moves them.
+if grep -nE 'chars_total[[:space:]]*>[[:space:]]*chars' "$PARSER" | grep -vE '^[0-9]+: *(//|\*)' | grep -q .; then
+  bad "(p1) partiality is inferred from chars_total vs chars — compaction makes that true of nearly every document"
+else
+  ok "(p1) partiality is never inferred from the character counts"
 fi
 
 echo "── (p2) the parser SERVING the port is the parser on disk (R46) ──"
@@ -83,53 +111,88 @@ else
   ok "(p2) served parser matches disk ($DISK_VERSION)"
 fi
 
-echo "── (p3) a capped read reports the cap, and the text stops where it says it stopped ──"
-node scripts/guards/fixtures/make-paged-pdf.mjs "$WORK/forty.pdf" 40 >/dev/null 2>&1 \
-  || bad "(p3) could not build the 40-page fixture"
-probe_pdf() {  # <path> → one line: pages_read pages_total chars_total has_last_read has_first_unread
-  node -e '
+echo "── (p3) a document OVER the character cap says so, and its text stops at the cap ──"
+# A text document is the cheapest way to pass the cap: the cap applies to EVERY path, and the text
+# path reaches it without building a two-thousand-page PDF.
+CAP=350000   # SP-267 lowered the backstop from 400,000; the read cap proper is a window count (SP-271)
+node -e '
+  const fs = require("node:fs");
+  // Markers either side of the cap, so the check is WHERE the text stops and not merely how long it is.
+  const unit = "The quick brown fox jumps over the lazy dog. ";
+  const want = Number(process.argv[2]) + 50000;
+  let s = "HEADMARKER ";
+  while (s.length < want) s += unit;
+  const at = Number(process.argv[2]) + 1000;
+  s = s.slice(0, at) + " TAILMARKER " + s.slice(at);
+  fs.writeFileSync(process.argv[1], s, "utf8");
+' "$WORK/big.txt" "$CAP" 2>/dev/null
+if [ ! -s "$WORK/big.txt" ]; then
+  bad "(p3) could not build the over-cap fixture — the checks below would pass on absence"
+else
+  P3=$(node -e '
     const fs = require("node:fs");
     const b64 = fs.readFileSync(process.argv[1]).toString("base64");
-    const url = process.argv[2], cap = Number(process.argv[3]), total = Number(process.argv[4]);
-    fetch(url, { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ file_name: "fixture.pdf", file_type: "application/pdf", content_base64: b64 }) })
+    fetch(process.argv[2], { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file_name: "big.txt", file_type: "text/plain", content_base64: b64 }) })
       .then((r) => r.json())
       .then((j) => {
         const t = String(j.text || "");
-        // the fixture marks every page uniquely, so we check WHICH pages were opened, not how many
-        console.log([j.pages_read, j.pages_total, j.chars_total,
-          t.includes(`P${cap}E`) ? "yes" : "no",
-          cap < total ? (t.includes(`P${cap + 1}E`) ? "yes" : "no") : "n/a"].join(" "));
+        console.log([j.chars, j.chars_total, j.chars_capped,
+          t.includes("HEADMARKER") ? "yes" : "no", t.includes("TAILMARKER") ? "yes" : "no"].join(" "));
       })
-      .catch((e) => { console.log("ERR " + e.message); });
-  ' "$1" "$PARSER_URL" "$2" "$3" 2>/dev/null
-}
-P3=$(probe_pdf "$WORK/forty.pdf" 30 40)
-read -r R3 T3 C3 LAST3 NEXT3 <<<"$P3"
-if [ "$R3" = "30" ] && [ "$T3" = "40" ]; then
-  ok "(p3) 40-page document: pages_read=30 pages_total=40 (chars_total=$C3)"
-else
-  bad "(p3) 40-page document reported pages_read=$R3 pages_total=$T3 — expected 30 and 40 [$P3]"
-fi
-if [ "$LAST3" = "yes" ] && [ "$NEXT3" = "no" ]; then
-  ok "(p3) the text contains page 30 and NOT page 31 — the cap is real, not a number in a field"
-else
-  bad "(p3) page-30 present=$LAST3 page-31 present=$NEXT3 — the reported cap does not match the text"
-fi
-if [ -n "$C3" ] && [ "$C3" -gt 0 ] 2>/dev/null; then
-  ok "(p3) chars_total is recorded ($C3)"
-else
-  bad "(p3) chars_total missing or zero on a document that yielded text"
+      .catch((e) => console.log("ERR " + e.message));
+  ' "$WORK/big.txt" "$PARSER_URL" 2>/dev/null)
+  read -r C3 CT3 CAPPED3 HEAD3 TAIL3 <<<"$P3"
+  if [ "$CAPPED3" = "true" ]; then
+    ok "(p3) an over-cap document reports chars_capped=true (chars=$C3 of chars_total=$CT3)"
+  else
+    bad "(p3) an over-cap document reported chars_capped=$CAPPED3 — expected true [$P3]"
+  fi
+  if [ -n "$C3" ] && [ "$C3" -le "$CAP" ] 2>/dev/null && [ "$C3" -gt $((CAP - 200)) ] 2>/dev/null; then
+    ok "(p3) the text stops at the cap ($C3 characters, cap $CAP)"
+  else
+    bad "(p3) the text is $C3 characters against a $CAP cap — the reported cap does not match the text"
+  fi
+  if [ "$HEAD3" = "yes" ] && [ "$TAIL3" = "no" ]; then
+    ok "(p3) the text contains the head marker and NOT the marker past the cap — the cap is a real read"
+  else
+    bad "(p3) head present=$HEAD3 past-cap marker present=$TAIL3 — the cap is a number in a field, not a read"
+  fi
 fi
 
-echo "── (p4) a WHOLE read says so — the guard is not just asserting the number 30 ──"
-node scripts/guards/fixtures/make-paged-pdf.mjs "$WORK/five.pdf" 5 >/dev/null 2>&1
-P4=$(probe_pdf "$WORK/five.pdf" 5 5)
-read -r R4 T4 _C4 LAST4 _N4 <<<"$P4"
-if [ "$R4" = "5" ] && [ "$T4" = "5" ] && [ "$LAST4" = "yes" ]; then
-  ok "(p4) 5-page document: pages_read=5 pages_total=5, page 5 present — a whole read, reported whole"
+echo "── (p4) a 40-page document is now read WHOLE — the page cap really is gone ──"
+# This is also (p3)'s non-vacuity: a guard in which everything is capped proves nothing about capping.
+node scripts/guards/fixtures/make-paged-pdf.mjs "$WORK/forty.pdf" 40 >/dev/null 2>&1 \
+  || bad "(p4) could not build the 40-page fixture"
+P4=$(node -e '
+  const fs = require("node:fs");
+  const b64 = fs.readFileSync(process.argv[1]).toString("base64");
+  fetch(process.argv[2], { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file_name: "fixture.pdf", file_type: "application/pdf", content_base64: b64 }) })
+    .then((r) => r.json())
+    .then((j) => {
+      const t = String(j.text || "");
+      // the fixture marks every page uniquely, so we check WHICH pages were opened, not how many
+      console.log([j.pages_read, j.pages_total, j.chars_capped,
+        t.includes("P40E") ? "yes" : "no", t.includes("P31E") ? "yes" : "no"].join(" "));
+    })
+    .catch((e) => console.log("ERR " + e.message));
+' "$WORK/forty.pdf" "$PARSER_URL" 2>/dev/null)
+read -r R4 T4 CAPPED4 LAST4 PAST30 <<<"$P4"
+if [ "$R4" = "40" ] && [ "$T4" = "40" ]; then
+  ok "(p4) 40-page document: pages_read=40 pages_total=40 — a whole read, reported whole"
 else
-  bad "(p4) 5-page document reported pages_read=$R4 pages_total=$T4 page5=$LAST4 — expected a whole read [$P4]"
+  bad "(p4) 40-page document reported pages_read=$R4 pages_total=$T4 — expected 40 and 40 [$P4]"
+fi
+if [ "$LAST4" = "yes" ] && [ "$PAST30" = "yes" ]; then
+  ok "(p4) the text contains page 40 AND page 31 — pages past the old 30-page cap are really opened"
+else
+  bad "(p4) page-40 present=$LAST4 page-31 present=$PAST30 — the old cap is still cutting the read"
+fi
+if [ "$CAPPED4" = "false" ]; then
+  ok "(p4) and chars_capped is false on it — the flag is not stuck on"
+else
+  bad "(p4) chars_capped=$CAPPED4 on a 40-page document well under the character cap"
 fi
 
 echo "── (p5) the one write path carries the pair (STATIC — D4: this function writes and calls a model) ──"
@@ -226,12 +289,87 @@ else
   fi
 fi
 
-echo "── (p8) the surfaces render S-ING-1, verbatim and BESIDE the state ──"
+echo "── (p8) the surfaces render S-ING-1 .. S-ING-5, verbatim and BESIDE the state ──"
 if npx vitest run src/lib/ingest/ingestStrings.parity.test.ts src/views/client/workspace/InputsPage.partialRead.test.tsx >"$WORK/vitest.log" 2>&1; then
-  ok "(p8) the S-ING-1 parity test and the render test pass ($(grep -cE '^ *✓' "$WORK/vitest.log") file(s))"
+  ok "(p8) the string parity test and the render test pass ($(grep -cE '^ *✓' "$WORK/vitest.log") file(s))"
 else
-  bad "(p8) the S-ING-1 parity or render test FAILED — see $WORK/vitest.log"
+  bad "(p8) the string parity or render test FAILED — see $WORK/vitest.log"
   tail -20 "$WORK/vitest.log" | sed 's/^/       /'
+fi
+
+echo "── (p9) the info icon: present on a budget-selected row, ABSENT on a one-window row (SP-260) ──"
+# WHY THIS CHECK IS HERE AND NOT IN THE PARITY TEST. The parity test asserts the PREDICATE on literal
+# numbers. This asserts it on NUMBERS THAT CAME OUT OF THE DATABASE, through the column CHECK, on the
+# same held fixture (p6) uses — so a constraint that silently rejected one of the two counts, or a
+# column that defaulted, would show up here and nowhere else.
+#
+# The decision is evaluated by importing the SHARED helper under deno, which reads .ts directly. It is
+# the same function the surfaces call; a second copy of the rule here would be the drift the whole
+# strings file exists to prevent.
+DENO="${DENO_BIN:-$HOME/.deno/bin/deno}"
+if [ ! -x "$DENO" ]; then
+  bad "(p9) deno not found at $DENO (set DENO_BIN) — the icon decision was not exercised"
+elif ! psqlq "select 1" >/dev/null 2>&1 || [ -z "${OWNER:-}" ]; then
+  bad "(p9) no database or no FR_LOGIN_EMAIL — the icon decision was not exercised on stored rows"
+else
+  # A long document: read whole, interpreted in part. The icon's whole subject.
+  SEL=$(psql_insert_id "insert into public.file_proposals
+    (company_id, file_name, source_type, summary, signal_type, status, processing_state,
+     sections_total, sections_ready, sections_failed, items_extracted, items_interpreted)
+    values ('$IPH','iph-budget-selected.pdf','uploaded_file','icon fixture','document','pending','ready',
+            17, 17, 0, 336, 76)")
+  # A one-window document whose extract fitted whole. Nothing to disclose.
+  ONE=$(psql_insert_id "insert into public.file_proposals
+    (company_id, file_name, source_type, summary, signal_type, status, processing_state,
+     sections_total, sections_ready, sections_failed, items_extracted, items_interpreted)
+    values ('$IPH','iph-one-window.pdf','uploaded_file','icon fixture','document','pending','ready',
+            1, 1, 0, 12, 12)")
+  if [ -z "$SEL" ] || [ -z "$ONE" ]; then
+    bad "(p9) could not insert both icon fixtures — the checks below would pass on absence"
+  else
+    read_row() { psqlq "select coalesce(items_extracted::text,'null') || ' ' || coalesce(items_interpreted::text,'null') || ' ' || coalesce(sections_total::text,'null') from public.file_proposals where id='$1';"; }
+    decide() {  # <extracted> <interpreted> → true|false, from the SHARED helper
+      "$DENO" eval --ext=ts "
+        const { isBudgetSelected } = await import('file://$PWD/src/lib/ingest/ingestStrings.ts');
+        console.log(String(isBudgetSelected(Number(Deno.args[0]), Number(Deno.args[1]))));
+      " "$1" "$2" 2>/dev/null
+    }
+    read -r SE SI ST <<<"$(read_row "$SEL")"
+    read -r OE OI OT <<<"$(read_row "$ONE")"
+    if [ "$SE" = "336" ] && [ "$SI" = "76" ] && [ "$ST" = "17" ]; then
+      ok "(p9) the budget-selected row stored its counts (17 sections, 76 of 336 items)"
+    else
+      bad "(p9) the budget-selected row read back as extracted=$SE interpreted=$SI sections=$ST"
+    fi
+    D1=$(decide "$SE" "$SI")
+    if [ "$D1" = "true" ]; then
+      ok "(p9) and the icon APPEARS on it — items_interpreted below items_extracted on a ready row"
+    else
+      bad "(p9) the icon did NOT appear on a budget-selected row (helper said '$D1')"
+    fi
+    D2=$(decide "$OE" "$OI")
+    if [ "$D2" = "false" ]; then
+      ok "(p9) the icon is ABSENT on the one-window row ($OI of $OE interpreted) — the negative SP-262 asks for"
+    else
+      bad "(p9) the icon appeared on a one-window row whose extract fitted whole (helper said '$D2')"
+    fi
+    # Non-vacuity: the helper must be capable of both answers, and of refusing a half-pair.
+    D3=$(decide 336 "null")
+    if [ "$D3" = "false" ] && [ "$D1" != "$D2" ]; then
+      ok "(p9) the helper gives both answers and refuses half a pair — not a constant"
+    else
+      bad "(p9) the helper is not discriminating (budget=$D1 one-window=$D2 half-pair=$D3)"
+    fi
+    # SP-257: the column CHECK must refuse interpreted ABOVE extracted — the icon's premise reversed.
+    if psql_refused "insert into public.file_proposals
+      (company_id, file_name, source_type, summary, signal_type, status, processing_state,
+       items_extracted, items_interpreted)
+      values ('$IPH','iph-impossible.pdf','uploaded_file','icon fixture','document','pending','ready', 10, 20);"; then
+      ok "(p9) a row claiming it interpreted MORE than it extracted is refused by the column CHECK"
+    else
+      bad "(p9) a row with items_interpreted > items_extracted was accepted"
+    fi
+  fi
 fi
 
 if [ "$fails" = 0 ]; then echo "guard: PASS"; else echo "guard: RED ($fails check(s)) — see above"; fi

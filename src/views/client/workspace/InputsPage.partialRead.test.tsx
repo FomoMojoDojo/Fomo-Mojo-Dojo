@@ -43,7 +43,7 @@ const BASE: FileProposalRow = {
   confidence: "medium", confidence_reason: "", analysis_version: 1,
   // extraction_pages keeps its old meaning: the DOCUMENT's count. The read is the new pair.
   extraction_chars: 41_000, extraction_images: 0, extraction_pages: 77,
-  pages_read: null, pages_total: null, chars_total: null, questions_to_verify: [],
+  pages_read: null, pages_total: null, chars_total: null, chars_capped: null, sections_total: null, sections_ready: null, sections_failed: null, items_extracted: null, items_interpreted: null, questions_to_verify: [],
   status: "accepted", processing_state: "ready", processing_error: null, processing_started_at: null,
   processing_completed_at: "2026-11-13T17:05:00Z", applied_areas: ["jobmap"],
   created_at: "2026-11-13T17:00:00Z", reviewed_at: "2026-11-13T17:08:04Z",

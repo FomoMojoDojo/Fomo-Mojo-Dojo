@@ -5,7 +5,11 @@
 import { useState, useEffect, type Dispatch, type SetStateAction } from "react";
 import type { FileProposalRow } from "@/hooks/useFileProposals";
 import { formatAnalysisVersion, formatExtractionShape } from "@/lib/fileAnalysis";
-import { isPartialRead, partialReadLine } from "@/lib/ingest/ingestStrings";
+import {
+  INGEST_STRINGS, isBudgetSelected, isPartialRead, partialReadLine,
+  sectionsFailedLine, sectionsProgressLine, showsSectionCounts,
+} from "@/lib/ingest/ingestStrings";
+import { Info } from "lucide-react";
 import { isInternalFileTag, makeAreaSupportTag } from "@/lib/fileTags";
 
 export const WORKSHOP_TAGS = [
@@ -182,6 +186,75 @@ export function fileProposalPartialReadText(proposal: FileProposalRow | null | u
   if (!proposal) return null;
   if (!isPartialRead(proposal.pages_read, proposal.pages_total)) return null;
   return partialReadLine(proposal.pages_read as number, proposal.pages_total as number);
+}
+
+/**
+ * S-ING-2 / S-ING-3 / S-ING-4 for this proposal, or null when none applies. Rendered from the ROW
+ * (SP-183): the chunk rows have no client policy, and a progress line that depends on a second query
+ * is a progress line that vanishes while the work continues.
+ *
+ * ORDER MATTERS. A ready document whose sections failed says SO (S-ING-3) rather than reporting
+ * progress, and the character cap (S-ING-4) is reported even when the sections all succeeded —
+ * because those sections covered only the part of the document that was read.
+ *
+ * All three of these describe something that could NOT be read, and carry the warning styling the
+ * partial-read line already has. S-ING-5 is the one that does not; see below.
+ */
+export function fileProposalSectionsText(proposal: FileProposalRow | null | undefined): string | null {
+  if (!proposal) return null;
+  const total = proposal.sections_total;
+  const failed = proposal.sections_failed ?? 0;
+  if (proposal.processing_state === "ready" || proposal.processing_state === "failed") {
+    if (showsSectionCounts(total) && failed > 0) return sectionsFailedLine(failed, total as number);
+    if (proposal.chars_capped === true) return INGEST_STRINGS.charsCapped;
+    return null;
+  }
+  if (proposal.processing_state === "running" && showsSectionCounts(total)) {
+    return sectionsProgressLine(proposal.sections_ready ?? 0, total as number);
+  }
+  return null;
+}
+
+/**
+ * S-ING-5 for this proposal, or null. SP-260: only on a READY row whose framework pass read fewer
+ * items than extraction found.
+ *
+ * THIS IS NOT A PARTIAL AND MUST NOT LOOK LIKE ONE (SP-257, SP-262). Every section was read, and
+ * SP-256's round-robin guarantees every section contributed to the hand-off; what the budget decided
+ * is how much of a long document's extract this pass INTERPRETED. So it renders as the app's existing
+ * info icon in neutral styling — never the warning style, which stays with S-ING-3 and S-ING-4.
+ */
+export function fileProposalBudgetInfoText(proposal: FileProposalRow | null | undefined): string | null {
+  if (!proposal) return null;
+  if (proposal.processing_state !== "ready") return null;
+  if (!isBudgetSelected(proposal.items_extracted, proposal.items_interpreted)) return null;
+  return INGEST_STRINGS.budgetSelected;
+}
+
+/** Neutral, deliberately not the warning palette. Sized to sit inside the badge's own line. */
+const READY_INFO_ICON: React.CSSProperties = {
+  width: 11, height: 11, marginLeft: 4, flexShrink: 0, color: "#6b7280", verticalAlign: "middle",
+};
+
+/**
+ * The info icon beside "Analysis ready" (SP-260, SP-261, SP-262). S-ING-5 is BOTH the tooltip and the
+ * accessible label, so the disclosure exists for a screen reader and not only for a hover.
+ */
+export function FileProposalReadyInfoIcon(
+  { proposal }: { proposal: FileProposalRow | null | undefined },
+): JSX.Element | null {
+  const text = fileProposalBudgetInfoText(proposal);
+  if (!text) return null;
+  return (
+    <Info
+      style={READY_INFO_ICON}
+      aria-label={text}
+      role="img"
+      data-testid="ingest-budget-info"
+    >
+      <title>{text}</title>
+    </Info>
+  );
 }
 
 export function fileProposalReviewCountsText(proposal: FileProposalRow): string {

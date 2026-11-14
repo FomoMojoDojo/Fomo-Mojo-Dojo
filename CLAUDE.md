@@ -257,8 +257,9 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   helper `diagnose-data-guard` invokes, never an independent member) — classifies on BOTH the exit
   code and the printed verdict, and puts `~/.deno/bin` on PATH, because `interview-parser-guard` runs
   `deno test` bare and reads RED without it for no code reason. Source the three env files first.
-- **The guard sweep is 45 GREEN / 4 RED of 49, and the FOUR standing REDs are named** (re-measured
-  2026-11-13 after Part B added `ingest-partial-honesty-guard`; was 44 / 4 of 48 with
+- **The guard sweep is 48 GREEN / 4 RED of 52, and the FOUR standing REDs are named** (re-measured
+  2026-11-14 after I-2 added `ingest-chunking-guard` and `ingest-merge-guard`; was 46 / 4 of 50 after
+  I-1, 45 / 4 of 49 after Part B added `ingest-partial-honesty-guard`, 44 / 4 of 48 with
   `caller-authz-guard` and 43 / 4 of 47 before either, all three env files sourced;
   `interview-upload-path-guard` is excluded from the session sweep by design (U6-38) and passes
   standalone):
@@ -286,6 +287,20 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
 
   The remedy for the gap is that same insert with `'20261112130000'`. **Not done here** — it is
   outside Part B and belongs to whoever signs for that migration.
+- **SP-F43 filed (2026-11-14) — Adjudication's OUTPUT is unbounded, so its runtime is
+  unpredictable. BLOCKER before any client uploads a long document.** The file-analysis workflow's
+  Adjudication node emitted **4,747 tokens on one run and 8,329 on the next**, taking 364.0 s and
+  563.9 s; every other LLM node in the same workflow emits 356–1,372. Its duration tracks its own
+  output at about 0.072 s per token, and its INPUT barely moves with the hand-off size (14,270 →
+  12,963 tokens across a threefold reduction) because its input is dominated by the seven framework
+  nodes' outputs rather than by the merged extract. **So shrinking the hand-off does not shorten it —
+  the smaller hand-off produced the LONGER run.** It has already been killed at exactly 600.0 s by the
+  plugin daemon (`[ollama] … PluginDaemonInternalServerError: killed by ti…`, run `1291fccd`), which
+  is what stopped that whole workflow at 1,555.6 s against the 1,200 s ceiling.
+  The fix is to BOUND the node's output, in the Dify workflow, not to tune the input. Until then a
+  long document's analysis time cannot be predicted and can exceed the plugin ceiling without warning.
+  Out of scope for I-2 (SP-280); the hand-off budget stays 10,000 until this is addressed (SP-281).
+
 - **SP-F35 filed (2026-11-13) — a baseline on company B can start while a file analysis runs on
   company A.** Both are heavy local jobs, and nothing excludes that one pair. I-1 closes every case
   it controls: the file-analysis starter yields to any `company_run_locks` row anywhere, and a running

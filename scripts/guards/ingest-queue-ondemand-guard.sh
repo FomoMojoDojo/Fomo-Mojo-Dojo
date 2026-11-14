@@ -198,7 +198,18 @@ docker exec -i "$DB" psql -U postgres -q -c "delete from public.file_proposals w
 # ── (s2a) the PK refusal, DETERMINISTICALLY, before any timing is involved ───────────────────────
 # The opportunistic plant below needs a live run to race; this one needs nothing, so the
 # single-flight guarantee is never left resting on a sampling window.
-psqlx "delete from public.ingest_single_flight;"
+# SP-264: a guard deletes ONLY rows it created, by its own fixture ids. This used to be an UNSCOPED
+# `delete from public.ingest_single_flight` — the same defect as ingest-queue-guard q18, which on
+# 2026-11-13 broke a live analysis by taking the Charter 10-Q's claim at window 10 of 17. The lock
+# table's primary key is a CONSTANT, so there is only ever one row and "delete whatever is there" was
+# the easy way to get the slot. It is never an acceptable one.
+LOCK_OWNER=$(psqlq "select coalesce(company_id::text,'') from public.ingest_single_flight limit 1;")
+if [ -n "$LOCK_OWNER" ] && [ "$LOCK_OWNER" != "$HELDCO" ]; then
+  echo "  SKIP (s2a) an analysis is in flight on company $LOCK_OWNER — refusing to take its lock."
+  echo "       Re-run this guard when nothing is in flight (SP-265)."
+  PROBE=""
+else
+psqlx "delete from public.ingest_single_flight where company_id='$HELDCO';"
 PROBE=$(psql_insert_id "insert into public.file_proposals (company_id, processing_state) values ('$HELDCO','queued')")
 psqlx "insert into public.ingest_single_flight (lock_key, proposal_id, company_id, expires_at)
        values ('file_analysis','$PROBE','$HELDCO', now() + interval '5 minutes');"
@@ -208,8 +219,9 @@ if psql_refused "insert into public.ingest_single_flight (lock_key, proposal_id,
 else
   bad "(s2a) a second single-flight claim was ACCEPTED (SP-180)"
 fi
-psqlx "delete from public.ingest_single_flight;"
+psqlx "delete from public.ingest_single_flight where company_id='$HELDCO';"
 psqlx "delete from public.file_proposals where id='$PROBE';"
+fi
 
 # ── three REAL files on the held company ────────────────────────────────────────────────────────
 # Direct proposal inserts, because SP-191 makes the enqueue skip a held company — but the files and
