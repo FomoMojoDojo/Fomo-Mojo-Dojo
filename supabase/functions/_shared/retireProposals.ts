@@ -200,3 +200,48 @@ export async function applySignalRetirement(supabase: Sb, companyId: string, pla
   if (out.some((o) => o.superseded > 0 || o.struck > 0)) await snapshotMojoScore(supabase as any, companyId);
   return out;
 }
+
+// ── SP-301: A NEWER ANALYSIS OF A FILE SUPERSEDES THE EARLIER ONES (2026-11-14) ─────────────────
+//
+// Re-analysing a file used to insert a new proposal and mint afresh while the earlier analysis's
+// signals and claims stayed live: the Charter 10-Q analysed twice left 29 + 35 = 64 live signals from
+// one document (SP-F49). This retires every OTHER proposal on the same file through the signed path
+// above — signals superseded (never deleted), wholly-backed claims struck, one ledger row each, the
+// score re-snapshotted once — and changes nothing else. The earlier proposal rows stay as records
+// (SP-310).
+//
+// The caller runs it only AFTER the new analysis has minted and is `ready`. That ordering is what
+// keeps a claim resting on both old and new signals alive: its new signal is part of its live backing,
+// so it is not wholly backed by retired signals. The reason does not start with operator_retired, so
+// rule J2 does not exclude the upload from the corpus.
+export const REANALYSIS_REASON = "reanalysis:superseded_by_newer_analysis";
+export const REANALYSIS_ACTOR = "system:dify-analyze-file";
+
+export async function retireEarlierAnalysesOfFile(
+  supabase: Sb,
+  companyId: string,
+  fileId: string,
+  keepProposalId: string,
+): Promise<{ proposals: number; signals: number; claims_struck: number }> {
+  const none = { proposals: 0, signals: 0, claims_struck: 0 };
+  if (!fileId || !keepProposalId) return none;
+  const { data, error } = await supabase
+    .from("file_proposals").select("id")
+    .eq("company_id", companyId).eq("file_id", fileId).neq("id", keepProposalId);
+  if (error) throw new Error(`earlier analyses lookup failed: ${error.message}`);
+  const earlier = ((data ?? []) as Array<{ id: unknown }>).map((r) => String(r.id));
+  if (!earlier.length) return none;
+  const plans = await planRetirement(supabase, companyId, earlier, REANALYSIS_REASON);
+  const toRetire = plans.filter((p) => p.change === "retire");
+  if (!toRetire.length) return none;
+  const applied = await applyRetirement(supabase, companyId, toRetire, {
+    reason: REANALYSIS_REASON,
+    actor: REANALYSIS_ACTOR,
+    note: `superseded by the newer analysis ${keepProposalId} of the same file`,
+  });
+  return {
+    proposals: applied.length,
+    signals: applied.reduce((n, a) => n + a.superseded, 0),
+    claims_struck: applied.reduce((n, a) => n + a.struck, 0),
+  };
+}

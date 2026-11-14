@@ -11,6 +11,7 @@ import { ReadFoot } from "./readBands";
 import { useViewedSet } from "./viewedSet";
 import { ReadBand, WorkspaceReadPage } from "./WorkspaceReadPage";
 import { WORKSPACE_STRINGS } from "./workspaceNav";
+import { isGenericJtbdStatement } from "@/views/JobSteps/helpers/validation";
 
 export default function MarketPage() {
   const { activeCompany } = useCompany();
@@ -18,6 +19,12 @@ export default function MarketPage() {
   const { marketDefinition, needs, loading } = useOdiNeeds(activeCompany?.id, 0, set.viewedKey ?? undefined);
   const busy = set.loading || loading;
   const jtbd = marketDefinition?.jtbd?.trim() || null;
+  // SP-300 (S-MKT-1): research-company's jtbdFromJourneyTitle() falls through to a fixed sentence —
+  // "…move from defining outcomes to executing and monitoring progress…" — whenever the audience it
+  // parsed matches none of four keyword lists, and that sentence rests on no evidence (SP-F46; 9 of 27
+  // companies rendered it). The admin JobSteps view already blanks it with this same check; the client
+  // page now says what is true instead. The stored row is not changed.
+  const jtbdIsCanned = jtbd !== null && isGenericJtbdStatement(jtbd);
   const statement = marketDefinition?.job_executor?.trim() || null;
   return (
     <WorkspaceReadPage eyebrow={WORKSPACE_STRINGS.yourMarket} statement={statement}>
@@ -27,7 +34,11 @@ export default function MarketPage() {
         <>
           {jtbd ? (
             <ReadBand label={WORKSPACE_STRINGS.whatTheyAreHiringFor} region="hiring-for">
-              <p className="fr-ws-band-statement fr-ws-band-statement--large">{withStop(jtbd)}</p>
+              {jtbdIsCanned ? (
+                <p className="fr-ws-band-statement" data-testid="market-hiring-for-unknown">{WORKSPACE_STRINGS.marketNotEnoughEvidence}</p>
+              ) : (
+                <p className="fr-ws-band-statement fr-ws-band-statement--large">{withStop(jtbd)}</p>
+              )}
             </ReadBand>
           ) : null}
           {needs.length > 0 ? (

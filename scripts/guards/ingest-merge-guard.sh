@@ -332,6 +332,21 @@ print(json.dumps(out))
     || bad "(m6) a minItems appeared in the schema (SP-305 forbids it)"
   [ "$(val num_predict)" = "6300" ] && ok "(m6) the output backstop is num_predict 6,300 (SP-294)" \
     || bad "(m6) num_predict is $(val num_predict), not the signed 6,300"
+  # SP-312: the provider credential is NOT in the DSL, and Dify enforces its max_tokens as num_predict's
+  # maximum. Below 6,300 every analysis fails at Adjudication in 0.0 s — which is how the first F43 run
+  # failed. Read from the same tenant's provider_models -> provider_model_credentials join the plugin uses.
+  CRED_MAX=$(docker exec -i "$DIFYDB" psql -U postgres -d dify -At -c "
+    select (c.encrypted_config::jsonb)->>'max_tokens'
+      from provider_models m join provider_model_credentials c on c.id = m.credential_id
+      join apps a on a.tenant_id = m.tenant_id
+     where a.id = '2b694256-d03d-4e2f-a0ae-8a0e666f3c38' and m.model_name = 'qwen2.5:14b-instruct'
+       and m.provider_name like '%ollama%';" 2>/dev/null | head -1)
+  NP=$(val num_predict)
+  if [ -n "$CRED_MAX" ] && [ "$NP" != "None" ] && [ "$CRED_MAX" -ge "$NP" ] 2>/dev/null; then
+    ok "(m6) SP-312: the credential's max_tokens $CRED_MAX allows the node's num_predict $NP"
+  else
+    bad "(m6) the credential's max_tokens '${CRED_MAX:-unreadable}' is below the node's num_predict $NP — every analysis would fail at Adjudication"
+  fi
 fi
 
 echo "  -- $oks ok / $fails FAIL --"

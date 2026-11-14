@@ -25,6 +25,7 @@ import {
   FRAMEWORK_TIMEOUT_CODE, FRAMEWORK_TRUNCATED_CODE, isFrameworkOutputTruncated, isTimeCeilingFailure,
   MAX_FRAMEWORK_ATTEMPTS,
 } from "../_shared/frameworkRetry.ts";
+import { retireEarlierAnalysesOfFile } from "../_shared/retireProposals.ts";
 import { FILE_ANALYSIS_VERSION } from "../../../src/lib/fileAnalysis.ts";
 
 const corsHeaders = {
@@ -1263,6 +1264,28 @@ async function retryFrameworkPass(args: {
   }
 }
 
+// ── SP-301: a newer analysis of a file supersedes the earlier ones ──────────────────────────────
+// The rule and the work live in _shared/retireProposals.ts (retireEarlierAnalysesOfFile), beside the
+// signed retirement path it reuses. What is HERE is the failure policy: a failure to retire does not
+// fail this analysis — it is complete and correct; the earlier signals simply stay live, as before,
+// until the next analysis of the file (the planner is idempotent).
+async function supersedeEarlierAnalyses(args: {
+  supabase: { from: (t: string) => any; rpc?: any };
+  companyId: string;
+  fileId: string;
+  proposalId: string;
+}): Promise<void> {
+  try {
+    const r = await retireEarlierAnalysesOfFile(args.supabase as never, args.companyId, args.fileId, args.proposalId);
+    if (r.proposals > 0) {
+      console.log("[dify-analyze-file] SP-301: earlier analyses superseded", JSON.stringify({ proposalId: args.proposalId, ...r }));
+    }
+  } catch (error) {
+    console.warn("[dify-analyze-file] SP-301: supersede of earlier analyses FAILED; they stay live until the next analysis:",
+      args.proposalId, String((error as Error)?.message ?? error));
+  }
+}
+
 async function markProposalFailed(params: {
   // deno-lint-ignore no-explicit-any
   supabase: { from: (t: string) => any };
@@ -1563,6 +1586,14 @@ async function persistDifyResult(params: {
       processing_error_code: null,
       minting_origin_state: mintingOriginState,
     }).eq("id", proposalId).neq("status", "rejected");
+
+    // SP-301: only now — minted, linked, ready — do the earlier analyses of this file stand down.
+    await supersedeEarlierAnalyses({
+      supabase: supabase as unknown as { from: (t: string) => any; rpc?: any },
+      companyId,
+      fileId: String((proposalRow as { file_id?: unknown }).file_id ?? "").trim(),
+      proposalId,
+    });
   } else {
     // No company on the row means there is no minting step to succeed or fail, so there is nothing
     // for 'ready' to be a claim about — but the row must still reach a terminal state rather than

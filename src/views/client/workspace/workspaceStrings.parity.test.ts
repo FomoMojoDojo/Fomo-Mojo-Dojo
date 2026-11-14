@@ -46,3 +46,18 @@ describe("Job Map register — market door (signed 2026-09-15, item 2, R2)", () 
     expect(Object.values(WORKSPACE_STRINGS)).not.toContain("No steps");
   });
 });
+
+describe("Market — S-MKT-1 (signed 2026-11-14, SP-300)", () => {
+  it("byte-identical", () => {
+    expect(WORKSPACE_STRINGS.marketNotEnoughEvidence).toBe(
+      "Not enough evidence yet to say what this market is hiring for.");
+  });
+  it("the Market page renders it from the register and carries no copy of its own", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const page = readFileSync(join(__dirname, "MarketPage.tsx"), "utf8");
+    expect(page).toContain("WORKSPACE_STRINGS.marketNotEnoughEvidence");
+    expect(page).toContain("isGenericJtbdStatement(jtbd)");
+    expect(page).not.toContain("Not enough evidence yet to say");
+  });
+});

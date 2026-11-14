@@ -257,8 +257,9 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   helper `diagnose-data-guard` invokes, never an independent member) — classifies on BOTH the exit
   code and the printed verdict, and puts `~/.deno/bin` on PATH, because `interview-parser-guard` runs
   `deno test` bare and reads RED without it for no code reason. Source the three env files first.
-- **The guard sweep is 48 GREEN / 4 RED of 52, and the FOUR standing REDs are named** (re-measured
-  2026-11-14 after I-2 added `ingest-chunking-guard` and `ingest-merge-guard`; was 46 / 4 of 50 after
+- **The guard sweep is 49 GREEN / 4 RED of 53, and the FOUR standing REDs are named** (re-measured
+  2026-11-14 after SP-301 added `reanalysis-supersede-guard`; 48 / 4 of 52 after I-2 added
+  `ingest-chunking-guard` and `ingest-merge-guard`; was 46 / 4 of 50 after
   I-1, 45 / 4 of 49 after Part B added `ingest-partial-honesty-guard`, 44 / 4 of 48 with
   `caller-authz-guard` and 43 / 4 of 47 before either, all three env files sourced;
   `interview-upload-path-guard` is excluded from the session sweep by design (U6-38) and passes
@@ -325,7 +326,10 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   none of four keyword lists. The row is `internal_inferred`, `unvalidated`, with no source ref. 9 of
   27 companies with a live market definition render it (all real, none held). `isGenericJtbdStatement`
   already detects it and the admin JobSteps view blanks it; the client `MarketPage.tsx` never asks.
-  Trace: `~/dev/_diagnose-shots/2026-11-13/ingest/job-statement-trace.md`.
+  Trace: `~/dev/_diagnose-shots/2026-11-13/ingest/job-statement-trace.md`. **Client side addressed
+  (SP-300, 2026-11-14):** `MarketPage.tsx` now runs the same check and renders S-MKT-1 ("Not enough
+  evidence yet to say what this market is hiring for.") in place of the sentence; the stored rows and
+  `research-company`'s template are unchanged.
 
 - **SP-F47 filed (2026-11-14) — the differentiator judge cannot say "contradicted", and nothing checks
   polarity, so a customer-complaint pattern reads as a corroborated strength.** `judgeAttributeEvidence`
@@ -345,6 +349,11 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
 - **SP-F49 filed (2026-11-14) — re-analysing a file leaves the earlier analysis's signals and claims
   live.** Each analysis inserts a new proposal and mints afresh without superseding the previous
   proposal's rows: the Charter 10-Q analysed twice left 29 + 35 = 64 live signals from one document.
+  **Fixed going forward (SP-301, 2026-11-14):** when an analysis of a file reaches `ready`,
+  `retireEarlierAnalysesOfFile` (`_shared/retireProposals.ts`, reusing the signed retirement path)
+  supersedes every other proposal's signals on that file and strikes the claims wholly backed by them;
+  a claim also backed by the newer analysis stays live. Existing duplicates are retired by each file's
+  NEXT analysis — there is no backfill. Guard: `reanalysis-supersede-guard`.
 
 - **SP-F35 filed (2026-11-13) — a baseline on company B can start while a file analysis runs on
   company A.** Both are heavy local jobs, and nothing excludes that one pair. I-1 closes every case

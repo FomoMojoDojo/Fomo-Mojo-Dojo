@@ -170,6 +170,9 @@ export const WORKSPACE_STRINGS = {
   insteadOf: "Instead of",
   taglineShift: "Tagline shift",
   whatTheyAreHiringFor: "What they are hiring for",
+  /** S-MKT-1 (signed 2026-11-14, SP-300) — shown under "What they are hiring for" in place of the canned
+   *  jtbdFromJourneyTitle default-branch sentence, which rests on no evidence (SP-F46). */
+  marketNotEnoughEvidence: "Not enough evidence yet to say what this market is hiring for.",
   customerTensionsMapped: "Customer tensions mapped",
   // ── No public site (2026-09-16) — DRAFT pending the operator's signature at screenshot ──
   /** Add-Client checkbox label (given by the operator). */
