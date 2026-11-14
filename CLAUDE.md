@@ -366,7 +366,15 @@ unit test, or use a function's own `dry_run` body flag where one exists (`restam
   router consumer would admit them to an outside model. Measured: 27 live signals on 2 companies
   (Charter 19, from its 10-Q). No outside call has carried them on Charter (its last outside call,
   2026-11-12 16:10, predates the 10-Q's signals). `reconcile-map-evidence` labels every uploaded signal
-  non-public; the router itself is unchanged. Wants a ruling.
+  non-public.
+  **Fixed (SP-346, 2026-11-14):** `signalProvenance(band, voice, sourceType)` tests the SOURCE first,
+  against `PUBLIC_SIGNAL_SOURCE_TYPES` (`_shared/clientMaterial.ts`, the W1 list, imported); an upload /
+  intake / interview, NULL, unknown or unpassed source is non-public whatever the voice. Every caller
+  passes `source_type`. Re-measured, the affected set was **224** live signals on 4 companies (Charter
+  19; the rest held fixtures / the member throwaway), not 27 — `market_context` is a public voice too;
+  none was carried outside. Guard: `outside-call-guard` (b9). **Still open:** a claim's stored
+  `provenance` is a separate channel — 43 active `public_observed` claims rest wholly on upload signals
+  (Charter 7, CB1 36), and claim-delta synthesis routes by it. Review: `SP-346-review.md`.
   On Charter the 10-Q was classed `third_party` by the classifier; SP-321 ruled the filings are Charter's
   own voice, so an operator override row (`doc_voice_verdicts` `6cfbf94a`, `client_voice`) now records
   that. Its 19 existing signals keep their stored band until the file is next analysed (no re-mint).

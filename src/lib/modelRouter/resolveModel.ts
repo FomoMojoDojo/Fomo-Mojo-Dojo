@@ -20,6 +20,9 @@ export type ModelChoice = { provider: ModelProvider; model: string; role: ModelR
 // importing PUBLIC_PROVENANCES / isPublicProvenance from this module unchanged, now hardened at source.
 import { PUBLIC_PROVENANCES, isPublicProvenance } from "../../../supabase/functions/_shared/publicReadGuards.ts";
 export { PUBLIC_PROVENANCES, isPublicProvenance };
+// SP-346 (2026-11-14): the source half of a signal's provenance. ONE allowlist of public source_types,
+// the same predicate the public-read wall applies (W1) — imported, never a second list.
+import { isPublicSignalSourceType } from "../../../supabase/functions/_shared/clientMaterial.ts";
 
 // ── MODEL TRIAL (operator ruling, 2026-10-15): THE EXTERNAL BRANCH SPLITS BY ROLE ───────────────
 //
@@ -51,12 +54,25 @@ export const EXTERNAL_MODEL = EXTERNAL_JUDGE;
 export const LOCAL_GENERATOR = "qwen2.5:14b-instruct";
 export const LOCAL_JUDGE = "llama3:70b";
 
-/** A signal has no provenance column — derive it from band + voice. Only outside-band PUBLIC-web
- *  voices are public; our own analysis, unknown/NULL voices, and non-outside bands are non-public. */
+/** A signal has no provenance column — derive it from SOURCE + band + voice. Only an outside-band
+ *  PUBLIC-web voice on a PUBLIC source_type is public; our own analysis, unknown/NULL voices,
+ *  non-outside bands, and every client-provided source are non-public.
+ *
+ *  SP-346 (containment, 2026-11-14): the SOURCE decides first. A signal minted from an uploaded file
+ *  is PRIVATE regardless of its voice label — the upload voice gate mints a document it classes
+ *  third_party as outside / outside_voice_about_client, and band + voice alone read that as
+ *  public_observed. So source_type must be on the public allowlist (clientMaterial.ts,
+ *  PUBLIC_SIGNAL_SOURCE_TYPES); an upload/intake/interview source, a NULL, an unrecognised value,
+ *  or a caller that did not select the column (undefined) is non-public. Fail closed. */
 const PUBLIC_SIGNAL_VOICES: ReadonlySet<string> = new Set([
   "outside_voice_about_client", "client_voice", "market_context", "competitor_voice",
 ]);
-export function signalProvenance(signalBand: string | null | undefined, voiceClass: string | null | undefined): string | null {
+export function signalProvenance(
+  signalBand: string | null | undefined,
+  voiceClass: string | null | undefined,
+  sourceType?: string | null,
+): string | null {
+  if (!isPublicSignalSourceType(sourceType)) return null; // SP-346: uploaded / client-provided / unknown source → local
   if (signalBand !== "outside") return null; // organization / customer / unknown band → non-public
   return voiceClass && PUBLIC_SIGNAL_VOICES.has(voiceClass) ? "public_observed" : null; // analysis/NULL → local
 }

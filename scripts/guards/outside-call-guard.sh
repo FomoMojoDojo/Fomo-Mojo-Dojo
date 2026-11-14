@@ -55,6 +55,15 @@
 # trap. The non-vacuity partners make a real (cent-fraction) OpenAI call on a throwaway, which step 13
 # permits; they are the only spend in this guard.
 #   (b5) SP-106. council-review refuses a non-admin caller by name, in the function.
+#   (b9) SERVED WORKER, SP-346 (2026-11-14). An uploaded file's signal is PRIVATE whatever its voice.
+#        A third held throwaway holds ONE signal minted from an upload the voice gate classed third
+#        party — source_type='uploaded_file', signal_band='outside', voice 'outside_voice_about_client',
+#        exactly the shape band + voice alone read as public. assess-surface-drift must save it
+#        'withheld' with no score, propose-route-changes must refuse it by name, and NO outside model
+#        call may be recorded for that company. Non-vacuity: (b6-nv)/(b7-nv) on the public-only
+#        throwaway in the same run. Plant: drop the source_type test in signalProvenance
+#        (src/lib/modelRouter/resolveModel.ts) via scripts/plant.sh, docker restart the edge runtime —
+#        (b9) goes RED (and the plant's run makes one cent-fraction call on the throwaway's synthetic text).
 #
 # Read the printed verdict, not only the exit code — this guard sets both (SP-59).
 set -uo pipefail
@@ -131,17 +140,20 @@ done
 
 echo "── (a3) the four contained functions still carry their gate ──"
 if [ "$PLANT" = "unrouted" ]; then echo "  (PLANT=unrouted: a3/b1 are expected RED)"; fi
-grep -q 'signalProvenance(s.signal_band, s.voice_class)' supabase/functions/assess-surface-drift/index.ts \
-  && ok "(a3) assess-surface-drift routes on every signal's provenance" \
+grep -q 'signalProvenance(s.signal_band, s.voice_class, s.source_type)' supabase/functions/assess-surface-drift/index.ts \
+  && ok "(a3) assess-surface-drift routes on every signal's provenance, source first (SP-346)" \
   || bad "(a3) assess-surface-drift no longer routes on signal provenance"
 grep -q "drift_state: \"withheld\"" supabase/functions/assess-surface-drift/index.ts \
   && ok "(a3) assess-surface-drift withholds rather than guessing a verdict" \
   || bad "(a3) assess-surface-drift has no withheld path"
 for p in propose-route-changes propose-opportunity-changes; do
-  grep -q 'isPublicProvenance(signalProvenance' "supabase/functions/$p/index.ts" \
-    && ok "(a3) $p filters the evidence block by provenance" \
+  grep -q 'isPublicProvenance(signalProvenance(r.signal_band, r.voice_class, r.source_type))' "supabase/functions/$p/index.ts" \
+    && ok "(a3) $p filters the evidence block by provenance, source first (SP-346)" \
     || bad "(a3) $p sends its evidence block ungated"
 done
+grep -q 'if (!isPublicSignalSourceType(sourceType)) return null;' src/lib/modelRouter/resolveModel.ts \
+  && ok "(a3) SP-346: signalProvenance decides from source_type first — an uploaded file is never public" \
+  || bad "(a3) SP-346: signalProvenance no longer tests source_type — an upload labelled outside voice reads public"
 grep -q 'client text withheld' supabase/functions/_shared/contextBuilders.ts \
   && ok "(a3) the shared input brief carries no authored client text (SP-95)" \
   || bad "(a3) _shared/contextBuilders.ts buildInputBrief sends inputs.description to a model"
@@ -162,18 +174,18 @@ if ! psqlq "select 1" >/dev/null 2>&1; then
   bad "(b1) cannot reach the local database ($DB) — behaviour half not exercised"
 else
   # the predicate the function applies, evaluated in SQL over a company that really holds such a row
+  # SP-346: an upload-derived signal is non-public WHATEVER its band and voice
   CO=$(psqlq "select company_id::text from public.signals
-              where source_type in ('uploaded_file','file','intake')
-                and not (signal_band='outside' and voice_class in
-                      ('outside_voice_about_client','client_voice','market_context','competitor_voice'))
+              where source_type in ('uploaded_file','file','file_proposal','intake','interview')
               group by company_id order by count(*) desc limit 1")
   if [ -z "$CO" ]; then
     ok "(b1) no company holds a non-public upload-derived signal — vacuous, nothing to contain"
   else
     NONPUB=$(psqlq "select count(*) from public.signals
                     where company_id='$CO' and relevance_state='active'
-                      and not (signal_band='outside' and voice_class in
-                            ('outside_voice_about_client','client_voice','market_context','competitor_voice'))")
+                      and (source_type in ('uploaded_file','file','file_proposal','intake','interview')
+                           or not (signal_band='outside' and voice_class in
+                            ('outside_voice_about_client','client_voice','market_context','competitor_voice'))))")
     # every outside model_calls row for this company written AFTER the containment commit date
     LEAKED=$(psqlq "select count(*) from public.model_calls
                     where company_id='$CO' and provider in ('openai','anthropic')
@@ -196,8 +208,9 @@ fi
 echo "── (b2) non-vacuity + (b3) SP-107 + (b4) SP-112 render: the unit contract ──"
 if npx vitest run src/components/drift/driftStrings.parity.test.ts \
                  src/components/drift/withheldRender.test.tsx \
-                 src/lib/modelRouter/resolveModelHardening.test.ts >/tmp/outside-call-guard-vitest.log 2>&1; then
-  ok "(b2/b4) router admits the external lane for all-public inputs; withheld renders correctly"
+                 src/lib/modelRouter/resolveModelHardening.test.ts \
+                 src/lib/modelRouter/resolveModel.test.ts >/tmp/outside-call-guard-vitest.log 2>&1; then
+  ok "(b2/b4) router admits the external lane for all-public inputs, never for an upload source (SP-346); withheld renders correctly"
 else
   bad "(b2/b4) the router/render contract failed — see /tmp/outside-call-guard-vitest.log"
 fi
@@ -211,6 +224,7 @@ grep -q 'evidence withheld — not cleared for an outside model' supabase/functi
 echo "── (b6/b7) served worker: the four fixed functions on held throwaway companies ──"
 PRIV="0c900000-0000-4000-8000-00000000c001"
 PUB="0c900000-0000-4000-8000-00000000c002"
+UPV="0c900000-0000-4000-8000-00000000c003"   # SP-346: an upload labelled outside voice
 FUNCTIONS_URL="${FUNCTIONS_URL:-http://127.0.0.1:54321/functions/v1}"
 AUTH_URL="${AUTH_URL:-http://127.0.0.1:54321/auth/v1}"
 
@@ -244,7 +258,7 @@ psqlx() {
 remove_children() {
   local left=""
   try_del() { psqlx "$2" || left="$left $1"; }
-  for c in "$PRIV" "$PUB"; do
+  for c in "$PRIV" "$PUB" "$UPV"; do
     try_del surface_drift_assessments "delete from public.surface_drift_assessments where company_id='$c';"
     try_del integrity_runs            "delete from public.integrity_runs where company_id='$c';"
     try_del model_calls               "delete from public.model_calls where company_id='$c';"
@@ -282,7 +296,7 @@ else
       bad "(b6/b7) FR_LOGIN_EMAIL not set or no such account — source backups/fr-login.env; the served-worker half did not run (the fixture owner is the CC-owned test account from backups/fr-login.env; the operator's own login is never used here)"
     fi
     if [ -n "$OWNER" ]; then
-    for c in "$PRIV|private-evidence" "$PUB|public-only"; do
+    for c in "$PRIV|private-evidence" "$PUB|public-only" "$UPV|upload-outside-voice"; do
       cid="${c%%|*}"; nm="ocg-throwaway-${c##*|}"
       # born HELD and idempotent: the id is fixed and reused, so a second run must not fail on it,
       # and the hold is stamped in the SAME statement that creates the row (E2 step 1).
@@ -302,10 +316,18 @@ else
     psqlx "insert into public.signals (id, company_id, source_type, signal_band, voice_class, claim_text, evidence_excerpt, topic, relevance_state)
            values (gen_random_uuid(),'$PUB','public_baseline_run','outside','client_voice','A claim the company published on its own site','An excerpt from a public page','pricing','active');"
 
+    # (b9) SP-346: ONE signal from an upload the voice gate classed third party — the exact shape
+    # (outside band, outside_voice_about_client) that band + voice alone admitted as public_observed
+    psqlx "insert into public.signals (id, company_id, source_type, signal_band, voice_class, claim_text, evidence_excerpt, topic, relevance_state)
+           values (gen_random_uuid(),'$UPV','uploaded_file','outside','outside_voice_about_client','A claim lifted from a third-party document the client uploaded','An excerpt from a private third-party upload','pricing','active');"
+    UPV_SIG=$(psqlq "select count(*) from public.signals where company_id='$UPV' and source_type='uploaded_file' and signal_band='outside' and voice_class='outside_voice_about_client'")
+    [ "${UPV_SIG:-0}" = "1" ] || bad "(b9) the upload-outside-voice fixture signal did not land (count=${UPV_SIG:-?}) — (b9) would be vacuous"
     CASC_PRIV=$(psqlq "select id::text from public.strategy_cascades where company_id='$PRIV' limit 1")
     CASC_PUB=$(psqlq "select id::text from public.strategy_cascades where company_id='$PUB' limit 1")
     ROUTE_PRIV=$(psqlq "select id::text from public.routes where company_id='$PRIV' limit 1")
     ROUTE_PUB=$(psqlq "select id::text from public.routes where company_id='$PUB' limit 1")
+    CASC_UPV=$(psqlq "select id::text from public.strategy_cascades where company_id='$UPV' limit 1")
+    ROUTE_UPV=$(psqlq "select id::text from public.routes where company_id='$UPV' limit 1")
 
     invoke() { # $1 fn, $2 bearer, $3 json  → body on stdout
       curl -s -m 180 -X POST "$FUNCTIONS_URL/$1" \
@@ -324,6 +346,19 @@ else
     [ "${LEAK6:-1}" = "0" ] \
       && ok "(b6) and no outside model call was recorded for that company" \
       || bad "(b6) $LEAK6 outside model call(s) recorded on the private throwaway"
+
+    # (b9) SP-346: the upload labelled outside voice is withheld on the worker, never judged outside
+    invoke assess-surface-drift "$SRK" "{\"company_id\":\"$UPV\",\"surface_type\":\"cascade\",\"surface_id\":\"$CASC_UPV\"}" >/dev/null
+    ROW9=$(psqlq "select coalesce(drift_state,'(none)')||'|'||coalesce(drift_score::text,'NULL') from public.surface_drift_assessments where company_id='$UPV' and surface_type='cascade' limit 1")
+    if [ "$ROW9" = "withheld|NULL" ]; then
+      ok "(b9) an uploaded file's signal labelled outside_voice_about_client → withheld, drift_score NULL (SP-346)"
+    else
+      bad "(b9) an uploaded file's signal labelled outside voice was assessed as '${ROW9:-(none)}' (expected withheld|NULL) — the router read the voice, not the source"
+    fi
+    LEAK9=$(psqlq "select count(*) from public.model_calls where company_id='$UPV' and provider in ('openai','anthropic')")
+    [ "${LEAK9:-1}" = "0" ] \
+      && ok "(b9) and no outside model call was recorded for that company" \
+      || bad "(b9) $LEAK9 outside model call(s) recorded on the upload-outside-voice throwaway"
 
     # (b8) SP-133: a surface whose CANDIDATE ROWS ARE GONE must never be saved as 'withheld'.
     # newSignalIds is non-empty but the content query returns nothing — rows deleted or
@@ -402,6 +437,17 @@ else
       [ "${LEAK7:-1}" = "0" ] \
         && ok "(b7-evidence) and still no outside model call recorded for that company" \
         || bad "(b7-evidence) $LEAK7 outside model call(s) recorded on the private throwaway"
+
+      B9R=$(invoke propose-route-changes "$JWT_AD" "{\"route_id\":\"$ROUTE_UPV\",\"company_id\":\"$UPV\"}")
+      if echo "$B9R" | grep -q '"skipped":true' && echo "$B9R" | grep -q 'not cleared for an outside model'; then
+        ok "(b9) propose-route-changes refuses an upload labelled outside voice by name, on the worker (SP-346)"
+      else
+        bad "(b9) propose-route-changes on an upload labelled outside voice did not refuse: $(echo "$B9R" | head -c 160)"
+      fi
+      LEAK9R=$(psqlq "select count(*) from public.model_calls where company_id='$UPV' and provider in ('openai','anthropic')")
+      [ "${LEAK9R:-1}" = "0" ] \
+        && ok "(b9) and still no outside model call recorded for that company" \
+        || bad "(b9) $LEAK9R outside model call(s) recorded on the upload-outside-voice throwaway"
 
       B7N=$(invoke propose-route-changes "$JWT_AD" "{\"route_id\":\"$ROUTE_PUB\",\"company_id\":\"$PUB\"}")
       CALLS=$(psqlq "select count(*) from public.model_calls where company_id='$PUB' and provider='openai' and call_site='propose-route-changes'")

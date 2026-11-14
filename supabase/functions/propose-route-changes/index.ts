@@ -225,7 +225,7 @@ Deno.serve(async (req: Request) => {
   // --- Fetch recent signals (naive for MVP — recent for company) ---
   const { data: signalRows } = await db
     .from("signals")
-    .select("claim_text, evidence_excerpt, topic, signal_band, voice_class")
+    .select("claim_text, evidence_excerpt, topic, signal_band, voice_class, source_type")   // SP-346: source decides first
     .eq("company_id", company_id)
     .order("created_at", { ascending: false })
     .limit(20);
@@ -240,8 +240,8 @@ Deno.serve(async (req: Request) => {
   // WITHHELD from the prompt and counted, exactly as odi_needs are withheld on the council path.
   const signalsAll = Array.isArray(signalRows) ? signalRows : [];
   const signals = signalsAll.filter((row) => {
-    const r = row as { signal_band?: string | null; voice_class?: string | null };
-    return isPublicProvenance(signalProvenance(r.signal_band, r.voice_class));
+    const r = row as { signal_band?: string | null; voice_class?: string | null; source_type?: string | null };
+    return isPublicProvenance(signalProvenance(r.signal_band, r.voice_class, r.source_type));
   });
   const signalsWithheld = signalsAll.length - signals.length;
   if (signalsWithheld > 0) {
@@ -256,8 +256,8 @@ Deno.serve(async (req: Request) => {
   const evidenceChoice = resolveModel({
     role: "judge",
     inputs: signals.map((row) => {
-      const r = row as { signal_band?: string | null; voice_class?: string | null };
-      return { provenance: signalProvenance(r.signal_band, r.voice_class) };
+      const r = row as { signal_band?: string | null; voice_class?: string | null; source_type?: string | null };
+      return { provenance: signalProvenance(r.signal_band, r.voice_class, r.source_type) };
     }),
   });
   // A proposal built on an EMPTY evidence block, when evidence exists but may not travel, is a

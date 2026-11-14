@@ -287,7 +287,7 @@ async function loadEligibleSignals(
 
   const { data, error } = await supabase
     .from("signals")
-    .select("id, claim_text, source_url, syndicated_from_client, voice_class, evidence_class")
+    .select("id, claim_text, source_url, syndicated_from_client, voice_class, evidence_class, source_type")
     .eq("company_id", companyId)
     .eq("signal_band", "outside")
     // Gate 3 step 2: dropped fabrications (superseded_at) and held-pending-recrawl
@@ -298,7 +298,7 @@ async function loadEligibleSignals(
   if (error) throw new Error(`signals load failed: ${error.message}`);
 
   const signals: EligibleSignal[] = [];
-  for (const row of (data ?? []) as Array<{ id: string; claim_text: string; source_url: string | null; syndicated_from_client: boolean | null; voice_class: string | null; evidence_class?: string | null }>) {
+  for (const row of (data ?? []) as Array<{ id: string; claim_text: string; source_url: string | null; syndicated_from_client: boolean | null; voice_class: string | null; evidence_class?: string | null; source_type?: string | null }>) {
     if (!recurrenceEligibleRow(row)) continue; // LISTING CLASS: a listing is not prose recurrence (explicit branch)
     if (row.syndicated_from_client === true) continue; // design Q3
     const domain = registrableDomain(row.source_url);
@@ -312,8 +312,9 @@ async function loadEligibleSignals(
       url: String(row.source_url),
       domain,
       identity: await sha256Hex(normalizeForHash(row.claim_text)),
-      // Provenance for the model router: outside-band PUBLIC voices are public; analysis/NULL → local.
-      provenance: signalProvenance("outside", row.voice_class),
+      // Provenance for the model router: outside-band PUBLIC voices on a PUBLIC source are public;
+      // analysis/NULL voice or an uploaded/client-provided source (SP-346) → local.
+      provenance: signalProvenance("outside", row.voice_class, row.source_type),
     });
   }
   return { signals, companyName };

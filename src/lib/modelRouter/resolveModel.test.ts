@@ -49,18 +49,47 @@ describe("resolveModel — route by provenance of every input", () => {
     for (const p of ["market_read", "internal_declared", "analytic", "client_attested", null, undefined, "unknown"]) expect(isPublicProvenance(p)).toBe(false);
   });
 
-  it("signalProvenance: outside-band public voices → public_observed; analysis/NULL/non-outside → null (local)", () => {
-    expect(signalProvenance("outside", "outside_voice_about_client")).toBe("public_observed");
-    expect(signalProvenance("outside", "client_voice")).toBe("public_observed");
-    expect(signalProvenance("outside", "market_context")).toBe("public_observed");
-    expect(signalProvenance("outside", "analysis")).toBeNull(); // our synthesis → local
-    expect(signalProvenance("outside", null)).toBeNull(); // unknown voice → local
-    expect(signalProvenance("organization", null)).toBeNull(); // internal band → local
+  it("signalProvenance: outside-band public voices on a public source → public_observed; analysis/NULL/non-outside → null (local)", () => {
+    const PB = "public_baseline_run";
+    expect(signalProvenance("outside", "outside_voice_about_client", PB)).toBe("public_observed");
+    expect(signalProvenance("outside", "client_voice", PB)).toBe("public_observed");
+    expect(signalProvenance("outside", "market_context", PB)).toBe("public_observed");
+    expect(signalProvenance("outside", "analysis", PB)).toBeNull(); // our synthesis → local
+    expect(signalProvenance("outside", null, PB)).toBeNull(); // unknown voice → local
+    expect(signalProvenance("organization", null, PB)).toBeNull(); // internal band → local
     // a recurrence pair where one side is analysis routes local
     expect(resolveModel({ role: "judge", inputs: [
-      { id: "s1", provenance: signalProvenance("outside", "outside_voice_about_client") },
-      { id: "s2", provenance: signalProvenance("outside", "analysis") },
+      { id: "s1", provenance: signalProvenance("outside", "outside_voice_about_client", PB) },
+      { id: "s2", provenance: signalProvenance("outside", "analysis", PB) },
     ] }).provider).toBe("local_ollama");
+  });
+
+  // SP-346 (containment, 2026-11-14): the SOURCE decides first. An uploaded file's signal is private
+  // whatever voice the upload gate stamped on it — outside_voice_about_client included.
+  it("SP-346: an uploaded / client-provided source is NEVER public, whatever its band and voice", () => {
+    for (const src of ["uploaded_file", "file", "file_proposal", "intake", "interview"]) {
+      for (const voice of ["outside_voice_about_client", "client_voice", "market_context", "competitor_voice"]) {
+        expect(signalProvenance("outside", voice, src)).toBeNull();
+      }
+    }
+    // the case that leaked: a third-party-classified upload minted outside / outside_voice_about_client
+    expect(resolveModel({ role: "judge", inputs: [
+      { id: "pub", provenance: signalProvenance("outside", "client_voice", "public_baseline_run") },
+      { id: "upl", provenance: signalProvenance("outside", "outside_voice_about_client", "uploaded_file") },
+    ] }).provider).toBe("local_ollama");
+  });
+
+  it("SP-346: an unknown, NULL or unselected source_type fails closed", () => {
+    expect(signalProvenance("outside", "outside_voice_about_client", null)).toBeNull();
+    expect(signalProvenance("outside", "outside_voice_about_client", undefined)).toBeNull();
+    expect(signalProvenance("outside", "outside_voice_about_client")).toBeNull(); // column not selected
+    expect(signalProvenance("outside", "outside_voice_about_client", "some_new_lane")).toBeNull();
+  });
+
+  it("SP-346 non-vacuity: every public source_type still admits a public voice", () => {
+    for (const src of ["public_baseline_run", "competitor_discovery_run", "outside_recrawl_regen", "outside_listing_regen", "client_voice_regen", "website"]) {
+      expect(signalProvenance("outside", "outside_voice_about_client", src)).toBe("public_observed");
+    }
   });
 
   it("modelStamp shapes the persisted columns", () => {

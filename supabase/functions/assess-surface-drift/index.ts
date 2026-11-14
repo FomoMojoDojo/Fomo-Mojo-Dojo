@@ -181,6 +181,8 @@ type SignalRow = {
   // SP-100: voice_class is load-bearing, not display. signalProvenance(band, voice) is the router's
   // provenance for a signal; an unselected column reads undefined and would resolve non-public.
   voice_class: string | null;
+  // SP-346: an uploaded file's signal is private whatever its voice — the source decides first.
+  source_type: string | null;
 };
 
 function formatSignalForPrompt(s: SignalRow, index: number): string {
@@ -269,7 +271,7 @@ async function assessSurface(
   const candidateIds = newSignalIds.slice(0, 30);
   const { data: signalRows, error: sigErr } = await supabase
     .from("signals")
-    .select("id, claim_text, evidence_excerpt, topic, signal_band, evidence_type, voice_class")
+    .select("id, claim_text, evidence_excerpt, topic, signal_band, evidence_type, voice_class, source_type")
     .in("id", candidateIds);
 
   if (sigErr) {
@@ -299,7 +301,7 @@ async function assessSurface(
   // LOCAL (an empty input set is fail-closed, resolveModel.ts:70) and the surface would be saved
   // 'withheld' — claiming evidence it does not have. Behave exactly as at f21d1554: assess it.
   const zeroCandidates = signals.length === 0;
-  const signalProvenances = signals.map((s) => signalProvenance(s.signal_band, s.voice_class));
+  const signalProvenances = signals.map((s) => signalProvenance(s.signal_band, s.voice_class, s.source_type));
   const choice = resolveModel({
     role: "judge",
     inputs: signalProvenances.map((provenance) => ({ provenance })),
