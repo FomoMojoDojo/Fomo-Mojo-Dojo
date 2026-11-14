@@ -14,6 +14,7 @@ import { loadConfirmedRelatedEntities, ownHostsFor } from "./ownHosts.ts";
 import type { OwnWordsHostOrder } from "./publicReadSelection.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isPublicSignalSourceType } from "./clientMaterial.ts";
+import { CLAIM_NOT_PUBLIC_BY_SOURCE, claimRouterProvenance } from "./claimRouterProvenance.ts";   // SP-349
 import { declaredEligibleFor, parseOwnWordsKind } from "./ownWordsKinds.ts";
 import { isAnalysisRow } from "./voiceLabel.ts";
 import { evidenceTierOf, selectDeltas, selectFindings, selectOwnWords, selectSignals, type Dropped, type SelClaim, type SelDelta, type SelFinding, type SelOwnWord, type SelSignal } from "./publicReadSelection.ts";
@@ -402,7 +403,16 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
     .from("claim_delta_rule_refusals_active").select("content_identity, rule").eq("company_id", companyId);
   if (refusalErr) throw new Error(`selectPublicInputs: claim_delta_rule_refusals_active could not be read (${refusalErr.message})`);
   const ruleRefusalByIdentity = new Map(((refusalRows ?? []) as Array<{ content_identity: string; rule: string }>).map((r) => [r.content_identity, r.rule]));
-  const dSel = selectDeltas(deltas, READ_CAP.delta, claimById, ruleRefusalByIdentity);
+  // SP-349: a delta enters the public pool only when BOTH its claims are public BY SOURCE — derived
+  // from their signals at call time (claimRouterProvenance), never from pairing_kind or the stored
+  // marking. A delta with either side private is dropped and named in selection_dropped.
+  const deltaRouterProv = await claimRouterProvenance(supabase as unknown as { from: (t: string) => any }, claimIds); // deno-lint-ignore-line no-explicit-any
+  const deltasPublic = deltas.filter((d) => {
+    const ok = [d.declared_claim_id, d.public_claim_id].every((id) => !!id && deltaRouterProv.get(id) != null);
+    if (!ok) dropped.push({ id: d.id, kind: "delta", reason: CLAIM_NOT_PUBLIC_BY_SOURCE });
+    return ok;
+  });
+  const dSel = selectDeltas(deltasPublic, READ_CAP.delta, claimById, ruleRefusalByIdentity);
   dropped.push(...dSel.dropped);
   for (const d of dSel.kept) {
     const decl = d.declared_claim_id ? claimById.get(d.declared_claim_id)?.statement : "";

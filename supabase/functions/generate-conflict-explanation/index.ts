@@ -13,6 +13,7 @@ import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supa
 import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
+import { claimRouterProvenance } from "../_shared/claimRouterProvenance.ts";   // SP-349
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -79,6 +80,9 @@ async function loadDivergentPairs(supabase: SupabaseClient, companyId: string, p
     }
   }
   const hosts = await hostsByClaim(supabase, claimIds);
+  // SP-349: the provenance each side hands the router is DERIVED from its signals' source, never the
+  // stored claims.provenance — a public_observed claim resting on an uploaded file routes local.
+  const routerProv = await claimRouterProvenance(supabase as unknown as { from: (t: string) => any }, claimIds); // deno-lint-ignore-line no-explicit-any
   const pairs: Pair[] = [];
   for (const d of deltas) {
     const decl = d.declared_claim_id ? claimById.get(d.declared_claim_id) : null;
@@ -86,8 +90,8 @@ async function loadDivergentPairs(supabase: SupabaseClient, companyId: string, p
     if (!decl?.statement || !pub?.statement) continue;
     pairs.push({
       id: d.id,
-      declaredText: decl.statement, declaredProv: decl.provenance, declaredHost: d.declared_claim_id ? hosts.get(d.declared_claim_id) ?? null : null,
-      contraText: pub.statement, contraProv: pub.provenance, contraHost: d.public_claim_id ? hosts.get(d.public_claim_id) ?? null : null,
+      declaredText: decl.statement, declaredProv: d.declared_claim_id ? routerProv.get(d.declared_claim_id) ?? null : null, declaredHost: d.declared_claim_id ? hosts.get(d.declared_claim_id) ?? null : null,
+      contraText: pub.statement, contraProv: d.public_claim_id ? routerProv.get(d.public_claim_id) ?? null : null, contraHost: d.public_claim_id ? hosts.get(d.public_claim_id) ?? null : null,
     });
   }
   return pairs;

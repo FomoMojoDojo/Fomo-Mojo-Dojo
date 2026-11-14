@@ -65,6 +65,23 @@
 #        (src/lib/modelRouter/resolveModel.ts) via scripts/plant.sh, docker restart the edge runtime —
 #        (b9) goes RED (and the plant's run makes one cent-fraction call on the throwaway's synthetic text).
 #
+#   (c1) SERVED WORKER, SP-349 (2026-11-14). A claim's publicness is DERIVED from its signals' source at
+#        call time, never the stored marking. Held throwaway 0c900000-…-c004 holds a claim stored
+#        'public_observed' that rests on ONE uploaded-file signal (outside / outside_voice_about_client),
+#        paired in a public_vs_public divergent delta with a public claim. generate-conflict-explanation
+#        (write:false) must route that pair LOCAL — 0 outside model_calls rows carrying tokens for c004 —
+#        and the public-read pool (generate-public-read plan mode, read-only) must drop the delta with
+#        reason claim_not_public_by_source. (Note: that function writes ONE provider='openai' ledger row
+#        per run even when nothing went outside — tokens 0 — so the check counts rows with tokens.)
+#   (c2) PUBLIC CONTROL. Throwaway …-c005, the same shape on public_baseline_run signals only: the same
+#        call reaches OpenAI (≥1 ledgered row with tokens; a cent-fraction call on synthetic text) and the
+#        pool keeps its delta.
+#   (c3) UNIT. src/lib/claimRouterProvenance.test.ts — the pure rule and the fail-closed loader.
+#        Plant: make decideClaimRouterProvenance return the stored marking, docker restart the edge
+#        runtime — (c1) and (c3) go RED. The c004/c005 claim, signal and delta rows are FIXED ids, born
+#        held, and never deleted (a claim or delta delete writes an audit row); only their model_calls
+#        rows are cleared each run (SP-264: rows this guard created).
+#
 # Read the printed verdict, not only the exit code — this guard sets both (SP-59).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -459,6 +476,84 @@ else
     fi
     fi
   fi
+fi
+
+# ── (c1) (c2) (c3) SP-349: claim publicness is derived from signal source, at call time ─────────────
+echo "── (c1/c2/c3) SP-349: a claim is public only when every signal it rests on is public by source ──"
+if npx vitest run src/lib/claimRouterProvenance.test.ts >/tmp/outside-call-guard-c3.log 2>&1; then
+  ok "(c3) the pure rule and the fail-closed loader hold (claimRouterProvenance.test.ts)"
+else
+  bad "(c3) claimRouterProvenance unit contract failed — see /tmp/outside-call-guard-c3.log"
+fi
+C4="0c900000-0000-4000-8000-00000000c004"; C5="0c900000-0000-4000-8000-00000000c005"
+OWNER_C=""
+[ -n "${FR_LOGIN_EMAIL:-}" ] && OWNER_C=$(docker exec -i "$DB" psql -U postgres -At -c "select id::text from auth.users where lower(email)=lower('$FR_LOGIN_EMAIL') limit 1" 2>/dev/null)
+SRK_C="${SERVICE_ROLE_KEY:-}"
+[ -n "$SRK_C" ] || SRK_C=$(npx supabase status --output env 2>/dev/null | sed -n 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/p')
+if [ -z "$OWNER_C" ] || [ -z "$SRK_C" ]; then
+  bad "(c1/c2) FR_LOGIN_EMAIL or SERVICE_ROLE_KEY unavailable — source backups/fr-login.env; the served-worker half did not run"
+else
+  cq() { docker exec -i "$DB" psql -U postgres -At -v ON_ERROR_STOP=1 -c "$1" 2>&1; }
+  # fixed ids, idempotent, born held (E2); suffix a = upload signal, b = public signal, c/d = claims, e = delta
+  for spec in "$C4|uploaded_file|ocg-throwaway-claim-upload" "$C5|public_baseline_run|ocg-throwaway-claim-public"; do
+    cid="${spec%%|*}"; rest="${spec#*|}"; src="${rest%%|*}"; nm="${rest#*|}"; k="${cid: -4}"
+    out=$(cq "insert into public.companies (id, name, created_by, fixture_hold) values ('$cid','$nm','$OWNER_C','OCG:test_fixture')
+                on conflict (id) do update set fixture_hold = coalesce(public.companies.fixture_hold,'OCG:test_fixture');
+              insert into public.signals (id, company_id, source_type, signal_band, voice_class, claim_text, evidence_excerpt, topic, relevance_state, source_url)
+                values ('0c900000-0000-4000-8000-00000${k}a01','$cid','$src','outside','outside_voice_about_client','Reviewers report the service is often late','Reviewers report the service is often late','reliability','active','https://reviews.example.org/a'),
+                       ('0c900000-0000-4000-8000-00000${k}b01','$cid','public_baseline_run','outside','client_voice','We deliver on time, every time','We deliver on time, every time','reliability','active','https://company.example.com/about')
+                on conflict (id) do nothing;
+              insert into public.claims (id, company_id, statement, provenance, status)
+                values ('0c900000-0000-4000-8000-00000${k}c01','$cid','We deliver on time, every time','public_observed','active'),
+                       ('0c900000-0000-4000-8000-00000${k}d01','$cid','Reviewers report the service is often late','public_observed','active')
+                on conflict (id) do nothing;
+              insert into public.claim_signal_refs (company_id, claim_id, signal_id)
+                select '$cid', x.c::uuid, x.s::uuid from (values ('0c900000-0000-4000-8000-00000${k}c01','0c900000-0000-4000-8000-00000${k}b01'),
+                                                                  ('0c900000-0000-4000-8000-00000${k}d01','0c900000-0000-4000-8000-00000${k}a01')) x(c,s)
+                where not exists (select 1 from public.claim_signal_refs r where r.claim_id=x.c::uuid and r.signal_id=x.s::uuid);
+              insert into public.claim_deltas (id, company_id, declared_claim_id, public_claim_id, delta_type, pairing_kind, pairing_basis, content_identity)
+                values ('0c900000-0000-4000-8000-00000${k}e01','$cid','0c900000-0000-4000-8000-00000${k}c01','0c900000-0000-4000-8000-00000${k}d01','divergent','public_vs_public','judge_confirmed','ocg-sp349-$k')
+                on conflict (id) do nothing;
+              delete from public.model_calls where company_id='$cid';") || bad "(c1/c2) fixture SQL failed on $cid: $(echo "$out" | head -2 | tr '\n' ' ')"
+  done
+  # non-vacuity of the fixture itself: c004's claim really rests on an upload, stored public_observed
+  SHAPE=$(cq "select count(*) from public.claims c join public.claim_signal_refs r on r.claim_id=c.id join public.signals s on s.id=r.signal_id
+              where c.id='0c900000-0000-4000-8000-00000c004d01' and c.provenance='public_observed' and s.source_type='uploaded_file' and s.signal_band='outside' and s.voice_class='outside_voice_about_client'")
+  [ "$SHAPE" = "1" ] || bad "(c1) the c004 fixture claim does not have the leak shape (got '$SHAPE') — (c1) would be vacuous"
+  HOLDS=$(cq "select count(*) from public.companies where id in ('$C4','$C5') and fixture_hold is not null")
+  [ "$HOLDS" = "2" ] || bad "(c1/c2) a fixture company is not held (held=$HOLDS)"
+  callfn() { curl -s -m 400 -X POST "${FUNCTIONS_URL:-http://127.0.0.1:54321/functions/v1}/$1" -H "Authorization: Bearer $SRK_C" -H "Content-Type: application/json" -d "$2"; }
+  pick() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const f=new Function("j","return ("+process.argv[1]+")");process.stdout.write(String(f(j)))}catch(e){process.stdout.write("ERR")}})' "$1"; }
+
+  # (c1) the upload-backed pair: local, never outside
+  R4=$(callfn generate-conflict-explanation "{\"company_id\":\"$C4\",\"pair_ids\":[\"0c900000-0000-4000-8000-00000c004e01\"],\"write\":false}")
+  L4=$(echo "$R4" | pick 'j.results && j.results[0] ? j.results[0].router_forced_local+"|"+j.results[0].model : "none"')
+  case "$L4" in
+    true\|qwen*|true\|llama*) ok "(c1) a public_observed claim resting on an uploaded file is routed LOCAL by the worker ($L4)" ;;
+    *) bad "(c1) the upload-backed pair was not routed local: $L4 — $(echo "$R4" | head -c 160)" ;;
+  esac
+  O4=$(cq "select count(*) from public.model_calls where company_id='$C4' and provider in ('openai','anthropic') and coalesce(prompt_tokens,0) > 0")
+  [ "$O4" = "0" ] && ok "(c1) and 0 outside model_calls rows carrying tokens for c004" \
+                  || bad "(c1) $O4 outside model_calls row(s) carrying tokens for c004 — the claim left the building"
+  P4=$(callfn generate-public-read "{\"company_id\":\"$C4\",\"plan\":true}")
+  D4=$(echo "$P4" | pick '((j.selection&&j.selection.dropped_by_kind&&j.selection.dropped_by_kind.delta)||[]).filter(d=>d.id==="0c900000-0000-4000-8000-00000c004e01").map(d=>d.reason).join(",")+"|"+((j.input_ledger&&j.input_ledger.ids)||[]).includes("0c900000-0000-4000-8000-00000c004e01")')
+  [ "$D4" = "claim_not_public_by_source|false" ] \
+    && ok "(c1) the public-read pool drops the delta with reason claim_not_public_by_source (plan mode, read-only)" \
+    || bad "(c1) the public-read pool did not drop the upload-backed delta by source: '$D4' — $(echo "$P4" | head -c 160)"
+
+  # (c2) the public-only control: still reaches the outside model, and the pool keeps it
+  R5=$(callfn generate-conflict-explanation "{\"company_id\":\"$C5\",\"pair_ids\":[\"0c900000-0000-4000-8000-00000c005e01\"],\"write\":false}")
+  L5=$(echo "$R5" | pick 'j.results && j.results[0] ? String(j.results[0].router_forced_local) : "none"')
+  O5=$(cq "select count(*) from public.model_calls where company_id='$C5' and provider='openai' and call_site='generate-conflict-explanation' and coalesce(prompt_tokens,0) > 0")
+  if [ "$L5" = "false" ] && [ "${O5:-0}" -ge 1 ]; then
+    ok "(c2) the public-only control still reaches the outside model ($O5 ledgered OpenAI row(s) with tokens)"
+  else
+    bad "(c2) the public-only control did not reach the outside model (forced_local=$L5, rows=$O5) — the guard would be vacuous"
+  fi
+  P5=$(callfn generate-public-read "{\"company_id\":\"$C5\",\"plan\":true}")
+  D5=$(echo "$P5" | pick '((j.selection&&j.selection.dropped_by_kind&&j.selection.dropped_by_kind.delta)||[]).some(d=>d.id==="0c900000-0000-4000-8000-00000c005e01"&&d.reason==="claim_not_public_by_source")')
+  [ "$D5" = "false" ] && ok "(c2) and the pool does not drop the public-only delta by source" \
+                      || bad "(c2) the public-only delta was dropped by source ('$D5') — over-correction"
 fi
 
 if [ "$fails" = 0 ]; then echo "guard: PASS"; else echo "guard: RED ($fails check(s)) — see above"; fi

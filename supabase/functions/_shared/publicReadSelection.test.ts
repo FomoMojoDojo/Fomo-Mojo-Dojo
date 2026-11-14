@@ -201,7 +201,9 @@ Deno.test("SP1-neg a reverted refusal is not in the active view — the pair is 
 Deno.test("SP2 the shared pool reads claim_delta_rule_refusals_active and passes it to selectDeltas; the select carries content_identity", async () => {
   const pool = await read("./publicReadInputs.ts");
   assert(/from\("claim_delta_rule_refusals_active"\)\.select\("content_identity, rule"\)\.eq\("company_id", companyId\)/.test(pool), "the active refusals are loaded for the company");
-  assert(/selectDeltas\(deltas, READ_CAP\.delta, claimById, ruleRefusalByIdentity\)/.test(pool), "and passed to selectDeltas");
+  assert(/selectDeltas\(deltasPublic, READ_CAP\.delta, claimById, ruleRefusalByIdentity\)/.test(pool), "and passed to selectDeltas");
+  // SP-349: the deltas reach selectDeltas only after the by-source claim filter, which names its drops
+  assert(pool.includes("const deltaRouterProv = await claimRouterProvenance(supabase as unknown as") && pool.includes("reason: CLAIM_NOT_PUBLIC_BY_SOURCE"), "the delta lane drops a delta whose claim is not public by source");
   assert(/from\("claim_deltas"\)\.select\("[^"]*\bcontent_identity\b[^"]*"\)/.test(pool), "the pair select carries content_identity");
   const sel = await read("./publicReadSelection.ts");
   assert(/isPairAdmissible\(\{[^}]*\bruleRefusal\b[^}]*\}\)/.test(sel), "selectDeltas passes ruleRefusal to the ONE gate");

@@ -10,6 +10,7 @@
 // orphanQuestionIds is the finalize's rule, pure: a live row whose anchor_identity is not in the
 // current anchor set. Gate 1 (held state, finding_signal_refs) is NOT here.
 import { contentIdentity } from "./contentIdentity.ts";
+import { claimRouterProvenance } from "./claimRouterProvenance.ts";   // SP-349
 import { documentDerivedClaimIds } from "./firstReadProvenance.ts";
 import type { QuestionAnchor } from "../../../src/lib/firstRead/openQuestionLinks.ts";
 
@@ -34,9 +35,12 @@ export async function loadQuestionAnchors(supabase: AnySupabase, companyId: stri
  *  delta is not active. The finalize reads the reasons from here — one predicate, one place. */
 export async function loadQuestionAnchorsDetailed(
   supabase: AnySupabase, companyId: string, runId: string,
-): Promise<{ anchors: QuestionAnchor[]; excluded: AnchorExclusion[] }> {
+): Promise<{ anchors: QuestionAnchor[]; excluded: AnchorExclusion[]; deltaRouterProvenance: Map<string, string | null> }> {
   const anchors: QuestionAnchor[] = [];
   const excluded: AnchorExclusion[] = [];
+  // SP-349: a delta anchor's router provenance, keyed by anchor identity — DERIVED from its claims'
+  // signals at call time (claimRouterProvenance); public only when every present claim is.
+  const deltaRouterProvenance = new Map<string, string | null>();
 
   const { data: findingRows } = await supabase
     .from("findings").select("body").eq("company_id", companyId).eq("origin_run_id", Number(runId))
@@ -80,6 +84,7 @@ export async function loadQuestionAnchorsDetailed(
     const srcBySig = new Map(((sigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
     excludedDecl = documentDerivedClaimIds(refRows, srcBySig);
   }
+  const claimRouterProv = await claimRouterProvenance(supabase, claimIds);
   for (const d of deltas) {
     if (d.declared_claim_id && excludedDecl.has(d.declared_claim_id)) continue; // outside-only: doc-derived never born
     const text = (d.declared_claim_id && claimById.get(d.declared_claim_id)) || "";
@@ -87,8 +92,11 @@ export async function loadQuestionAnchorsDetailed(
     if (!claimsActive(d)) { excluded.push({ identity: d.content_identity, reason: ORPHAN_REASON_DELTA_CLAIM_STRUCK }); continue; }
     // anchor identity = the delta's own content identity (stable provenance link)
     anchors.push({ kind: "silent_delta", text: text.trim(), identity: d.content_identity });
+    const present = [d.declared_claim_id, d.public_claim_id].filter((x): x is string => !!x);
+    const provs = present.map((id) => claimRouterProv.get(id) ?? null);
+    deltaRouterProvenance.set(d.content_identity, provs.length > 0 && provs.every((p) => p != null) ? provs[0] : null);
   }
-  return { anchors, excluded };
+  return { anchors, excluded, deltaRouterProvenance };
 }
 
 /** The finalize rule: live rows of the run whose anchor is no longer in the anchor set. Pure. */

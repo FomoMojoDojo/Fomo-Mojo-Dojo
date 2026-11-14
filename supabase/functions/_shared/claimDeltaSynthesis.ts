@@ -69,6 +69,7 @@ import { loadConfirmedRelatedEntities, ownHostsFor, type OwnHostSet } from "./ow
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { loadPageWordsDecision } from "./deltaPageWords.ts";
 import { applyDeltaRuleChecks } from "./deltaRuleChecks.ts";
+import { claimRouterProvenance } from "./claimRouterProvenance.ts";   // SP-349
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
 const DEFAULT_JUDGE_MODEL = "llama3:70b";
@@ -1037,6 +1038,13 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     throw new Error(`claim-delta ${label} insert failed: ${e.message}`);
   };
 
+  // SP-349: the router sees each claim's provenance DERIVED from its signals' source at call time
+  // (claimRouterProvenance), never the stored marking alone — a public_observed claim resting on an
+  // uploaded file routes local. Loaded once for both sides of every pair; only the routed path uses it.
+  const routerProv = args.routedCall
+    ? await claimRouterProvenance(args.supabase, [...declaredScope.map((c) => c.id), ...publics.map((c) => c.id)])
+    : new Map<string, string | null>();
+
   for (const d of declaredScope) {
     for (const p of publics) {
       // LISTING PAIRS BY CONSTRUCTION (operator ruling 2026-09-04): a listing-backed observed claim admitted by
@@ -1117,7 +1125,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
 
       // Stage 2a: proposer — ROUTER picks qwen14b (local) or gpt-4.1-mini (external) by the pair's
       // provenances. internal_declared declared side → local (never leaves the machine).
-      const pairProv = [d.provenance, p.provenance];
+      const pairProv = [routerProv.get(d.id) ?? null, routerProv.get(p.id) ?? null]; // SP-349: derived, not stored
       const capRefuse = () => { totals.pairs_refused_by_cap = (totals.pairs_refused_by_cap ?? 0) + 1; capRefusedDeclared.add(d.id); capRefusedPublic.add(p.id); };
       if (capStopped) { capRefuse(); continue; }
       let propRes: { content: string; provider: string; model: string };

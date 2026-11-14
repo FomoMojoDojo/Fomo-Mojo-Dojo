@@ -35,6 +35,7 @@ import { backstopSkipsListingPair } from "./listingClass.ts";
 export { backstopSkipsListingPair };
 import { meaningfulTokens } from "./claimDeltaSynthesis.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
+import { claimRouterProvenance } from "./claimRouterProvenance.ts";   // SP-349
 
 // ── Stage A: distinctive-overlap router ───────────────────────────────────────
 
@@ -377,8 +378,11 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
     judgeJobs.push({ r, declared, observed, overlap: routeA.distinctiveOverlap, tokens: routeA.distinctiveTokens });
   }
 
-  const provenances = ["public_observed", "public_observed"]; // pairing_kind guarantees both public
+  // SP-349: pairing_kind no longer stands in for provenance. Each side's provenance is DERIVED from
+  // its signals' source at call time (claimRouterProvenance); an uploaded-file claim routes local.
+  const routerProv = await claimRouterProvenance(args.supabase, judgeJobs.flatMap((j) => [j.r.declared_claim_id, j.r.public_claim_id]));
   const judgeOne = async (j: Job): Promise<RelevanceProposal> => {
+    const provenances = [routerProv.get(j.r.declared_claim_id) ?? null, routerProv.get(j.r.public_claim_id) ?? null];
     const res = await args.routedCall({ role: "judge", provenances, system: RELEVANCE_JUDGE_SYSTEM, user: buildRelevanceUser(j.declared, j.observed) });
     const parsed = parseRelevance(res.content);
     return {
