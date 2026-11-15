@@ -125,6 +125,13 @@
 #        Plant: marketPublicBySource admits everything AND council-review is restored to its pre-F3′ OpenAI
 #        client (both via scripts/plant.sh), docker restart — (e1) (e2) (e4) (e5) go RED; (e3) stays green.
 #        Fixed ids, born held, never deleted; each run clears only c008/c009 model_calls rows (SP-264).
+#   (e6) SERVED WORKER, council trial (2026-11-15): council-review's optional `model` field. Control: e1's
+#        default run names the default on its run row and ledger rows. A non-listed tag (model_not_listed),
+#        `model` with write absent or true (model_requires_no_write) and a non-admin caller (403) are refused
+#        with no run row and no model call; a LISTED tag (qwen2.5:7b-instruct) on a no-write admin run names
+#        that model on its run row and every ledger row. Plant: resolveCouncilModel skips the listed-tag test
+#        (scripts/plant.sh), docker restart — the non-listed refusal and the no-run-row check go RED; the
+#        control stays green.
 #
 # Read the printed verdict, not only the exit code — this guard sets both (SP-59).
 set -uo pipefail
@@ -779,7 +786,7 @@ if [ -n "$GATE_LINE" ] && [ -n "$KEY_LINE" ] && [ -n "$EP_LINE" ] && [ "$KEY_LIN
    && grep -q 'inputs.marketSource.public ? "web_search"' "$NJ"; then
   ok "(e5) normative reads its outside key only inside the web_search lane, opened only by marketPublicBySource"
 else bad "(e5) normative reads its outside key or endpoint outside the public-by-source lane (gate=$GATE_LINE key=$KEY_LINE endpoint=$EP_LINE)"; fi
-if npx vitest run src/lib/councilLocal.test.ts src/lib/marketSourcePublic.test.ts src/lib/councilRun.test.ts >/tmp/outside-call-guard-e5.log 2>&1; then
+if npx vitest run src/lib/councilLocal.test.ts src/lib/marketSourcePublic.test.ts src/lib/councilRun.test.ts src/lib/councilModelField.test.ts >/tmp/outside-call-guard-e5.log 2>&1; then
   ok "(e5) the councilLocal / marketSourcePublic / councilRun unit contracts hold"
 else bad "(e5) an F3′ unit contract failed — see /tmp/outside-call-guard-e5.log"; fi
 
@@ -892,6 +899,53 @@ else
                        || bad "(e1) no local council-review row with tokens for c008 ($L1)"
   [ "$RECS_E" = "0" ] && ok "(e1) no-write: the run wrote no council_recommendations" \
                       || bad "(e1) no-write run wrote $RECS_E council_recommendations row(s)"
+
+  # (e6) council trial (2026-11-15): the optional `model` field. CONTROL first — e1's default-model run names the
+  # default on its run row and on every ledger row of its window.
+  DEF_E6="qwen2.5:14b-instruct"; ALT_E6="qwen2.5:7b-instruct"; BAD_E6="no-such-model:0"
+  RUNMOD_E=$(eq "select model from public.council_review_runs where id='${RUN_E:-00000000-0000-0000-0000-000000000000}'")
+  LEDMOD_E=$(eq "select coalesce(string_agg(distinct m.model, ','), '(none)') from public.model_calls m, public.council_review_runs r
+                 where r.id='${RUN_E:-00000000-0000-0000-0000-000000000000}' and m.company_id='$C8' and m.call_site='council-review'
+                   and m.created_at between r.created_at and r.updated_at + interval '5 seconds'")
+  [ "$RUNMOD_E" = "local_ollama:$DEF_E6" ] && [ "$LEDMOD_E" = "$DEF_E6" ] \
+    && ok "(e6) control: with no \`model\` field the run row and its ledger rows name the default ($DEF_E6)" \
+    || bad "(e6) control: default run named run='$RUNMOD_E' ledger='$LEDMOD_E' (expected the default $DEF_E6)"
+  cr() { curl -s -m 60 -o /dev/null -w '%{http_code}' -X POST "$FN_E/council-review" -H "apikey: $ANON_E" -H "Authorization: Bearer $1" -H 'Content-Type: application/json' -d "$2"; }
+  crb() { curl -s -m 60 -X POST "$FN_E/council-review" -H "apikey: $ANON_E" -H "Authorization: Bearer $1" -H 'Content-Type: application/json' -d "$2"; }
+  RUNS0=$(eq "select count(*) from public.council_review_runs where company_id='$C8'")
+  MC0=$(eq "select count(*) from public.model_calls where company_id='$C8'")
+  R6A=$(crb "$JWT_E" "{\"company_id\":\"$C8\",\"council_key\":\"mojo_council\",\"write\":false,\"model\":\"$BAD_E6\"}")
+  R6B=$(crb "$JWT_E" "{\"company_id\":\"$C8\",\"council_key\":\"mojo_council\",\"model\":\"$ALT_E6\"}")
+  R6C=$(crb "$JWT_E" "{\"company_id\":\"$C8\",\"council_key\":\"mojo_council\",\"write\":true,\"model\":\"$ALT_E6\"}")
+  JWT_M6=""
+  [ -n "${MEMBER_EMAIL:-}" ] && JWT_M6=$(curl -s -m 30 -X POST "${AUTH_URL:-http://127.0.0.1:54321/auth/v1}/token?grant_type=password" -H "apikey: $ANON_E" -H 'Content-Type: application/json' \
+          -d "{\"email\":\"$MEMBER_EMAIL\",\"password\":\"$MEMBER_PASSWORD\"}" | epick 'j.access_token||""')
+  H6D=$( [ -n "$JWT_M6" ] && cr "$JWT_M6" "{\"company_id\":\"$C8\",\"council_key\":\"mojo_council\",\"write\":false,\"model\":\"$ALT_E6\"}" || echo "no-member")
+  RUNS1=$(eq "select count(*) from public.council_review_runs where company_id='$C8'")
+  MC1=$(eq "select count(*) from public.model_calls where company_id='$C8'")
+  echo "$R6A" | grep -q '"model_not_listed"' && ok "(e6) a tag the local Ollama does not list is refused by name (model_not_listed)" \
+    || bad "(e6) a non-listed tag was not refused: $(echo "$R6A" | head -c 160)"
+  echo "$R6B" | grep -q '"model_requires_no_write"' && echo "$R6C" | grep -q '"model_requires_no_write"' \
+    && ok "(e6) \`model\` with write absent and with write:true is refused by name (model_requires_no_write)" \
+    || bad "(e6) \`model\` without {write:false} was not refused: absent=$(echo "$R6B" | head -c 100) true=$(echo "$R6C" | head -c 100)"
+  [ "$H6D" = "403" ] && ok "(e6) a non-admin caller with \`model\` is refused (403)" \
+    || bad "(e6) non-admin with \`model\` answered '$H6D' (expected 403; source backups/fr-member.env)"
+  [ "$RUNS1" = "$RUNS0" ] && [ "$MC1" = "$MC0" ] && ok "(e6) the four refusals wrote no run row and made no model call" \
+    || bad "(e6) the refusals wrote run rows ${RUNS0}→${RUNS1} / model_calls ${MC0}→${MC1}"
+  # (e6) a LISTED override on a no-write admin run: the run row and every ledger row name the model that ran
+  C6=$(crb "$JWT_E" "{\"company_id\":\"$C8\",\"council_key\":\"mojo_council\",\"write\":false,\"model\":\"$ALT_E6\"}")
+  RUN_6=$(echo "$C6" | epick 'j.run_id||""'); ST_6=""
+  if [ -n "$RUN_6" ] && [ "$RUN_6" != "ERR" ]; then
+    for i in $(seq 1 96); do ST_6=$(eq "select status from public.council_review_runs where id='$RUN_6'"); [ "$ST_6" != "running" ] && break; sleep 5; done
+  fi
+  R6=$(eq "select model||'|'||coalesce(source_snapshot_json->'llm_path'->>'model','?')||'|'||coalesce(source_snapshot_json->>'model_failure','') from public.council_review_runs where id='${RUN_6:-00000000-0000-0000-0000-000000000000}'")
+  LED6=$(eq "select coalesce(string_agg(distinct m.provider||':'||m.model, ','), '(none)')||'|'||count(*) from public.model_calls m, public.council_review_runs r
+             where r.id='${RUN_6:-00000000-0000-0000-0000-000000000000}' and m.company_id='$C8' and m.call_site='council-review'
+               and m.created_at between r.created_at and r.updated_at + interval '5 seconds'")
+  RECS6=$(eq "select count(*) from public.council_recommendations where run_id='${RUN_6:-00000000-0000-0000-0000-000000000000}'")
+  [ "$ST_6" = "completed" ] && [ "$R6" = "local_ollama:$ALT_E6|$ALT_E6|" ] && [ "${LED6%%|*}" = "local_ollama:$ALT_E6" ] && [ "$RECS6" = "0" ] \
+    && ok "(e6) a listed override ran locally and names $ALT_E6 on the run row and on ${LED6##*|} ledger row(s); no recommendations written" \
+    || bad "(e6) listed override: run='${RUN_6:0:8}' status='$ST_6' row='$R6' ledger='$LED6' recs='$RECS6' — $(echo "$C6" | head -c 120)"
 fi
 
 if [ "$fails" = 0 ]; then echo "guard: PASS"; else echo "guard: RED ($fails check(s)) — see above"; fi

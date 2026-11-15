@@ -7,6 +7,8 @@ import {
   COUNCIL_NUM_CTX,
   COUNCIL_RUN_BUDGET_MS,
   isLocalOllamaUrl,
+  listLocalOllamaTags,
+  resolveCouncilModel,
 } from "../_shared/councilLocal.ts";
 import {
   getFrameworksForPhase,
@@ -1262,7 +1264,7 @@ Deno.serve(async (req) => {
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     // F3′: the model address is LOCAL or the run is refused before anything is read.
     const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
-    const localModel = Deno.env.get("COUNCIL_LOCAL_MODEL") ?? COUNCIL_LOCAL_DEFAULT_MODEL;
+    let localModel = Deno.env.get("COUNCIL_LOCAL_MODEL") ?? COUNCIL_LOCAL_DEFAULT_MODEL;
 
     if (!supabaseUrl || !serviceRoleKey || !anonKey) {
       return jsonResponse({ error: "Missing Supabase env vars" }, 500);
@@ -1303,6 +1305,17 @@ Deno.serve(async (req) => {
     // row is still written — it is how a background run reports back — marked dry_run, with the output on it;
     // every reader of council_review_runs leaves dry-run rows out (src/lib/councilRun.ts).
     const dryRun = body?.write === false;
+    // Council trial (2026-11-15): an optional `model` picks the local model for one no-write admin run, only if
+    // the local Ollama lists it; refused by name before any model call. Absent, the default is used as before.
+    const modelChoice = await resolveCouncilModel({
+      requested: body?.model,
+      dryRun,
+      isAdmin: Array.isArray(adminRoles) && adminRoles.length > 0,
+      defaultModel: localModel,
+      listTags: () => listLocalOllamaTags(ollamaUrl),
+    });
+    if (!modelChoice.ok) return jsonResponse({ error: modelChoice.error, message: modelChoice.message }, modelChoice.status);
+    localModel = modelChoice.model;
     if (!companyId) return jsonResponse({ error: "company_id is required" }, 400);
 
     const { data: accessibleCompany, error: accessErr } = await anonClient

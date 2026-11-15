@@ -147,3 +147,57 @@ export async function callLocalCouncilJSON(opts: {
   }
   throw new Error("local council JSON generation failed after retries");
 }
+
+// Council trial (operator ruling 2026-11-15): an optional `model` body field picks the local model for ONE
+// no-write run. It is refused by name unless the run is {write:false}, the caller is an admin, and the tag is
+// listed by the local Ollama's /api/tags — all before any model call. With no `model` field nothing here runs:
+// the configured default (COUNCIL_LOCAL_MODEL, else COUNCIL_LOCAL_DEFAULT_MODEL) is used exactly as before.
+export type CouncilModelChoice =
+  | { ok: true; model: string; override: boolean }
+  | { ok: false; status: number; error: string; message: string };
+
+/** The tags the local Ollama lists (name and model fields). Refuses a non-local address. */
+export async function listLocalOllamaTags(ollamaUrl: string, fetchImpl: typeof fetch = fetch): Promise<string[]> {
+  if (!isLocalOllamaUrl(ollamaUrl)) throw new Error(`local-only: refusing non-local model address ${ollamaUrl}`);
+  const base = ollamaUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "");
+  const res = await fetchImpl(`${base}/api/tags`, { method: "GET" });
+  if (!res.ok) throw new Error(`ollama /api/tags HTTP ${res.status}`);
+  const data = await res.json() as { models?: Array<{ name?: unknown; model?: unknown }> };
+  const tags = new Set<string>();
+  for (const m of data?.models ?? []) {
+    if (typeof m?.name === "string" && m.name) tags.add(m.name);
+    if (typeof m?.model === "string" && m.model) tags.add(m.model);
+  }
+  return [...tags];
+}
+
+export async function resolveCouncilModel(opts: {
+  /** body.model — `undefined` means the field is absent. */
+  requested: unknown;
+  dryRun: boolean;
+  isAdmin: boolean;
+  defaultModel: string;
+  listTags: () => Promise<string[]>;
+}): Promise<CouncilModelChoice> {
+  if (opts.requested === undefined) return { ok: true, model: opts.defaultModel, override: false };
+  if (!opts.isAdmin) {
+    return { ok: false, status: 403, error: "model_requires_admin", message: "Only an admin can choose the council model — nothing was run." };
+  }
+  if (!opts.dryRun) {
+    return { ok: false, status: 400, error: "model_requires_no_write", message: "A `model` is accepted only with {write:false} — nothing was run." };
+  }
+  const tag = typeof opts.requested === "string" ? opts.requested.trim() : "";
+  if (!tag) {
+    return { ok: false, status: 400, error: "model_invalid", message: "`model` must be a non-empty model tag — nothing was run." };
+  }
+  let tags: string[];
+  try {
+    tags = await opts.listTags();
+  } catch (_e) {
+    return { ok: false, status: 503, error: "model_tags_unavailable", message: "The local model list could not be read — nothing was run." };
+  }
+  if (!tags.includes(tag)) {
+    return { ok: false, status: 400, error: "model_not_listed", message: `Model ${tag} is not listed by the local Ollama — nothing was run.` };
+  }
+  return { ok: true, model: tag, override: true };
+}
