@@ -23,6 +23,7 @@ import { assertSpendable, projectOpenAIUsd, type SpendCap } from "./spendCap.ts"
 import { makeRoutedModel, type RoutedModel, type OpenAIUsage } from "./modelRouter.ts";
 import { callOllamaJson } from "./signalRecurrence.ts";
 import { companyHasClientProvidedMaterial } from "./clientMaterial.ts";
+import { findingSourceVerdicts } from "./findingRouterProvenance.ts"; // F1
 import { openaiRecord, recordModelCall } from "./recordModelCall.ts";
 import { LOCAL_GENERATOR } from "../../../src/lib/modelRouter/resolveModel.ts";
 import { FINDING_VOICE, BEAT_LENGTH_RULE } from "./findingVoice.ts";
@@ -185,6 +186,10 @@ export async function generateFindingBeats(args: {
   const systemText = `${buildSystemText()}\n\n${BEATS_SCHEMA_INSTRUCTION}`;
   // ruling 8: the wall predicate decides where an internal_inferred finding may go (fail closed on lookup error)
   const material = await companyHasClientProvidedMaterial(supabase, companyId);
+  // F1 (SP-352): a finding reaches the router as public only when it is public BY SOURCE — its origin
+  // signal's source_type, or a frontier's full input ledger (findingRouterProvenance). Ruling 8 applies on
+  // top of that; a finding that is not public by source routes local whatever its register says.
+  const bySource = await findingSourceVerdicts(supabase, pending.map((f) => f.id));
   let usage: OpenAIUsage | null = null;
   const routed = args.routedModel ?? defaultBeatsRoutedModel(openaiApiKey, (u) => { usage = u; }, args.spendCap ?? null);
 
@@ -201,7 +206,7 @@ export async function generateFindingBeats(args: {
       usage = null;
       const r = await routed({
         role: "generator",
-        provenances: [beatsRouteProvenance((f as { register?: string | null }).register, material.has)],
+        provenances: [bySource.get(f.id)?.publicBySource ? beatsRouteProvenance((f as { register?: string | null }).register, material.has) : null],
         system: systemText,
         user: buildUserText(f, profile),
       });

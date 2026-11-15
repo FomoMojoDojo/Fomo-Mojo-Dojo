@@ -82,6 +82,32 @@
 #        held, and never deleted (a claim or delta delete writes an audit row); only their model_calls
 #        rows are cleared each run (SP-264: rows this guard created).
 #
+#   (d1) SERVED WORKER, F1 (SP-352, 2026-11-14). A finding's publicness is DERIVED from its sources at
+#        call time, never its stored register. Held throwaway 0c900000-…-c006 holds two findings stored
+#        'public_inferred', both open with no beats yet: a FRONTIER with no input ledger (the pre-wall
+#        shape), and an observation whose origin signal is an uploaded file. generate-finding-beats must
+#        route both LOCAL — 0 outside model_calls rows carrying tokens for c006, ≥1 local row (it ran) —
+#        and the public-read pool (generate-public-read plan mode, read-only) must drop both with reason
+#        finding_not_public_by_source.
+#   (d2) PUBLIC CONTROL. Throwaway …-c007: one finding on a public_baseline_run origin signal. The same
+#        call reaches OpenAI (≥1 ledgered finding-beats row with tokens; a cent-fraction call on synthetic
+#        text) and the pool keeps the finding.
+#   (d3) UNIT. src/lib/findingRouterProvenance.test.ts — the pure rule and the fail-closed loader.
+#        Plant: make decideFindingPublicBySource return true (so the stored register decides, as before),
+#        docker restart the edge runtime — (d1) and (d3) go RED. The fixture rows are FIXED ids, born held,
+#        never deleted; each run resets ONLY their beats to NULL (so (d1)/(d2) always have work) and clears
+#        their model_calls rows (SP-264: rows this guard created).
+#   (d4) SERVED WORKER, the recurrence finding-join judge (the path that historically carried c7bfc5cc ×40
+#        and ac951864 ×25). c006 also holds two public signals on different domains with a banked accepted
+#        pair verdict, so its two findings reach the R1 join judge. generate-signal-recurrence {write:false}
+#        must make ≥2 finding-join calls and record 0 outside tokens on that call site for c006.
+#   (d5) SERVED WORKER, open-question finding anchors. Both c006 findings point at the fixture's own
+#        public_baseline_runs row; generate-open-questions (plan, then one scoped chunk, write:false) must
+#        process both anchors with 0 outside tokens for c006.
+#   (d4/d5 controls) c007: the same shapes on public sources — the control finding's origin signal is
+#        OUTSIDE the cluster, so it reaches the judge rather than an origin join — and both calls reach
+#        OpenAI (≥1 ledgered row with tokens each; cent-fraction calls on synthetic text).
+#
 # Read the printed verdict, not only the exit code — this guard sets both (SP-59).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -554,6 +580,169 @@ else
   D5=$(echo "$P5" | pick '((j.selection&&j.selection.dropped_by_kind&&j.selection.dropped_by_kind.delta)||[]).some(d=>d.id==="0c900000-0000-4000-8000-00000c005e01"&&d.reason==="claim_not_public_by_source")')
   [ "$D5" = "false" ] && ok "(c2) and the pool does not drop the public-only delta by source" \
                       || bad "(c2) the public-only delta was dropped by source ('$D5') — over-correction"
+fi
+
+# ── (d1) (d2) (d3) F1: finding publicness is derived from its sources, at call time ─────────────────
+echo "── (d1/d2/d3) F1: a finding is public only when it is public by source ──"
+if npx vitest run src/lib/findingRouterProvenance.test.ts >/tmp/outside-call-guard-d3.log 2>&1; then
+  ok "(d3) the pure rule and the fail-closed loader hold (findingRouterProvenance.test.ts)"
+else
+  bad "(d3) findingRouterProvenance unit contract failed — see /tmp/outside-call-guard-d3.log"
+fi
+C6="0c900000-0000-4000-8000-00000000c006"; C7="0c900000-0000-4000-8000-00000000c007"
+OWNER_D=""
+[ -n "${FR_LOGIN_EMAIL:-}" ] && OWNER_D=$(docker exec -i "$DB" psql -U postgres -At -c "select id::text from auth.users where lower(email)=lower('$FR_LOGIN_EMAIL') limit 1" 2>/dev/null)
+SRK_D="${SERVICE_ROLE_KEY:-}"
+[ -n "$SRK_D" ] || SRK_D=$(npx supabase status --output env 2>/dev/null | sed -n 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/p')
+if [ -z "$OWNER_D" ] || [ -z "$SRK_D" ]; then
+  bad "(d1/d2) FR_LOGIN_EMAIL or SERVICE_ROLE_KEY unavailable — source backups/fr-login.env; the served-worker half did not run"
+else
+  dq() { docker exec -i "$DB" psql -U postgres -At -v ON_ERROR_STOP=1 -c "$1" 2>&1; }
+  # fixed ids, idempotent, born held (E2). suffix a01 = upload signal, b01 = public signal,
+  # f01 = frontier with no ledger (c006 only), f02 = observation on the upload (c006) / on the public signal (c007)
+  out=$(dq "insert into public.companies (id, name, created_by, fixture_hold) values
+              ('$C6','ocg-throwaway-finding-private','$OWNER_D','OCG:test_fixture'),
+              ('$C7','ocg-throwaway-finding-public','$OWNER_D','OCG:test_fixture')
+              on conflict (id) do update set fixture_hold = coalesce(public.companies.fixture_hold,'OCG:test_fixture');
+            insert into public.signals (id, company_id, source_type, signal_band, voice_class, claim_text, evidence_excerpt, topic, relevance_state, source_url)
+              values ('0c900000-0000-4000-8000-00000c006a01','$C6','uploaded_file','outside','outside_voice_about_client','Synthetic fixture: deliveries slip in the second quarter','Synthetic fixture: deliveries slip in the second quarter','reliability','active',null),
+                     ('0c900000-0000-4000-8000-00000c007b01','$C7','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: reviewers praise the fast turnaround','Synthetic fixture: reviewers praise the fast turnaround','reliability','active','https://reviews.example.org/b')
+              on conflict (id) do nothing;
+            insert into public.findings (id, company_id, kind, body, status, register, origin_signal_id, beats)
+              values ('0c900000-0000-4000-8000-00000c006f01','$C6','frontier','Synthetic fixture: you are betting that second-quarter deliveries recover','open','public_inferred',null,null),
+                     ('0c900000-0000-4000-8000-00000c006f02','$C6','observation','Synthetic fixture: deliveries slip in the second quarter','open','public_inferred','0c900000-0000-4000-8000-00000c006a01',null),
+                     ('0c900000-0000-4000-8000-00000c007f02','$C7','observation','Synthetic fixture: reviewers praise the fast turnaround','open','public_inferred','0c900000-0000-4000-8000-00000c007b01',null)
+              on conflict (id) do nothing;
+            insert into public.finding_recurrence (finding_id, company_id, cluster_signal_ids, distinct_host_count, host_list, verdict_count)
+              select x.f::uuid, x.c::uuid, '[]'::jsonb, 2, '[]'::jsonb, 1 from (values
+                ('0c900000-0000-4000-8000-00000c006f01','$C6'),('0c900000-0000-4000-8000-00000c006f02','$C6'),('0c900000-0000-4000-8000-00000c007f02','$C7')) x(f,c)
+              where not exists (select 1 from public.finding_recurrence r where r.finding_id=x.f::uuid);
+            update public.findings set beats = null where id in ('0c900000-0000-4000-8000-00000c006f01','0c900000-0000-4000-8000-00000c006f02','0c900000-0000-4000-8000-00000c007f02');
+            delete from public.model_calls where company_id in ('$C6','$C7');") || bad "(d1/d2) fixture SQL failed: $(echo "$out" | head -2 | tr '\n' ' ')"
+  # non-vacuity of the fixture itself: both c006 findings are stored public_inferred, one ledger-less frontier, one on an upload
+  SHAPE_D=$(dq "select count(*) from public.findings f left join public.signals s on s.id=f.origin_signal_id
+                where f.company_id='$C6' and f.register='public_inferred' and f.status='open' and f.beats is null
+                  and ((f.kind='frontier' and f.origin_signal_id is null) or (s.source_type='uploaded_file'))")
+  [ "$SHAPE_D" = "2" ] || bad "(d1) the c006 fixture findings do not have the leak shape (got '$SHAPE_D') — (d1) would be vacuous"
+  HOLDS_D=$(dq "select count(*) from public.companies where id in ('$C6','$C7') and fixture_hold is not null")
+  [ "$HOLDS_D" = "2" ] || bad "(d1/d2) a fixture company is not held (held=$HOLDS_D)"
+  dcall() { curl -s -m 400 -X POST "${FUNCTIONS_URL:-http://127.0.0.1:54321/functions/v1}/$1" -H "Authorization: Bearer $SRK_D" -H "Content-Type: application/json" -d "$2"; }
+  dpick() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const f=new Function("j","return ("+process.argv[1]+")");process.stdout.write(String(f(j)))}catch(e){process.stdout.write("ERR")}})' "$1"; }
+
+  # (d1) the two private findings: beats routed local, never outside
+  B6=$(dcall generate-finding-beats "{\"company_id\":\"$C6\"}")
+  G6=$(echo "$B6" | dpick 'j.generated+"|"+j.failed')
+  O6=$(dq "select count(*) from public.model_calls where company_id='$C6' and provider in ('openai','anthropic') and coalesce(prompt_tokens,0) > 0")
+  L6=$(dq "select count(*) from public.model_calls where company_id='$C6' and call_site='finding-beats' and provider='local_ollama'")
+  [ "$O6" = "0" ] && ok "(d1) 0 outside model_calls rows carrying tokens for c006 (beats: generated|failed = $G6)" \
+                  || bad "(d1) $O6 outside model_calls row(s) carrying tokens for c006 — a finding not public by source left the building"
+  [ "${L6:-0}" -ge 2 ] && ok "(d1) and both private findings were routed LOCAL ($L6 local finding-beats rows — the run did happen)" \
+                       || bad "(d1) expected 2 local finding-beats rows for c006, saw '$L6' — $(echo "$B6" | head -c 160)"
+  P6=$(dcall generate-public-read "{\"company_id\":\"$C6\",\"plan\":true}")
+  D6=$(echo "$P6" | dpick '(((j.selection&&j.selection.dropped_by_kind&&j.selection.dropped_by_kind.finding)||[]).filter(d=>d.reason==="finding_not_public_by_source").map(d=>d.id).sort().join(","))+"|"+((j.input_ledger&&j.input_ledger.ids)||[]).filter(i=>String(i).startsWith("0c900000-0000-4000-8000-00000c006f")).length')
+  [ "$D6" = "0c900000-0000-4000-8000-00000c006f01,0c900000-0000-4000-8000-00000c006f02|0" ] \
+    && ok "(d1) the public-read pool drops both with reason finding_not_public_by_source (plan mode, read-only)" \
+    || bad "(d1) the public-read pool did not drop the private findings by source: '$D6' — $(echo "$P6" | head -c 160)"
+
+  # (d2) the public control: still reaches the outside model, and the pool keeps it
+  B7=$(dcall generate-finding-beats "{\"company_id\":\"$C7\"}")
+  O7=$(dq "select count(*) from public.model_calls where company_id='$C7' and provider='openai' and call_site='finding-beats' and coalesce(prompt_tokens,0) > 0")
+  [ "${O7:-0}" -ge 1 ] && ok "(d2) the public control still reaches the outside model ($O7 ledgered OpenAI finding-beats row(s) with tokens)" \
+                       || bad "(d2) the public control did not reach the outside model (rows=$O7) — the guard would be vacuous — $(echo "$B7" | head -c 160)"
+  P7=$(dcall generate-public-read "{\"company_id\":\"$C7\",\"plan\":true}")
+  D7=$(echo "$P7" | dpick '((j.selection&&j.selection.dropped_by_kind&&j.selection.dropped_by_kind.finding)||[]).some(d=>d.reason==="finding_not_public_by_source")+"|"+((j.input_ledger&&j.input_ledger.ids)||[]).includes("0c900000-0000-4000-8000-00000c007f02")')
+  [ "$D7" = "false|true" ] && ok "(d2) and the pool keeps the public finding" \
+                           || bad "(d2) the public finding was not kept by the pool ('$D7') — over-correction"
+fi
+
+# ── (d4) (d5) F1: the recurrence finding-join and open-question finding anchors, live ────────────────
+echo "── (d4/d5) F1: the recurrence join judge and open-question anchors route a finding by its sources ──"
+if [ -z "${OWNER_D:-}" ] || [ -z "${SRK_D:-}" ]; then
+  bad "(d4/d5) FR_LOGIN_EMAIL or SERVICE_ROLE_KEY unavailable — the served-worker half did not run"
+else
+  # Fixed ids, idempotent, on the same held throwaways. b02/b03 = two public signals on DIFFERENT domains with
+  # a banked ACCEPTED pair verdict (identities computed exactly as signalRecurrence does: sha256 over
+  # normalizeForHash — lower-case, whitespace-collapsed, trimmed). 901..905 = five UNRELATED public padding
+  # signals per company: the join's DISTINCTIVE floor excludes tokens in ≥40% of eligible signals, so without
+  # them every shared token is generic and no finding would ever reach the judge. Each company gets ONE fixture run row the
+  # findings point at (origin_run_id), so they anchor open questions. Beats are reset to NULL so the join
+  # statement is the finding body (findingStatement = beats.observe ?? body), keeping the token overlap fixed.
+  out=$(dq "insert into public.signals (id, company_id, source_type, signal_band, voice_class, claim_text, evidence_excerpt, topic, relevance_state, source_url, evidence_class)
+              values ('0c900000-0000-4000-8000-00000c006b02','$C6','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: second quarter deliveries slip at the depot','Synthetic fixture: second quarter deliveries slip at the depot','reliability','active','https://news.example.net/q2','prose'),
+                     ('0c900000-0000-4000-8000-00000c006b03','$C6','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: buyers say deliveries slip in the second quarter','Synthetic fixture: buyers say deliveries slip in the second quarter','reliability','active','https://trade.example.com/q2','prose'),
+                     ('0c900000-0000-4000-8000-00000c007b02','$C7','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: reviewers praise the turnaround speed','Synthetic fixture: reviewers praise the turnaround speed','reliability','active','https://news.example.net/fast','prose'),
+                     ('0c900000-0000-4000-8000-00000c007b03','$C7','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: customers praise how fast the turnaround is','Synthetic fixture: customers praise how fast the turnaround is','reliability','active','https://trade.example.com/fast','prose')
+              on conflict (id) do nothing;
+            insert into public.signals (id, company_id, source_type, signal_band, voice_class, claim_text, evidence_excerpt, topic, relevance_state, source_url, evidence_class)
+              values ('0c900000-0000-4000-8000-00000c006901','$C6','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: the lobby has bright murals','Synthetic fixture: the lobby has bright murals','venue','active','https://pad1.example.org/006','prose'),
+                     ('0c900000-0000-4000-8000-00000c006902','$C6','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: parking is free after six','Synthetic fixture: parking is free after six','venue','active','https://pad2.example.org/006','prose'),
+                     ('0c900000-0000-4000-8000-00000c006903','$C6','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: staff wear green aprons','Synthetic fixture: staff wear green aprons','venue','active','https://pad3.example.org/006','prose'),
+                     ('0c900000-0000-4000-8000-00000c006904','$C6','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: the website lists holiday hours','Synthetic fixture: the website lists holiday hours','venue','active','https://pad4.example.org/006','prose'),
+                     ('0c900000-0000-4000-8000-00000c006905','$C6','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: the menu changes every spring','Synthetic fixture: the menu changes every spring','venue','active','https://pad5.example.org/006','prose'),
+                     ('0c900000-0000-4000-8000-00000c007901','$C7','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: the lobby has bright murals','Synthetic fixture: the lobby has bright murals','venue','active','https://pad1.example.org/007','prose'),
+                     ('0c900000-0000-4000-8000-00000c007902','$C7','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: parking is free after six','Synthetic fixture: parking is free after six','venue','active','https://pad2.example.org/007','prose'),
+                     ('0c900000-0000-4000-8000-00000c007903','$C7','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: staff wear green aprons','Synthetic fixture: staff wear green aprons','venue','active','https://pad3.example.org/007','prose'),
+                     ('0c900000-0000-4000-8000-00000c007904','$C7','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: the website lists holiday hours','Synthetic fixture: the website lists holiday hours','venue','active','https://pad4.example.org/007','prose'),
+                     ('0c900000-0000-4000-8000-00000c007905','$C7','public_baseline_run','outside','outside_voice_about_client','Synthetic fixture: the menu changes every spring','Synthetic fixture: the menu changes every spring','venue','active','https://pad5.example.org/007','prose')
+              on conflict (id) do nothing;
+            insert into public.signal_recurrence_verdicts (company_id, pair_identity, signal_a_id, signal_b_id, statement_a_identity, statement_b_identity, verdict, judge_model, judge_reason, candidate_basis, model_provider, model_name)
+              select x.c::uuid,
+                     encode(sha256(convert_to('recur|' || least(x.na, x.nb) || '|' || greatest(x.na, x.nb), 'UTF8')), 'hex'),
+                     x.a::uuid, x.b::uuid,
+                     encode(sha256(convert_to(x.na, 'UTF8')), 'hex'), encode(sha256(convert_to(x.nb, 'UTF8')), 'hex'),
+                     'accepted', 'ocg-fixture', 'OCG fixture: banked accepted pair', 'shared_tokens:fixture', 'ocg_fixture', 'ocg-fixture'
+              from (select c, a, b, lower(trim(regexp_replace(ta, '\s+', ' ', 'g'))) na, lower(trim(regexp_replace(tb, '\s+', ' ', 'g'))) nb from (values
+                ('$C6','0c900000-0000-4000-8000-00000c006b02','0c900000-0000-4000-8000-00000c006b03','Synthetic fixture: second quarter deliveries slip at the depot','Synthetic fixture: buyers say deliveries slip in the second quarter'),
+                ('$C7','0c900000-0000-4000-8000-00000c007b02','0c900000-0000-4000-8000-00000c007b03','Synthetic fixture: reviewers praise the turnaround speed','Synthetic fixture: customers praise how fast the turnaround is')) v(c,a,b,ta,tb)) x
+              where not exists (select 1 from public.signal_recurrence_verdicts r where r.company_id=x.c::uuid and r.signal_a_id=x.a::uuid and r.signal_b_id=x.b::uuid);
+            insert into public.public_baseline_runs (company_id, company_name, website)
+              select x.c::uuid, x.n, '' from (values ('$C6','ocg-throwaway-finding-private'),('$C7','ocg-throwaway-finding-public')) x(c,n)
+              where not exists (select 1 from public.public_baseline_runs r where r.company_id=x.c::uuid);
+            update public.findings f set origin_run_id = (select min(id) from public.public_baseline_runs r where r.company_id=f.company_id), beats = null
+              where f.id in ('0c900000-0000-4000-8000-00000c006f01','0c900000-0000-4000-8000-00000c006f02','0c900000-0000-4000-8000-00000c007f02');") \
+    || bad "(d4/d5) fixture SQL failed: $(echo "$out" | head -2 | tr '\n' ' ')"
+  RUNS_D=$(dq "select count(distinct f.origin_run_id) from public.findings f where f.company_id in ('$C6','$C7') and f.origin_run_id is not null")
+  [ "$RUNS_D" = "2" ] || bad "(d4/d5) the fixture findings do not point at their fixture runs (runs=$RUNS_D) — (d5) would be vacuous"
+
+  # (d4) the recurrence finding-join judge — c006 private findings: local; c007 public control: outside
+  R6=$(dcall generate-signal-recurrence "{\"company_id\":\"$C6\",\"write\":false}")
+  J6=$(echo "$R6" | dpick 'j.totals ? j.totals.finding_judge_calls+"|"+j.totals.clusters : "none"')
+  O6R=$(dq "select count(*) from public.model_calls where company_id='$C6' and call_site='generate-signal-recurrence' and provider in ('openai','anthropic') and coalesce(prompt_tokens,0) > 0")
+  case "$J6" in
+    none|0\|*|1\|*) bad "(d4) the c006 recurrence run did not reach the finding-join judge for both findings (calls|clusters=$J6) — $(echo "$R6" | head -c 160)" ;;
+    *) ok "(d4) the recurrence finding-join judge ran on c006 (calls|clusters = $J6)" ;;
+  esac
+  [ "$O6R" = "0" ] && ok "(d4) and 0 outside model_calls rows carrying tokens for c006's recurrence run — both joins routed LOCAL" \
+                   || bad "(d4) $O6R outside recurrence row(s) carrying tokens for c006 — a finding not public by source reached the outside judge"
+  R7=$(dcall generate-signal-recurrence "{\"company_id\":\"$C7\",\"write\":false}")
+  J7=$(echo "$R7" | dpick 'j.totals ? String(j.totals.finding_judge_calls) : "none"')
+  O7R=$(dq "select count(*) from public.model_calls where company_id='$C7' and call_site='generate-signal-recurrence' and provider='openai' and coalesce(prompt_tokens,0) > 0")
+  if [ "${J7:-0}" != "none" ] && [ "${J7:-0}" -ge 1 ] 2>/dev/null && [ "${O7R:-0}" -ge 1 ]; then
+    ok "(d4) control: the c007 public finding still reaches the outside join judge (calls=$J7, $O7R OpenAI row(s) with tokens)"
+  else
+    bad "(d4) control: the c007 public finding did not reach the outside join judge (calls=$J7, rows=$O7R) — vacuous — $(echo "$R7" | head -c 160)"
+  fi
+
+  # (d5) open-question finding anchors — plan (zero model, zero writes) for the identities, then ONE scoped chunk
+  for spec in "$C6|6" "$C7|7"; do
+    cid="${spec%%|*}"; n="${spec#*|}"
+    PL=$(dcall generate-open-questions "{\"company_id\":\"$cid\",\"plan\":true}")
+    IDS=$(echo "$PL" | dpick 'JSON.stringify((j.anchors||[]).filter(a=>a.kind==="finding").map(a=>a.identity))')
+    NA=$(echo "$PL" | dpick 'String((j.anchors||[]).filter(a=>a.kind==="finding").length)')
+    CH=$(dcall generate-open-questions "{\"company_id\":\"$cid\",\"write\":false,\"anchor_identities\":$IDS}")
+    PR=$(echo "$CH" | dpick 'j.totals ? j.totals.anchors_processed+"|"+((j.perAnchor||[]).filter(a=>a.error).length)+"|"+(j.cost?j.cost.prompt_tokens:"?") : "none"')
+    eval "NA$n=\"\$NA\"; PR$n=\"\$PR\"; CH$n=\"\$CH\""
+  done
+  O6Q=$(dq "select count(*) from public.model_calls where company_id='$C6' and call_site='generate-open-questions' and provider in ('openai','anthropic') and coalesce(prompt_tokens,0) > 0")
+  O7Q=$(dq "select count(*) from public.model_calls where company_id='$C7' and call_site='generate-open-questions' and provider='openai' and coalesce(prompt_tokens,0) > 0")
+  [ "$NA6" = "2" ] && [ "$PR6" = "2|0|0" ] && [ "$O6Q" = "0" ] \
+    && ok "(d5) both c006 finding anchors were processed LOCAL (anchors=$NA6, processed|errors|outside_tokens = $PR6; 0 outside rows with tokens)" \
+    || bad "(d5) c006 finding anchors: anchors=$NA6, processed|errors|outside_tokens=$PR6, outside rows=$O6Q — $(echo "$CH6" | head -c 160)"
+  case "$PR7" in
+    1\|0\|0|none|*\|*\|\?) bad "(d5) control: the c007 public finding anchor did not reach the outside model ($PR7, rows=$O7Q) — vacuous — $(echo "$CH7" | head -c 160)" ;;
+    *) [ "${O7Q:-0}" -ge 1 ] && ok "(d5) control: the c007 public finding anchor still reaches the outside model ($PR7; $O7Q OpenAI row(s) with tokens)" \
+                             || bad "(d5) control: no OpenAI open-questions row with tokens for c007 ($PR7)" ;;
+  esac
 fi
 
 if [ "$fails" = 0 ]; then echo "guard: PASS"; else echo "guard: RED ($fails check(s)) — see above"; fi

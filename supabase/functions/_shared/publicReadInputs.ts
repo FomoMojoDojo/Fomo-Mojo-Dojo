@@ -15,6 +15,7 @@ import type { OwnWordsHostOrder } from "./publicReadSelection.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isPublicSignalSourceType } from "./clientMaterial.ts";
 import { CLAIM_NOT_PUBLIC_BY_SOURCE, claimRouterProvenance } from "./claimRouterProvenance.ts";   // SP-349
+import { FINDING_NOT_PUBLIC_BY_SOURCE, findingRouterProvenance } from "./findingRouterProvenance.ts"; // F1
 import { declaredEligibleFor, parseOwnWordsKind } from "./ownWordsKinds.ts";
 import { isAnalysisRow } from "./voiceLabel.ts";
 import { evidenceTierOf, selectDeltas, selectFindings, selectOwnWords, selectSignals, type Dropped, type SelClaim, type SelDelta, type SelFinding, type SelOwnWord, type SelSignal } from "./publicReadSelection.ts";
@@ -349,13 +350,23 @@ export async function selectPublicInputs(supabase: SupabaseClient, companyId: st
   // wall brief 2026-09-18: a caller may exclude finding kinds — the bet writer excludes 'frontier' so a bet never feeds itself
   const excludedKinds = new Set(opts.excludeFindingKinds ?? []);
   for (const f of ((fnd ?? []) as Array<SelFinding & { kind?: string | null }>).filter((f) => excludedKinds.has(String(f.kind ?? "")))) dropped.push({ id: f.id, kind: "finding", reason: `kind_excluded:${f.kind}` });
-  const fSel = selectFindings(((fnd ?? []) as Array<SelFinding & { kind?: string | null }>).filter((f) => !excludedKinds.has(String(f.kind ?? ""))), READ_CAP.finding, recurrenceBacked);
+  // F1 (SP-352): a finding enters the public pool only when it is public BY SOURCE — its origin signal's
+  // source_type, or a frontier's full input ledger (findingRouterProvenance) — never by its stored register
+  // alone. A finding that is not is dropped and named in selection_dropped.
+  const fndKinds = ((fnd ?? []) as Array<SelFinding & { kind?: string | null }>).filter((f) => !excludedKinds.has(String(f.kind ?? "")));
+  const findingProv = await findingRouterProvenance(supabase as unknown as { from: (t: string) => any }, fndKinds.map((f) => f.id)); // deno-lint-ignore-line no-explicit-any
+  const fndPublic = fndKinds.filter((f) => {
+    if (findingProv.get(f.id) != null) return true;
+    dropped.push({ id: f.id, kind: "finding", reason: FINDING_NOT_PUBLIC_BY_SOURCE });
+    return false;
+  });
+  const fSel = selectFindings(fndPublic, READ_CAP.finding, recurrenceBacked);
   dropped.push(...fSel.dropped);
   // 1a-4 (ruling 1A-i): EVERY finding is our read — its body is our synthesis whatever it rests on,
   // which is what the findings beat already says of it ("the finding BODY is OUR reading, not a
   // quote"). A frontier row (origin_signal_id NULL, basis in beats.input_ledger) arrives through this
   // same lane and is classed the same way.
-  for (const f of fSel.kept) rows.push({ id: f.id, kind: "finding", provenance: "public_inferred", source_class: "our_read", text: (f.body ?? "").trim() });
+  for (const f of fSel.kept) rows.push({ id: f.id, kind: "finding", provenance: findingProv.get(f.id) as string, source_class: "our_read", text: (f.body ?? "").trim() });
 
   // 4. (REMOVED — Stage B Option-B, 2026-08-28) odi_market_definitions is a STRUCTURALLY FORBIDDEN
   //    input for this generator. Stage A proved the table holds ZERO public_research rows across the

@@ -31,6 +31,9 @@ function fakeDb(seed: Record<string, Row[]>, opts: { failTable?: string } = {}) 
   const log: Array<{ table: string; op: string; row?: Row; ids?: unknown[] }> = [];
   /** The filter chain of every SELECT, per table (last query wins) — so a guard can assert the predicate itself. */
   const filters: Record<string, string[]> = {};
+  // F1: EVERY query per table (filters keeps only the last one) — the F1 source lookup reads signals by id
+  // after the corpus query, so the band assertion is made over all of them.
+  const queries: Record<string, Array<{ cols: string; applied: string[] }>> = {};
   const from = (table: string) => {
     tables[table] ??= [];
     let rows = [...tables[table]];
@@ -38,6 +41,7 @@ function fakeDb(seed: Record<string, Row[]>, opts: { failTable?: string } = {}) 
     let pending: Row | null = null;
     const b: Record<string, unknown> = {};
     const applied: string[] = []; filters[table] = applied;
+    const q = { cols: "", applied }; (queries[table] ??= []).push(q);
     const chain = (fn: (r: Row[]) => Row[]) => { rows = fn(rows); return b; };
     const result = () => {
       if (opts.failTable === table) return { data: null, count: null, error: { message: `boom on ${table}` } };
@@ -45,7 +49,7 @@ function fakeDb(seed: Record<string, Row[]>, opts: { failTable?: string } = {}) 
       return head ? { data: null, count: rows.length, error: null } : { data: rows, error: null };
     };
     Object.assign(b, {
-      select: (_c?: string, o?: { head?: boolean }) => { head = !!o?.head; return b; },
+      select: (_c?: string, o?: { head?: boolean }) => { head = !!o?.head; q.cols = String(_c ?? "*"); return b; },
       insert: (r: Row | Row[]) => { const arr = Array.isArray(r) ? r : [r]; for (const x of arr) { tables[table].push({ id: `new-${table}-${tables[table].length + 1}`, ...x }); log.push({ table, op: "insert", row: x }); } return Promise.resolve({ data: null, error: null }); },
       update: (patch: Row) => { pending = patch; return b; },
       eq: (c: string, v: unknown) => { applied.push(`eq:${c}=${String(v)}`); return chain((r) => r.filter((x) => (c.includes(".") ? true : x[c] === v))); },
@@ -60,7 +64,7 @@ function fakeDb(seed: Record<string, Row[]>, opts: { failTable?: string } = {}) 
     });
     return b;
   };
-  return { tables, log, filters, from };
+  return { tables, log, filters, queries, from };
 }
 
 const PUBLIC_SIG = (id: string, url: string, text: string, extra: Row = {}): Row => ({ id, company_id: CO, signal_band: "outside", voice_class: "outside_voice_about_client", source_type: "public_baseline_run", claim_text: text, evidence_excerpt: text, source_title: "x", source_url: url, event_date: "2026-09-01", created_at: "2026-09-11T00:00:00Z", confidence_to_use: "medium", evidence_class: "prose", superseded_at: null, held_at: null, raw_payload: { url, snippet: text, excerpt_guard: { basis: "retained_page", traced: true } }, ...extra });   // R5: verified page words
@@ -74,7 +78,7 @@ function world(opts: { hasUpload: boolean; defProvenance: string; frontierStatus
   if (opts.withdrawnTwin) sigs.push(PUBLIC_SIG("S-withdrawn", "https://glassdoor.com/r/2", "WITHDRAWN-TWIN text that must never be read.", { superseded_at: "2026-09-01T00:00:00Z" }));
   if (opts.hasUpload) sigs.push(UPLOAD_SIG);
   const findings: Row[] = [
-    { id: "F-obs", company_id: CO, kind: "observation", register: "public_inferred", status: "open", body: "Regulatory licensing underpins IAQM's market access.", created_at: "2026-09-11T00:00:00Z" },
+    { id: "F-obs", company_id: CO, kind: "observation", register: "public_inferred", origin_signal_id: "S-live", status: "open", body: "Regulatory licensing underpins IAQM's market access.", created_at: "2026-09-11T00:00:00Z" },
     { id: "F-frontier-other", company_id: CO, kind: "frontier", register: "public_inferred", status: "open", body: "You're betting on sustainability messaging.", created_at: "2026-09-11T00:00:00Z" },
   ];
   if (opts.frontierStatus) { findings.pop(); findings.push({ id: "F-frontier", company_id: CO, kind: "frontier", register: "public_inferred", status: opts.frontierStatus, body: "OLD BET", beats: {}, created_at: "2026-06-08T00:00:00Z" }); }
@@ -115,10 +119,17 @@ Deno.test("(a) an organization-band upload row never reaches the prompt; the pub
   assert(calls[0].user.includes("4.8-star rating") && calls[0].user.includes("polluted indoor air") && calls[0].user.includes("Regulatory licensing"), "public S/O/F rows are");
   assert(!calls[0].user.includes("sustainability messaging"), "the existing frontier does not feed itself");
   // the corpus query ITSELF can never return an organization-band row: the band predicate is on the signals query
-  const sigFilters = db.filters.signals ?? [];
+  const sigQueries = db.queries.signals ?? [];
+  const readsText = (x: { cols: string }) => /claim_text|evidence_excerpt|\*/.test(x.cols);
+  const sigFilters = sigQueries.find(readsText)?.applied ?? [];
   assert(sigFilters.includes("eq:signal_band=outside"), `signals query carries signal_band=outside (got ${sigFilters.join(" ")})`);
   assert(sigFilters.includes("in:voice_class") && sigFilters.includes("is:superseded_at=null") && sigFilters.includes("is:held_at=null"), "public voices, live only");
-  // and no signals query in the whole run was made without the band predicate — the org band is unreachable
+  // and no signals query in the whole run was made without the band predicate — the org band is unreachable —
+  // for any query that reads TEXT: counts read only ids, and F1's source lookup reads only id + source_type
+  for (const x of sigQueries.filter(readsText)) {
+    assert(x.applied.includes("eq:signal_band=outside"), `a text-reading signals query without the band predicate: ${x.cols} / ${x.applied.join(" ")}`);
+  }
+  assert(sigQueries.some((x) => x.cols === "id, source_type" && x.applied.join(" ") === "in:id"), "F1: the finding-source lookup ran (id + source_type only)");
   assert(!db.log.some((l) => l.table === "signals"), "no write to signals");
 });
 
@@ -221,9 +232,11 @@ Deno.test("(g) findingBeats: internal_inferred + client material → local; inte
   assertEquals(beatsRouteProvenance("internal_inferred", true), "internal_inferred");
   assertEquals(beatsRouteProvenance("internal_inferred", false), "public_inferred");
   assertEquals(beatsRouteProvenance("public_inferred", true), "public_inferred");
-  const mk = (hasUpload: boolean, register: string) => {
+  // F1 (SP-352): a finding is public to the router only by SOURCE — the fixture finding rests on a public signal
+  // (S-live) unless the case names another origin.
+  const mk = (hasUpload: boolean, register: string, origin = "S-live") => {
     const db = world({ hasUpload, defProvenance: "internal_hypothesis" });
-    db.tables.findings = [{ id: "F-b", company_id: CO, kind: "observation", register, status: "open", body: "A finding body.", beats: null, created_at: "2026-09-11T00:00:00Z" }];
+    db.tables.findings = [{ id: "F-b", company_id: CO, kind: "observation", register, origin_signal_id: origin, status: "open", body: "A finding body.", beats: null, created_at: "2026-09-11T00:00:00Z" }];
     return db;
   };
   const calls: Array<{ provenances: unknown[]; provider: string }> = [];
@@ -234,7 +247,11 @@ Deno.test("(g) findingBeats: internal_inferred + client material → local; inte
   assertEquals(calls.at(-1)?.provider, "external_openai");
   await generateFindingBeats({ supabase: mk(true, "public_inferred") as never, companyId: CO, openaiApiKey: "k", routedModel: routed });
   assertEquals(calls.at(-1)?.provider, "external_openai");
-  assertEquals(calls.length, 3);
+  // F1: the same public_inferred register on an UPLOAD origin signal routes local — the register never widens
+  await generateFindingBeats({ supabase: mk(true, "public_inferred", "S-upload") as never, companyId: CO, openaiApiKey: "k", routedModel: routed });
+  assertEquals(calls.at(-1)?.provider, "local_ollama");
+  assertEquals(calls.at(-1)?.provenances, [null]);
+  assertEquals(calls.length, 4);
 });
 
 Deno.test("(h) every routed call writes a model_calls row (frontier and beats)", async () => {

@@ -32,6 +32,7 @@ import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { signalProvenance } from "../../../src/lib/modelRouter/resolveModel.ts";
 import type { RoutedJudge } from "./modelRouter.ts";
+import { findingRouterProvenance } from "./findingRouterProvenance.ts"; // F1
 // Gate 5a: the ONE tokenizer authority (single source of truth). Re-exported so
 // existing consumers (normativeConsistency.ts) keep importing from here unchanged.
 import {
@@ -597,6 +598,12 @@ export async function computeRecurrenceForCompany(
     .slice().sort((a, b) => a.id.localeCompare(b.id));
   // Finding statement = the render convention since CV-1: beats.observe ?? body.
   const findingStatement = (f: FindingRow) => String(f.beats?.observe ?? f.body ?? "").trim();
+  // F1 (SP-352): the finding side of the R1 join judge is routed by the finding's provenance DERIVED from
+  // its sources (findingRouterProvenance), never a hard-coded 'public_inferred'. Loaded only when a routed
+  // judge is in play; the local-only path never reads it.
+  const findingRouterProv = args.routedJudge
+    ? await findingRouterProvenance(args.supabase, openFindings.map((f) => f.id))
+    : new Map<string, string | null>();
 
   const acceptedByPair = liveVerdicts.filter((v) => v.verdict === "accepted");
   type DesiredRow = GatedFindingRow;
@@ -687,9 +694,9 @@ export async function computeRecurrenceForCompany(
           continue;
         }
         const fjUser = buildFindingJoinUser(companyName, stmt, m.claim_text);
-        // ROUTER: finding (public_inferred) + signal provenance decide the model.
+        // ROUTER: the finding's source-derived provenance (F1) + the signal's provenance decide the model.
         const fjr = args.routedJudge
-          ? await args.routedJudge({ provenances: ["public_inferred", m.provenance], system: FINDING_JOIN_SYSTEM, user: fjUser })
+          ? await args.routedJudge({ provenances: [findingRouterProv.get(f.id) ?? null, m.provenance], system: FINDING_JOIN_SYSTEM, user: fjUser })
           : { content: await callOllamaJson(args.ollamaUrl, judgeModel, FINDING_JOIN_SYSTEM, fjUser, JUDGE_TIMEOUT_MS), provider: "local_ollama" as const, model: judgeModel };
         const v = parseJudgeVerdict(fjr.content);
         totals.finding_judge_calls++;

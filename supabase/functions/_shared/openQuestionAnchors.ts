@@ -11,6 +11,7 @@
 // current anchor set. Gate 1 (held state, finding_signal_refs) is NOT here.
 import { contentIdentity } from "./contentIdentity.ts";
 import { claimRouterProvenance } from "./claimRouterProvenance.ts";   // SP-349
+import { findingRouterProvenance } from "./findingRouterProvenance.ts"; // F1
 import { documentDerivedClaimIds } from "./firstReadProvenance.ts";
 import type { QuestionAnchor } from "../../../src/lib/firstRead/openQuestionLinks.ts";
 
@@ -35,20 +36,30 @@ export async function loadQuestionAnchors(supabase: AnySupabase, companyId: stri
  *  delta is not active. The finalize reads the reasons from here — one predicate, one place. */
 export async function loadQuestionAnchorsDetailed(
   supabase: AnySupabase, companyId: string, runId: string,
-): Promise<{ anchors: QuestionAnchor[]; excluded: AnchorExclusion[]; deltaRouterProvenance: Map<string, string | null> }> {
+): Promise<{ anchors: QuestionAnchor[]; excluded: AnchorExclusion[]; deltaRouterProvenance: Map<string, string | null>; findingAnchorRouterProvenance: Map<string, string | null> }> {
   const anchors: QuestionAnchor[] = [];
   const excluded: AnchorExclusion[] = [];
   // SP-349: a delta anchor's router provenance, keyed by anchor identity — DERIVED from its claims'
   // signals at call time (claimRouterProvenance); public only when every present claim is.
   const deltaRouterProvenance = new Map<string, string | null>();
+  // F1 (SP-352): a FINDING anchor's router provenance, keyed by anchor identity — DERIVED from the finding's
+  // sources (findingRouterProvenance); public only when every finding sharing that identity is.
+  const findingAnchorRouterProvenance = new Map<string, string | null>();
 
   const { data: findingRows } = await supabase
-    .from("findings").select("body").eq("company_id", companyId).eq("origin_run_id", Number(runId))
+    .from("findings").select("id, body").eq("company_id", companyId).eq("origin_run_id", Number(runId))
     // ruling 4 (2026-09-18): a resolved finding anchors nothing — its questions become orphans at finalize
     .eq("status", ANCHORABLE_FINDING_STATUS);
-  for (const f of (findingRows ?? []) as Array<{ body?: string | null }>) {
+  const fRows = (findingRows ?? []) as Array<{ id?: string | null; body?: string | null }>;
+  const findingProv = await findingRouterProvenance(supabase, fRows.map((f) => f.id));
+  for (const f of fRows) {
     const text = (f.body ?? "").trim();
-    if (text) anchors.push({ kind: "finding", text, identity: await contentIdentity(text) });
+    if (!text) continue;
+    const identity = await contentIdentity(text);
+    anchors.push({ kind: "finding", text, identity });
+    const prov = (f.id ? findingProv.get(f.id) : null) ?? null;
+    const seenPrivate = findingAnchorRouterProvenance.has(identity) && findingAnchorRouterProvenance.get(identity) == null;
+    findingAnchorRouterProvenance.set(identity, seenPrivate ? null : prov);
   }
 
   const { data: deltaRows } = await supabase
@@ -96,7 +107,7 @@ export async function loadQuestionAnchorsDetailed(
     const provs = present.map((id) => claimRouterProv.get(id) ?? null);
     deltaRouterProvenance.set(d.content_identity, provs.length > 0 && provs.every((p) => p != null) ? provs[0] : null);
   }
-  return { anchors, excluded, deltaRouterProvenance };
+  return { anchors, excluded, deltaRouterProvenance, findingAnchorRouterProvenance };
 }
 
 /** The finalize rule: live rows of the run whose anchor is no longer in the anchor set. Pure. */

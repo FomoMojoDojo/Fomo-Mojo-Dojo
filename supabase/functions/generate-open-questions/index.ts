@@ -74,7 +74,7 @@ Deno.serve(async (req) => {
     if (!runId) return json({ status: "empty", empty_reason: "No findings run for this company.", trace });
 
     // gate 0 (ruling 4): the ONE anchor loader — OPEN findings + publicly_silent deltas (openQuestionAnchors.ts)
-    const { anchors, excluded: anchorExclusions, deltaRouterProvenance } = await loadQuestionAnchorsDetailed(supabase, company_id, runId);
+    const { anchors, excluded: anchorExclusions, deltaRouterProvenance, findingAnchorRouterProvenance } = await loadQuestionAnchorsDetailed(supabase, company_id, runId);
     const findingIdentities = new Set(anchors.filter((a) => a.kind === "finding").map((a) => a.identity));
 
     // ── PLAN: manifest only (zero model, zero writes, NO ledger row). ─────────────────
@@ -170,9 +170,11 @@ Deno.serve(async (req) => {
     // Anchor provenance: findings ride the public_inferred register; publicly-silent deltas are the
     // public_vs_public pairing → the declared side is public (own-words / public claims).
     // SP-349: a DELTA anchor's provenance is derived from its claims' signals (openQuestionAnchors,
-    // claimRouterProvenance) — an uploaded-file claim routes local. The finding side is SP-350.
+    // claimRouterProvenance) — an uploaded-file claim routes local.
+    // F1 (SP-352): a FINDING anchor's provenance is derived the same way, from the finding's sources
+    // (openQuestionAnchors, findingRouterProvenance) — a ledger-less frontier or an upload-backed finding routes local.
     const anchorProvenance = (a: QuestionAnchor): string | null =>
-      (a.kind === "finding" ? "public_inferred" : (deltaRouterProvenance.get(a.identity) ?? null));
+      (a.kind === "finding" ? (findingAnchorRouterProvenance.get(a.identity) ?? null) : (deltaRouterProvenance.get(a.identity) ?? null));
 
     const GEN_FINDING = `You read ONE finding from a company's outside read and produce the open question(s) it raises — the strategic unknown a decision-maker must resolve. Ground every question STRICTLY in THIS finding; invent nothing beyond it. Emit 1 question, or 2 only if the finding genuinely raises two distinct unknowns. Each question must be genuinely OPEN — not already answered by the finding itself. Plain English, no jargon, end with "?". Respond with ONLY JSON: {"questions":["..."]}. No other text.
 

@@ -86,9 +86,11 @@ Deno.test("finalize: the resolved finding's question and the gone-delta question
 Deno.test("source guard: the handler loads anchors through the shared loader and finalizes with orphanQuestionIds; no second anchor loader exists", async () => {
   const src = await read("../generate-open-questions/index.ts");
   // ruling 7 (2026-09-18): the handler reads the detailed loader (anchors + named exclusions) and audits the finalize
-  assert(src.includes("const { anchors, excluded: anchorExclusions, deltaRouterProvenance } = await loadQuestionAnchorsDetailed(supabase, company_id, runId);"));
+  assert(src.includes("const { anchors, excluded: anchorExclusions, deltaRouterProvenance, findingAnchorRouterProvenance } = await loadQuestionAnchorsDetailed(supabase, company_id, runId);"));
   // SP-349: a delta anchor routes by the provenance DERIVED from its claims' signals, never a constant
   assert(src.includes("(deltaRouterProvenance.get(a.identity) ?? null)") && !src.includes(': "public_observed")'), "delta anchor provenance is derived");
+  // F1 (SP-352): a FINDING anchor routes by the provenance DERIVED from its sources, never the constant
+  assert(src.includes("(findingAnchorRouterProvenance.get(a.identity) ?? null)") && !src.includes('a.kind === "finding" ? "public_inferred"'), "finding anchor provenance is derived");
   assert(src.includes("const orphanIds = orphanQuestionIds((liveRows ?? []) as Array<{ id: string; anchor_identity: string | null }>, anchors);"));
   assert(!src.includes("async function loadAnchors("), "the local loader is gone");
   const mod = await read("./openQuestionAnchors.ts");

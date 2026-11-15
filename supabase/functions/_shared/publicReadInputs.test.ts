@@ -70,7 +70,9 @@ Deno.test("source guard: every lane stamps a class, analysis is admitted, and th
   }
   assert(src.includes('kind: "signal", provenance: "public_observed", source_class: classOfSignal(s)'), "signals by classOfSignal");
   assert(src.includes('kind: "own_word", provenance: "public_observed", source_class: "you"'), "own words are always you");
-  assert(src.includes('kind: "finding", provenance: "public_inferred", source_class: "our_read"'), "every finding is our read (1A-i)");
+  // F1 (SP-352): the finding lane stamps the provenance DERIVED from the finding's sources, and drops the rest by name
+  assert(src.includes('kind: "finding", provenance: findingProv.get(f.id) as string, source_class: "our_read"'), "every finding is our read (1A-i)");
+  assert(src.includes('dropped.push({ id: f.id, kind: "finding", reason: FINDING_NOT_PUBLIC_BY_SOURCE })'), "F1: a finding not public by source is dropped by name");
   assert(src.includes("source_class: classOfDelta(d, analysisClaimIds)"), "deltas by classOfDelta");
   // the mark is tested BEFORE the voice label
   const fn = src.slice(src.indexOf("export function classOfSignal("));
