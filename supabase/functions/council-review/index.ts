@@ -1,8 +1,13 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// F3′ (2026-11-14): LOCAL ONLY — the council runs on the local model; there is no outside lane.
 import {
-  buildFrameworkBrief,
-  getFrameworkRoutingPlan,
-} from "../_shared/frameworkLibrary.ts";
+  buildActivePhaseFrameworkGuidance,
+  callLocalCouncilJSON,
+  COUNCIL_LOCAL_DEFAULT_MODEL,
+  COUNCIL_NUM_CTX,
+  COUNCIL_RUN_BUDGET_MS,
+  isLocalOllamaUrl,
+} from "../_shared/councilLocal.ts";
 import {
   getFrameworksForPhase,
   getPhaseGuardrailText,
@@ -10,7 +15,13 @@ import {
 } from "../_shared/phaseFrameworks.ts";
 import { gateStrategyArtifactsForExternal } from "../_shared/strategyArtifactGate.ts";
 import { isExternalAdmissibleNeed } from "../_shared/externalProvenance.ts";
-import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
+import { recordModelCall } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07); F3′: one LOCAL row per call
+
+/** F3′: the run continues after the 202 — the edge worker keeps it alive (inside its 400 s wall clock). */
+function edgeWaitUntil(p: Promise<unknown>) {
+  const edge = (globalThis as unknown as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
+  if (edge?.waitUntil) edge.waitUntil(p); else void p;
+}
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -226,177 +237,6 @@ function safeParseJsonObject(input: unknown): Record<string, unknown> | null {
     }
   }
   return null;
-}
-
-async function fetchWithTimeout(
-  input: RequestInfo | URL,
-  init: RequestInit,
-  timeoutMs = 90_000,
-) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.toLowerCase().includes("abort")) {
-      throw new Error(`Council model request timed out after ${Math.round(timeoutMs / 1000)}s`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function extractResponsesOutputText(data: unknown): string | null {
-  const row = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
-  if (typeof row.output_text === "string" && row.output_text.trim()) return row.output_text;
-
-  const out = Array.isArray(row.output) ? row.output : [];
-  for (const item of out) {
-    if (item?.type !== "message") continue;
-    const content = Array.isArray(item?.content) ? item.content : [];
-    for (const part of content) {
-      if (part?.type === "output_text" && typeof part?.text === "string" && part.text.trim()) {
-        return part.text;
-      }
-    }
-  }
-  return null;
-}
-
-async function callOpenAIJSON(opts: {
-  apiKey: string;
-  model: string;
-  systemText: string;
-  userText: string;
-  maxOutputTokens?: number;
-  temperature?: number;
-  timeoutMs?: number;
-  /** E4d (2026-11-07): fired once per OpenAI HTTP response that returned a body, with the model that
-   *  served it and that response's usage. council-review carries its OWN copy of this client, so the
-   *  hook is added here too; neither copy reads the other. */
-  onUsage?: (model: string, usage: { prompt_tokens: number; completion_tokens: number } | null) => void | Promise<void>;
-}) {
-  const {
-    apiKey,
-    model,
-    systemText,
-    userText,
-    maxOutputTokens = 3500,
-    temperature = 0.15,
-    timeoutMs = 55_000,
-    onUsage,
-  } = opts;
-
-  /** E4d: report one call's usage, never letting the report break the call. /v1/responses reports
-   *  input_tokens/output_tokens; chat-completions reports prompt_tokens/completion_tokens. */
-  const reportUsage = async (activeModel: string, data: unknown) => {
-    if (!onUsage) return;
-    try {
-      const u = (data as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; input_tokens?: unknown; output_tokens?: unknown } } | null)?.usage;
-      const pt = Number(u?.prompt_tokens ?? u?.input_tokens), ct = Number(u?.completion_tokens ?? u?.output_tokens);
-      await onUsage(activeModel, u && Number.isFinite(pt) && Number.isFinite(ct) ? { prompt_tokens: pt, completion_tokens: ct } : null);
-    } catch (_e) { /* observability must not fail the call it measures */ }
-  };
-
-  const buildBody = (outputBudget: number, retryNote = "") => ({
-    model,
-    store: false,
-    temperature,
-    max_output_tokens: outputBudget,
-    input: [
-      {
-        role: "system",
-        content: [{
-          type: "input_text",
-          text: `${systemText}\n\n${PLAIN_LANGUAGE_RULES}${retryNote ? `\n\n${retryNote}` : ""}`,
-        }],
-      },
-      { role: "user", content: [{ type: "input_text", text: userText }] },
-    ],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "council_response",
-        strict: false,
-        schema: {
-          type: "object",
-          additionalProperties: true,
-          required: ["summary", "recommendations"],
-          properties: {
-            summary: { type: "string" },
-            panel_discussion: {
-              anyOf: [
-                { type: "string" },
-                { type: "array", items: { type: "string" } },
-                { type: "null" },
-              ],
-            },
-            recommendations: {
-              type: "array",
-              items: {
-                type: "object",
-                additionalProperties: true,
-                required: ["title", "recommendation"],
-                properties: {
-                  title: { type: "string" },
-                  recommendation: { type: "string" },
-                  rationale: { type: "string" },
-                  category: { type: "string" },
-                  priority: { type: "string" },
-                  confidence: { type: "number" },
-                  source_basis: { type: "string" },
-                  references: { type: "array", items: { type: "string" } },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
-
-  const budgets = [maxOutputTokens, Math.round(maxOutputTokens * 1.7)];
-
-  for (let attempt = 0; attempt < budgets.length; attempt++) {
-    const retryNote =
-      attempt === 0
-        ? ""
-        : "Your previous response was truncated or invalid. Return one complete JSON object that exactly matches the schema.";
-
-    const response = await fetchWithTimeout(
-      "https://api.openai.com/v1/responses",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(buildBody(budgets[attempt], retryNote)),
-      },
-      timeoutMs,
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`OpenAI council model error ${response.status}: ${errorText}`);
-    }
-
-    const payload = await response.json();
-    // E4d: ledger BEFORE parsing — the call was billed whether or not its JSON is usable.
-    await reportUsage(model, payload);
-    const text = extractResponsesOutputText(payload);
-    const parsed = safeParseJsonObject(text);
-    if (parsed) return parsed;
-
-    const lower = String(text || "").toLowerCase();
-    const truncated = lower.includes("unterminated") || lower.includes("unexpected end");
-    if (attempt < budgets.length - 1 && truncated) continue;
-    throw new Error("OpenAI council model returned non-JSON output.");
-  }
-
-  throw new Error("OpenAI council JSON generation failed after retries");
 }
 
 function toPercent(value: unknown, fallback = 0) {
@@ -1420,17 +1260,15 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-    const openaiKey = Deno.env.get("OPENAI_API_KEY");
-    const openaiModel =
-      Deno.env.get("COUNCIL_OPENAI_MODEL") ??
-      Deno.env.get("OPENAI_MODEL") ??
-      "gpt-4.1-mini";
+    // F3′: the model address is LOCAL or the run is refused before anything is read.
+    const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
+    const localModel = Deno.env.get("COUNCIL_LOCAL_MODEL") ?? COUNCIL_LOCAL_DEFAULT_MODEL;
 
     if (!supabaseUrl || !serviceRoleKey || !anonKey) {
       return jsonResponse({ error: "Missing Supabase env vars" }, 500);
     }
-    if (!openaiKey) {
-      return jsonResponse({ error: "Missing OPENAI_API_KEY" }, 500);
+    if (!isLocalOllamaUrl(ollamaUrl)) {
+      return jsonResponse({ error: "Local-only policy violation: OLLAMA_BASE_URL must resolve to localhost/host.docker.internal." }, 500);
     }
 
     const authHeader = req.headers.get("Authorization");
@@ -1461,6 +1299,10 @@ Deno.serve(async (req) => {
     const companyId = asText(body?.company_id, "");
     const councilKey = normalizeCouncilKey(body?.council_key);
     const councilProfile = COUNCIL_PROFILES[councilKey];
+    // F3′ NO-WRITE MODE: {write:false} writes NO council_recommendations (the live queue is untouched). The run
+    // row is still written — it is how a background run reports back — marked dry_run, with the output on it;
+    // every reader of council_review_runs leaves dry-run rows out (src/lib/councilRun.ts).
+    const dryRun = body?.write === false;
     if (!companyId) return jsonResponse({ error: "company_id is required" }, 400);
 
     const { data: accessibleCompany, error: accessErr } = await anonClient
@@ -1487,14 +1329,15 @@ Deno.serve(async (req) => {
       .insert({
         company_id: companyId,
         user_id: userId,
-        model: `openai:${openaiModel}`,
+        model: `local_ollama:${localModel}`,
         status: "running",
         summary: "",
         source_snapshot_json: {
           council_key: councilProfile.key,
           council_label: councilProfile.label,
-          llm_model: openaiModel,
-          llm_provider: "openai_api",
+          llm_model: localModel,
+          llm_provider: "local_ollama",
+          ...(dryRun ? { dry_run: true } : {}),
         },
       })
       .select("id")
@@ -1505,6 +1348,12 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: errorMessage }, 500);
     }
     runId = runInsert.id as string;
+
+    // F3′ BACKGROUND RUN: a local council takes minutes, so the request answers 202 now and the run reports
+    // through its council_review_runs row (status running → completed | failed). Callers poll that row.
+    const runStartedAt = Date.now();
+    const work = (async () => {
+    try {
 
     const [
       latestBaselineRun,
@@ -1747,10 +1596,11 @@ Deno.serve(async (req) => {
         },
       },
       llm_path: {
-        provider: "openai_api",
-        model: openaiModel,
-        endpoint: "https://api.openai.com/v1/responses",
+        provider: "local_ollama",
+        model: localModel,
+        endpoint: ollamaUrl,
       },
+      ...(dryRun ? { dry_run: true } : {}),
       counts: {
         strategic_problems: contextPayload.strategic_problems.length,
         strategy_assumptions: contextPayload.strategy_assumptions.length,
@@ -1780,13 +1630,8 @@ Deno.serve(async (req) => {
       },
     };
 
-    const frameworkGuidance = [
-      buildFrameworkBrief("inputs", getFrameworkRoutingPlan("inputs")),
-      buildFrameworkBrief("journeys", getFrameworkRoutingPlan("journeys")),
-      buildFrameworkBrief("positioning", getFrameworkRoutingPlan("positioning")),
-      buildFrameworkBrief("opportunities", getFrameworkRoutingPlan("opportunities")),
-      buildFrameworkBrief("routes", getFrameworkRoutingPlan("routes")),
-    ].join("\n\n");
+    // F3′: ONLY the active phase's frameworks (all five briefs were 51,231 chars whatever the phase).
+    const frameworkGuidance = buildActivePhaseFrameworkGuidance(activeFrameworks);
 
     const contextJson = truncateText(JSON.stringify(contextPayload, null, 2), councilProfile.contextMaxChars);
     const sourceSnapshotJson = JSON.stringify(sourceSnapshot, null, 2);
@@ -1825,21 +1670,24 @@ Deno.serve(async (req) => {
     let parsed: Record<string, unknown>;
     let modelFailure: string | undefined;
     try {
-      parsed = await callOpenAIJSON({
-        apiKey: openaiKey,
-        model: openaiModel,
-        systemText,
+      parsed = await callLocalCouncilJSON({
+        ollamaUrl,
+        model: localModel,
+        systemText: `${systemText}\n\n${PLAIN_LANGUAGE_RULES}`,
         userText,
         maxOutputTokens: councilProfile.maxOutputTokens,
         temperature: councilProfile.temperature,
-        timeoutMs: councilProfile.modelTimeoutMs,
-        // E4d (2026-11-07): one model_calls row per outside call; this function wrote none.
-        onUsage: (usedModel, usage) =>
-          void recordModelCall(serviceClient as unknown as { from: (t: string) => any }, {
+        numCtx: COUNCIL_NUM_CTX,
+        deadlineMs: runStartedAt + COUNCIL_RUN_BUDGET_MS,
+        parse: (text) => safeParseJsonObject(text),
+        // F3′: one LOCAL model_calls row per call, carrying Ollama's own token counts; local calls cost 0.
+        onUsage: async (usedModel, usage) => {
+          await recordModelCall(serviceClient as unknown as { from: (t: string) => any }, {
             companyId: String(companyId),
             callSite: "council-review",
-            usage: openaiRecord(usedModel, usage),
-          }),
+            usage: { provider: "local_ollama", model: usedModel, prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: 0 },
+          });
+        },
       });
     } catch (error) {
       modelFailure = error instanceof Error ? error.message : String(error);
@@ -1876,7 +1724,7 @@ Deno.serve(async (req) => {
         "No detailed transcript was returned by the model in this run.";
     }
 
-    if (recommendations.length > 0) {
+    if (recommendations.length > 0 && !dryRun) {
       const insertPayload = recommendations.map((item) => ({
         run_id: runId,
         company_id: companyId,
@@ -1912,6 +1760,8 @@ Deno.serve(async (req) => {
         source_snapshot_json: {
           ...sourceSnapshot,
           panel_discussion: panelDiscussion,
+          ...(modelFailure ? { model_failure: modelFailure } : {}),
+          ...(dryRun ? { dry_run: true, dry_run_output: { summary, panel_discussion: panelDiscussion, recommendations } } : {}),
         },
         recommendation_count: recommendations.length,
         updated_at: new Date().toISOString(),
@@ -1928,6 +1778,17 @@ Deno.serve(async (req) => {
       recommendation_count: recommendations.length,
       status: "completed",
     });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log("[council-review] background run failed", message);
+      await serviceClient.from("council_review_runs").update({
+        status: "failed", summary: message.slice(0, 500), source_snapshot_json: { ...sourceSnapshot, ...(dryRun ? { dry_run: true } : {}) },
+        updated_at: new Date().toISOString(),
+      }).eq("id", runId);
+    }
+    })();
+    edgeWaitUntil(work);
+    return jsonResponse({ run_id: runId, council_key: councilProfile.key, status: "running", dry_run: dryRun }, 202);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.log("[council-review] error", message);

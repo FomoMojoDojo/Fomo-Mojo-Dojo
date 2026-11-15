@@ -107,6 +107,24 @@
 #   (d4/d5 controls) c007: the same shapes on public sources — the control finding's origin signal is
 #        OUTSIDE the cluster, so it reaches the judge rather than an origin join — and both calls reach
 #        OpenAI (≥1 ledgered row with tokens each; cent-fraction calls on synthetic text).
+#   (e1) SERVED WORKER, F3′ (2026-11-14): council-review is LOCAL ONLY. Held throwaway 0c900000-…-c008 holds
+#        client-material markets (manual + internal_declared), a NULL-provenance job step and an internal
+#        route. council-review {write:false} (admin JWT, background run polled to completion) must leave 0
+#        outside model_calls rows with tokens, ≥1 local_ollama council-review row with tokens, and NO
+#        council_recommendations for its run.
+#   (e2) generate-normative-jobmap on c008's MANUAL market must not take the web-search lane (lane named
+#        in integrity_runs), must leave 0 outside rows with tokens, and ≥1 local generator row with tokens.
+#   (e3) PUBLIC CONTROL. Throwaway …-c009 holds a public_research market: the same call takes the web_search
+#        lane and reaches the Anthropic search (≥1 ledgered generate-normative-jobmap anthropic row; one paid
+#        web-search call on a synthetic, public industry query).
+#   (e4) backfill-canonical-statements refuses c008's public need because its market is not public by source
+#        (skipped market_not_public_by_source:*), with 0 outside rows.
+#   (e5) SOURCE + UNIT: council-review and _shared/councilLocal.ts name no outside key or endpoint; normative
+#        reads its outside key only inside the web_search lane, which only marketPublicBySource opens; the
+#        councilLocal / marketSourcePublic / councilRun unit tests pass.
+#        Plant: marketPublicBySource admits everything AND council-review is restored to its pre-F3′ OpenAI
+#        client (both via scripts/plant.sh), docker restart — (e1) (e2) (e4) (e5) go RED; (e3) stays green.
+#        Fixed ids, born held, never deleted; each run clears only c008/c009 model_calls rows (SP-264).
 #
 # Read the printed verdict, not only the exit code — this guard sets both (SP-59).
 set -uo pipefail
@@ -129,7 +147,7 @@ allowlisted() {
     supersede-old-client-voice) echo "signals read are filtered voice_class=client_voice (public web)" ;;
     public-baseline)            echo "the crawl itself; banked reads are a delete, two local dedupe sets and a head count" ;;
     competitor-discovery)       echo "public baseline; job_steps gated by allPublic (every step carries source_run_id)" ;;
-    generate-normative-jobmap)  echo "normative industry sources; reads no input_files and no sidecar" ;;
+    generate-normative-jobmap)  echo "F3′: web search ONLY for a market public by source (marketPublicBySource); generator and judge are local" ;;
     reconcile-market-definition) echo "signals filtered voice_class=market_context; its own judge is local Ollama" ;;
     backfill-canonical-statements) echo "odi_needs gated per row by gateSubjectForExternal" ;;
     evaluate-opportunity-alignment|evaluate-positioning-alignment|evaluate-route-alignment)
@@ -138,7 +156,7 @@ allowlisted() {
                                 echo "routes provenance-filtered (DECL-OPP 1a.1); input brief gated at contextBuilders" ;;
     propose-cascade-changes|propose-positioning-changes)
                                 echo "subject gated per row; input brief gated at contextBuilders (no authored text)" ;;
-    council-review)             echo "odi_needs gated per row; inputs + file metadata withheld; admin-only in-function" ;;
+    council-review)             echo "" ;;   # F3′: local only — must never reappear in this census (e5)
     research-company)           echo "birth-only and public-only: refuses a company holding an interview upload, and its uploaded-evidence context carries a COUNT only" ;;
     assess-surface-drift|propose-route-changes|propose-opportunity-changes)
                                 echo "" ;;   # NOT allowlisted — these must be routed/gated (a3)
@@ -174,7 +192,7 @@ echo "── (a2) SP-103: every OpenAI request body sets store:false ──"
 # one body per file; Anthropic /v1/messages has no store parameter and is not checked
 for f in supabase/functions/_shared/openaiClient.ts supabase/functions/_shared/modelRouter.ts \
          supabase/functions/_shared/ownWordsJudge.ts supabase/functions/research-company/index.ts \
-         supabase/functions/council-review/index.ts supabase/functions/public-baseline/index.ts \
+         supabase/functions/public-baseline/index.ts \
          supabase/functions/extract-client-voice/index.ts \
          supabase/functions/supersede-old-client-voice/index.ts; do
   if grep -q 'store: false' "$f"; then ok "(a2) $(basename "$(dirname "$f")")/$(basename "$f")"
@@ -743,6 +761,137 @@ else
     *) [ "${O7Q:-0}" -ge 1 ] && ok "(d5) control: the c007 public finding anchor still reaches the outside model ($PR7; $O7Q OpenAI row(s) with tokens)" \
                              || bad "(d5) control: no OpenAI open-questions row with tokens for c007 ($PR7)" ;;
   esac
+fi
+
+# ── (e1)–(e5) F3′: council-review local only; normative search only for a market public by source ─────
+echo "── (e1–e5) F3′: council and normative job map keep client-material markets local ──"
+CR=supabase/functions/council-review/index.ts; CL=supabase/functions/_shared/councilLocal.ts; NJ=supabase/functions/generate-normative-jobmap/index.ts
+if grep -qE 'OPENAI_API_KEY|ANTHROPIC_API_KEY|api\.openai\.com|api\.anthropic\.com|callOpenAIJSON' "$CR" "$CL"; then
+  bad "(e5) council-review / councilLocal name an outside key or endpoint: $(grep -nE 'OPENAI_API_KEY|ANTHROPIC_API_KEY|api\.openai\.com|api\.anthropic\.com|callOpenAIJSON' "$CR" "$CL" | head -2 | tr '\n' ' ')"
+else ok "(e5) council-review and councilLocal name no outside key or endpoint"; fi
+grep -q 'if (!isLocalOllamaUrl(ollamaUrl)) {' "$CR" && grep -q 'parsed = await callLocalCouncilJSON({' "$CR" \
+  && ok "(e5) council-review refuses a non-local address and calls only the local lane" \
+  || bad "(e5) council-review no longer refuses a non-local address or no longer calls the local lane"
+GATE_LINE=$(grep -n 'if (lane === "web_search") {' "$NJ" | head -1 | cut -d: -f1)
+KEY_LINE=$(grep -n 'ANTHROPIC_API_KEY' "$NJ" | head -1 | cut -d: -f1)
+EP_LINE=$(grep -n 'api\.anthropic\.com' "$NJ" | head -1 | cut -d: -f1)
+if [ -n "$GATE_LINE" ] && [ -n "$KEY_LINE" ] && [ -n "$EP_LINE" ] && [ "$KEY_LINE" -gt "$GATE_LINE" ] && [ "$EP_LINE" -gt "$GATE_LINE" ] \
+   && grep -q 'inputs.marketSource.public ? "web_search"' "$NJ"; then
+  ok "(e5) normative reads its outside key only inside the web_search lane, opened only by marketPublicBySource"
+else bad "(e5) normative reads its outside key or endpoint outside the public-by-source lane (gate=$GATE_LINE key=$KEY_LINE endpoint=$EP_LINE)"; fi
+if npx vitest run src/lib/councilLocal.test.ts src/lib/marketSourcePublic.test.ts src/lib/councilRun.test.ts >/tmp/outside-call-guard-e5.log 2>&1; then
+  ok "(e5) the councilLocal / marketSourcePublic / councilRun unit contracts hold"
+else bad "(e5) an F3′ unit contract failed — see /tmp/outside-call-guard-e5.log"; fi
+
+C8="0c900000-0000-4000-8000-00000000c008"; C9="0c900000-0000-4000-8000-00000000c009"
+OWNER_E=""
+[ -n "${FR_LOGIN_EMAIL:-}" ] && OWNER_E=$(docker exec -i "$DB" psql -U postgres -At -c "select id::text from auth.users where lower(email)=lower('$FR_LOGIN_EMAIL') limit 1" 2>/dev/null)
+SRK_E="${SERVICE_ROLE_KEY:-}"; ANON_E="${ANON_KEY:-}"
+if [ -z "$SRK_E" ] || [ -z "$ANON_E" ]; then
+  ENV_E=$(npx supabase status --output env 2>/dev/null)
+  [ -n "$SRK_E" ] || SRK_E=$(echo "$ENV_E" | sed -n 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/p')
+  [ -n "$ANON_E" ] || ANON_E=$(echo "$ENV_E" | sed -n 's/^ANON_KEY="\(.*\)"$/\1/p')
+fi
+if [ -z "$OWNER_E" ] || [ -z "$SRK_E" ] || [ -z "$ANON_E" ] || [ -z "${FR_LOGIN_PASSWORD:-}" ]; then
+  bad "(e1–e4) FR_LOGIN_EMAIL/FR_LOGIN_PASSWORD or the stack keys unavailable — source backups/fr-login.env; the served-worker half did not run"
+else
+  eq() { docker exec -i "$DB" psql -U postgres -At -v ON_ERROR_STOP=1 -c "$1" 2>&1; }
+  epick() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const f=new Function("j","return ("+process.argv[1]+")");process.stdout.write(String(f(j)))}catch(e){process.stdout.write("ERR")}})' "$1"; }
+  FN_E="${FUNCTIONS_URL:-http://127.0.0.1:54321/functions/v1}"
+  # fixed ids, idempotent, born held (E2); m01/m02 markets, j01 job step, r01 route, n01 need
+  out=$(eq "insert into public.companies (id, name, created_by, fixture_hold) values
+              ('$C8','ocg-throwaway-council-private','$OWNER_E','OCG:test_fixture'),
+              ('$C9','ocg-throwaway-normative-public','$OWNER_E','OCG:test_fixture')
+              on conflict (id) do update set fixture_hold = coalesce(public.companies.fixture_hold,'OCG:test_fixture');") \
+    || bad "(e1–e4) fixture company SQL failed: $(echo "$out" | head -2 | tr '\n' ' ')"
+  out=$(eq "insert into public.odi_market_definitions (id, company_id, user_id, journey_key, job_executor, jtbd, provenance_type, market_register) values
+              ('0c900000-0000-4000-8000-00000c008d01','$C8','$OWNER_E','customer','Synthetic fixture: the clinic owner','Synthetic fixture: keep the waiting list short','manual','internal_declared'),
+              ('0c900000-0000-4000-8000-00000c008d02','$C8','$OWNER_E','dmk-ocg-declared','Synthetic fixture: the referring family','Synthetic fixture: get a first appointment quickly','internal_declared','internal_declared'),
+              ('0c900000-0000-4000-8000-00000c009d01','$C9','$OWNER_E','customer','independent bakery owners','keep a neighborhood bakery stocked and profitable every day','public_research','internal_inferred')
+              on conflict (id) do nothing;
+            insert into public.job_steps (id, company_id, user_id, journey_key, journey_title, step_number, step_label, description, provenance_type)
+              values ('0c900000-0000-4000-8000-00000c008a01','$C8','$OWNER_E','customer','Synthetic fixture journey',1,'Synthetic fixture: triage the referral','Synthetic fixture: the owner sorts referrals by urgency',null)
+              on conflict (id) do nothing;
+            insert into public.routes (id, company_id, user_id, title, category, short_description, provenance_type)
+              values ('0c900000-0000-4000-8000-00000c008b01','$C8','$OWNER_E','Synthetic fixture: open a Saturday clinic','improve','Synthetic fixture: an internal route','internal_hypothesis')
+              on conflict (id) do nothing;
+            insert into public.odi_needs (id, company_id, user_id, holder, journey_key, desired_outcome, provenance_type, status)
+              values ('0c900000-0000-4000-8000-00000c008c01','$C8','$OWNER_E','market','customer','Synthetic fixture: minimize the time a family waits for a first call','public_research','active')
+              on conflict (id) do nothing;
+            update public.odi_needs set odi_canonical_statement = null where id = '0c900000-0000-4000-8000-00000c008c01';
+            delete from public.model_calls where company_id in ('$C8','$C9');") || bad "(e1–e4) fixture SQL failed: $(echo "$out" | head -2 | tr '\n' ' ')"
+  SHAPE_E=$(eq "select (select count(*) from public.odi_market_definitions where company_id='$C8' and provenance_type in ('manual','internal_declared'))
+                 ||'|'||(select count(*) from public.job_steps where company_id='$C8' and provenance_type is null)
+                 ||'|'||(select count(*) from public.routes where company_id='$C8' and provenance_type='internal_hypothesis')
+                 ||'|'||(select count(*) from public.odi_market_definitions where company_id='$C9' and provenance_type='public_research')
+                 ||'|'||(select count(*) from public.companies where id in ('$C8','$C9') and fixture_hold is not null)")
+  [ "$SHAPE_E" = "2|1|1|1|2" ] || bad "(e1–e4) the c008/c009 fixtures do not have their shape (got '$SHAPE_E') — the checks would be vacuous"
+  outside_rows() { eq "select count(*) from public.model_calls where company_id='$1' and provider in ('openai','anthropic','external_openai') and coalesce(prompt_tokens,0) > 0${2:+ and call_site like '$2%'}"; }
+
+  # (e4) backfill refuses the need on a manual market — before any model call
+  B4=$(curl -s -m 120 -X POST "$FN_E/backfill-canonical-statements" -H "Authorization: Bearer $SRK_E" -H 'Content-Type: application/json' -d '{"need_ids":["0c900000-0000-4000-8000-00000c008c01"]}')
+  R4=$(echo "$B4" | epick '(j.skipped||[]).map(x=>x.reason).join(",")+"|"+j.success')
+  case "$R4" in
+    market_not_public_by_source:*\|0) ok "(e4) backfill refuses a need whose market is not public by source ($R4)" ;;
+    *) bad "(e4) backfill did not refuse the manual-market need: '$R4' — $(echo "$B4" | head -c 160)" ;;
+  esac
+  O4=$(outside_rows "$C8" backfill)
+  [ "$O4" = "0" ] && ok "(e4) and 0 outside rows with tokens for it" || bad "(e4) $O4 outside backfill row(s) with tokens on c008"
+
+  # (e2) normative on the manual market: never the web-search lane; local generator ledgered
+  N2=$(curl -s -m 400 -X POST "$FN_E/generate-normative-jobmap" -H "Authorization: Bearer $SRK_E" -H 'Content-Type: application/json' -d "{\"company_id\":\"$C8\",\"journey_key\":\"customer\"}")
+  L2=$(echo "$N2" | epick 'j.lane||("error:"+String(j.error||"").slice(0,80))')
+  case "$L2" in
+    stored_sources|scaffold) ok "(e2) normative on a manual market takes the $L2 lane, not web search" ;;
+    error:*) L2I=$(eq "select excluded_by_rule->>'lane' from public.integrity_runs where company_id='$C8' and component='normative_jobmap_discovery' order by ran_at desc limit 1")
+             case "$L2I" in stored_sources|scaffold) ok "(e2) normative on a manual market recorded the $L2I lane (the run then stopped: ${L2#error:})" ;;
+                            *) bad "(e2) normative on c008 recorded no private lane ('$L2' / '$L2I')" ;; esac ;;
+    *) bad "(e2) normative on a manual market took lane '$L2' — $(echo "$N2" | head -c 160)" ;;
+  esac
+  O2=$(outside_rows "$C8" generate-normative-jobmap)
+  G2=$(eq "select count(*) from public.model_calls where company_id='$C8' and call_site='generate-normative-jobmap:generate' and provider='local_ollama' and coalesce(prompt_tokens,0) > 0")
+  [ "$O2" = "0" ] && ok "(e2) 0 outside rows with tokens for c008's normative run" || bad "(e2) $O2 outside normative row(s) with tokens on c008 — a client-declared executor framed the outside search"
+  [ "${G2:-0}" -ge 1 ] && ok "(e2) and the local generator ran and was ledgered ($G2 row(s) with Ollama token counts)" \
+                       || bad "(e2) no local generator row with tokens for c008 ($G2) — $(echo "$N2" | head -c 160)"
+
+  # (e3) public control: a public_research market still reaches the Anthropic search
+  N3=$(curl -s -m 400 -X POST "$FN_E/generate-normative-jobmap" -H "Authorization: Bearer $SRK_E" -H 'Content-Type: application/json' -d "{\"company_id\":\"$C9\",\"journey_key\":\"customer\"}")
+  L3=$(echo "$N3" | epick 'j.lane||("error:"+String(j.error||"").slice(0,80))')
+  A3=$(eq "select count(*) from public.model_calls where company_id='$C9' and call_site='generate-normative-jobmap' and provider='anthropic'")
+  L3I=$(eq "select excluded_by_rule->>'lane' from public.integrity_runs where company_id='$C9' and component='normative_jobmap_discovery' order by ran_at desc limit 1")
+  if [ "${A3:-0}" -ge 1 ] && { [ "$L3" = "web_search" ] || [ "$L3I" = "web_search" ]; }; then
+    ok "(e3) control: the public_research market takes the web_search lane and reaches the Anthropic search ($A3 ledgered row(s))"
+  else
+    bad "(e3) control: the public market did not reach the search (lane=$L3 / $L3I, rows=$A3) — vacuous — $(echo "$N3" | head -c 160)"
+  fi
+
+  # (e1) council-review on c008, no-write, background — poll the run row to completion
+  JWT_E=$(curl -s -m 30 -X POST "${AUTH_URL:-http://127.0.0.1:54321/auth/v1}/token?grant_type=password" -H "apikey: $ANON_E" -H 'Content-Type: application/json' \
+          -d "{\"email\":\"$FR_LOGIN_EMAIL\",\"password\":\"$FR_LOGIN_PASSWORD\"}" | epick 'j.access_token||""')
+  C1=$(curl -s -m 400 -X POST "$FN_E/council-review" -H "apikey: $ANON_E" -H "Authorization: Bearer $JWT_E" -H 'Content-Type: application/json' \
+       -d "{\"company_id\":\"$C8\",\"council_key\":\"mojo_council\",\"write\":false}")
+  RUN_E=$(echo "$C1" | epick 'j.run_id||""')
+  ST_E=""
+  if [ -n "$RUN_E" ]; then
+    for i in $(seq 1 96); do
+      ST_E=$(eq "select status from public.council_review_runs where id='$RUN_E'")
+      [ "$ST_E" != "running" ] && break
+      sleep 5
+    done
+  fi
+  PROV_E=$(eq "select coalesce(source_snapshot_json->'llm_path'->>'provider', source_snapshot_json->>'llm_provider', '?') from public.council_review_runs where id='${RUN_E:-00000000-0000-0000-0000-000000000000}'")
+  RECS_E=$(eq "select count(*) from public.council_recommendations where run_id='${RUN_E:-00000000-0000-0000-0000-000000000000}'")
+  O1=$(outside_rows "$C8" council-review)
+  L1=$(eq "select count(*) from public.model_calls where company_id='$C8' and call_site='council-review' and provider='local_ollama' and coalesce(prompt_tokens,0) > 0")
+  [ "$ST_E" = "completed" ] && [ "$PROV_E" = "local_ollama" ] \
+    && ok "(e1) council-review ran in the background on the local lane (run ${RUN_E:0:8}: $ST_E, $PROV_E)" \
+    || bad "(e1) council-review run did not complete on the local lane (run='$RUN_E' status='$ST_E' provider='$PROV_E') — $(echo "$C1" | head -c 160)"
+  [ "$O1" = "0" ] && ok "(e1) 0 outside model_calls rows with tokens for c008's council" \
+                  || bad "(e1) $O1 outside council-review row(s) with tokens on c008 — client-material markets left the building"
+  [ "${L1:-0}" -ge 1 ] && ok "(e1) and ≥1 local council-review row with Ollama token counts ($L1)" \
+                       || bad "(e1) no local council-review row with tokens for c008 ($L1)"
+  [ "$RECS_E" = "0" ] && ok "(e1) no-write: the run wrote no council_recommendations" \
+                      || bad "(e1) no-write run wrote $RECS_E council_recommendations row(s)"
 fi
 
 if [ "$fails" = 0 ]; then echo "guard: PASS"; else echo "guard: RED ($fails check(s)) — see above"; fi

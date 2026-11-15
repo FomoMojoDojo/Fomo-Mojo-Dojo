@@ -27,6 +27,11 @@ import {
   inferStandardMarketCategory,
 } from "../_shared/industryStepAnchors.ts";
 import { type NormStep, validateSubsetOfEight } from "./logic.ts";
+// F3′ (2026-11-14): the outside web search runs ONLY for a market that is public BY SOURCE; a market resting on
+// client material uses stored sources or the ODI scaffold. Generator and judge are local and ledgered.
+import { marketPublicBySource, MARKET_NOT_PUBLIC_BY_SOURCE, type MarketSourceRow } from "../_shared/marketSourcePublic.ts";
+import { recordModelCall } from "../_shared/recordModelCall.ts";
+import { insertIntegrityRun } from "../_shared/integrityWrite.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -60,7 +65,8 @@ function isLocalOllamaUrl(rawUrl: string): boolean {
   }
 }
 
-async function callOllamaJson(ollamaUrl: string, model: string, system: string, user: string, timeoutMs: number): Promise<string> {
+type LocalJsonResult = { content: string; promptTokens: number | null; completionTokens: number | null };
+async function callOllamaJson(ollamaUrl: string, model: string, system: string, user: string, timeoutMs: number): Promise<LocalJsonResult> {
   const nativeBase = ollamaUrl.replace(/\/v1\/?$/, "");
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -81,7 +87,9 @@ async function callOllamaJson(ollamaUrl: string, model: string, system: string, 
     const data = await resp.json().catch(() => ({}));
     const content = String((data as { message?: { content?: unknown } })?.message?.content ?? "");
     if (!content) throw new Error(`ollama call returned empty content (${model})`);
-    return content;
+    const pt = Number((data as { prompt_eval_count?: unknown })?.prompt_eval_count);
+    const ct = Number((data as { eval_count?: unknown })?.eval_count);
+    return { content, promptTokens: Number.isFinite(pt) ? pt : null, completionTokens: Number.isFinite(ct) ? ct : null };
   } finally {
     clearTimeout(t);
   }
@@ -99,6 +107,8 @@ type NormInputs = {
   coarseCategory: string;
   anchors: IndustryStepAnchor | null;
   excludeDomains: string[];
+  /** F3′: is the titling market public BY SOURCE (marketSourcePublic.ts)? Only then may its executor/jtbd frame the outside search. */
+  marketSource: { public: boolean; reason: string };
 };
 
 // deno-lint-ignore no-explicit-any
@@ -125,9 +135,10 @@ async function buildNormInputs(supabase: any, companyId: string, journeyKeyOverr
   let titleSource: "pmk" | "anchor" = "anchor";
   let executor = "";
   let jtbd = "";
+  let marketRow: MarketSourceRow | null = null;
   const pickMarket = async (jk: string) => {
-    const { data } = await supabase.from("odi_market_definitions").select("journey_key, job_executor, jtbd").eq("company_id", companyId).eq("journey_key", jk).maybeSingle();
-    return data as { journey_key: string; job_executor: string; jtbd: string } | null;
+    const { data } = await supabase.from("odi_market_definitions").select("journey_key, job_executor, jtbd, provenance_type, source_path, market_register, operator_edited_at").eq("company_id", companyId).eq("journey_key", jk).maybeSingle();
+    return data as ({ journey_key: string; job_executor: string; jtbd: string } & MarketSourceRow) | null;
   };
   if (journeyKeyOverride) {
     const m = await pickMarket(journeyKeyOverride);
@@ -136,15 +147,17 @@ async function buildNormInputs(supabase: any, companyId: string, journeyKeyOverr
     titleSource = journeyKey.startsWith("pmk-") ? "pmk" : "anchor";
     executor = String(m.job_executor || "");
     jtbd = String(m.jtbd || "");
+    marketRow = m;
   } else {
-    const { data: pmks } = await supabase.from("odi_market_definitions").select("journey_key, job_executor, jtbd")
+    const { data: pmks } = await supabase.from("odi_market_definitions").select("journey_key, job_executor, jtbd, provenance_type, source_path, market_register, operator_edited_at")
       .eq("company_id", companyId).like("journey_key", "pmk-%").order("journey_key", { ascending: true }).limit(1);
-    const pmk = Array.isArray(pmks) && pmks.length > 0 ? pmks[0] as { journey_key: string; job_executor: string; jtbd: string } : null;
+    const pmk = Array.isArray(pmks) && pmks.length > 0 ? pmks[0] as ({ journey_key: string; job_executor: string; jtbd: string } & MarketSourceRow) : null;
     if (pmk) {
       journeyKey = pmk.journey_key;
       titleSource = "pmk";
       executor = String(pmk.job_executor || "");
       jtbd = String(pmk.jtbd || "");
+      marketRow = pmk;
     } else {
       const anchor = await pickMarket("customer");
       if (!anchor) return { error: "No pmk-* market and no anchor 'customer' market definition — cannot title the norm map." };
@@ -152,6 +165,7 @@ async function buildNormInputs(supabase: any, companyId: string, journeyKeyOverr
       titleSource = "anchor";
       executor = String(anchor.job_executor || "");
       jtbd = String(anchor.jtbd || "");
+      marketRow = anchor;
     }
   }
   if (!executor.trim()) return { error: "Titling market has no executor — cannot key the industry discovery." };
@@ -159,7 +173,8 @@ async function buildNormInputs(supabase: any, companyId: string, journeyKeyOverr
   const coarseCategory = inferStandardMarketCategory(categoryArchetype || "", executor, jtbd);
   const anchors = coarseCategory ? getIndustryStepAnchors(coarseCategory) : null;
 
-  return { companyName, companyDomain, executor, jtbd, journeyKey, titleSource, categoryArchetype, coarseCategory, anchors, excludeDomains };
+  return { companyName, companyDomain, executor, jtbd, journeyKey, titleSource, categoryArchetype, coarseCategory, anchors, excludeDomains,
+    marketSource: marketPublicBySource(marketRow) };
 }
 
 // ── Discovery prompt (WIDE-FIRST, EXPAND-NOT-NARROW) ────────────────────────────
@@ -218,8 +233,6 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-    const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-    const anthropicModel = Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-4-6";
     const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
     const genModel = Deno.env.get("OLLAMA_MODEL") || DEFAULT_GEN_MODEL;
     const judgeModel = Deno.env.get("OLLAMA_JUDGE_MODEL") || DEFAULT_JUDGE_MODEL;
@@ -247,14 +260,41 @@ Deno.serve(async (req) => {
     if ("error" in inputs) return json({ error: inputs.error }, 404);
     const discoveryPrompt = buildIndustryDiscoveryPrompt(inputs);
 
+    // ── F3′ DISCOVERY LANE ──────────────────────────────────────────────────────
+    // web_search: the market is public BY SOURCE, so its executor/jtbd may frame the outside search (the query
+    //   is built from public fields only — executor, jtbd, the public baseline's category, the static scaffold).
+    // stored_sources: a market resting on client material NEVER frames an outside call; the company's most recent
+    //   stored industry sources (public pages from an earlier discovery) feed the local generator instead.
+    // scaffold: no stored sources either — the generator leans on the ODI scaffold (its thin-pool backstop).
+    let storedRunId: string | null = null;
+    let storedRows: any[] = [];
+    if (!inputs.marketSource.public) {
+      const { data: stored } = await supabase.from("normative_industry_sources")
+        .select("source_run_id, source_url, host, registrable_domain, source_text, content_sha, computed_at")
+        .eq("company_id", company_id).order("computed_at", { ascending: false }).limit(200);
+      const rows = (Array.isArray(stored) ? stored : []) as Array<{ source_run_id: string; source_text: string | null }>;
+      storedRunId = rows[0]?.source_run_id ?? null;
+      storedRows = storedRunId ? rows.filter((r) => r.source_run_id === storedRunId && String(r.source_text ?? "").trim()) : [];
+    }
+    const lane: "web_search" | "stored_sources" | "scaffold" =
+      inputs.marketSource.public ? "web_search" : storedRows.length > 0 ? "stored_sources" : "scaffold";
+
     if (dry_run) {
       // Return the LITERAL outbound payload without any external/model call — proves
       // the query embeds only executor/jtbd + category (Outside-safe).
-      return json({ status: "dry_run", company_id, inputs, discovery_prompt: discoveryPrompt });
+      return json({ status: "dry_run", company_id, inputs, lane, market_public_by_source: inputs.marketSource,
+        discovery_prompt: lane === "web_search" ? discoveryPrompt : null });
     }
 
+    let sourceRunId: string = crypto.randomUUID();
+    let sourceRows: any[] = [];
+    let refinedIndustry = String(inputs.coarseCategory || "");
+    let expandUsed = "none";
+    if (lane === "web_search") {
+    // F3′: the ONLY outside call in this function, reached only when marketPublicBySource admitted the market.
+    const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+    const anthropicModel = Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-4-6";
     if (!anthropicKey) return json({ error: "Missing ANTHROPIC_API_KEY (discovery engine)" }, 500);
-    const sourceRunId = crypto.randomUUID();
 
     // ── Discovery (claude_web_search) ───────────────────────────────────────────
     const webSearchTool: Record<string, unknown> = { type: "web_search_20250305", name: "web_search", max_uses: 16 };
@@ -294,14 +334,13 @@ Deno.serve(async (req) => {
     if (!parsed) return json({ error: "Could not parse industry-discovery JSON" }, 502);
 
     const rawSources = Array.isArray(parsed?.sources) ? parsed.sources : [];
-    const expandUsed = String(parsed?.expand_used || "none");
-    const refinedIndustry = String(parsed?.refined_industry || inputs.coarseCategory || "");
+    expandUsed = String(parsed?.expand_used || "none");
+    refinedIndustry = String(parsed?.refined_industry || inputs.coarseCategory || "");
 
     // Store discovered sources — pre-computed independence fields (registrable_domain,
     // host, content_sha) in the shape signalRecurrence consumes. Own-domain exclusion
     // is a C-2 SCORE-TIME concern (the recurrence law); C-1 stores the pool.
     const seenSha = new Set<string>();
-    const sourceRows: any[] = [];
     for (const s of rawSources) {
       const text = String(s?.snippet || "").trim();
       if (!text) continue;
@@ -327,8 +366,35 @@ Deno.serve(async (req) => {
       }
     }
 
+    } else if (lane === "stored_sources") {
+      sourceRunId = storedRunId as string;
+      sourceRows = storedRows;
+    }
+    // F3′: the lane is named in the run ledger (integrity_runs), with why — never a silent choice.
+    try {
+      await insertIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+        company_id, component: "normative_jobmap_discovery", surface_type: "normative_job_steps", surface_id: null,
+        ran_at: new Date().toISOString(), status: "completed", examined: 1, admitted: sourceRows.length,
+        excluded_by_rule: {
+          lane, journey_key: inputs.journeyKey, market_public_by_source: inputs.marketSource.public,
+          reason: inputs.marketSource.public ? inputs.marketSource.reason : `${MARKET_NOT_PUBLIC_BY_SOURCE}:${inputs.marketSource.reason}`,
+          source_run_id: sourceRunId,
+        },
+        error: null, run_ref: `normative_jobmap_${sourceRunId}`,
+      });
+    } catch (e) {
+      console.log("[generate-normative-jobmap] lane ledger write failed", String((e as Error)?.message ?? e));
+    }
+    const ledgerLocal = (callSite: string, model: string, r: LocalJsonResult) =>
+      recordModelCall(supabase as unknown as { from: (t: string) => any }, {
+        companyId: company_id, runId: null, callSite,
+        usage: { provider: "local_ollama", model, prompt_tokens: r.promptTokens, completion_tokens: r.completionTokens, usd: 0 },
+      });
+
     // ── Generation (14b) + shape judge (70b) ────────────────────────────────────
-    const genRaw = await callOllamaJson(ollamaUrl, genModel, buildGenSystem(), buildGenUser(inputs, sourceRows.map((r) => ({ snippet: r.source_text }))), GEN_TIMEOUT_MS);
+    const genRes = await callOllamaJson(ollamaUrl, genModel, buildGenSystem(), buildGenUser(inputs, sourceRows.map((r) => ({ snippet: r.source_text }))), GEN_TIMEOUT_MS);
+    await ledgerLocal("generate-normative-jobmap:generate", genModel, genRes);
+    const genRaw = genRes.content;
     let genSteps: NormStep[] = [];
     try {
       const p = JSON.parse(genRaw) as { steps?: unknown };
@@ -351,7 +417,9 @@ Deno.serve(async (req) => {
     const judgeUser =
       `Executor: ${inputs.executor}\nJob: ${inputs.jtbd}\nSteps:\n` +
       genSteps.map((s, i) => `${i + 1} (${s.step_key}): ${s.step_label} — ${s.description}`).join("\n");
-    const judgeRaw = await callOllamaJson(ollamaUrl, judgeModel, judgeSystem, judgeUser, JUDGE_TIMEOUT_MS);
+    const judgeRes = await callOllamaJson(ollamaUrl, judgeModel, judgeSystem, judgeUser, JUDGE_TIMEOUT_MS);
+    await ledgerLocal("generate-normative-jobmap:judge", judgeModel, judgeRes);
+    const judgeRaw = judgeRes.content;
     let judgeOk = false;
     let judgeReason = "";
     try {
@@ -390,6 +458,8 @@ Deno.serve(async (req) => {
 
     return json({
       status: "ok",
+      lane,
+      market_public_by_source: inputs.marketSource,
       company_id,
       source_run_id: sourceRunId,
       title_source: inputs.titleSource,

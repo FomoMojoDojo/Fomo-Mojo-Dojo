@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { visibleCouncilRuns, waitForCouncilRun } from "@/lib/councilRun";
 
 type RecommendationStatus = "pending" | "accepted" | "ignored";
 type CouncilKey = "strategy_council" | "mojo_council";
@@ -267,7 +268,7 @@ export default function CouncilRecommendationsPanel({
       if (runResult.error) throw runResult.error;
 
       setRecommendations((recommendationResult.data ?? []) as CouncilRecommendationRow[]);
-      setRuns((runResult.data ?? []) as CouncilRunRow[]);
+      setRuns(visibleCouncilRuns((runResult.data ?? []) as CouncilRunRow[]));
     } catch (err) {
       setRecommendations([]);
       setRuns([]);
@@ -333,6 +334,8 @@ export default function CouncilRecommendationsPanel({
         throw new Error(`${msg}. The run may still be processing; refresh in a few seconds.`);
       }
       if (data?.error) throw new Error(String(data.error));
+      // F3′: the council runs in the background on the local model — wait for its run row to finish.
+      if (data?.status === "running" && data?.run_id) await waitForCouncilRun(supabase as any, String(data.run_id));
       toast.success(`${councilMeta.label} completed for ${companyName}`);
       await loadData();
     } catch (err) {

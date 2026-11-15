@@ -3,6 +3,7 @@
 // tables, same columns, same order/limit; no new read. CouncilPanel keeps its inline copy untouched.
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { visibleCouncilRuns } from "@/lib/councilRun";
 
 export type CouncilRecStatus = "pending" | "accepted" | "ignored";
 
@@ -63,7 +64,7 @@ export function useCouncil(companyId?: string) {
         if (recRes.error) throw recRes.error;
         if (runRes.error) throw runRes.error;
         setRecs((recRes.data ?? []) as CouncilRec[]);
-        setRuns((runRes.data ?? []) as CouncilRun[]);
+        setRuns(visibleCouncilRuns((runRes.data ?? []) as CouncilRun[]));
         setDecisions((decRes.data ?? []) as CouncilDecisionSummary[]);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load council data");

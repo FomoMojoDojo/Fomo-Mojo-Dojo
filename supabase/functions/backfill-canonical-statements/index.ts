@@ -9,6 +9,7 @@ import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 import { adminOnlyGate } from "../_shared/callerGate.ts";
+import { marketPublicBySource, MARKET_NOT_PUBLIC_BY_SOURCE, type MarketSourceRow } from "../_shared/marketSourcePublic.ts";   // F3′
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -140,11 +141,21 @@ Deno.serve(async (req: Request) => {
       // Fetch job_executor from odi_market_definitions for this company + journey
       const { data: marketDef } = await db
         .from("odi_market_definitions")
-        .select("job_executor")
+        .select("job_executor, provenance_type, source_path, market_register, operator_edited_at")
         .eq("company_id", row.company_id)
         .eq("journey_key", row.journey_key)
         .maybeSingle();
 
+      // F3′ (2026-11-14): the market's executor frames this OUTSIDE prompt, so the definition must be public BY
+      // SOURCE (marketSourcePublic.ts) — a declared, manual or step-hypothesis market, or an operator-edited one,
+      // is refused by name and the need keeps its NULL canonical (consumers fall back to desired_outcome).
+      if (marketDef) {
+        const market = marketPublicBySource(marketDef as MarketSourceRow);
+        if (!market.public) {
+          results.skipped.push({ id: needId, reason: `${MARKET_NOT_PUBLIC_BY_SOURCE}:${market.reason}` });
+          continue;
+        }
+      }
       const jobExecutor = (marketDef as { job_executor?: string | null } | null)?.job_executor?.trim() ?? "";
 
       const systemText =

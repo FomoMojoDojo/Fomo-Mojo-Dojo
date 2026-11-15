@@ -9,6 +9,7 @@ import { HierarchyPageShell } from "@/components/design-system/HierarchyPageShel
 import { HierarchySectionHeader } from "@/components/design-system/HierarchySectionHeader";
 import { D } from "@/components/design-system/tokens";
 import type { SignalBasis } from "@/components/design-system/SignalBasisChip";
+import { visibleCouncilRuns, waitForCouncilRun } from "@/lib/councilRun";
 
 type CouncilKey = "strategy_council" | "mojo_council";
 type CouncilRecStatus = "pending" | "accepted" | "ignored";
@@ -187,7 +188,7 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
       if (recRes.error) throw recRes.error;
       if (runRes.error) throw runRes.error;
       setRecs((recRes.data ?? []) as CouncilRec[]);
-      setRuns((runRes.data ?? []) as CouncilRun[]);
+      setRuns(visibleCouncilRuns((runRes.data ?? []) as CouncilRun[]));
       setDecisions((decRes.data ?? []) as DecisionSummary[]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load council data");
@@ -222,6 +223,8 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
         throw new Error(`${msg}. The run may still be processing — refresh in a few seconds.`);
       }
       if (data?.error) throw new Error(String(data.error));
+      // F3′: the council runs in the background on the local model — wait for its run row to finish.
+      if (data?.status === "running" && data?.run_id) await waitForCouncilRun(sb, String(data.run_id));
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Council review failed");

@@ -22,14 +22,14 @@ import * as path from "node:path";
 const ROOT = path.resolve(__dirname, "../..");
 const read = (fn: string) => fs.readFileSync(path.join(ROOT, `supabase/functions/${fn}/index.ts`), "utf8");
 
-/** Every function that makes an outside (OpenAI) call. research-company has its own suite. */
+/** Every function that makes an outside (OpenAI) call. research-company has its own suite.
+ *  F3′ (2026-11-14): council-review left this list — it runs on the local model only (see the F3′ block below). */
 const THE_NINE = [
   "propose-positioning-changes",
   "propose-cascade-changes",
   "propose-route-changes",
   "propose-opportunity-changes",
   "assess-surface-drift",
-  "council-review",
   "backfill-canonical-statements",
   "refresh-positioning",
   "refresh-cascade",
@@ -135,13 +135,37 @@ describe("E4d — every outside call is ledgered", () => {
     }
   });
 
-  it("the two private OpenAI clients fire the hook BEFORE parsing", () => {
-    // A call billed but unparseable must still appear in the ledger. research-company and
-    // council-review each carry their own copy of the client.
-    for (const p of ["supabase/functions/council-review/index.ts", "supabase/functions/research-company/index.ts"]) {
+  it("the private OpenAI client fires the hook BEFORE parsing", () => {
+    // A call billed but unparseable must still appear in the ledger. research-company carries its own
+    // copy of the client (council-review's copy was removed by F3′).
+    for (const p of ["supabase/functions/research-company/index.ts"]) {
       const src = fs.readFileSync(path.join(ROOT, p), "utf8");
       expect(src, p).toMatch(/await reportUsage\((?:model|activeModel), (?:payload|data)\);/);
     }
+  });
+});
+
+describe("F3′ — council-review is local only, and ledgers every local call", () => {
+  const src = read("council-review");
+  const lane = fs.readFileSync(path.join(ROOT, "supabase/functions/_shared/councilLocal.ts"), "utf8");
+  it("reads no outside key and names no outside endpoint", () => {
+    for (const bad of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "api.openai.com", "api.anthropic.com", "callOpenAIJSON", "openaiRecord"]) {
+      expect([bad, src.includes(bad)]).toEqual([bad, false]);
+      expect([bad, lane.includes(bad)]).toEqual([bad, false]);
+    }
+  });
+  it("refuses a non-local model address and calls only the local lane", () => {
+    expect(src).toMatch(/if \(!isLocalOllamaUrl\(ollamaUrl\)\) \{/);
+    expect(src).toMatch(/parsed = await callLocalCouncilJSON\(\{/);
+  });
+  it("writes one LOCAL model_calls row per call, from Ollama's own counts, before parsing", () => {
+    expect(src).toMatch(/callSite: "council-review",\n\s+usage: \{ provider: "local_ollama", model: usedModel, prompt_tokens: usage\.prompt_tokens, completion_tokens: usage\.completion_tokens, usd: 0 \}/);
+    expect(lane.indexOf("await opts.onUsage(")).toBeGreaterThan(0);
+    expect(lane.indexOf("await opts.onUsage(")).toBeLessThan(lane.indexOf("const parsed = opts.parse(text)"));
+  });
+  it("sends only the active phase's framework briefs", () => {
+    expect(src).toMatch(/const frameworkGuidance = buildActivePhaseFrameworkGuidance\(activeFrameworks\);/);
+    expect(src).not.toMatch(/buildFrameworkBrief\("inputs", getFrameworkRoutingPlan\("inputs"\)\)/);
   });
 });
 
