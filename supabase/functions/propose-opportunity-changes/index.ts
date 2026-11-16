@@ -14,6 +14,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
+import { needRestsOnPrivateSource } from "../_shared/externalProvenance.ts";   // B1 (2026-11-16)
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 import { resolveModel, signalProvenance, isPublicProvenance } from "../_shared/modelRouter.ts";   // SP-100 (2026-11-12)
 import { capabilityRefusal, identifyCaller } from "../_shared/callerGate.ts";
@@ -125,7 +126,7 @@ Deno.serve(async (req: Request) => {
   // --- Fetch opportunity ---
   const { data: oppData, error: oppError } = await db
     .from("odi_needs")
-    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key, service_state, importance, satisfaction, opportunity_score, strategy_alignment, provenance_type, operator_edited_at")
+    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key, service_state, importance, satisfaction, opportunity_score, strategy_alignment, provenance_type, operator_edited_at, source_path, frameworks_used, interview_record_id, source_proposal_id")
     .eq("id", opportunity_id)
     .eq("company_id", company_id)
     .maybeSingle();
@@ -154,6 +155,8 @@ Deno.serve(async (req: Request) => {
     surfaceId: String(opportunity_id),
     provenance: (oppData as { provenance_type?: string | null }).provenance_type,
     operatorEditedAt: (oppData as { operator_edited_at?: string | null }).operator_edited_at,
+    // B1: a need resting on an upload, an interview or an intake is refused whatever its marking.
+    privateSource: needRestsOnPrivateSource(oppData as Record<string, unknown>),
     consumer: "propose-opportunity-changes",
   });
   if (!subjectGate.admissible) {

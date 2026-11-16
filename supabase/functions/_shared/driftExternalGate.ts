@@ -49,12 +49,16 @@ export async function gateSubjectForExternal(opts: {
   /** Q3 (2026-11-06) — REQUIRED. The caller must select operator_edited_at; an unselected column
    *  reads undefined and the gate would admit an operator-edited row. */
   operatorEditedAt: string | null | undefined;
+  /** B1 (2026-11-16) — REQUIRED. True when the subject rests on private material (for a need:
+   *  needRestsOnPrivateSource(row), which reads the source columns the caller must select). A
+   *  private-source subject is refused whatever its provenance label says. */
+  privateSource: boolean;
   consumer: string;
 }): Promise<{ admissible: boolean }> {
   const prov = opts.provenance == null ? null : String(opts.provenance);
   const editedAt = opts.operatorEditedAt == null ? null : String(opts.operatorEditedAt);
   const operatorEdited = isOperatorEdited(editedAt);
-  if (isDriftSurfaceExternallyAdmissible(prov, editedAt)) {
+  if (!opts.privateSource && isDriftSurfaceExternallyAdmissible(prov, editedAt)) {
     return { admissible: true };
   }
   console.log("[drift-external-gate] subject excluded", {
@@ -64,6 +68,7 @@ export async function gateSubjectForExternal(opts: {
     surface_id: opts.surfaceId,
     provenance: prov,
     operator_edited: operatorEdited,
+    private_source: opts.privateSource,
   });
   await recordIntegrityRun(opts.supabase ?? null, {
     company_id: opts.companyId,
@@ -73,7 +78,7 @@ export async function gateSubjectForExternal(opts: {
     status: "completed",
     examined: 1,
     admitted: 0,
-    // The two reasons are reported SEPARATELY: a row can be refused for its provenance, for
+    // The reasons are reported SEPARATELY: a row can be refused for its provenance, for
     // operator authorship, or for both, and collapsing them would lose which rule fired.
     excluded_by_rule: {
       // "would the provenance ALONE have admitted it?" — asked by passing a null flag, so the two
@@ -81,6 +86,7 @@ export async function gateSubjectForExternal(opts: {
       non_public_provenance: !isSubjectExternallyAdmissible(prov, null),
       operator_edited: operatorEdited,
       operator_edited_at: operatorEdited ? editedAt : null,
+      private_source: opts.privateSource,   // B1
       provenance: prov,
     },
     run_ref: opts.consumer,
@@ -104,11 +110,14 @@ export async function gateSubjectForLocal(opts: {
   /** Q3 (2026-11-06) — REQUIRED, and the reason XOR survives: an operator-edited public row is
    *  refused by the external gate, so the LOCAL lane must admit it or it would be judged nowhere. */
   operatorEditedAt: string | null | undefined;
+  /** B1 (2026-11-16) — REQUIRED, for the same XOR reason: a private-source subject is refused by
+   *  the external gate, so the local lane must admit it. */
+  privateSource: boolean;
   consumer: string;
 }): Promise<{ admissible: boolean }> {
   const prov = opts.provenance == null ? null : String(opts.provenance);
   const editedAt = opts.operatorEditedAt == null ? null : String(opts.operatorEditedAt);
-  if (isSubjectLocalAdmissible(prov, editedAt)) {
+  if (opts.privateSource || isSubjectLocalAdmissible(prov, editedAt)) {
     return { admissible: true };
   }
   console.log("[local-lane-gate] subject declined (external lane)", {
@@ -186,6 +195,8 @@ export async function gateDriftSurfacesForExternal<
   companyId: string;
   surfaceType: string;
   rows: T[] | null | undefined;
+  /** B1 (2026-11-16) — REQUIRED. Per-row private-source test (for needs: needRestsOnPrivateSource). */
+  privateSource: (row: T) => boolean;
   consumer: string;
 }): Promise<{ admissible: T[]; excludedCount: number }> {
   const rows = Array.isArray(opts.rows) ? opts.rows : [];
@@ -196,7 +207,8 @@ export async function gateDriftSurfacesForExternal<
     const provenance = row?.provenance_type == null ? null : String(row.provenance_type);
     const editedAt = row?.operator_edited_at == null ? null : String(row.operator_edited_at);
     const operatorEdited = isOperatorEdited(editedAt);
-    if (isDriftSurfaceExternallyAdmissible(provenance, editedAt)) {
+    const privateSource = opts.privateSource(row);
+    if (!privateSource && isDriftSurfaceExternallyAdmissible(provenance, editedAt)) {
       admissible.push(row);
       continue;
     }
@@ -222,6 +234,7 @@ export async function gateDriftSurfacesForExternal<
         non_public_provenance: !isSubjectExternallyAdmissible(provenance, null),
         operator_edited: operatorEdited,
         operator_edited_at: operatorEdited ? editedAt : null,
+        private_source: privateSource,   // B1
         provenance,
       },
       run_ref: opts.consumer,

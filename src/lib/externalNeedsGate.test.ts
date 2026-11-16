@@ -16,8 +16,11 @@ const read = (p: string) => fs.readFileSync(path.join(ROOT, p), "utf8");
 const PUBLIC_TEXT = "Minimize the time to confirm a program fits the child (public)";
 const DECLARED_TEXT = "Minimize the wait for a first appointment (declared, internal)";
 const UNKNOWN_TEXT = "Minimize the effort to reach a clinician (unknown provenance)";
+// B1 (2026-11-16): a need is public only by its source, so the public row carries the source columns every
+// live public need has (source_path = the column default, no interview / proposal link, no upload marks).
+const PUBLIC_SOURCE = { source_path: "public_research", step_label: "", frameworks_used: [], interview_record_id: null, source_proposal_id: null };
 const FIXTURE = [
-  { id: "n-public", desired_outcome: PUBLIC_TEXT, provenance_type: "public_research" },
+  { id: "n-public", desired_outcome: PUBLIC_TEXT, provenance_type: "public_research", ...PUBLIC_SOURCE },
   { id: "n-declared", desired_outcome: DECLARED_TEXT, provenance_type: "internal_declared" },
   { id: "n-unknown", desired_outcome: UNKNOWN_TEXT, provenance_type: "stakeholder_interview" }, // does not exist on the enum yet
   { id: "n-null", desired_outcome: "Minimize (null provenance)", provenance_type: null },
@@ -31,9 +34,9 @@ describe("Gate 0 — the predicate", () => {
     expect([...EXTERNAL_ADMISSIBLE_PROVENANCE].sort()).toEqual(["public_baseline", "public_research"]);
   });
   it("admits public_research; withholds internal_declared, an unknown string, NULL, and every other enum value", () => {
-    expect(isExternalAdmissibleNeed({ provenance_type: "public_research" })).toBe(true);
+    expect(isExternalAdmissibleNeed({ provenance_type: "public_research", ...PUBLIC_SOURCE })).toBe(true);
     for (const p of ["internal_declared", "stakeholder_interview", "manual", "framework_adjudicated", "odi_survey", "internal_hypothesis", "", null, undefined]) {
-      expect(isExternalAdmissibleNeed({ provenance_type: p }), String(p)).toBe(false);
+      expect(isExternalAdmissibleNeed({ provenance_type: p, ...PUBLIC_SOURCE }), String(p)).toBe(false);
     }
     expect(isExternalAdmissibleNeed(null)).toBe(false);
   });
@@ -52,16 +55,22 @@ describe("Gate 0 — the assembled external context (fixture)", () => {
 });
 
 describe("Gate 0 — the three collectors (source guard)", () => {
-  const cases: Array<{ file: string; builderCall: RegExp }> = [
-    { file: "supabase/functions/propose-positioning-changes/index.ts", builderCall: /buildOpportunityBrief\(externalNeeds\)/ },
-    { file: "supabase/functions/propose-cascade-changes/index.ts", builderCall: /buildOpportunityBrief\(externalNeeds\)/ },
-    { file: "supabase/functions/council-review/index.ts", builderCall: /odi_needs:\s*externalNeeds\.map\(/ },
+  // B1 (2026-11-16): the two propose functions share ONE collector (_shared/externalNeeds.ts), which carries
+  // the select and the filter; council-review filters its own select("*") rows.
+  it("the shared collector filters at the collection point with the ONE predicate", () => {
+    const src = read("supabase/functions/_shared/externalNeeds.ts");
+    expect(src).toMatch(/import \{[^}]*\bisExternalAdmissibleNeed\b[^}]*\} from "\.\/externalProvenance\.ts"/);
+    expect(src).toMatch(/const externalNeeds = [^\n]*\.filter\(isExternalAdmissibleNeed\)/);
+  });
+  const cases: Array<{ file: string; builderCall: RegExp; collector: RegExp }> = [
+    { file: "supabase/functions/propose-positioning-changes/index.ts", builderCall: /buildOpportunityBrief\(externalNeeds\)/, collector: /const \{ externalNeeds, needsWithheldExternal \} = await collectExternalNeeds\(/ },
+    { file: "supabase/functions/propose-cascade-changes/index.ts", builderCall: /buildOpportunityBrief\(externalNeeds\)/, collector: /const \{ externalNeeds, needsWithheldExternal \} = await collectExternalNeeds\(/ },
+    { file: "supabase/functions/council-review/index.ts", builderCall: /odi_needs:\s*externalNeeds\.map\(/, collector: /const externalNeeds = [^\n]*\.filter\(isExternalAdmissibleNeed\)/ },
   ];
   for (const c of cases) {
     it(`${c.file}: filters at the collection point with the ONE predicate, feeds the builder from the filtered set, reports the withheld count`, () => {
       const src = read(c.file);
-      expect(src).toMatch(/import \{[^}]*\bisExternalAdmissibleNeed\b[^}]*\} from "\.\.\/_shared\/externalProvenance\.ts"/);
-      expect(src).toMatch(/const externalNeeds = [^\n]*\.filter\(isExternalAdmissibleNeed\)/);
+      expect(src).toMatch(c.collector);
       expect(src).toMatch(c.builderCall);
       expect(src).toMatch(/needs_withheld_external/);
       // the raw rows never reach the builder
@@ -77,9 +86,9 @@ describe("Gate 0 — the three collectors (source guard)", () => {
       if (!fs.existsSync(p)) continue;
       const src = fs.readFileSync(p, "utf8");
       const external = /openaiClient\.ts|api\.openai\.com/.test(src);
-      const readsNeeds = /from\("odi_needs"\)|"odi_needs",\s*companyId/.test(src);
+      const readsNeeds = /from\("odi_needs"\)|"odi_needs",\s*companyId|collectExternalNeeds\(/.test(src);
       if (!external || !readsNeeds) continue;
-      const gated = /isExternalAdmissibleNeed|gateSubjectForExternal|gateDriftSurfacesForExternal|non_public_provenance/.test(src);
+      const gated = /isExternalAdmissibleNeed|collectExternalNeeds|gateSubjectForExternal|gateDriftSurfacesForExternal|non_public_provenance/.test(src);
       if (!gated) offenders.push(name);
     }
     expect(offenders).toEqual([]);

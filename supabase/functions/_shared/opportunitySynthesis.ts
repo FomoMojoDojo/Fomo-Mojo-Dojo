@@ -22,6 +22,7 @@ import { judgeOpportunityLikelihood, type LikelihoodBand } from "./opportunityLi
 import { planReconcile } from "./reconcilePublicSynthesis.ts";
 import { contentIdentity, needIdentityStatement } from "./contentIdentity.ts";
 import { gateSubjectForLocal } from "./driftExternalGate.ts";
+import { needRestsOnPrivateSource } from "./externalProvenance.ts";   // B1 (2026-11-16)
 import { generateCanonicalLocal } from "./localCanonicalGenerator.ts";
 
 // Per-opportunity value band → odi_needs.confidence (the band's storage). A2-3 reads
@@ -436,6 +437,8 @@ export async function writeDeclaredOpportunities(args: {
         // Q3 (2026-11-06): internal_declared is already local-admissible on provenance alone, so the
         // flag cannot change this lane decision — passed explicitly because the gate requires it.
         operatorEditedAt: (r.operator_edited_at as string | null | undefined) ?? null,
+        // B1: a private-source need belongs to the local lane too; internal_declared is local already.
+        privateSource: needRestsOnPrivateSource(r),
         consumer: "declared-canonical-backfill",
       });
       if (!gate.admissible) continue; // public → external backfill keeps it

@@ -65,6 +65,43 @@ export const LOCAL_LANE_PROVENANCE = new Set(
   PROVENANCE_TYPE_ENUM.filter((p) => !EXTERNAL_ADMISSIBLE_PROVENANCE.has(p)),
 );
 
+// ── A need is public only by its SOURCE (B1, operator ruling 2026-11-15) ──────
+//
+// The SP-346 / SP-349 / F1 rule, for odi_needs. A provenance LABEL is a claim about the row; the
+// source columns say what the row rests on. The upload dialog stamped needs derived from a
+// third-party document `public_research`, and every need gate admitted them on the label alone, so
+// a private upload's content could reach OpenAI through six click-started functions (hold H4).
+//
+// ALLOWLIST POLARITY, as SP-346: a need is public by source ONLY when its source_path is a known
+// public value — every live public need carries the column default 'public_research' — and nothing
+// links it to an interview, an intake or a file analysis. Anything else is private: a storage path,
+// 'interview', 'intake.quiz', any free text, NULL, and a column the caller never SELECTED (undefined),
+// so a consumer that forgets the columns fails CLOSED. The upload markers below are belt and braces
+// for a row whose source_path was left at its default.
+export const NEED_SOURCE_COLUMNS = [
+  "source_path", "step_label", "frameworks_used", "interview_record_id", "source_proposal_id",
+] as const;
+const PUBLIC_NEED_SOURCE_PATHS: ReadonlySet<string> = new Set(["public_research"]);
+const UPLOAD_STEP_LABEL_PREFIXES = ["Upload-derived", "Reanalyzed existing file"] as const;
+const UPLOAD_FRAMEWORK_MARKS: ReadonlySet<string> = new Set(["Local Upload Analysis", "Existing File Reanalysis"]);
+
+/** True when the need rests on private material (an upload, an interview, an intake, a file
+ *  analysis) or its source cannot be read. Unknown ⇒ private. */
+export function needRestsOnPrivateSource(row: Record<string, unknown> | null | undefined): boolean {
+  if (!row || typeof row !== "object") return true;
+  for (const col of NEED_SOURCE_COLUMNS) {
+    if (!(col in row) || row[col] === undefined) return true;   // not selected ⇒ unknown ⇒ private
+  }
+  if (row.interview_record_id != null) return true;
+  if (row.source_proposal_id != null) return true;
+  if (typeof row.source_path !== "string" || !PUBLIC_NEED_SOURCE_PATHS.has(row.source_path)) return true;
+  const label = typeof row.step_label === "string" ? row.step_label : "";
+  if (UPLOAD_STEP_LABEL_PREFIXES.some((p) => label.startsWith(p))) return true;
+  const frameworks = Array.isArray(row.frameworks_used) ? row.frameworks_used : [];
+  if (frameworks.some((f) => UPLOAD_FRAMEWORK_MARKS.has(String(f)))) return true;
+  return false;
+}
+
 // ── Need rows (Gate 0, operator ruling 2026-09-16) ────────────────────────────
 // The ONE predicate for an odi_needs row entering an OpenAI payload as CONTEXT
 // (propose-positioning-changes, propose-cascade-changes, council-review — the
@@ -80,6 +117,9 @@ export const LOCAL_LANE_PROVENANCE = new Set(
 export function isExternalAdmissibleNeed(
   row: { provenance_type?: unknown; operator_edited_at?: unknown } | null | undefined,
 ): boolean {
+  // B1 (2026-11-16): the SOURCE is tested first — a need resting on an upload, an interview or an
+  // intake is private whatever its marking says, and a row without its source columns is private.
+  if (needRestsOnPrivateSource(row as Record<string, unknown> | null | undefined)) return false;
   const p = row?.provenance_type;
   const edited = row?.operator_edited_at;
   if (isOperatorEdited(typeof edited === "string" ? edited : edited == null ? null : String(edited))) return false;

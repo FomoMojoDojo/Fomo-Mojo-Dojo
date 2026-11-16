@@ -189,6 +189,9 @@ Deno.serve(async (req: Request) => {
     surfaceId: String(route_id),
     provenance: (routeData as { provenance_type?: string | null }).provenance_type,
     operatorEditedAt: (routeData as { operator_edited_at?: string | null }).operator_edited_at,
+    // B1 (2026-11-16): the by-source rule is for NEEDS; a route subject has no source rule yet, so
+    // this gate decides on provenance and authorship exactly as before.
+    privateSource: false,
     consumer: "propose-route-changes",
   });
   if (!subjectGate.admissible) {

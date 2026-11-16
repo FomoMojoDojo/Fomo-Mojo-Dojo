@@ -28,7 +28,7 @@ import {
 import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
 import { getFrameworkRoutingPlan } from "../_shared/frameworkLibrary.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
-import { isExternalAdmissibleNeed } from "../_shared/externalProvenance.ts";
+import { collectExternalNeeds } from "../_shared/externalNeeds.ts";   // B1 (2026-11-16)
 import { isSubjectExternallyAdmissible } from "../_shared/externalProvenance.ts";   // E4c (2026-11-07)
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 import { adminOnlyGate } from "../_shared/callerGate.ts";
@@ -309,28 +309,14 @@ Deno.serve(async (req: Request) => {
     .eq("company_id", company_id)
     .limit(20);
 
-  // --- Fetch opportunities (odi_needs, aligned only) ---
-  // C1: migrated from legacy `opportunities` table to `odi_needs` (current canonical source).
-  // Filter excludes off_strategy items so B2C/consumer-framed needs from pre-pivot data
-  // don't flow into cascade proposals for B2B-pivoted companies.
-  const { data: opportunityRows } = await db
-    .from("odi_needs")
-    // 4f-6 (F9): a company-held need (journey_key NULL) is not of any market, so it never enters a
-    // market-framed proposal context — the prompt would print it under a Journey it does not have.
-    .select("desired_outcome as outcome, journey_key, step_number, step_label, importance, satisfaction, opportunity_score, tier as priority_tier, provenance_type, operator_edited_at")
-    .eq("company_id", company_id)
-    .not("journey_key", "is", null)
-    .neq("strategy_alignment", "off_strategy")
-    .order("opportunity_score", { ascending: false })
-    .limit(30);
-  // Gate 0 (2026-09-16): only external-admissible needs enter the OpenAI context — the ONE
-  // predicate, at the collection point, before any prompt text exists. Withheld count is
-  // reported on every response so the omission is visible.
-  // (The select aliases with `as`, which supabase-js types as a ParserError — the rows are cast
-  // to the shape the predicate and the brief builder actually read.)
-  const needRows = ((opportunityRows ?? []) as unknown) as Array<{ provenance_type?: unknown } & Record<string, unknown>>;
-  const externalNeeds = needRows.filter(isExternalAdmissibleNeed);
-  const needsWithheldExternal = needRows.length - externalNeeds.length;
+  // --- Fetch opportunities (odi_needs) — Gate 0 + B1 (2026-11-16) ---
+  // The shared collector selects each need's SOURCE columns and filters through the one need
+  // predicate, which withholds a need resting on an upload, an interview or an intake whatever its
+  // marking (B1). Same select, filters and limit as before; the withheld count is reported.
+  const { externalNeeds, needsWithheldExternal } = await collectExternalNeeds(
+    db as unknown as { from: (t: string) => any },
+    String(company_id),
+  );
 
   // --- Fetch routes (active only) ---
   // C1: changed from .not("source", "like", "manual_%") to .neq("relevance_state", "deprioritized").

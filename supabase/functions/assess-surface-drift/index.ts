@@ -19,6 +19,7 @@ import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { gateStrategyArtifactsForExternal } from "../_shared/strategyArtifactGate.ts";
 import { gateDriftSurfacesForExternal } from "../_shared/driftExternalGate.ts";
+import { needRestsOnPrivateSource } from "../_shared/externalProvenance.ts";   // B1 (2026-11-16)
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 // CONTAINMENT (SP-100, 2026-11-12): the evidence block is routed by the provenance of EVERY signal
 // whose text enters the prompt. One non-public row forces the whole call local. Before this, the
@@ -571,6 +572,9 @@ async function assessRoutes(
     companyId,
     surfaceType: "route",
     rows: (data ?? []) as RouteRow[],
+    // B1 (2026-11-16): the by-source rule is for NEEDS; a route has no source rule yet, so this gate
+    // decides on provenance and authorship exactly as before.
+    privateSource: () => false,
     consumer: "assess-surface-drift",
   });
 
@@ -609,7 +613,7 @@ async function assessOpportunities(
 ): Promise<{ aligned: number; slight_drift: number; material_drift: number; assessed: number }> {
   const query = supabase
     .from("odi_needs")
-    .select("id, desired_outcome, odi_canonical_statement, evidence_baseline_signal_ids, evidence_baseline_captured_at, provenance_type, operator_edited_at")
+    .select("id, desired_outcome, odi_canonical_statement, evidence_baseline_signal_ids, evidence_baseline_captured_at, provenance_type, operator_edited_at, step_label, source_path, frameworks_used, interview_record_id, source_proposal_id")
     .eq("company_id", companyId);
 
   if (filterSurfaceId) query.eq("id", filterSurfaceId);
@@ -626,6 +630,8 @@ async function assessOpportunities(
     companyId,
     surfaceType: "opportunity",
     rows: (data ?? []) as OpportunityRow[],
+    // B1: a need resting on an upload, an interview or an intake is skipped whatever its marking.
+    privateSource: (row) => needRestsOnPrivateSource(row as unknown as Record<string, unknown>),
     consumer: "assess-surface-drift",
   });
 

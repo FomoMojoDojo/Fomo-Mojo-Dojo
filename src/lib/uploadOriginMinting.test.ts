@@ -169,14 +169,20 @@ describe("g. still safe", () => {
   });
 });
 
-describe("h. upload-derived needs carry the document's origin (ruling 8)", () => {
-  it("client ⇒ manual (unchanged); third_party ⇒ public_research; us / uncertain ⇒ no need is written", async () => {
-    const { needProvenanceForOrigin } = await import("@/components/FileUploadDialog");
-    expect(needProvenanceForOrigin({ authorship: "client", subject: "this_company" })).toBe("manual");
-    expect(needProvenanceForOrigin({ authorship: "third_party", subject: "the_sector" })).toBe("public_research");
-    expect(needProvenanceForOrigin({ authorship: "third_party", subject: "this_company" })).toBe("public_research");
-    expect(needProvenanceForOrigin({ authorship: "us", subject: "this_company" })).toBeNull();
-    expect(needProvenanceForOrigin({ authorship: "uncertain", subject: "uncertain" })).toBeNull();
+describe("h. the upload dialog writes no need (B1, ruling option c, 2026-11-15)", () => {
+  // Ruling 8 used to stamp a third-party document's dialog-derived needs public_research, which every need
+  // gate admitted to OpenAI (hold H4). Ruling (c) removes the dialog's need extraction: need candidates come
+  // only from the full-document analysis, through the review queue.
+  it("FileUploadDialog has no odi_needs write and no provenance helper for one", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const src = fs.readFileSync(path.resolve(__dirname, "../components/FileUploadDialog.tsx"), "utf8");
+    expect(src).not.toMatch(/from\(['"]odi_needs['"]\)/);
+    expect(src).not.toMatch(/persistUploadDerivedNeeds|needProvenanceForOrigin|odi_needs_candidates/);
+    const mod = await import("@/components/FileUploadDialog");
+    expect("needProvenanceForOrigin" in mod).toBe(false);
+  });
+  it("the certainty rung for a public need is unchanged", () => {
     expect(certaintyRung({ provenance_type: "public_research" } as never)).toBe("outside_signals"); // "From outside signals", never "Backed by your research"
   });
 });

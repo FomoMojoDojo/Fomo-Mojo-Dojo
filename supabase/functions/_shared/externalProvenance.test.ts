@@ -66,9 +66,11 @@ Deno.test("Q3: an operator-edited subject is never external; its unedited twin s
 });
 
 Deno.test("Q3: isExternalAdmissibleNeed reads the flag off the row", () => {
-  assert(isExternalAdmissibleNeed({ provenance_type: "public_research" }),
+  // B1 (2026-11-16): a public need is public by its SOURCE too, so the row carries the source columns.
+  const PUBLIC_SOURCE = { source_path: "public_research", step_label: "", frameworks_used: [], interview_record_id: null, source_proposal_id: null };
+  assert(isExternalAdmissibleNeed({ provenance_type: "public_research", ...PUBLIC_SOURCE }),
     "a public need with no stamp is admissible (the control — otherwise this guard refuses everything)");
-  assert(!isExternalAdmissibleNeed({ provenance_type: "public_research", operator_edited_at: EDITED }),
+  assert(!isExternalAdmissibleNeed({ provenance_type: "public_research", operator_edited_at: EDITED, ...PUBLIC_SOURCE }),
     "a public need the operator edited is NOT admissible");
   assert(!isExternalAdmissibleNeed({ provenance_type: "internal_declared" }), "internal stays inadmissible");
   assert(!isExternalAdmissibleNeed(null), "a missing row is inadmissible (fail closed)");

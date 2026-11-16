@@ -24,11 +24,6 @@ type AnalysisResult = {
   suggestedInputId: string | null;
   suggestedTags: FileCategory[];
   crossAreaInputIds: string[];
-  odiNeedCandidates: Array<{
-    desiredOutcome: string;
-    importance: number;
-    satisfaction: number;
-  }>;
   otherAreaSignals: string[];
   extractionSource: string;
   parserEngine: string;
@@ -45,7 +40,6 @@ type UploadSummary = {
   inputLabel?: string;
   subGroup?: string;
   tags: string[];
-  derivedNeedsAdded?: number;
   additionalAreas?: string[];
   additionalSignals?: string[];
   extractionSource?: string;
@@ -136,53 +130,6 @@ function normalizeCrossAreaInputIds(raw: unknown): string[] {
     unique.add(id);
   }
   return [...unique];
-}
-
-const ODI_UPLOAD_OUTCOME_REPLACEMENTS: Array<[RegExp, string]> = [
-  [/\bmonitored decision outcomes\b/gi, 'tracked decision results'],
-  [/\bdecision outcomes\b/gi, 'decision results'],
-  [/\bbased on insights from\b/gi, 'using evidence from'],
-  [/\bstrategic alignment\b/gi, 'fit with strategy'],
-  [/\bcore audience\b/gi, 'main audience'],
-  [/\bleverage\b/gi, 'use'],
-  [/\butili[sz]e\b/gi, 'use'],
-  [/\boptimi[sz]e\b/gi, 'improve'],
-];
-
-function normalizeNeedOutcomeText(value: string): string {
-  let text = String(value || '').trim();
-  if (!text) return '';
-  for (const [pattern, replacement] of ODI_UPLOAD_OUTCOME_REPLACEMENTS) {
-    text = text.replace(pattern, replacement);
-  }
-  text = text
-    .replace(/\s+/g, ' ')
-    .replace(/\s+([,.;:!?])/g, '$1')
-    .trim();
-  if (!text) return '';
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-function normalizeOdiNeedCandidates(raw: unknown) {
-  if (!Array.isArray(raw)) return [] as AnalysisResult['odiNeedCandidates'];
-  const normalized: AnalysisResult['odiNeedCandidates'] = [];
-  const seen = new Set<string>();
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue;
-    const record = item as Record<string, unknown>;
-    const desiredOutcome = normalizeNeedOutcomeText(String(record.desired_outcome || ''));
-    if (!desiredOutcome) continue;
-    const canonical = desiredOutcome.toLowerCase();
-    if (seen.has(canonical)) continue;
-    seen.add(canonical);
-    const importanceRaw = Number(record.importance);
-    const satisfactionRaw = Number(record.satisfaction);
-    const importance = Number.isFinite(importanceRaw) ? Math.max(1, Math.min(10, Math.round(importanceRaw))) : 7;
-    const satisfaction = Number.isFinite(satisfactionRaw) ? Math.max(1, Math.min(10, Math.round(satisfactionRaw))) : 4;
-    normalized.push({ desiredOutcome, importance, satisfaction });
-    if (normalized.length >= 8) break;
-  }
-  return normalized;
 }
 
 function normalizeOtherAreaSignals(raw: unknown): string[] {
@@ -304,7 +251,7 @@ async function analyzeFileForRouting(
       const refusal = await refusalFromInvoke(data, error);
       if (!refusal) return null;
       return {
-        suggestedInputId: null, suggestedTags: [], crossAreaInputIds: [], odiNeedCandidates: [], otherAreaSignals: [],
+        suggestedInputId: null, suggestedTags: [], crossAreaInputIds: [], otherAreaSignals: [],
         extractionSource: 'refused', parserEngine: 'local_ollama', reasoning: fileTooLargeMessage(refusal), refusal,
       };
     }
@@ -318,7 +265,6 @@ async function analyzeFileForRouting(
       suggestedInputId,
       suggestedTags: normalizeSuggestedTags(data?.suggested_tags),
       crossAreaInputIds: normalizeCrossAreaInputIds(data?.cross_area_input_ids),
-      odiNeedCandidates: normalizeOdiNeedCandidates(data?.odi_needs_candidates),
       otherAreaSignals: normalizeOtherAreaSignals(data?.other_area_signals),
       extractionSource:
         typeof data?.extraction_source === 'string' && data.extraction_source.trim().length > 0
@@ -371,86 +317,6 @@ async function classifyUploadedDocument(companyId: string | null, inputFileId: s
     return uncertain;
   }
 }
-/**
- * Ruling 8: an upload-derived need carries the DOCUMENT'S origin, never the `manual` default that read as
- * "Backed by your research". client ⇒ manual (unchanged: the client's own material); third_party ⇒
- * public_research ("From outside signals"); us / uncertain ⇒ no need is written from the upload at all.
- */
-export function needProvenanceForOrigin(origin: UploadOrigin): 'manual' | 'public_research' | null {
-  if (origin.authorship === 'client') return 'manual';
-  if (origin.authorship === 'third_party') return 'public_research';
-  return null;
-}
-async function persistUploadDerivedNeeds(params: {
-  companyId: string | null;
-  userId: string | null;
-  sourcePath: string | null;
-  inputLabel: string;
-  candidates: AnalysisResult['odiNeedCandidates'];
-  origin: UploadOrigin;
-}) {
-  const { companyId, userId, sourcePath, inputLabel, candidates, origin } = params;
-  if (!companyId || !userId || !sourcePath || candidates.length === 0) return 0;
-  const provenanceType = needProvenanceForOrigin(origin);
-  if (!provenanceType) return 0;
-
-  try {
-    const { data: existingRows, error: existingError } = await supabase
-      .from('odi_needs')
-      .select('desired_outcome')
-      .eq('company_id', companyId)
-      .limit(600);
-    if (existingError) return 0;
-
-    const existing = new Set(
-      ((existingRows ?? []) as Array<{ desired_outcome?: string | null }>)
-        .map((row) => String(row.desired_outcome || '').trim().toLowerCase())
-        .filter(Boolean),
-    );
-
-    const toInsert = candidates
-      .map((candidate) => ({
-        desired_outcome: normalizeNeedOutcomeText(candidate.desiredOutcome),
-        importance: Math.max(1, Math.min(10, Math.round(candidate.importance || 7))),
-        satisfaction: Math.max(1, Math.min(10, Math.round(candidate.satisfaction || 4))),
-      }))
-      .filter((candidate) => {
-        const key = candidate.desired_outcome.toLowerCase();
-        if (!key || existing.has(key)) return false;
-        existing.add(key);
-        return true;
-      })
-      .slice(0, 6)
-      .map((candidate) => {
-        const opportunityScore = Number((candidate.importance + Math.max(0, candidate.importance - candidate.satisfaction)).toFixed(1));
-        return {
-          company_id: companyId,
-          user_id: userId,
-          desired_outcome: candidate.desired_outcome,
-          importance: candidate.importance,
-          satisfaction: candidate.satisfaction,
-          opportunity_score: opportunityScore,
-          journey_key: 'customer',
-          step_number: 0,
-          step_label: `Upload-derived (${inputLabel || 'Unmapped input'})`,
-          tier: 'company',
-          service_state: 'monitor',
-          source_path: sourcePath,
-          frameworks_used: ['JTBD', 'Strategic Decision System', 'Local Upload Analysis'],
-          provenance_type: provenanceType,
-        };
-      });
-
-    if (toInsert.length === 0) return 0;
-
-    const { error: insertError } = await supabase.from('odi_needs').insert(toInsert);
-    if (insertError) return 0;
-    return toInsert.length;
-  } catch {
-    return 0;
-  }
-}
-
 /** Commit 2b: the browser's post-upload inference call — fire-and-forget, result and failure both ignored here
  *  (the Inputs page shows the run through its planned row). Exported for the test. */
 export function startInterviewMarketInference(companyId: string, recordId: string): void {
@@ -595,8 +461,6 @@ export default function FileUploadDialog({
     let successCount = 0;
     let failureCount = 0;
     const selectedCompanyId = companyId || activeCompany?.id || null;
-    const { data: authData } = await supabase.auth.getUser();
-    const currentUserId = authData.user?.id ?? null;
     const inputById = new Map(eligibleInputs.map((input) => [input.id, input]));
 
     setUploading(true);
@@ -766,17 +630,11 @@ export default function FileUploadDialog({
           }
         }
 
-        // Authorship + subject are judged as soon as the sidecar exists (post-upload analyze-file wrote it),
-        // BEFORE any need is written from this document.
-        const origin = await classifyUploadedDocument(selectedCompanyId, uploadResult?.id ?? null);
-        const derivedNeedsAdded = await persistUploadDerivedNeeds({
-          companyId: selectedCompanyId,
-          userId: currentUserId,
-          sourcePath: uploadResult?.filePath ?? null,
-          inputLabel: finalInput.input_label,
-          candidates: analysis?.odiNeedCandidates ?? [],
-          origin,
-        });
+        // Authorship + subject are judged as soon as the sidecar exists (post-upload analyze-file wrote it).
+        // The verdict row is what lets the enqueue sweep start the analysis (SP-209).
+        // B1 (2026-11-16, ruling option c): the dialog writes no need row. Need candidates come only from
+        // the full-document analysis, through the review queue (SP-F48).
+        await classifyUploadedDocument(selectedCompanyId, uploadResult?.id ?? null);
 
         successCount += 1;
         localSummaries.push({
@@ -785,7 +643,6 @@ export default function FileUploadDialog({
           inputLabel: finalInput.input_label,
           subGroup: finalInput.sub_group,
           tags: finalTags.filter((tag) => !tag.startsWith('__area:')),
-          derivedNeedsAdded,
           additionalAreas: [...additionalAreaLabels].slice(0, 4),
           additionalSignals: (analysis?.otherAreaSignals ?? []).slice(0, 3),
           extractionSource: analysis?.extractionSource || undefined,
@@ -1153,11 +1010,6 @@ export default function FileUploadDialog({
                             {summary.inputLabel} ({summary.subGroup}) • {sourceLabel(summary.source)}
                           </p>
                         )}
-                        {summary.derivedNeedsAdded && summary.derivedNeedsAdded > 0 ? (
-                          <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#4c7f73' }}>
-                            +{summary.derivedNeedsAdded} upload-derived Strategic Decision System need{summary.derivedNeedsAdded === 1 ? '' : 's'} added
-                          </p>
-                        ) : null}
                         {summary.additionalAreas && summary.additionalAreas.length > 0 ? (
                           <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#46606d' }}>
                             Also relevant: {summary.additionalAreas.join(', ')}

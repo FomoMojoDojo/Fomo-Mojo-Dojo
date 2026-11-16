@@ -98,9 +98,9 @@ describe("Q3 — a gated SELECT that omits operator_edited_at would fail open", 
 describe("Q3 — the need-row collectors select the flag the row-shaped predicate reads", () => {
   // isExternalAdmissibleNeed(row) reads row.operator_edited_at, so these three selects are the
   // ones that decide whether the Gate 0 need filter can see operator authorship at all.
+  // B1 (2026-11-16): the two propose functions now share ONE collector, _shared/externalNeeds.ts.
   const COLLECTORS = [
-    "supabase/functions/propose-positioning-changes/index.ts",
-    "supabase/functions/propose-cascade-changes/index.ts",
+    "supabase/functions/_shared/externalNeeds.ts",
   ] as const;
   for (const file of COLLECTORS) {
     it(`${file}: the odi_needs collector selects operator_edited_at`, () => {

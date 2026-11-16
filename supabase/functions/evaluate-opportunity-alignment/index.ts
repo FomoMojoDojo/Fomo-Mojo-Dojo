@@ -12,6 +12,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 import { gateSubjectForExternal, gateSubjectForLocal } from "../_shared/driftExternalGate.ts";
+import { needRestsOnPrivateSource } from "../_shared/externalProvenance.ts";   // B1 (2026-11-16)
 import { judgeOpportunityAlignmentLocal } from "../_shared/localAlignmentJudge.ts";
 import { optionBDoor } from "../_shared/optionBDoor.ts";
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";
@@ -82,7 +83,7 @@ Deno.serve(async (req: Request) => {
     .from("odi_needs")
     // Q3 (2026-11-06): operator_edited_at is selected because the subject gate REQUIRES it. An
     // unselected column reads undefined and the gate would admit an operator-edited need.
-    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key, provenance_type, operator_edited_at")
+    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key, provenance_type, operator_edited_at, source_path, frameworks_used, interview_record_id, source_proposal_id")
     .eq("id", need_id)
     .eq("company_id", company_id)
     .maybeSingle();
@@ -119,6 +120,8 @@ Deno.serve(async (req: Request) => {
       surfaceId: String(need_id),
       provenance: (needData as { provenance_type?: string | null }).provenance_type,
       operatorEditedAt: (needData as { operator_edited_at?: string | null }).operator_edited_at,
+      // B1: a need resting on an upload, an interview or an intake never goes external.
+      privateSource: needRestsOnPrivateSource(needData as Record<string, unknown>),
       consumer: "evaluate-opportunity-alignment",
     })
     : { admissible: false };
@@ -137,6 +140,7 @@ Deno.serve(async (req: Request) => {
         surfaceId: String(need_id),
         provenance: (needData as { provenance_type?: string | null }).provenance_type,
         operatorEditedAt: (needData as { operator_edited_at?: string | null }).operator_edited_at,
+        privateSource: needRestsOnPrivateSource(needData as Record<string, unknown>),   // B1: XOR with the external gate
         consumer: "evaluate-opportunity-alignment",
       });
       if (!localGate.admissible) {

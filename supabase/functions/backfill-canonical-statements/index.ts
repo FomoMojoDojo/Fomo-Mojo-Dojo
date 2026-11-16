@@ -7,6 +7,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
+import { needRestsOnPrivateSource } from "../_shared/externalProvenance.ts";   // B1 (2026-11-16)
 import { recordModelCall, openaiRecord } from "../_shared/recordModelCall.ts";   // E4d (2026-11-07)
 import { adminOnlyGate } from "../_shared/callerGate.ts";
 import { marketPublicBySource, MARKET_NOT_PUBLIC_BY_SOURCE, type MarketSourceRow } from "../_shared/marketSourcePublic.ts";   // F3′
@@ -93,7 +94,7 @@ Deno.serve(async (req: Request) => {
       const { data: needRow, error: needErr } = await db
         .from("odi_needs")
         // Q3 (2026-11-06): operator_edited_at selected because the subject gate REQUIRES it.
-        .select("id, company_id, desired_outcome, odi_canonical_statement, journey_key, provenance_type, operator_edited_at")
+        .select("id, company_id, desired_outcome, odi_canonical_statement, journey_key, provenance_type, operator_edited_at, step_label, source_path, frameworks_used, interview_record_id, source_proposal_id")
         .eq("id", needId)
         .maybeSingle();
 
@@ -131,6 +132,8 @@ Deno.serve(async (req: Request) => {
         surfaceId: row.id,
         provenance: row.provenance_type,
         operatorEditedAt: row.operator_edited_at,
+        // B1: a need resting on an upload, an interview or an intake never goes external.
+        privateSource: needRestsOnPrivateSource(needRow as Record<string, unknown>),
         consumer: "backfill-canonical-statements",
       });
       if (!subjectGate.admissible) {

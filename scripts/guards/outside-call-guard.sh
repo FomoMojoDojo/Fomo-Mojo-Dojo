@@ -124,6 +124,25 @@
 #        councilLocal / marketSourcePublic / councilRun unit tests pass.
 #        Plant: marketPublicBySource admits everything AND council-review is restored to its pre-F3′ OpenAI
 #        client (both via scripts/plant.sh), docker restart — (e1) (e2) (e4) (e5) go RED; (e3) stays green.
+#
+#   (f1)–(f6) B1 (2026-11-16, hold H4). A need is public only by its SOURCE. The upload dialog used to stamp a
+#        third-party document's needs public_research, and six click-started functions admitted them to OpenAI.
+#   (f1/f2/f6) UNIT. src/lib/needSourceRule.test.ts + externalNeedsGate.test.ts: the shared collector of
+#        propose-positioning-changes / propose-cascade-changes (which always call OpenAI) and the subject gate
+#        used by backfill-canonical-statements (no caller) withhold the planted upload need and admit the
+#        public control; every gated need select carries the source columns.
+#   (f3) SERVED WORKER. Held throwaway 0c900000-…-c010 holds need …c010c01 marked public_research that rests on
+#        an upload (storage source_path, 'Upload-derived' step label, 'Local Upload Analysis' mark).
+#        propose-opportunity-changes must skip it with a drift_external_gate row private_source=true.
+#   (f4) evaluate-opportunity-alignment must refuse it on the external gate (private_source=true; it is then
+#        judged on the local lane, never 'lane: external').
+#   (f5) assess-surface-drift (surface_type opportunity) must exclude it at the gate (private_source=true).
+#        And 0 outside model_calls rows with tokens for c010.
+#   (f3–f5 controls) Throwaway …-c011, need …c011c01 on the public source (source_path = the column default):
+#        no gate or door row, propose not skipped, evaluate judged outside, drift scan past the gate (a few
+#        cent-fraction outside calls on synthetic text). Plants: (A) drop the source test from
+#        isExternalAdmissibleNeed — f1/f2 go RED; (B) make the subject gates ignore privateSource — f3/f4/f5
+#        and the unit subject tests go RED; controls stay green in both.
 #        Fixed ids, born held, never deleted; each run clears only c008/c009 model_calls rows (SP-264).
 #   (e6) SERVED WORKER, council trial (2026-11-15): council-review's optional `model` field. Control: e1's
 #        default run names the default on its run row and ledger rows. A non-listed tag (model_not_listed),
@@ -946,6 +965,104 @@ else
   [ "$ST_6" = "completed" ] && [ "$R6" = "local_ollama:$ALT_E6|$ALT_E6|" ] && [ "${LED6%%|*}" = "local_ollama:$ALT_E6" ] && [ "$RECS6" = "0" ] \
     && ok "(e6) a listed override ran locally and names $ALT_E6 on the run row and on ${LED6##*|} ledger row(s); no recommendations written" \
     || bad "(e6) listed override: run='${RUN_6:0:8}' status='$ST_6' row='$R6' ledger='$LED6' recs='$RECS6' — $(echo "$C6" | head -c 120)"
+fi
+
+# ── (f1)–(f6) B1 (2026-11-16): a need is public only by its SOURCE ─────────────────────────────────
+echo "── (f1–f6) B1: a need resting on an upload is private whatever its marking ──"
+if npx vitest run src/lib/needSourceRule.test.ts src/lib/externalNeedsGate.test.ts >/tmp/outside-call-guard-f.log 2>&1; then
+  ok "(f1/f2/f6) unit: the shared need collector (propose-positioning / propose-cascade) and the subject gate (backfill) withhold the planted upload need and admit the public control"
+else bad "(f1/f2/f6) a B1 unit contract failed — see /tmp/outside-call-guard-f.log"; fi
+
+C10="0c900000-0000-4000-8000-00000000c010"; C11="0c900000-0000-4000-8000-00000000c011"
+N10="0c900000-0000-4000-8000-00000c010c01"; N11="0c900000-0000-4000-8000-00000c011c01"
+OWNER_F=""
+[ -n "${FR_LOGIN_EMAIL:-}" ] && OWNER_F=$(docker exec -i "$DB" psql -U postgres -At -c "select id::text from auth.users where lower(email)=lower('$FR_LOGIN_EMAIL') limit 1" 2>/dev/null)
+SRK_F="${SERVICE_ROLE_KEY:-}"; ANON_F="${ANON_KEY:-}"
+if [ -z "$SRK_F" ] || [ -z "$ANON_F" ]; then
+  ENV_F=$(npx supabase status --output env 2>/dev/null)
+  [ -n "$SRK_F" ] || SRK_F=$(echo "$ENV_F" | sed -n 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/p')
+  [ -n "$ANON_F" ] || ANON_F=$(echo "$ENV_F" | sed -n 's/^ANON_KEY="\(.*\)"$/\1/p')
+fi
+if [ -z "$OWNER_F" ] || [ -z "$SRK_F" ] || [ -z "$ANON_F" ] || [ -z "${FR_LOGIN_PASSWORD:-}" ]; then
+  bad "(f3–f5) FR_LOGIN_EMAIL/FR_LOGIN_PASSWORD or the stack keys unavailable — source backups/fr-login.env; the served-worker half did not run"
+else
+  fq() { docker exec -i "$DB" psql -U postgres -At -v ON_ERROR_STOP=1 -c "$1" 2>&1; }
+  fpick() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const f=new Function("j","return ("+process.argv[1]+")");process.stdout.write(String(f(j)))}catch(e){process.stdout.write("ERR")}})' "$1"; }
+  FN_F="${FUNCTIONS_URL:-http://127.0.0.1:54321/functions/v1}"
+  # Fixed ids, born held (E2), reset every run. SP-264: only rows this guard created are deleted —
+  # the two companies' model_calls, integrity_runs and surface_proposals; the needs are upserted back.
+  # c010 PLANT: a need marked public_research that rests on an upload (the shape the upload dialog
+  # wrote for a third-party document). c011 CONTROL: the same need on the public source every live
+  # public need carries (source_path = the column default).
+  out=$(fq "insert into public.companies (id, name, created_by, fixture_hold) values
+              ('$C10','ocg-throwaway-need-upload','$OWNER_F','OCG:test_fixture'),
+              ('$C11','ocg-throwaway-need-public','$OWNER_F','OCG:test_fixture')
+              on conflict (id) do update set fixture_hold = coalesce(public.companies.fixture_hold,'OCG:test_fixture');
+            delete from public.model_calls where company_id in ('$C10','$C11');
+            delete from public.integrity_runs where company_id in ('$C10','$C11');
+            delete from public.surface_proposals where company_id in ('$C10','$C11');
+            insert into public.odi_needs (id, company_id, user_id, holder, journey_key, step_number, step_label, desired_outcome, provenance_type, status, source_path, frameworks_used, importance, satisfaction, opportunity_score)
+              values ('$N10','$C10','$OWNER_F','market','customer',0,'Upload-derived (Brand Narrative)','Synthetic fixture: minimize the time a donor waits to hear what their gift did','public_research','active','$C10/brand-narrative/third-party-report.pdf',array['JTBD','Local Upload Analysis'],8,3,13),
+                     ('$N11','$C11','$OWNER_F','market','customer',1,'','Synthetic fixture: minimize the time a family waits for a first call','public_research','active','public_research','{}',8,3,13)
+              on conflict (id) do update set provenance_type='public_research', operator_edited_at=null, strategy_alignment=null,
+                source_path=excluded.source_path, step_label=excluded.step_label, frameworks_used=excluded.frameworks_used,
+                interview_record_id=null, source_proposal_id=null, journey_key='customer';
+            -- the control needs a public market_read cascade: both functions judge a need against it
+            insert into public.strategy_cascades (id, company_id, user_id, artifact_role, source_direction_key, provenance_type, winning_aspiration, where_to_play, how_to_win, evidence_baseline_signal_ids, evidence_baseline_captured_at)
+              values ('0c900000-0000-4000-8000-00000c011e01','$C11','$OWNER_F','market_read','','public_research','Synthetic fixture: be the first call a family makes','Synthetic fixture: families in two counties','Synthetic fixture: answer the same day','[]'::jsonb, now())
+              on conflict (id) do nothing;") \
+    || bad "(f3–f5) fixture SQL failed: $(echo "$out" | head -2 | tr '\n' ' ')"
+  SHAPE_F=$(fq "select (select count(*) from public.odi_needs where id='$N10' and provenance_type='public_research' and source_path like '$C10/%')
+                 ||'|'||(select count(*) from public.odi_needs where id='$N11' and provenance_type='public_research' and source_path='public_research')
+                 ||'|'||(select count(*) from public.companies where id in ('$C10','$C11') and fixture_hold is not null)")
+  [ "$SHAPE_F" = "1|1|2" ] || bad "(f3–f5) the c010/c011 fixtures do not have their shape (got '$SHAPE_F') — the checks would be vacuous"
+  f_outside() { fq "select count(*) from public.model_calls where company_id='$1' and provider in ('openai','anthropic','external_openai') and coalesce(prompt_tokens,0) > 0"; }
+  f_gate_refused() { fq "select count(*) from public.integrity_runs where company_id='$1' and component='drift_external_gate' and surface_id='$2' and run_ref='$3' and excluded_by_rule->>'private_source'='true'"; }
+  JWT_F=$(curl -s -m 30 -X POST "${AUTH_URL:-http://127.0.0.1:54321/auth/v1}/token?grant_type=password" -H "apikey: $ANON_F" -H 'Content-Type: application/json' \
+          -d "{\"email\":\"$FR_LOGIN_EMAIL\",\"password\":\"$FR_LOGIN_PASSWORD\"}" | fpick 'j.access_token||""')
+
+  # (f3) propose-opportunity-changes: the plant is refused by name before any model call
+  R3=$(curl -s -m 180 -X POST "$FN_F/propose-opportunity-changes" -H "apikey: $ANON_F" -H "Authorization: Bearer $JWT_F" -H 'Content-Type: application/json' \
+       -d "{\"opportunity_id\":\"$N10\",\"company_id\":\"$C10\"}")
+  G3=$(f_gate_refused "$C10" "$N10" propose-opportunity-changes)
+  if echo "$R3" | grep -q '"skipped":true' && [ "${G3:-0}" -ge 1 ]; then
+    ok "(f3) propose-opportunity-changes refuses an upload need marked public_research (skipped; gate row private_source=true)"
+  else bad "(f3) propose-opportunity-changes did not refuse the planted upload need (gate rows=$G3): $(echo "$R3" | head -c 160)"; fi
+
+  # (f4) evaluate-opportunity-alignment: the per-row gate refuses the plant (it goes to the local lane)
+  R4F=$(curl -s -m 300 -X POST "$FN_F/evaluate-opportunity-alignment" -H "Authorization: Bearer $SRK_F" -H 'Content-Type: application/json' \
+        -d "{\"need_id\":\"$N10\",\"company_id\":\"$C10\"}")
+  G4=$(f_gate_refused "$C10" "$N10" evaluate-opportunity-alignment)
+  [ "${G4:-0}" -ge 1 ] && ! echo "$R4F" | grep -q '"lane":"external"' \
+    && ok "(f4) evaluate-opportunity-alignment refuses the plant on the external gate (private_source=true; answered $(echo "$R4F" | fpick 'j.lane||j.error||"?"'))" \
+    || bad "(f4) evaluate-opportunity-alignment did not refuse the plant on its source (gate rows=$G4): $(echo "$R4F" | head -c 160)"
+
+  # (f5) assess-surface-drift: the plant opportunity is skipped at the gate
+  curl -s -m 180 -X POST "$FN_F/assess-surface-drift" -H "Authorization: Bearer $SRK_F" -H 'Content-Type: application/json' \
+       -d "{\"company_id\":\"$C10\",\"surface_type\":\"opportunity\",\"surface_id\":\"$N10\"}" >/dev/null
+  G5=$(f_gate_refused "$C10" "$N10" assess-surface-drift)
+  [ "${G5:-0}" -ge 1 ] && ok "(f5) assess-surface-drift skips the planted upload opportunity at the gate (private_source=true)" \
+                       || bad "(f5) assess-surface-drift did not exclude the planted upload opportunity on its source (gate rows=$G5)"
+
+  O10=$(f_outside "$C10")
+  [ "$O10" = "0" ] && ok "(f3–f5) 0 outside model_calls rows with tokens for the plant company" \
+                   || bad "(f3–f5) $O10 outside row(s) with tokens on c010 — an upload-derived need left the building"
+
+  # (f3–f5 controls) the same calls on the public need: admitted by every gate (each control makes at
+  # most one cent-fraction outside call on synthetic text, as c2/d2/e3 do)
+  R3C=$(curl -s -m 180 -X POST "$FN_F/propose-opportunity-changes" -H "apikey: $ANON_F" -H "Authorization: Bearer $JWT_F" -H 'Content-Type: application/json' \
+        -d "{\"opportunity_id\":\"$N11\",\"company_id\":\"$C11\"}")
+  R4C=$(curl -s -m 300 -X POST "$FN_F/evaluate-opportunity-alignment" -H "Authorization: Bearer $SRK_F" -H 'Content-Type: application/json' \
+        -d "{\"need_id\":\"$N11\",\"company_id\":\"$C11\"}")
+  curl -s -m 180 -X POST "$FN_F/assess-surface-drift" -H "Authorization: Bearer $SRK_F" -H 'Content-Type: application/json' \
+       -d "{\"company_id\":\"$C11\",\"surface_type\":\"opportunity\",\"surface_id\":\"$N11\"}" >/dev/null
+  GX=$(fq "select count(*) from public.integrity_runs where company_id='$C11' and component in ('drift_external_gate','option_b_door')")
+  D5C=$(fq "select count(*) from public.integrity_runs where company_id='$C11' and component='drift_scan' and surface_id='$N11'")
+  if [ "$GX" = "0" ] && ! echo "$R3C" | grep -q '"skipped":true' && echo "$R4C" | grep -q '"classification"' && ! echo "$R4C" | grep -q '"lane":"local"' && [ "${D5C:-0}" -ge 1 ]; then
+    ok "(f3–f5 controls) the public need is admitted by all three: propose not skipped, evaluate judged on the outside lane, drift scan past the gate"
+  else
+    bad "(f3–f5 controls) the public control was not admitted everywhere (gate/door rows=$GX, drift_scan rows=$D5C) — propose=$(echo "$R3C" | head -c 100) evaluate=$(echo "$R4C" | head -c 100)"
+  fi
 fi
 
 if [ "$fails" = 0 ]; then echo "guard: PASS"; else echo "guard: RED ($fails check(s)) — see above"; fi
