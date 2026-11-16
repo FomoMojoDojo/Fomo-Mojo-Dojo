@@ -115,7 +115,7 @@ async function expandRoute(page: Page, index: number) {
 }
 const q = (c: Captured) => new URL(c.url).searchParams;
 const CONTROL_IDS = ["routes-actions", "routes-choose", "routes-choose-btn", "routes-check-drift-route", "routes-drift-badge-route", "routes-legs", "routes-leg", "routes-check-drift-leg", "routes-leg-test"];
-const DRIFT_ROUTE = "c3c9b9c2-7804-4d7a-909d-61987d4a030b"; // the fixture's real slight_drift assessment lives on this route
+const DRIFT_ROUTE = "672322e8-5fc6-4c3c-8fd6-b6a309fa645a"; // the fixture's real slight_drift assessment lives on this route (D4b: the twin's copy of c3c9b9c2…)
 
 test("e. default render: zero operator nodes and none of the controls; the accordion still reads", async ({ page }) => {
   const g = await guardWrites(page, { chosen: "planted", phaseFlow: true });

@@ -103,7 +103,7 @@ Deno.test({
     // `ILIKE 'Edgewood%' LIMIT 1` that produced void audit 9942. The Edgewood anchor is the
     // operator-named company_id, asserted; and the new example phrase is then checked against EVERY
     // classed company's live record, so the leg does not depend on the pick at all.
-    const EDGEWOOD = "3dd2cfbb-0792-4bf1-9cd4-15db9646874b";
+    const EDGEWOOD = "ed9e7000-0000-4000-8000-00000000d4b1"; // D4b: the Edgewood TEST TWIN (same rows); Edgewood itself is never read
     const { data: reads } = await db.from("public_reads")
       .select("company_id, input_ledger").eq("kind", "positioning").eq("is_current", true);
     const classed = [...new Set(((reads ?? []) as Array<{ company_id: string; input_ledger: { classes?: unknown } | null }>)

@@ -92,7 +92,7 @@ test("b. Run analysis: the click issues dify-analyze-file for that file id", asy
   await expect.poll(() => captured.some((c) => /\/functions\/v1\/dify-analyze-file/.test(c.url))).toBe(true);
   const call = captured.find((c) => /dify-analyze-file/.test(c.url))!.body as Record<string, unknown>;
   expect(call.fileId).toBe(fileId);
-  expect(call.companyId).toBe("3dd2cfbb-0792-4bf1-9cd4-15db9646874b");
+  expect(call.companyId).toBe("ed9e7000-0000-4000-8000-00000000d4b1"); // D4b: the Edgewood test twin
   expect(call.sourceType).toBe("uploaded_file");
   expect(typeof call.filePath).toBe("string");
 });

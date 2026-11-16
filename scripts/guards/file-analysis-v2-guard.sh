@@ -27,7 +27,7 @@ cd "$(dirname "$0")/../.."
 DB=supabase_db_dzlgyxcvuwiulgifbmew
 API=http://127.0.0.1:54321
 SR=$(supabase status -o env 2>/dev/null | grep -E '^SERVICE_ROLE_KEY=' | cut -d= -f2- | tr -d '"')
-EDGEWOOD="3dd2cfbb-0792-4bf1-9cd4-15db9646874b"
+EDGEWOOD="ed9e7000-0000-4000-8000-00000000d4b1"  # D4b: the Edgewood TEST TWIN; Edgewood itself is proved unchanged by scripts/edgewood-unchanged.sh
 TMP=$(mktemp -d)
 psql() { docker exec -i "$DB" psql -U postgres -Atc "$1"; }
 dify() { docker exec -i docker-db_postgres-1 psql -U postgres -d dify -Atc "$1"; }

@@ -14,6 +14,12 @@ const FRONT_DOOR = "/preview/client-refine";
 /** A company that is NOT the one we click. Whatever the link does, it must not be this. */
 const OTHER_COMPANY_ID = "fd3f7f63-968b-4698-b946-3d6b6450d79d"; // Cafe Barra 2
 const EDGEWOOD = /edgewood/i;
+/** D4b (2026-11-16): the company whose Workspace link (y2)(y3) CLICK. The default company is now the
+ *  Edgewood test twin, which is held — and R40 refuses to make a held company active, by design, so a
+ *  click on its link cannot hand it off. The hand-off is proved on an unheld company instead; (y1)
+ *  still checks the twin's row and link. FomoMojoDojo is only read here, never written. */
+const HANDOFF_CO = "dea66de5-647e-45b7-9f13-a9673f641006";
+const HANDOFF_NAME = /fomomojodojo/i;
 
 /** Open the front door with the OTHER company pinned active. */
 async function openFrontDoor(page: Page): Promise<void> {
@@ -42,12 +48,12 @@ test("(y1) the companies page carries a Workspace link on every row, beside the 
 
 test("(y2) clicking Workspace opens THAT company's workspace home, and the launcher keeps it into Inputs", async ({ page }) => {
   await openFrontDoor(page);
-  await page.getByTestId(`front-door-workspace-${COMPANY_ID}`).click();
+  await page.getByTestId(`front-door-workspace-${HANDOFF_CO}`).click();
 
   // the workspace home, on the company whose row was clicked — not the pinned one
   await expect(page.getByTestId("workspace-root")).toBeVisible({ timeout: 60_000 });
   await expect(page).toHaveURL(/\/preview\/client-refine\/workspace$/);
-  await expect(page.getByTestId("workspace-identity")).toHaveText(EDGEWOOD, { timeout: 60_000 });
+  await expect(page.getByTestId("workspace-identity")).toHaveText(HANDOFF_NAME, { timeout: 60_000 });
 
   // and it survives the launcher into Inputs — the company travelled, not just the route
   await page.getByTestId("workspace-square").click();
@@ -57,15 +63,15 @@ test("(y2) clicking Workspace opens THAT company's workspace home, and the launc
   // and those sit behind the overlay, so an unscoped selector picks an unclickable one.
   await panel.locator('[data-fr-tile="inputs"]').click();
   await expect(page.getByTestId("workspace-root")).toHaveAttribute("data-fr-page", "inputs", { timeout: 60_000 });
-  await expect(page.getByTestId("workspace-identity")).toHaveText(EDGEWOOD, { timeout: 60_000 });
+  await expect(page.getByTestId("workspace-identity")).toHaveText(HANDOFF_NAME, { timeout: 60_000 });
 });
 
 test("(y3) the link is keyboard reachable — Tab lands on it and Enter opens the workspace", async ({ page }) => {
   await openFrontDoor(page);
-  const link = page.getByTestId(`front-door-workspace-${COMPANY_ID}`);
+  const link = page.getByTestId(`front-door-workspace-${HANDOFF_CO}`);
   await link.focus();
   await expect(link).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("workspace-root")).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByTestId("workspace-identity")).toHaveText(EDGEWOOD, { timeout: 60_000 });
+  await expect(page.getByTestId("workspace-identity")).toHaveText(HANDOFF_NAME, { timeout: 60_000 });
 });

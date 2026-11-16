@@ -12,8 +12,10 @@ import path from "node:path";
 export const BASE_URL = process.env.FR_BASE_URL || "http://localhost:8080";
 /** Where the admin storage state lives. backups/ is gitignored. */
 export const STORAGE_STATE = path.resolve(process.env.FR_STORAGE_STATE || "backups/fr-state.json");
-/** The Edgewood fixture — the company the specs read. Overridable. */
-export const COMPANY_ID = process.env.FR_COMPANY_ID || "3dd2cfbb-0792-4bf1-9cd4-15db9646874b";
+/** The company the specs read: the Edgewood TEST TWIN (D4b, 2026-11-16) — a held fixture holding a copy of
+ *  Edgewood's rows with every id remapped (scripts/twin/build-edgewood-twin.mjs). Edgewood itself (3dd2cfbb)
+ *  is a real client and no spec reads it; scripts/edgewood-unchanged.sh is its only reader. Overridable. */
+export const COMPANY_ID = process.env.FR_COMPANY_ID || "ed9e7000-0000-4000-8000-00000000d4b1";
 /** Pre-change DOM-text capture of /preview/client-refine/home (spec g). Re-pinned 2026-09-17 after the C0+C1
  *  audited data acts (integrity_runs 1220–1226): 7 public rows superseded/held/restamped (PUBLIC 137 → 130).
  *  Tracked under tests/workspace/fixtures so the baseline travels with the spec (backups/ is gitignored). */

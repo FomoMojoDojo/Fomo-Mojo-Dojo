@@ -14,7 +14,7 @@ import { COMPANY_ID } from "../../playwright.config";
 
 const GAP_BEAT = "The gap";
 /** The declared statement whose pairs the operator asked about (claim 31229eb0…). */
-const CLAIM = "31229eb0-e8f5-48a9-bba1-a7a73ba0bf8a";
+const CLAIM = "69eedecb-9498-468f-8882-c86ee8db8ff9"; // D4b: the twin's copy of Edgewood claim 31229eb0…
 
 async function openGap(page: Page) {
   await page.addInitScript((id) => { try { localStorage.setItem("active_company_id", id); } catch { /* no storage */ } }, COMPANY_ID);

@@ -47,8 +47,10 @@ const VIEWS = ["derived_tensions_structural", "relevance_overrides_without_live_
 // under_evidenced_diagnose, which was the VIEW asking the wrong question — an attestation is its
 // own evidence — not the fixture moving. derived_tensions_structural now excludes client_attested
 // from both under_evidenced branches, so the signed count stands. Guard: clientAttestedTension.spec.ts.
-const ADMIN_ROWS = 11;
-const ADMIN_COMPANIES = 3;
+// D4b (2026-11-16): 11 / 3 → 16 / 4. The Edgewood test twin holds a copy of Edgewood's rows, so this
+// fleet-wide view gains exactly Edgewood's 5 rows and one company. Nothing else moved.
+const ADMIN_ROWS = 16;
+const ADMIN_COMPANIES = 4;
 
 type Sb = {
   from: (t: string) => any;
@@ -102,7 +104,7 @@ test("(2) anon, no user token: a POST through the auto-updatable view is refused
   const res = await request.post(`${SUPABASE_URL}/rest/v1/${view}`, {
     headers: { apikey: ANON_KEY!, Authorization: `Bearer ${ANON_KEY!}`, "Content-Type": "application/json", Prefer: "return=representation" },
     data: {
-      company_id: "3dd2cfbb-0792-4bf1-9cd4-15db9646874b", // a company the anon caller has no claim to
+      company_id: "ed9e7000-0000-4000-8000-00000000d4b1", // a company the anon caller has no claim to (D4b: the Edgewood test twin)
       pairing_kind: "internal_vs_public",
       content_identity: identity,
       verdict: "relevant",

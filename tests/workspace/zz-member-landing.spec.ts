@@ -25,7 +25,7 @@ const NO_SESSION = { cookies: [], origins: [] } as const;
 /** The member fixture: exactly one company_members row, on the throwaway company below. */
 const MEMBER_CO = "66666666-6666-4666-8666-666666666601";
 /** A company the member fixture does not hold. Edgewood — read only as a URL, never written. */
-const FOREIGN_CO = "3dd2cfbb-0792-4bf1-9cd4-15db9646874b";
+const FOREIGN_CO = "ed9e7000-0000-4000-8000-00000000d4b1";
 /** The deleted fallback's id. A stored copy must not select anything. */
 const SENTINEL_CO = "00000000-0000-0000-0000-000000000001";
 
@@ -211,11 +211,11 @@ test.describe("the member landing", () => {
 
       // Both keys present before the click, or the assertion after it proves nothing.
       await p.evaluate(() => {
-        localStorage.setItem("active_company_id", "3dd2cfbb-0792-4bf1-9cd4-15db9646874b");
+        localStorage.setItem("active_company_id", "ed9e7000-0000-4000-8000-00000000d4b1");
         localStorage.setItem("mojo.presentation.mode", "client");
       });
       expect(await p.evaluate(() => [localStorage.getItem("active_company_id"), localStorage.getItem("mojo.presentation.mode")]))
-        .toEqual(["3dd2cfbb-0792-4bf1-9cd4-15db9646874b", "client"]);
+        .toEqual(["ed9e7000-0000-4000-8000-00000000d4b1", "client"]);
 
       await p.locator('[data-testid="member-notice-signout"]').click();
       await p.waitForURL("**/login", { timeout: 60_000 });

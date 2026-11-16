@@ -38,8 +38,8 @@ const TWELVE = [...ELEVEN, "/"] as const;
 // case worth testing, not a 404.
 const LANDING_ROUTES = [
   "/start",
-  "/preview/client-refine/first-read/3dd2cfbb-0792-4bf1-9cd4-15db9646874b",
-  "/preview/client-refine/diagnose/3dd2cfbb-0792-4bf1-9cd4-15db9646874b/home",
+  "/preview/client-refine/first-read/ed9e7000-0000-4000-8000-00000000d4b1",
+  "/preview/client-refine/diagnose/ed9e7000-0000-4000-8000-00000000d4b1/home",
 ] as const;
 
 const ALL_SIGNED_OUT = [...TWELVE, ...LANDING_ROUTES] as const;

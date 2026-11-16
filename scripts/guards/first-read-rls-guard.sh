@@ -237,7 +237,7 @@ NA_ROLES=$(psqlq "select count(*) from user_roles where user_id='$NA'")
 [ "$NA_ROLES" = "0" ] || { echo "guard: FAIL non-member fixture $NA has a user_roles row"; exit 1; }
 [ "$NA_CO_N" = "0" ] || { echo "guard: FAIL non-member fixture $NA has $NA_CO_N memberships, expected 0"; exit 1; }
 
-EDGEWOOD=3dd2cfbb-0792-4bf1-9cd4-15db9646874b
+EDGEWOOD=ed9e7000-0000-4000-8000-00000000d4b1  # D4b: the Edgewood TEST TWIN — the one live company this guard reads, asserted to return zero rows
 CO=66666666-6666-4666-8666-6666666666f1   # throwaway company for the admin write checks
 SESS_FIX=66666666-6666-4666-8666-6666666666a1  # kept fixture session on the member company
 

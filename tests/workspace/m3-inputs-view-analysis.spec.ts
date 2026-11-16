@@ -10,6 +10,7 @@
 // removing the workspace control fails b; removing the old-tab string switch fails c.
 import { expect, test, type Page, type Route } from "playwright/test";
 import { openWorkspace, open } from "./helpers";
+import { COMPANY_ID } from "../../playwright.config";
 
 type Captured = { method: string; url: string; body: unknown };
 const SUPABASE = /\/(rest|storage|functions)\/v1\//;
@@ -33,11 +34,12 @@ async function operatorOn(page: Page) {
 }
 /** The accepted proposal's stored summary, read through the page's own session (a GET). */
 async function storedSummary(page: Page, fileName: string): Promise<string> {
-  return page.evaluate(async (name) => {
+  // D4b: scoped to the default company — the Edgewood test twin holds a file of the same name as Edgewood's.
+  return page.evaluate(async ({ name, companyId }) => {
     const mod = await import("/src/integrations/supabase/client.ts");
-    const { data } = await mod.supabase.from("file_proposals").select("summary,status,processing_state").eq("file_name", name).eq("status", "accepted").eq("processing_state", "ready").limit(1);
+    const { data } = await mod.supabase.from("file_proposals").select("summary,status,processing_state").eq("company_id", companyId).eq("file_name", name).eq("status", "accepted").eq("processing_state", "ready").limit(1);
     return String((data as Array<{ summary: string }> | null)?.[0]?.summary ?? "");
-  }, fileName);
+  }, { name: fileName, companyId: COMPANY_ID });
 }
 
 test("b. workspace: View analysis → opens the completed analysis; zero non-GET requests", async ({ page }) => {

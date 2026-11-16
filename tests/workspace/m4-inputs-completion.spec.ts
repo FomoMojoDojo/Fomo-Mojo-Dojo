@@ -10,6 +10,7 @@
 // Vacuity: with the hook's `enabled` forced false on the page, a fails (no post, no transition).
 import { expect, test, type Page, type Route } from "playwright/test";
 import { fulfilledFrom, openWorkspace } from "./helpers";
+import { COMPANY_ID } from "../../playwright.config";
 
 type Captured = { method: string; url: string; body: unknown };
 const SUPABASE = /\/(rest|storage|functions)\/v1\//;
@@ -26,7 +27,7 @@ async function plant(page: Page): Promise<{ captured: Captured[]; state: { synce
         const res = await route.fetch();
         let rows: Array<Record<string, unknown>> = [];
         const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }
-        const filesRes = await page.request.get(url.replace(/\/file_proposals\?.*$/, `/input_files?select=id,file_name&file_name=eq.${encodeURIComponent(TARGET_FILE)}`), { headers: req.headers() });
+        const filesRes = await page.request.get(url.replace(/\/file_proposals\?.*$/, `/input_files?select=id,file_name,inputs!inner(company_id)&file_name=eq.${encodeURIComponent(TARGET_FILE)}&inputs.company_id=eq.${COMPANY_ID}`), { headers: req.headers() });
         const files = (await filesRes.json()) as Array<{ id: string }>;
         const fileId = files[0]?.id;
         const base = rows[0] ?? {};

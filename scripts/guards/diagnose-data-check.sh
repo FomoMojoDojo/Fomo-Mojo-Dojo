@@ -16,7 +16,7 @@
 # Run:  bash scripts/guards/diagnose-data-check.sh
 set -uo pipefail
 DB_CONTAINER="${DIAGNOSE_DB_CONTAINER:-supabase_db_dzlgyxcvuwiulgifbmew}"
-EDGEWOOD="3dd2cfbb-0792-4bf1-9cd4-15db9646874b"
+EDGEWOOD="ed9e7000-0000-4000-8000-00000000d4b1"  # D4b: the Edgewood TEST TWIN — same rows, ids remapped; Edgewood itself is never read
 fails=0
 ok()  { printf '  ok   (%s) %s\n' "$1" "$2"; }
 bad() { printf '  FAIL (%s) %s\n' "$1" "$2"; fails=$((fails+1)); }
