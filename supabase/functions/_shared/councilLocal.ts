@@ -114,6 +114,9 @@ export async function callLocalCouncilJSON(opts: {
         body: JSON.stringify({
           model: opts.model,
           stream: false,
+          // Council trial (2026-11-15): no thinking. A thinking model (qwen3.6:35b) otherwise spends the whole
+          // num_predict budget thinking and returns no JSON; a model without the capability ignores it.
+          think: false,
           format: COUNCIL_RESPONSE_SCHEMA,
           options: { num_ctx: opts.numCtx ?? COUNCIL_NUM_CTX, num_predict: budgets[attempt], temperature: opts.temperature },
           messages: [

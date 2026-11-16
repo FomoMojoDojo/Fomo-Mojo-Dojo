@@ -56,6 +56,7 @@ describe("F3′ callLocalCouncilJSON", () => {
     expect((f.calls[0].body.options as Record<string, unknown>).num_ctx).toBe(COUNCIL_NUM_CTX);
     expect((f.calls[0].body.options as Record<string, unknown>).num_predict).toBe(1000);
     expect(typeof f.calls[0].body.format).toBe("object");
+    expect(f.calls[0].body.think).toBe(false);
     expect(usage).toEqual([["qwen2.5:14b-instruct", { prompt_tokens: 1234, completion_tokens: 56 }]]);
   });
 
@@ -68,6 +69,7 @@ describe("F3′ callLocalCouncilJSON", () => {
     const out = await callLocalCouncilJSON({ ...base, ollamaUrl: "http://localhost:11434", fetchImpl: f.impl, onUsage: (_m, u) => { usage.push(u); } });
     expect(out.summary).toBe("ok");
     expect(f.calls.map((c) => (c.body.options as Record<string, unknown>).num_predict)).toEqual([1000, 1700]);
+    expect(f.calls.map((c) => c.body.think)).toEqual([false, false]);
     expect(usage.length).toBe(2);
   });
 
