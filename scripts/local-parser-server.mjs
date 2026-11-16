@@ -19,7 +19,7 @@ const PARSER_VERSIONS = Object.freeze({
   // 2026-11-13, so a date alone could not tell a 30-page read from a whole one, and a SIDECAR carries
   // no version of its own: the stored extraction_version on the proposal is the only record of which
   // parser wrote the text a later run reads. `-whole` is how a run says "this text is every page".
-  server: "local-parser-server-2026-11-13-whole",
+  server: "local-parser-server-2026-11-16-unreadable",
   pdfjs: (() => { try { return String(require("pdfjs-dist/package.json").version); } catch { return "unknown"; } })(),
   mammoth: (() => { try { return String(require("mammoth/package.json").version); } catch { return "unknown"; } })(),
 });
@@ -144,6 +144,22 @@ async function extractDocxText(buffer) {
   return { text: normalized.text, images, pagesRead: null, pagesTotal: null, charsTotal: raw.length, charsCapped: normalized.capped };
 }
 
+// S0 (2026-11-16): A FILE THAT CANNOT BE READ SAYS WHY. Every path that used to return empty text —
+// or threw, and reached the caller as a 500 — now returns `unreadable: { code }` beside the empty text,
+// so analyze-file can record the code on the file and the operator is shown the signed reason instead
+// of a bare "Analysis failed". The codes are the ones src/lib/ingest/ingestStrings.ts UNREADABLE_STRINGS
+// renders. OCR does not exist yet (S2), so a PDF of scanned pages, or an image, is `unreadable_format`.
+const CFB_MAGIC = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+/** An Office file saved with a password is an encrypted CFB container, not a zip. */
+const isCfbContainer = (buffer) => buffer.length >= 8 && buffer.subarray(0, 8).equals(CFB_MAGIC);
+const OOXML_EXT = new Set(["docx", "xlsx", "pptx", "docm", "xlsm", "pptm"]);
+
+function pdfErrorCode(error) {
+  const name = String(error?.name || "");
+  if (name === "PasswordException") return "unreadable_password";
+  return "unreadable_corrupt";
+}
+
 async function extractText({ fileName, fileType, contentBase64 }) {
   const buffer = Buffer.from(String(contentBase64 || ""), "base64");
   const ext = extensionFromName(fileName);
@@ -174,7 +190,15 @@ async function extractText({ fileName, fileType, contentBase64 }) {
     pages_read: pagesRead,
     pages_total: pagesTotal,
     versions: PARSER_VERSIONS,
+    unreadable: null,
   });
+  /** S0: empty text plus the reason it is empty. */
+  const unreadable = (code, source, extra = {}) => ({
+    ...shaped({ text: "", source, charsTotal: 0, ...extra }),
+    unreadable: { code },
+  });
+
+  if (buffer.length === 0) return unreadable("unreadable_empty", "empty_file");
 
   const isText =
     normalizedType.startsWith("text/") ||
@@ -184,23 +208,45 @@ async function extractText({ fileName, fileType, contentBase64 }) {
   if (isText) {
     const raw = buffer.toString("utf8");
     const normalized = normalizeTextCapped(raw);
+    if (!normalized.text) return unreadable("unreadable_empty", "local_text_reader");
     return shaped({ text: normalized.text, source: "local_text_reader", charsTotal: raw.length, charsCapped: normalized.capped });
   }
 
   const isPdf = normalizedType.includes("pdf") || ext === "pdf";
   if (isPdf) {
-    const { text, images, pagesRead, pagesTotal, charsTotal, charsCapped } = await extractPdfText(buffer);
+    let read;
+    try {
+      read = await extractPdfText(buffer);
+    } catch (error) {
+      return unreadable(pdfErrorCode(error), "local_parser_pdfjs");
+    }
+    const { text, images, pagesRead, pagesTotal, charsTotal, charsCapped } = read;
+    if (!text) {
+      // pages of images and no text layer: a scan, which needs OCR (S2) — not an empty document
+      const code = images > 0 ? "unreadable_format" : "unreadable_empty";
+      return unreadable(code, "local_parser_pdfjs", { images, pagesRead, pagesTotal });
+    }
     return shaped({ text, source: "local_parser_pdfjs", images, pagesRead, pagesTotal, charsTotal, charsCapped });
   }
+
+  // An encrypted Office file is a CFB container whatever its extension says.
+  if (OOXML_EXT.has(ext) && isCfbContainer(buffer)) return unreadable("unreadable_password", "office_encrypted");
 
   const isDocx =
     normalizedType.includes("officedocument.wordprocessingml.document") || ext === "docx";
   if (isDocx) {
-    const { text, images, pagesRead, pagesTotal, charsTotal, charsCapped } = await extractDocxText(buffer);
+    let read;
+    try {
+      read = await extractDocxText(buffer);
+    } catch {
+      return unreadable("unreadable_corrupt", "local_parser_mammoth");
+    }
+    const { text, images, pagesRead, pagesTotal, charsTotal, charsCapped } = read;
+    if (!text) return unreadable(images > 0 ? "unreadable_format" : "unreadable_empty", "local_parser_mammoth", { images });
     return shaped({ text, source: "local_parser_mammoth", images, pagesRead, pagesTotal, charsTotal, charsCapped });
   }
 
-  return shaped({ text: "", source: "unsupported", charsTotal: 0 });
+  return unreadable("unreadable_format", "unsupported");
 }
 
 function jsonResponse(res, status, body) {
@@ -240,7 +286,8 @@ const server = http.createServer(async (req, res) => {
     const fileType = String(payload.file_type || "").trim();
     const contentBase64 = String(payload.content_base64 || "").trim();
 
-    if (!fileName || !contentBase64) {
+    // S0: an EMPTY file is a real upload, answered unreadable_empty — only a missing field is a bad request.
+    if (!fileName || typeof payload.content_base64 !== "string") {
       jsonResponse(res, 400, { error: "file_name and content_base64 are required" });
       return;
     }

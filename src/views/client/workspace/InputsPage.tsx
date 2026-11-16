@@ -46,6 +46,7 @@ import { useFileProposals, type FileProposalRow } from "@/hooks/useFileProposals
 import { getFileSignedUrl, useArchiveInputFile, useArchivedInputFiles, useRestoreInputFile } from "@/hooks/useInputs";
 import { acceptFileProposal, dismissFileProposal, rejectFileProposal, runDifyAnalyzeFile, unlinkNeedsFromFilePath } from "@/hooks/useInputActions";
 import { FileTooLargeError, fileTooLargeMessage, type FileTooLargeRefusal } from "@/lib/fileTooLarge";
+import { unreadableReason } from "@/lib/ingest/ingestStrings";
 import { useProposalSync } from "@/hooks/useProposalSync";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useRoutes } from "@/hooks/useRoutes";
@@ -420,6 +421,10 @@ export default function InputsPage() {
                                 three strings describe the same kind of thing — something unread. */}
                             {sectionsText ? (
                               <span className="fr-ws-analysis-partial fr-mono" data-testid="inputs-analysis-sections">{sectionsText}</span>
+                            ) : null}
+                            {/* S0: a file that could not be read says why, in the refusal styling the size reason already uses. */}
+                            {proposal && proposal.processing_state === "failed" && unreadableReason(proposal.processing_error_code) ? (
+                              <span className="fr-ws-analysis-refused fr-mono" data-testid="inputs-analysis-reason" data-fr-code={proposal.processing_error_code ?? undefined}>{unreadableReason(proposal.processing_error_code)}</span>
                             ) : null}
                             {/* Ruling 9 (2026-09-14): Dify's proposal-level confidence, visible before the panel is opened. Same string as the panel chip. */}
                             {proposal && proposal.processing_state === "ready" && proposal.confidence ? (

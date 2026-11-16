@@ -107,3 +107,32 @@ export function isBudgetSelected(
   if (!Number.isFinite(itemsExtracted) || !Number.isFinite(itemsInterpreted)) return false;
   return itemsExtracted > 0 && itemsInterpreted >= 0 && itemsInterpreted < itemsExtracted;
 }
+
+// ── A FILE THAT COULD NOT BE READ (S0, signed 2026-11-16) ──────────────────────────────────────────
+//
+// Until S0 a file MojoMap could not read was filed 'voice_not_classified' with no reason, so a
+// password-protected, damaged or not-yet-supported file all showed a bare "Analysis failed". Each now
+// carries a code (input_files.extraction_error_code, written by analyze-file; copied onto the failed
+// proposal by public.close_unread_file) and the reason is rendered FROM THE CODE, here and nowhere
+// else — the database stores no copy of the wording, so the two cannot drift.
+//
+// Decision 6 (operator, 2026-11-16) relaxes SP-212 for exactly these codes. Every other failure code
+// (voice_not_classified, no_text_extracted, enqueue_attempts_exhausted, …) still renders no reason.
+export const UNREADABLE_STRINGS = {
+  unreadable_password: "This file is password-protected. Remove the password and upload it again.",
+  unreadable_corrupt: "This file appears to be damaged and could not be opened.",
+  unreadable_empty: "This file opened but contains no text.",
+  unreadable_no_text_after_ocr: "This file is an image, and no text could be recognized in it.",
+  unreadable_format: "MojoMap™ cannot read this kind of file yet.",
+  ocr_unavailable: "Text recognition is not available right now.",
+} as const;
+
+export type UnreadableCode = keyof typeof UNREADABLE_STRINGS;
+
+/** The signed reason for an unreadable code, or null for any other code (or none). */
+export function unreadableReason(code: string | null | undefined): string | null {
+  if (typeof code !== "string") return null;
+  return Object.prototype.hasOwnProperty.call(UNREADABLE_STRINGS, code)
+    ? UNREADABLE_STRINGS[code as UnreadableCode]
+    : null;
+}

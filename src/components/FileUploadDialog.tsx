@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { mapInputToAreaKey } from '@/lib/areaMapping';
 import { makeAreaSupportTag } from '@/lib/fileTags';
 import { FILE_TOO_LARGE_CAP_BYTES, fileTooLargeMessage, refusalFromInvoke, type FileTooLargeRefusal } from '@/lib/fileTooLarge';
+import { unreadableReason } from '@/lib/ingest/ingestStrings';
 import { INTERVIEW_SPEAKERS, INTERVIEW_UPLOAD_STRINGS, isTranscriptFileName, resolveInterviewHome, sha256HexOfFile, speakerLabelFor, speakerRoleFor, type InterviewSpeaker, type InterviewSpeakerRole } from '@/lib/interviewUploadStrings';
 
 interface Props {
@@ -30,6 +31,8 @@ type AnalysisResult = {
   reasoning: string;
   /** analyze-file refused the file by size (413 file_too_large) — the signed reason replaces the parser line. */
   refusal?: FileTooLargeRefusal;
+  /** S0: why the stored file could not be read (an UNREADABLE_STRINGS code), or null when it read. */
+  unreadableCode?: string | null;
 };
 
 type AssignmentSource = 'ai' | 'context' | 'filename' | 'fallback' | 'none';
@@ -45,6 +48,7 @@ type UploadSummary = {
   extractionSource?: string;
   parserEngine?: string;
   refusal?: FileTooLargeRefusal;
+  unreadableCode?: string | null;
   reasoning: string;
   source: AssignmentSource;
   error?: string;
@@ -278,6 +282,7 @@ async function analyzeFileForRouting(
         typeof data?.reasoning === 'string' && data.reasoning.trim().length > 0
           ? data.reasoning
           : 'Analysis complete.',
+      unreadableCode: typeof data?.unreadable_code === 'string' ? data.unreadable_code : null,
     };
   } catch {
     return null;
@@ -594,6 +599,18 @@ export default function FileUploadDialog({
               })
             : null;
         const analysis = postUploadAnalysis ?? initialAnalysis;
+        // S0: analyze-file records why a stored file could not be read BEFORE its tagging model call, so
+        // when that call outlasts the 20 s above, the code is still on the file row — read it from there.
+        // Only when analyze-file did not answer, and bounded: the upload never waits on this best-effort read.
+        let unreadableCode = postUploadAnalysis?.unreadableCode ?? null;
+        if (!postUploadAnalysis && uploadResult?.id) {
+          const codeRow = await Promise.race([
+            supabase.from('input_files').select('extraction_error_code').eq('id', uploadResult.id).maybeSingle()
+              .then(({ data }) => data as { extraction_error_code?: string | null } | null, () => null),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+          ]);
+          unreadableCode = codeRow?.extraction_error_code ?? null;
+        }
         const finalAssigned = resolveAssignedInput({
           inputs: eligibleInputs,
           suggestedInputId: analysis?.suggestedInputId ?? null,
@@ -648,6 +665,7 @@ export default function FileUploadDialog({
           extractionSource: analysis?.extractionSource || undefined,
           parserEngine: analysis?.parserEngine || 'local_ollama',
           refusal: analysis?.refusal,
+          unreadableCode,
           reasoning: analysis?.reasoning ?? 'Uploaded with automatic mapping.',
           source: finalAssigned.source,
         });
@@ -1027,6 +1045,11 @@ export default function FileUploadDialog({
                         ) : summary.refusal ? (
                           <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#915e46' }} data-testid="upload-analysis-refused">
                             {fileTooLargeMessage(summary.refusal)}
+                          </p>
+                        ) : unreadableReason(summary.unreadableCode) ? (
+                          // S0: a file that could not be read says why, in the signed words — not the parser line.
+                          <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#915e46' }} data-testid="upload-analysis-unreadable" data-fr-code={summary.unreadableCode ?? undefined}>
+                            {unreadableReason(summary.unreadableCode)}
                           </p>
                         ) : summary.parserEngine ? (
                           <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#6e847f' }}>

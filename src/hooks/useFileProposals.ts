@@ -118,6 +118,8 @@ export interface FileProposalRow {
   status: 'pending' | 'accepted' | 'rejected';
   processing_state: 'queued' | 'running' | 'ready' | 'failed';
   processing_error: string | null;
+  /** Machine-readable failure code. S0: an unreadable_* / ocr_unavailable code renders its signed reason. */
+  processing_error_code?: string | null;
   processing_started_at: string | null;
   processing_completed_at: string | null;
   applied_areas: string[];

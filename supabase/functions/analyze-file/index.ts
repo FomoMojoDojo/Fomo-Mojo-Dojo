@@ -90,8 +90,17 @@ async function extractTextViaLocalParser(params: {
   const data = await response.json().catch(() => ({}));
   const text = typeof data?.text === "string" ? data.text : "";
   const source = typeof data?.source === "string" ? data.source : "local_parser";
-  return { text, source };
+  // S0: the parser says WHY a read is empty (password, damaged, empty, not readable yet).
+  const unreadableCode = typeof data?.unreadable?.code === "string" ? data.unreadable.code : null;
+  return { text, source, unreadableCode };
 }
+
+// S0 (2026-11-16): the codes input_files.extraction_error_code admits (its CHECK constraint). Anything
+// else the parser might say is dropped rather than refused by the database.
+const EXTRACTION_ERROR_CODES = new Set([
+  "unreadable_password", "unreadable_corrupt", "unreadable_empty",
+  "unreadable_no_text_after_ocr", "unreadable_format", "ocr_unavailable",
+]);
 
 function safeParseJsonObject(input: unknown): Record<string, unknown> | null {
   if (typeof input !== "string") return null;
@@ -256,6 +265,8 @@ serve(async (req) => {
 
     let effectiveFileContent = String(fileContent || "");
     let effectiveExtractionSource = String(extractionSource || "").trim() || "none";
+    // S0: why a stored file read empty; recorded on the file row below and returned to the caller.
+    let unreadableCode: string | null = null;
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -289,7 +300,12 @@ serve(async (req) => {
 
         const ext = extensionFromName(fileName);
         const normalizedType = String(fileType || downloaded.type || "").toLowerCase();
-        if (
+        if (downloaded.size === 0) {
+          // S0: a 0-byte upload is a real file with nothing in it — not a parser error.
+          effectiveFileContent = "";
+          effectiveExtractionSource = "empty_file";
+          unreadableCode = "unreadable_empty";
+        } else if (
           normalizedType.startsWith("text/") ||
           normalizedType.includes("json") ||
           normalizedType.includes("csv") ||
@@ -297,6 +313,7 @@ serve(async (req) => {
         ) {
           effectiveFileContent = await downloaded.text();
           effectiveExtractionSource = "local_text_reader";
+          if (!effectiveFileContent.trim()) unreadableCode = "unreadable_empty";
         } else {
           const parsed = await extractTextViaLocalParser({
             parserUrl: LOCAL_PARSER_URL,
@@ -306,6 +323,7 @@ serve(async (req) => {
           });
           effectiveFileContent = parsed.text;
           effectiveExtractionSource = parsed.source;
+          if (!parsed.text.trim()) unreadableCode = parsed.unreadableCode;
         }
         {
           const m = Deno.memoryUsage();
@@ -323,6 +341,19 @@ serve(async (req) => {
       } catch (extractError) {
         console.error("analyze-file extraction failed:", extractError);
         effectiveExtractionSource = "local_parser_error";
+      }
+
+      // S0: the file row carries why it could not be read (cleared when a read succeeds), so the enqueue
+      // sweep closes it with that code instead of 'voice_not_classified' (public.unread_file_close_code).
+      // A parser that could not be reached records nothing: the sweep then says 'no_text_extracted'.
+      if (effectiveExtractionSource !== "local_parser_error") {
+        const code = effectiveFileContent.trim() ? null
+          : (unreadableCode && EXTRACTION_ERROR_CODES.has(unreadableCode) ? unreadableCode : null);
+        unreadableCode = code;
+        const { error: codeErr } = await supabase.from("input_files")
+          .update({ extraction_error_code: code })
+          .eq("file_path", filePath);
+        if (codeErr) console.error("analyze-file could not record extraction_error_code:", codeErr.message);
       }
     }
 
@@ -484,7 +515,7 @@ Only JSON, no markdown.`,
           text: effectiveFileContent,
         });
 
-        return new Response(JSON.stringify(normalized), {
+        return new Response(JSON.stringify({ ...normalized, unreadable_code: unreadableCode }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
@@ -517,7 +548,7 @@ Only JSON, no markdown.`,
       text: effectiveFileContent,
     });
 
-    return new Response(JSON.stringify(result), {
+    return new Response(JSON.stringify({ ...result, unreadable_code: unreadableCode }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {

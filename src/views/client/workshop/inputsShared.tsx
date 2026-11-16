@@ -7,7 +7,7 @@ import type { FileProposalRow } from "@/hooks/useFileProposals";
 import { formatAnalysisVersion, formatExtractionShape } from "@/lib/fileAnalysis";
 import {
   INGEST_STRINGS, isBudgetSelected, isPartialRead, partialReadLine,
-  sectionsFailedLine, sectionsProgressLine, showsSectionCounts,
+  sectionsFailedLine, sectionsProgressLine, showsSectionCounts, unreadableReason,
 } from "@/lib/ingest/ingestStrings";
 import { Info } from "lucide-react";
 import { isInternalFileTag, makeAreaSupportTag } from "@/lib/fileTags";
@@ -267,6 +267,8 @@ export function FileAnalysisBadge(
 ): JSX.Element {
   const partialRead = fileProposalPartialReadText(proposal);
   const sectionsText = fileProposalSectionsText(proposal);
+  // S0: a file that could not be read says why, beside "Analysis failed" — rendered from the code.
+  const unreadable = proposal.processing_state === "failed" ? unreadableReason(proposal.processing_error_code) : null;
   return (
     <>
       <span style={fileProposalProcessingBadgeStyle(proposal)} data-testid={`${testIdPrefix}-analysis-badge`} data-fr-state={proposal.processing_state}>
@@ -285,6 +287,11 @@ export function FileAnalysisBadge(
       {sectionsText ? (
         <span style={{ ...MONO, fontSize: 9, color: "#8a6d3b" }} data-testid={`${testIdPrefix}-analysis-sections`}>
           {sectionsText}
+        </span>
+      ) : null}
+      {unreadable ? (
+        <span style={{ ...MONO, fontSize: 9, color: "#a5281f" }} data-testid={`${testIdPrefix}-analysis-reason`} data-fr-code={proposal.processing_error_code ?? undefined}>
+          {unreadable}
         </span>
       ) : null}
     </>
@@ -654,9 +661,9 @@ export function ProposalReviewPanel({
         </div>
       )}
 
-      {isFailed && proposal.processing_error && (
+      {isFailed && (proposal.processing_error || unreadableReason(proposal.processing_error_code)) && (
         <p style={{ ...MONO, fontSize: 10, color: "#c0392b", margin: "0 0 14px", lineHeight: 1.6 }}>
-          Analysis failed: {proposal.processing_error}
+          Analysis failed: {proposal.processing_error || unreadableReason(proposal.processing_error_code)}
         </p>
       )}
 
