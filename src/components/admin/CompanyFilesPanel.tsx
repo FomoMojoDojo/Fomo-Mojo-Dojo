@@ -6,11 +6,18 @@ import { getFileSignedUrl, useDeleteInputFile, useInputs } from "@/hooks/useInpu
 import { useCompany } from "@/hooks/useCompany";
 import { toast } from "sonner";
 import type { InputFile } from "@/lib/types";
-import { isInternalFileTag, sanitizeUserEditableTags, visibleFileTags } from "@/lib/fileTags";
+import { visibleFileTags } from "@/lib/fileTags";
 import { buildDefaultCheckpointSeed } from "@/lib/jtbdProcess";
 import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import VoiceGatePanel from "@/components/admin/VoiceGatePanel";
+import { useCompanyFiles } from "@/hooks/useCompanyFiles";
+import { useFileProposals } from "@/hooks/useFileProposals";
+import { useProposalSync } from "@/hooks/useProposalSync";
+import { runDifyAnalyzeFile } from "@/hooks/useInputActions";
+import { FileTooLargeError, fileTooLargeMessage, type FileTooLargeRefusal } from "@/lib/fileTooLarge";
+import { FileAnalysisBadge, MONO, latestProposalByFile } from "@/views/client/workshop/inputsShared";
+import { WORKSPACE_STRINGS } from "@/views/client/workspace/workspaceNav";
 
 const c = {
   panel: "#FFFFFF",
@@ -35,74 +42,6 @@ interface Props {
   companyName: string;
   mode?: "preview" | "full";
 }
-
-type AnalyzeInputArea = {
-  id: string;
-  input_key: string;
-  group_key: string;
-  input_label: string;
-  sub_group: string;
-};
-
-type AnalyzeFileResult = {
-  suggested_tags?: string[];
-  suggested_input_id?: string | null;
-  odi_needs_candidates?: Array<{
-    desired_outcome?: string;
-    importance?: number;
-    satisfaction?: number;
-  }>;
-  error?: string;
-};
-
-const INPUT_KEYS_BY_AREA: Record<"positioning" | "strategy" | "market" | "odi", string[]> = {
-  positioning: ["comp-alt", "unique-attr", "val-prop", "target-aud", "market-cat", "brand-narrative"],
-  strategy: ["operating-model", "customer-research", "outcome-evidence", "acquisition-map", "channel-strat"],
-  market: ["market-cat", "target-aud", "comp-alt", "customer-research", "brand-narrative"],
-  odi: ["outcome-evidence", "customer-research", "operating-model"],
-};
-
-function areasForInputKeys(inputKeys: string[]) {
-  const normalized = new Set(inputKeys.map((key) => String(key || "").trim()));
-  const areas: Array<"positioning" | "strategy" | "market" | "odi"> = [];
-  for (const [area, keys] of Object.entries(INPUT_KEYS_BY_AREA) as Array<[
-    "positioning" | "strategy" | "market" | "odi",
-    string[],
-  ]>) {
-    if (keys.some((key) => normalized.has(key))) areas.push(area);
-  }
-  return areas;
-}
-
-type LocalAlignmentInvokeResult = {
-  error?: string;
-  applied_score_update?: {
-    applied?: boolean;
-    previous_mojo?: number | null;
-    updated_mojo?: number | null;
-    reason?: string;
-  };
-};
-
-type ResearchInvokeResult = {
-  error?: string;
-  message?: string;
-  status?: string;
-  stage?: string;
-  started_at?: string;
-  expires_at?: string;
-  odi_needs_inserted?: number;
-  odi_market_definitions_inserted?: number;
-  research_result?: {
-    error?: string;
-    message?: string;
-    status?: string;
-    started_at?: string;
-    expires_at?: string;
-    odi_needs_inserted?: number;
-    odi_market_definitions_inserted?: number;
-  };
-};
 
 type QuizIntakePayload = {
   where_stuck?: string;
@@ -622,56 +561,6 @@ type FileSystemDirectoryHandleLike = {
   getFileHandle: (name: string, options?: { create?: boolean }) => Promise<FileSystemFileHandleLike>;
 };
 
-async function describeInvokeError(error: unknown) {
-  const maybeContext = (() => {
-    if (!error || typeof error !== "object") return null;
-    const candidate = (error as { context?: { text?: () => Promise<string> } }).context;
-    if (!candidate || typeof candidate.text !== "function") return null;
-    return candidate;
-  })();
-
-  if (maybeContext) {
-    const payloadText = await maybeContext.text().catch(() => "");
-    if (!payloadText) return error instanceof Error ? error.message : String(error);
-    try {
-      const payload = JSON.parse(payloadText) as { error?: string; message?: string };
-      return String(payload.message || payload.error || payloadText);
-    } catch {
-      return payloadText;
-    }
-  }
-
-  return error instanceof Error ? error.message : String(error);
-}
-
-class InvokeTimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "InvokeTimeoutError";
-  }
-}
-
-async function invokeWithTimeout<T>(fn: () => Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      fn(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new InvokeTimeoutError(`Request timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-function formatLockTime(value?: string) {
-  if (!value) return "soon";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
 type FileSystemFileHandleLike = {
   createWritable: () => Promise<{ write: (data: Blob | BufferSource | string) => Promise<void>; close: () => Promise<void> }>;
 };
@@ -717,84 +606,6 @@ async function writeBlobUnique(dirHandle: FileSystemDirectoryHandleLike, desired
   throw new Error(`Could not create unique local filename for ${desiredName}`);
 }
 
-async function persistDerivedNeedsFromExistingFile(params: {
-  companyId: string;
-  userId: string | null;
-  sourcePath: string;
-  inputLabel: string;
-  candidates: Array<{
-    desired_outcome?: string;
-    importance?: number;
-    satisfaction?: number;
-  }>;
-}) {
-  const { companyId, userId, sourcePath, inputLabel, candidates } = params;
-  if (!userId || candidates.length === 0) return 0;
-
-  const { data: existingRows, error: existingError } = await supabase
-    .from("odi_needs")
-    .select("desired_outcome")
-    .eq("company_id", companyId)
-    .limit(600);
-  if (existingError) return 0;
-
-  const existing = new Set(
-    ((existingRows ?? []) as Array<{ desired_outcome?: string | null }>)
-      .map((row) => String(row.desired_outcome || "").trim().toLowerCase())
-      .filter(Boolean),
-  );
-
-  const toInsert = candidates
-    .map((candidate) => {
-      const desiredOutcome = String(candidate.desired_outcome || "").trim();
-      if (!desiredOutcome) return null;
-      const importance = Number.isFinite(Number(candidate.importance))
-        ? Math.max(1, Math.min(10, Math.round(Number(candidate.importance))))
-        : 7;
-      const satisfaction = Number.isFinite(Number(candidate.satisfaction))
-        ? Math.max(1, Math.min(10, Math.round(Number(candidate.satisfaction))))
-        : 4;
-      return {
-        desired_outcome: desiredOutcome,
-        importance,
-        satisfaction,
-      };
-    })
-    .filter((candidate): candidate is { desired_outcome: string; importance: number; satisfaction: number } => Boolean(candidate))
-    .filter((candidate) => {
-      const key = candidate.desired_outcome.toLowerCase();
-      if (!key || existing.has(key)) return false;
-      existing.add(key);
-      return true;
-    })
-    .slice(0, 6)
-    .map((candidate) => {
-      const opportunityScore = Number(
-        (candidate.importance + Math.max(0, candidate.importance - candidate.satisfaction)).toFixed(1),
-      );
-      return {
-        company_id: companyId,
-        user_id: userId,
-        desired_outcome: candidate.desired_outcome,
-        importance: candidate.importance,
-        satisfaction: candidate.satisfaction,
-        opportunity_score: opportunityScore,
-        journey_key: "customer",
-        step_number: 0,
-        step_label: `Reanalyzed existing file (${inputLabel || "Unmapped input"})`,
-        tier: "company",
-        service_state: "monitor",
-        source_path: sourcePath,
-        frameworks_used: ["JTBD", "Strategic Decision System", "Existing File Reanalysis"],
-      };
-    });
-
-  if (toInsert.length === 0) return 0;
-  const { error: insertError } = await supabase.from("odi_needs").insert(toInsert);
-  if (insertError) return 0;
-  return toInsert.length;
-}
-
 export default function CompanyFilesPanel({ companyId, companyName, mode = "preview" }: Props) {
   const { refetch: refetchCompanies } = useCompany();
   const { query } = useInputs(companyId);
@@ -806,7 +617,21 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const [mirroring, setMirroring] = useState(false);
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
-  const [reprocessing, setReprocessing] = useState(false);
+  const [analyzingIds, setAnalyzingIds] = useState<ReadonlySet<string>>(new Set());
+  const [failedIds, setFailedIds] = useState<ReadonlySet<string>>(new Set());
+  const [refusedById, setRefusedById] = useState<ReadonlyMap<string, FileTooLargeRefusal>>(new Map());
+  const busy = analyzingIds.size > 0;
+  // P1 (2026-11-16): the Inputs page's analysis state on this page — the same proposals, the same pick,
+  // the same sync poll while a run is queued or running (full mode only, as the button is).
+  const proposals = useFileProposals(companyId);
+  const proposalByFile = useMemo(() => latestProposalByFile(proposals.data), [proposals.data]);
+  useProposalSync(proposals.data, mode === "full", proposals.refetch);
+  const companyFiles = useCompanyFiles(companyId);
+  // An interview transcript is never analysed here — the fence refuses it server-side (Gate B).
+  const interviewFileIds = useMemo(
+    () => new Set((companyFiles.data ?? []).filter((f) => f.is_interview === true).map((f) => f.id)),
+    [companyFiles.data],
+  );
   const inputs = useMemo(() => query.data ?? [], [query.data]);
   const quizImportPreview = useMemo(() => {
     const raw = quizJson.trim();
@@ -932,228 +757,46 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
     }
   }
 
-  async function runReanalysisFromExistingFiles(filesToRun: FileWithContext[]) {
-    if (filesToRun.length === 0) {
-      toast.message("Select at least one file to re-run.");
-      return;
-    }
+  // Any queued or running proposal for the file, not only the one the badge shows: the badge's pick
+  // ranks an older ready analysis above a newer run, and a second start must not slip past that.
+  function isAnalysisActive(fileId: string) {
+    return (proposals.data ?? []).some(
+      (p) => p.file_id === fileId && (p.processing_state === "queued" || p.processing_state === "running"),
+    );
+  }
 
-    setReprocessing(true);
+  function canAnalyze(file: FileWithContext) {
+    return !interviewFileIds.has(file.id) && !isAnalysisActive(file.id);
+  }
+
+  // P1 (2026-11-16): "Analyze again" is the Inputs page's call and nothing else — runDifyAnalyzeFile
+  // queues a file_proposals row and the server starts it. The old Re-run chain (analyze-file, a needs
+  // insert, a local-alignment score rewrite, run-agent-flow research) cannot be started from here.
+  async function analyzeFile(file: FileWithContext) {
+    setAnalyzingIds((prev) => new Set([...prev, file.id]));
+    setFailedIds((prev) => { if (!prev.has(file.id)) return prev; const next = new Set(prev); next.delete(file.id); return next; });
+    setRefusedById((prev) => { if (!prev.has(file.id)) return prev; const next = new Map(prev); next.delete(file.id); return next; });
     try {
-      const { data: authRes } = await supabase.auth.getUser();
-      const userId = authRes?.user?.id ?? null;
-      const inputById = new Map(inputs.map((input) => [input.id, input]));
-      const inputAreas: AnalyzeInputArea[] = inputs.map((input) => ({
-        id: input.id,
-        input_key: input.input_key,
-        group_key: input.group_key,
-        input_label: input.input_label,
-        sub_group: input.sub_group,
-      }));
-
-      let succeeded = 0;
-      let failed = 0;
-      let insertedNeeds = 0;
-      let alignmentSummary = "";
-      const alignedInputKeys = new Set<string>();
-
-      for (const file of filesToRun) {
-        try {
-          const { data, error } = await supabase.functions.invoke("analyze-file", {
-            body: {
-              fileName: file.file_name,
-              filePath: file.file_url,
-              fileType: file.file_type || "",
-              extractionSource: "existing_file_rerun",
-              inputAreas,
-            },
-          });
-          if (error) throw error;
-
-          const analysis = (data ?? {}) as AnalyzeFileResult;
-          if (analysis.error) throw new Error(analysis.error);
-
-          const suggestedInputId = String(analysis.suggested_input_id || "").trim();
-          const targetInputId =
-            suggestedInputId && inputById.has(suggestedInputId) ? suggestedInputId : file.inputId;
-          const targetInput = inputById.get(targetInputId);
-          const targetInputKey = String(targetInput?.input_key || file.inputKey || "").trim();
-          if (targetInputKey) alignedInputKeys.add(targetInputKey);
-
-          const crossAreaInputIds = Array.isArray((analysis as { cross_area_input_ids?: unknown[] }).cross_area_input_ids)
-            ? (analysis as { cross_area_input_ids?: unknown[] }).cross_area_input_ids
-            : [];
-          for (const inputId of crossAreaInputIds) {
-            const mapped = inputById.get(String(inputId || "").trim());
-            const mappedKey = String(mapped?.input_key || "").trim();
-            if (mappedKey) alignedInputKeys.add(mappedKey);
-          }
-
-          const preservedInternalTags = (file.tags ?? []).filter((tag) => isInternalFileTag(tag));
-          const suggestedUserTags = Array.isArray(analysis.suggested_tags)
-            ? analysis.suggested_tags.map((tag) => String(tag || "").trim()).filter(Boolean)
-            : [];
-          const fallbackUserTags = sanitizeUserEditableTags(file.tags ?? []);
-          const userTags = suggestedUserTags.length > 0 ? [...new Set(suggestedUserTags)] : fallbackUserTags;
-          const finalTags = [...new Set([...userTags, ...preservedInternalTags])];
-
-          const { error: updateErr } = await supabase
-            .from("input_files")
-            .update({ input_id: targetInputId, tags: finalTags })
-            .eq("id", file.id);
-          if (updateErr) throw updateErr;
-
-          insertedNeeds += await persistDerivedNeedsFromExistingFile({
-            companyId,
-            userId,
-            sourcePath: file.file_url,
-            inputLabel: targetInput?.input_label || file.inputLabel,
-            candidates: Array.isArray(analysis.odi_needs_candidates) ? analysis.odi_needs_candidates : [],
-          });
-
-          succeeded += 1;
-        } catch (error) {
-          console.warn("Reanalysis failed for file", file.file_name, error);
-          failed += 1;
-        }
-      }
-
-      if (succeeded > 0) {
-        await query.refetch();
-        const rerunAreas = areasForInputKeys([...alignedInputKeys]);
-        const areasToRun = rerunAreas.length > 0 ? rerunAreas : (["positioning", "market"] as Array<"positioning" | "market">);
-        const { error: localAlignmentErr, data: localAlignmentData } = await supabase.functions.invoke("local-alignment", {
-          body: {
-            company_id: companyId,
-            areas: areasToRun,
-            trigger: "existing_file_rerun",
-            apply_score_update: true,
-            ignore_public_baseline: true,
-          },
-        });
-        if (localAlignmentErr || (localAlignmentData as LocalAlignmentInvokeResult | null)?.error) {
-          toast.error("Files re-ran, but local comparison refresh failed.");
-        } else {
-          const alignmentResult = (localAlignmentData ?? {}) as LocalAlignmentInvokeResult;
-          const applied = alignmentResult.applied_score_update?.applied === true;
-          const previous = alignmentResult.applied_score_update?.previous_mojo;
-          const updated = alignmentResult.applied_score_update?.updated_mojo;
-          if (applied && Number.isFinite(Number(previous)) && Number.isFinite(Number(updated))) {
-            alignmentSummary = ` Calibration read ${Number(previous)}→${Number(updated)} (${areasToRun.join(", ")}).`;
-          } else {
-            alignmentSummary = ` Local comparison completed (${areasToRun.join(", ")}).`;
-          }
-          await refetchCompanies().catch(() => undefined);
-        }
-
-        try {
-          const { data: activeLock } = await supabase
-            .from("company_run_locks")
-            .select("operation, started_at, expires_at")
-            .eq("company_id", companyId)
-            .maybeSingle();
-
-          if (activeLock?.operation === "research") {
-            alignmentSummary += ` Artifact regeneration already running (started ${formatLockTime(activeLock.started_at)}; lock expires ${formatLockTime(activeLock.expires_at)}).`;
-          } else {
-          const { data: companyRow, error: companyFetchErr } = await supabase
-            .from("companies")
-            .select("website")
-            .eq("id", companyId)
-            .maybeSingle();
-          if (companyFetchErr) throw companyFetchErr;
-
-          const { error: researchErr, data: researchData } = await invokeWithTimeout(
-            () =>
-              supabase.functions.invoke("run-agent-flow", {
-                body: {
-                  company_id: companyId,
-                  company_name: companyName,
-                  website: String((companyRow as { website?: unknown } | null)?.website || ""),
-                  mode: "uploaded_only",
-                  include_public_collection: false,
-                  include_local_alignment: false,
-                  apply_score_update: false,
-                  trigger: "existing_file_rerun",
-                  review_mode: "advisory",
-                  allow_review_block_save: true,
-                },
-              }),
-            95_000,
-          );
-
-          const researchResult =
-            researchData && typeof researchData === "object"
-              ? (researchData as ResearchInvokeResult)
-              : null;
-          const nestedResearch =
-            researchResult?.research_result && typeof researchResult.research_result === "object"
-              ? researchResult.research_result
-              : null;
-          const effectiveResearch = nestedResearch ?? researchResult;
-          const companyLocked =
-            effectiveResearch?.status === "company_locked" ||
-            /already running|company_locked/i.test(String(effectiveResearch?.message || "")) ||
-            /already running|company_locked/i.test(String(effectiveResearch?.error || ""));
-
-          if (companyLocked) {
-            alignmentSummary += ` Artifact regeneration already running (started ${formatLockTime(effectiveResearch?.started_at)}; lock expires ${formatLockTime(effectiveResearch?.expires_at)}).`;
-          } else if (researchErr || effectiveResearch?.error) {
-            const message = researchErr
-              ? await describeInvokeError(researchErr)
-              : String(effectiveResearch?.message || effectiveResearch?.error || "Research regeneration failed.");
-            alignmentSummary += ` Artifact regeneration failed (${message}).`;
-          } else {
-            const researchNeeds = Number(effectiveResearch?.odi_needs_inserted ?? 0);
-            const researchMarketDefs = Number(effectiveResearch?.odi_market_definitions_inserted ?? 0);
-            alignmentSummary += " Regenerated map, opportunities, routes, Strategic Decision System context, positioning, and strategy.";
-            alignmentSummary += ` Strategic Decision System: ${researchNeeds} need${researchNeeds === 1 ? "" : "s"}, ${researchMarketDefs} market context row${researchMarketDefs === 1 ? "" : "s"}.`;
-            await query.refetch();
-            await refetchCompanies().catch(() => undefined);
-          }
-          }
-        } catch (error) {
-          if (error instanceof InvokeTimeoutError) {
-            const { data: lockAfterTimeout } = await supabase
-              .from("company_run_locks")
-              .select("operation, started_at, expires_at")
-              .eq("company_id", companyId)
-              .maybeSingle();
-            if (lockAfterTimeout?.operation === "research") {
-              alignmentSummary += ` Artifact regeneration is still running (started ${formatLockTime(lockAfterTimeout.started_at)}; lock expires ${formatLockTime(lockAfterTimeout.expires_at)}).`;
-            } else {
-              alignmentSummary += ` Artifact regeneration timed out (${error.message}).`;
-            }
-          } else {
-            const message = await describeInvokeError(error);
-            alignmentSummary += ` Artifact regeneration failed (${message}).`;
-          }
-        }
-      }
-
-      if (failed > 0) {
-        toast.message(
-          `Re-ran ${succeeded} file${succeeded === 1 ? "" : "s"} (${failed} failed). Added ${insertedNeeds} Strategic Decision System need${insertedNeeds === 1 ? "" : "s"}.${alignmentSummary}`,
-        );
-      } else {
-        toast.success(
-          `Re-ran ${succeeded} file${succeeded === 1 ? "" : "s"} from existing uploads. Added ${insertedNeeds} Strategic Decision System need${insertedNeeds === 1 ? "" : "s"}.${alignmentSummary}`,
-        );
-      }
-
-      const completedIds = new Set(filesToRun.map((file) => file.id));
-      setSelectedFileIds((current) => current.filter((id) => !completedIds.has(id)));
+      await runDifyAnalyzeFile({
+        fileId: file.id,
+        filePath: file.file_url,
+        fileName: file.file_name,
+        fileType: file.file_type ?? "",
+        companyId,
+        sourceType: (file.tags ?? []).includes("Intake") ? "intake" : "uploaded_file",
+      });
+    } catch (err) {
+      if (err instanceof FileTooLargeError) setRefusedById((prev) => new Map(prev).set(file.id, err.refusal));
+      else setFailedIds((prev) => new Set([...prev, file.id]));
     } finally {
-      setReprocessing(false);
+      setAnalyzingIds((prev) => { const next = new Set(prev); next.delete(file.id); return next; });
+      await proposals.refetch();
     }
   }
 
-  async function handleRerunSelected() {
-    await runReanalysisFromExistingFiles(selectedFiles);
-  }
-
-  async function handleRerunSingle(file: FileWithContext) {
-    await runReanalysisFromExistingFiles([file]);
+  async function handleAnalyzeSelected() {
+    for (const file of selectedFiles.filter(canAnalyze)) await analyzeFile(file);
+    setSelectedFileIds([]);
   }
 
   async function handleMirrorToLocal() {
@@ -1541,7 +1184,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
               <button
                 type="button"
                 onClick={toggleVisibleSelection}
-                disabled={visibleFiles.length === 0 || reprocessing}
+                disabled={visibleFiles.length === 0 || busy}
                 className="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide transition-colors disabled:opacity-60"
                 style={{ color: c.secondary, borderColor: c.line, background: c.paper }}
               >
@@ -1549,13 +1192,13 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
               </button>
               <button
                 type="button"
-                onClick={handleRerunSelected}
-                disabled={selectedFiles.length === 0 || reprocessing}
+                onClick={() => { void handleAnalyzeSelected(); }}
+                disabled={selectedFiles.filter(canAnalyze).length === 0 || busy}
                 className="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide transition-colors disabled:opacity-60"
                 style={{ color: c.charcoal, borderColor: c.line, background: c.paper }}
-                title="Re-run analysis from selected existing files without uploading again"
+                data-testid="files-analyze-selected"
               >
-                {reprocessing ? "Re-running..." : `Re-run Selected (${selectedFiles.length})`}
+                {busy ? WORKSPACE_STRINGS.analyzing : `${WORKSPACE_STRINGS.analyzeAgain} (${selectedFiles.filter(canAnalyze).length})`}
               </button>
             </>
           ) : null}
@@ -1692,7 +1335,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
                             type="checkbox"
                             checked={selectedFileIds.includes(file.id)}
                             onChange={() => toggleSelected(file.id)}
-                            disabled={reprocessing}
+                            disabled={busy}
                             className="mt-1 h-4 w-4 cursor-pointer rounded border"
                             style={{ borderColor: c.line }}
                             aria-label={`Select ${file.file_name}`}
@@ -1723,20 +1366,34 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
                               </span>
                             ))}
                           </div>
+                          {proposalByFile.get(file.id) || refusedById.has(file.id) ? (
+                            <div className="mt-1 flex flex-wrap items-center gap-2" data-testid="files-analysis" data-fr-file-id={file.id}>
+                              {proposalByFile.get(file.id) ? <FileAnalysisBadge proposal={proposalByFile.get(file.id)!} testIdPrefix="files" /> : null}
+                              {refusedById.has(file.id) ? (
+                                <span style={{ ...MONO, fontSize: 9, color: "#8a6d3b" }} data-testid="files-analysis-refused">
+                                  {fileTooLargeMessage(refusedById.get(file.id)!)}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2">
-                        {mode === "full" ? (
+                        {mode === "full" && !interviewFileIds.has(file.id) ? (
                           <button
                             type="button"
-                            onClick={() => handleRerunSingle(file)}
-                            disabled={reprocessing}
+                            onClick={() => { void analyzeFile(file); }}
+                            disabled={busy || isAnalysisActive(file.id)}
                             className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide disabled:opacity-60"
                             style={{ color: c.secondary, borderColor: c.line, background: c.paper }}
-                            title="Re-run analysis from this stored file without uploading again"
+                            data-testid="files-analyze-again"
                           >
-                            {reprocessing ? "Re-running..." : "Re-run"}
+                            {analyzingIds.has(file.id) || isAnalysisActive(file.id)
+                              ? WORKSPACE_STRINGS.analyzing
+                              : failedIds.has(file.id)
+                                ? WORKSPACE_STRINGS.analysisFailedRetry
+                                : proposalByFile.get(file.id) ? WORKSPACE_STRINGS.analyzeAgain : WORKSPACE_STRINGS.runAnalysis}
                           </button>
                         ) : null}
                         <button
@@ -1750,7 +1407,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
                         <button
                           type="button"
                           onClick={() => handleDelete(file.id, file.file_url)}
-                          disabled={deleteMutation.isPending || reprocessing}
+                          disabled={deleteMutation.isPending || busy}
                           className="inline-flex items-center gap-1 rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide disabled:opacity-60"
                           style={{ color: "#915E46", borderColor: "#E6CFC2", background: "#FFF8F5" }}
                         >

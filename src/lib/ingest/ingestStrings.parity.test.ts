@@ -60,11 +60,15 @@ describe("the surfaces render it from this file", () => {
     "views/client/workspace/InputsPage.tsx",
     "views/client/workshop/tabs/InputsTab.tsx",
     "views/client/ClientRefinePreviewView.tsx",
+    "components/admin/CompanyFilesPanel.tsx",
   ];
 
+  // P1 (2026-11-16): a surface may render the helpers itself or through the shared FileAnalysisBadge,
+  // which is asserted below to render every one of them.
   it("each surface that shows a file's analysis state calls the shared helper", () => {
     for (const surface of surfaces) {
-      expect(read(surface), surface).toContain("fileProposalPartialReadText");
+      const src = read(surface);
+      expect(src.includes("fileProposalPartialReadText") || src.includes("<FileAnalysisBadge "), surface).toBe(true);
     }
   });
 
@@ -163,17 +167,29 @@ describe("the surfaces render the chunked strings from this file too", () => {
   const badgeSurfaces = [
     "views/client/workspace/InputsPage.tsx",
     "views/client/workshop/tabs/InputsTab.tsx",
+    "components/admin/CompanyFilesPanel.tsx",
   ];
+  const viaBadge = (src: string) => src.includes("<FileAnalysisBadge ");
+
+  it("the shared FileAnalysisBadge renders the badge, the info icon, and both reason lines (P1)", () => {
+    const shared = read("views/client/workshop/inputsShared.tsx");
+    const body = shared.slice(shared.indexOf("export function FileAnalysisBadge("), shared.indexOf("export function latestProposalByFile("));
+    for (const needle of ["fileProposalProcessingBadgeText(proposal)", "<FileProposalReadyInfoIcon proposal={proposal} />", "fileProposalPartialReadText(proposal)", "fileProposalSectionsText(proposal)"]) {
+      expect(body, needle).toContain(needle);
+    }
+  });
 
   it("every surface showing the ready badge renders the info icon from the shared component (SP-262)", () => {
     for (const surface of badgeSurfaces) {
-      expect(read(surface), surface).toContain("<FileProposalReadyInfoIcon proposal={proposal} />");
+      const src = read(surface);
+      expect(src.includes("<FileProposalReadyInfoIcon proposal={proposal} />") || viaBadge(src), surface).toBe(true);
     }
   });
 
   it("every surface showing the ready badge renders the section strings from the shared helper", () => {
     for (const surface of badgeSurfaces) {
-      expect(read(surface), surface).toContain("fileProposalSectionsText");
+      const src = read(surface);
+      expect(src.includes("fileProposalSectionsText") || viaBadge(src), surface).toBe(true);
     }
   });
 

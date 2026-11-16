@@ -54,7 +54,7 @@ import { canChangeSpeaker, canInferMarket, lastRunFailed, lastRunFoundNoMajority
 import { INTERVIEW_UPLOAD_STRINGS, type InterviewSpeakerRole } from "@/lib/interviewUploadStrings";
 import { readAreaSupportTags } from "@/lib/fileTags";
 import FileUploadDialog from "@/components/FileUploadDialog";
-import { DeleteConfirmPanel, FileProposalReadyInfoIcon, ProposalReviewPanel, fileProposalProcessingBadgeText, fileProposalPartialReadText, fileProposalSectionsText, proposalPriority, type FoundationArea, type SourceRow } from "@/views/client/workshop/inputsShared";
+import { DeleteConfirmPanel, FileProposalReadyInfoIcon, ProposalReviewPanel, fileProposalProcessingBadgeText, fileProposalPartialReadText, fileProposalSectionsText, latestProposalByFile, type FoundationArea, type SourceRow } from "@/views/client/workshop/inputsShared";
 import { Chip, type ChipTone } from "@/views/client/firstReadPreview/primitives";
 import { useOperatorControls } from "@/views/client/firstReadPreview/operatorControls";
 import { OPERATOR_MARK } from "@/views/client/firstReadPreview/operatorStrings";
@@ -162,14 +162,7 @@ export default function InputsPage() {
   const rows = files.data ?? [];
   const isInterviewFile = (f: CompanyFileRow) => f.is_interview === true || interviewByFile.has(f.id);
   // The tab's proposal-per-file choice (proposalPriority, newest wins ties).
-  const proposalByFile = useMemo(() => {
-    const m = new Map<string, FileProposalRow>();
-    for (const p of proposals.data ?? []) {
-      const cur = m.get(p.file_id);
-      if (!cur || proposalPriority(p) > proposalPriority(cur) || (proposalPriority(p) === proposalPriority(cur) && Date.parse(p.created_at) > Date.parse(cur.created_at))) m.set(p.file_id, p);
-    }
-    return m;
-  }, [proposals.data]);
+  const proposalByFile = useMemo(() => latestProposalByFile(proposals.data), [proposals.data]);
   // R13 (2026-09-19): the header numbers count evidence files only — interview rows stay listed but are outside both numbers.
   const counted = rows.filter((f) => !isInterviewFile(f));
   const assigned = counted.filter((f) => areasOf(f).length > 0).length;

@@ -257,6 +257,50 @@ export function FileProposalReadyInfoIcon(
   );
 }
 
+/**
+ * P1 (2026-11-16): the analysis badge and the reason lines beside it — the Inputs tab's cell, lifted
+ * here so Admin → Companies → Files renders the same thing with the same strings. Anything added to
+ * the reason lines later reaches every surface that renders this.
+ */
+export function FileAnalysisBadge(
+  { proposal, testIdPrefix }: { proposal: FileProposalRow; testIdPrefix: string },
+): JSX.Element {
+  const partialRead = fileProposalPartialReadText(proposal);
+  const sectionsText = fileProposalSectionsText(proposal);
+  return (
+    <>
+      <span style={fileProposalProcessingBadgeStyle(proposal)} data-testid={`${testIdPrefix}-analysis-badge`} data-fr-state={proposal.processing_state}>
+        {fileProposalProcessingBadgeText(proposal)}
+        {/* SP-260 (S-ING-5): inside the badge, so the icon reads as part
+            of "Analysis ready" rather than as a separate claim. */}
+        <FileProposalReadyInfoIcon proposal={proposal} />
+      </span>
+      {/* SP-94 (S-ING-1): beside the badge, never instead of it — the state is true, it is just not the whole document. */}
+      {partialRead ? (
+        <span style={{ ...MONO, fontSize: 9, color: "#8a6d3b" }} data-testid={`${testIdPrefix}-analysis-partial`}>
+          {partialRead}
+        </span>
+      ) : null}
+      {/* SP-244 (S-ING-2/3/4): same placement and same warning colour. */}
+      {sectionsText ? (
+        <span style={{ ...MONO, fontSize: 9, color: "#8a6d3b" }} data-testid={`${testIdPrefix}-analysis-sections`}>
+          {sectionsText}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+/** The proposal a file's analysis cell shows: the highest proposalPriority, the newest on a tie. */
+export function latestProposalByFile(rows: readonly FileProposalRow[] | null | undefined): Map<string, FileProposalRow> {
+  const m = new Map<string, FileProposalRow>();
+  for (const p of rows ?? []) {
+    const cur = m.get(p.file_id);
+    if (!cur || proposalPriority(p) > proposalPriority(cur) || (proposalPriority(p) === proposalPriority(cur) && Date.parse(p.created_at) > Date.parse(cur.created_at))) m.set(p.file_id, p);
+  }
+  return m;
+}
+
 export function fileProposalReviewCountsText(proposal: FileProposalRow): string {
   const parts: string[] = [];
   const needCount = proposal.candidate_needs.length;

@@ -21,8 +21,8 @@ import {
 import SocialSignalsPanel from "./SocialSignalsPanel";
 import {
   type ProposalAcceptPayload, type FoundationArea, FOUNDATION_AREAS, FOUNDATION_AREA_TO_AREA_KEY, AREA_KEY_TO_FOUNDATION,
-  applyAreaTags, type SourceRow, isFileBacked, areaDisplayLabel, fileProposalProcessingBadgeStyle, fileProposalProcessingBadgeText,
-  fileProposalPartialReadText, fileProposalSectionsText, FileProposalReadyInfoIcon,
+  applyAreaTags, type SourceRow, isFileBacked, areaDisplayLabel,
+  FileAnalysisBadge,
   fileProposalReviewCountsText, isProposalStale, isQueuedPlaceholderSummary, proposalPriority, inferSuggestedAreasFromProposal,
   proposalProgressPercent, MONO, LABEL_TINY, DeleteConfirmPanel, ProposalReviewPanel, WORKSHOP_TAGS, type WorkshopTag, type ProcessingStatus,
 } from "../inputsShared";
@@ -1413,24 +1413,7 @@ export default function InputsTab({
                                 const isFailedProposal = proposal.processing_state === "failed";
                                 return (
                                   <>
-                                    <span style={fileProposalProcessingBadgeStyle(proposal)}>
-                                      {fileProposalProcessingBadgeText(proposal)}
-                                      {/* SP-260 (S-ING-5): inside the badge, so the icon reads as part
-                                          of "Analysis ready" rather than as a separate claim. */}
-                                      <FileProposalReadyInfoIcon proposal={proposal} />
-                                    </span>
-                                    {/* SP-94 (S-ING-1): beside the badge, never instead of it — the state is true, it is just not the whole document. */}
-                                    {fileProposalPartialReadText(proposal) ? (
-                                      <span style={{ ...MONO, fontSize: 9, color: "#8a6d3b" }} data-testid="inputs-tab-analysis-partial">
-                                        {fileProposalPartialReadText(proposal)}
-                                      </span>
-                                    ) : null}
-                                    {/* SP-244 (S-ING-2/3/4): same placement and same warning colour. */}
-                                    {fileProposalSectionsText(proposal) ? (
-                                      <span style={{ ...MONO, fontSize: 9, color: "#8a6d3b" }} data-testid="inputs-tab-analysis-sections">
-                                        {fileProposalSectionsText(proposal)}
-                                      </span>
-                                    ) : null}
+                                    <FileAnalysisBadge proposal={proposal} testIdPrefix="inputs-tab" />
                                     <button
                                       type="button"
                                       onClick={() => {
