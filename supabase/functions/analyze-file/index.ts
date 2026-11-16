@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { encodeBlobBase64, parserRequestBody } from "../_shared/base64.ts";
 import { fileTooLargeBody, isOverCap, MAX_ANALYSIS_FILE_BYTES, storageObjectSize } from "../_shared/fileSizeGuard.ts";
 import { interviewFenceForFile, interviewFileRefusalBody } from "../_shared/uploadCorpus.ts";
+import { runUploadVoiceClassification } from "../_shared/uploadVoiceClassifier.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -101,6 +102,34 @@ const EXTRACTION_ERROR_CODES = new Set([
   "unreadable_password", "unreadable_corrupt", "unreadable_empty",
   "unreadable_no_text_after_ocr", "unreadable_format", "ocr_unavailable",
 ]);
+
+/** S1: the voice verdict for the uploaded file at filePath, written by the same local classifier
+ *  classify-upload-voice runs. A failure is logged and never fails the read: the browser's call and the
+ *  enqueue sweep's SP-205 close remain behind it. */
+async function classifyAfterSidecar(
+  // deno-lint-ignore no-explicit-any
+  supabase: { from: (t: string) => any; storage: any },
+  filePath: string,
+  ollamaUrl: string,
+): Promise<void> {
+  try {
+    const { data: fileRow } = await supabase.from("input_files")
+      .select("id, input_id, is_interview").eq("file_path", filePath).is("archived_at", null).maybeSingle();
+    if (!fileRow || (fileRow as { is_interview?: boolean }).is_interview === true) return;
+    const { data: inputRow } = await supabase.from("inputs")
+      .select("company_id").eq("id", (fileRow as { input_id: string }).input_id).maybeSingle();
+    const companyId = (inputRow as { company_id?: string } | null)?.company_id;
+    if (!companyId) return;
+    const result = await runUploadVoiceClassification(
+      supabase as unknown as Parameters<typeof runUploadVoiceClassification>[0],
+      companyId,
+      { ollamaUrl, model: Deno.env.get("OLLAMA_MODEL") ?? undefined, write: true, inputFileId: (fileRow as { id: string }).id },
+    );
+    console.log("[analyze-file] S1 voice classification after sidecar:", JSON.stringify(result).slice(0, 300));
+  } catch (err) {
+    console.error("[analyze-file] S1 voice classification failed:", err instanceof Error ? err.message : String(err));
+  }
+}
 
 function safeParseJsonObject(input: unknown): Record<string, unknown> | null {
   if (typeof input !== "string") return null;
@@ -337,6 +366,12 @@ serve(async (req) => {
             upsert: true,
             contentType: "text/plain;charset=utf-8",
           });
+          // S1 (2026-11-16): judge the document's voice HERE, the moment its sidecar exists. The browser
+          // used to ask for the verdict after giving this function 20 s; a slower read landed its sidecar
+          // after the browser had already asked, found nothing, and the file was closed
+          // voice_not_classified although it had been read. The browser's own call stays: it now finds
+          // this verdict and writes nothing (planUploadVoice skips a classified document).
+          await classifyAfterSidecar(supabase as unknown as Parameters<typeof classifyAfterSidecar>[0], filePath, OLLAMA_BASE_URL);
         }
       } catch (extractError) {
         console.error("analyze-file extraction failed:", extractError);
