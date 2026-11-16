@@ -22,6 +22,8 @@ export const HOME_DOM_BASELINE = path.resolve(process.env.FR_HOME_DOM_BASELINE |
 export default defineConfig({
   testDir: "tests/workspace",
   globalSetup: "tests/workspace/global-setup.ts",
+  // D4 (2026-11-16): the teardown compares Edgewood against the snapshot the setup took.
+  globalTeardown: "tests/workspace/global-teardown.ts",
   fullyParallel: false,
   workers: 1,
   retries: 0,

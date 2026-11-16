@@ -53,6 +53,10 @@ is_excluded() {
 }
 
 green=0; red=0; reds=""
+# D4 (2026-11-16): Edgewood is a real client and no guard may change it. Snapshot every row it owns
+# before the sweep and compare after; the comparison counts as one more sweep member.
+EW_SNAP=$(mktemp -t edgewood-sweep)
+bash scripts/edgewood-unchanged.sh snapshot "$EW_SNAP" >/dev/null || echo "edgewood-unchanged: snapshot FAILED"
 for g in scripts/guards/*.sh; do
   n=$(basename "$g")
   is_excluded "$n" && continue
@@ -66,6 +70,16 @@ for g in scripts/guards/*.sh; do
   $n  (exit $code)  $verdict"
   fi
 done
+
+ew_out=$(bash scripts/edgewood-unchanged.sh compare "$EW_SNAP" 2>&1); ew_code=$?
+rm -f "$EW_SNAP"
+if [ "$ew_code" -eq 0 ] && printf '%s' "$ew_out" | grep -q 'guard: PASS'; then
+  green=$((green+1))
+else
+  red=$((red+1))
+  reds="$reds
+  edgewood-unchanged (sweep before/after)  (exit $ew_code)  $(printf '%s' "$ew_out" | tr '\n' ' ' | head -c 300)"
+fi
 
 echo "GREEN=$green RED=$red TOTAL=$((green+red))"
 if [ -n "$reds" ]; then echo "REDS:$reds"; fi

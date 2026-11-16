@@ -7,12 +7,19 @@
 # Planted failure: PLANT=1 disables interview_records_immutable inside the transaction → (i) and (j) refusals vanish → FAIL.
 set -uo pipefail
 PGC=${PGC:-supabase_db_dzlgyxcvuwiulgifbmew}
-CO=3dd2cfbb-0792-4bf1-9cd4-15db9646874b
+# D4 (2026-11-16): its own held throwaway, never Edgewood (a real client). Born held (E2), never deleted;
+# the cases below still run inside a rolled-back transaction, so only the company row persists.
+CO=d4000000-0000-4000-8000-0000000000a2
+docker exec -i "$PGC" psql -U postgres -d postgres -At -q -c "insert into public.companies (id, name, created_by, fixture_hold)
+  values ('$CO', 'ZZ D4 throwaway interview-records guard', (select id from auth.users order by created_at limit 1), 'D4:test_fixture')
+  on conflict (id) do update set fixture_hold = coalesce(public.companies.fixture_hold, 'D4:test_fixture');" >/dev/null
 PLANT_SQL=""; [ "${PLANT:-0}" = "1" ] && PLANT_SQL="alter table public.interview_records disable trigger interview_records_immutable;"
 out=$(docker exec -i "$PGC" psql -U postgres -d postgres -At -v ON_ERROR_STOP=0 <<SQL 2>&1
 begin;
 $PLANT_SQL
--- fixture: one flagged file row + one customer transcript record (throwaway strings, rolled back)
+-- fixture: one input on the throwaway, one flagged file row + one customer transcript record (rolled back)
+insert into inputs (id, user_id, input_key, input_label, group_key, group_label, sub_group, completeness, status, score_impact, impact_tier, company_id)
+  select '33333333-3333-4333-8333-333333333333', created_by, 'guard-input', 'Guard', 'foundation', 'Guard', 'Guard', 0, 'not_started', 1.0, 'low', id from companies where id='$CO';
 insert into input_files (id, input_id, file_name, file_type, file_path, tags, is_interview)
   select '11111111-1111-4111-8111-111111111111', i.id, 'guard-fixture.txt', 'text/plain', 'guard/fixture.txt', '{}', true from inputs i where i.company_id='$CO' limit 1;
 insert into interview_records (id, company_id, speaker_role, interviewed_at, verbatim, created_by, input_file_id, file_sha256, file_bytes, text_sha256, extraction_method, extraction_version, market_state, market_basis)

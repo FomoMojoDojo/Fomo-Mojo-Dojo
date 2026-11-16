@@ -8,8 +8,12 @@
 set -uo pipefail
 PGC=${PGC:-supabase_db_dzlgyxcvuwiulgifbmew}
 psql_q() { docker exec -i "$PGC" psql -U postgres -d postgres -At -v ON_ERROR_STOP=0 "$@"; }
-CO=$(psql_q -c "select id from companies where name='Edgewood' limit 1")
-[ -n "$CO" ] || { echo "guard: FAIL no fixture company"; exit 1; }
+# D4 (2026-11-16): its own held throwaway, never Edgewood (a real client). Born held (E2), never deleted.
+CO=d4000000-0000-4000-8000-0000000000a3
+psql_q -q -c "insert into public.companies (id, name, created_by, fixture_hold)
+  values ('$CO', 'ZZ D4 throwaway integrity-system-scope guard', (select id from auth.users order by created_at limit 1), 'D4:test_fixture')
+  on conflict (id) do update set fixture_hold = coalesce(public.companies.fixture_hold, 'D4:test_fixture');" >/dev/null
+[ "$(psql_q -c "select count(*) from companies where id='$CO' and fixture_hold is not null")" = 1 ] || { echo "guard: FAIL no held fixture company"; exit 1; }
 # case 1 — must be rejected
 r1=$(psql_q <<SQL 2>&1
 begin;

@@ -5,9 +5,16 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { BASE_URL, COMPANY_ID, STORAGE_STATE } from "../../playwright.config";
 
+/** D4 (2026-11-16): where the run's Edgewood snapshot lives; global-teardown.ts compares against it. */
+export const EDGEWOOD_SNAPSHOT = path.resolve("backups/edgewood-snapshot-playwright.txt");
+
 export default async function globalSetup() {
+  // D4: before anything else, snapshot every row Edgewood owns. No spec may change a real client.
+  fs.mkdirSync(path.dirname(EDGEWOOD_SNAPSHOT), { recursive: true });
+  execFileSync("bash", ["scripts/edgewood-unchanged.sh", "snapshot", EDGEWOOD_SNAPSHOT], { stdio: "inherit" });
   if (fs.existsSync(STORAGE_STATE)) return;
   const email = process.env.FR_LOGIN_EMAIL;
   const password = process.env.FR_LOGIN_PASSWORD;

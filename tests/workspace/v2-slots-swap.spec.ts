@@ -17,7 +17,11 @@
 // in a finally. Only rows this spec created are ever deleted, by id.
 import { execFileSync } from "node:child_process";
 import { expect, test, type Page } from "playwright/test";
-import { COMPANY_ID } from "../../playwright.config";
+// D4 (2026-11-16): this spec WRITES (first_read_slots), so it runs on a held fixture, never on the
+// default company — Edgewood is a real client. BlueSkyAI (R39:test_fixture) carries a current
+// positioning and strategy read, which the slots bind to. It holds no slot of its own, so legs (2)(3)
+// run for both kinds and leg (6) skips — the mirror of Edgewood, whose live positioning slot ran (6).
+const COMPANY_ID = process.env.FR_V2_COMPANY_ID || "a74a0291-6a35-43cc-9544-fd788370a53c";
 import { open } from "./helpers";
 
 const PGC = process.env.PGC || "supabase_db_dzlgyxcvuwiulgifbmew";

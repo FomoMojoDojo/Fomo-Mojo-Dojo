@@ -5,7 +5,12 @@
 # in the pre-R15 count (every row counts) inside the transaction → the interview row moves completeness → FAIL.
 set -uo pipefail
 PGC=${PGC:-supabase_db_dzlgyxcvuwiulgifbmew}
-CO=3dd2cfbb-0792-4bf1-9cd4-15db9646874b
+# D4 (2026-11-16): its own held throwaway, never Edgewood (a real client). Born held (E2), never deleted;
+# the cases below still run inside a rolled-back transaction, so only the company row persists.
+CO=d4000000-0000-4000-8000-0000000000a1
+docker exec -i "$PGC" psql -U postgres -d postgres -At -q -c "insert into public.companies (id, name, created_by, fixture_hold)
+  values ('$CO', 'ZZ D4 throwaway input-completeness guard', (select id from auth.users order by created_at limit 1), 'D4:test_fixture')
+  on conflict (id) do update set fixture_hold = coalesce(public.companies.fixture_hold, 'D4:test_fixture');" >/dev/null
 PLANT_SQL=""
 if [ "${PLANT:-0}" = "1" ]; then
   PLANT_SQL=$(docker exec -i "$PGC" psql -U postgres -d postgres -At -c "select replace(pg_get_functiondef('public.recalculate_input_completeness'::regproc), 'AND is_interview = false', '')")";"

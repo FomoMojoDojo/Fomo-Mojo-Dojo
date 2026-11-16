@@ -22,6 +22,8 @@ STORAGE=supabase_storage_dzlgyxcvuwiulgifbmew
 PREFIX="zz-throwaway/largefile"
 TMP=$(mktemp -d)
 THROWAWAY_COMPANY="00000000-0000-4000-8000-00000000aaaa"
+# D4 (2026-11-16): the over-cap refusal names its own held throwaway, never Edgewood (a real client).
+REFUSAL_COMPANY="d4000000-0000-4000-8000-0000000000a4"
 fail() { echo "FAIL step $1: $2"; cleanup; exit 1; }
 psql() { docker exec -i "$DB" psql -U postgres -Atc "$1"; }
 cleanup() {
@@ -43,11 +45,13 @@ done
 SIZE26=$(psql "select (metadata->>'size')::bigint from storage.objects where bucket_id='input-files' and name='$PREFIX/guard-26mib.pdf'")
 [ "${SIZE26:-0}" -gt 26214400 ] || fail 0 "over-cap object not stored ($SIZE26)"
 
+psql "insert into companies (id, name, created_by, fixture_hold) values ('$REFUSAL_COMPANY', 'ZZ D4 throwaway large-file refusal', (select id from auth.users order by created_at limit 1), 'D4:test_fixture') on conflict (id) do update set fixture_hold = coalesce(companies.fixture_hold, 'D4:test_fixture')" >/dev/null
+
 # 1. over-cap refused by both, no download
 code=$(call analyze-file "{\"fileName\":\"guard-26mib.pdf\",\"filePath\":\"$PREFIX/guard-26mib.pdf\",\"fileType\":\"application/pdf\",\"inputAreas\":[]}")
 [ "$code" = 413 ] || fail 1a "analyze-file over-cap status $code: $(cat "$TMP/body")"
 grep -q "\"error\":\"file_too_large\",\"size\":$SIZE26,\"cap\":26214400" "$TMP/body" || fail 1a "analyze-file body: $(cat "$TMP/body")"
-code=$(call dify-analyze-file "{\"fileId\":\"00000000-0000-4000-8000-00000000bbbb\",\"filePath\":\"$PREFIX/guard-26mib.pdf\",\"fileName\":\"guard-26mib.pdf\",\"fileType\":\"application/pdf\",\"companyId\":\"3dd2cfbb-0792-4bf1-9cd4-15db9646874b\",\"sourceType\":\"uploaded_file\"}")
+code=$(call dify-analyze-file "{\"fileId\":\"00000000-0000-4000-8000-00000000bbbb\",\"filePath\":\"$PREFIX/guard-26mib.pdf\",\"fileName\":\"guard-26mib.pdf\",\"fileType\":\"application/pdf\",\"companyId\":\"$REFUSAL_COMPANY\",\"sourceType\":\"uploaded_file\"}")
 [ "$code" = 413 ] || fail 1b "dify-analyze-file over-cap status $code: $(cat "$TMP/body")"
 grep -q "\"error\":\"file_too_large\",\"size\":$SIZE26,\"cap\":26214400" "$TMP/body" || fail 1b "dify-analyze-file body: $(cat "$TMP/body")"
 n=$(psql "select count(*) from file_proposals where file_id='00000000-0000-4000-8000-00000000bbbb'")
