@@ -1222,24 +1222,24 @@ workflow:
 
                 Analyze this file through the JTBD lens.
 
-                Your job is to extract the underlying customer or team work described in the file.
+                Your job is to extract the work THE CLIENT'S CUSTOMER is trying to get done. The job executor is always the client's customer — the people or organizations the company serves — never the company's own staff, the author of the file, or anyone reading it.
 
                 Look for:
-                - what a person or team is trying to get done
-                - decision steps
-                - coordination steps
-                - validation steps
-                - planning or prioritization steps
-                - struggles during those steps
-                - desired progress or improved end state
+                - what the customer is trying to get done
+                - the steps the customer takes to get it done
+                - struggles the customer meets during those steps
+                - the customer's desired progress or improved end state
 
                 Important:
                 - do not restate MojoMap, Strategic Decision System, or any product concept as the job
                 - do not say the job is to build, refine, adopt, or develop MojoMap
                 - do not output product strategy as job map work
-                - each finding must describe a customer/team action, struggle, or desired progress
-                - each finding must be a job step, struggle, or desired progress that THIS file explicitly describes for the customer or team; quote the file sentence as evidence
+                - each finding must describe a customer action, struggle, or desired progress
+                - a step the company or its staff carries out (providing, telling, deepening relationships, streamlining, tracking, measuring, evaluating) is the company's work, not the customer's job — leave it out
+                - never phrase a finding as reading, studying or evaluating something: do not begin a claim with understand, analyze, review or assess — that is the reader's activity, not the customer's job
+                - each finding must be a job step, struggle, or desired progress that THIS file explicitly describes for the customer; quote the file sentence as evidence
                 - if the file describes no such work, return an empty findings array — do not emit a generic job step
+                - a document with no content about the client's customer doing their job (a financial filing, a legal or regulatory notice, a memo about the company's own operations) returns an empty findings array
                 - if the file describes a blocker, translate it into the affected job step
                 - use only file evidence
 
@@ -1335,20 +1335,23 @@ workflow:
 
                 Analyze this file through the ODI lens.
 
-                Your job is to extract directional desired outcome statements from the file, even when formal ODI survey evidence is missing.
+                Your job is to extract the desired outcomes of the client's customer that the file's own words support.
 
                 Look for:
                 - desired progress
                 - what success should improve
                 - bottlenecks, delays, uncertainty, rework, lack of clarity
-                - any signal that a team wants to get an outcome faster, more reliably, or with less effort
+                - any signal that the customer wants to get an outcome faster, more reliably, or with less effort
+                Write each claim as a desired outcome with three parts: a direction (minimize or increase), a metric (time, likelihood, number, effort, cost, or similar), and the object of control — the thing the customer is working on.
+                Not an outcome: "Better communication with families" — it has no direction, no metric and no object of control.
 
                 Important:
                 - do not fabricate ODI scores
                 - if the file does not contain enough evidence to score importance or satisfaction, treat them as unknown rather than absent
-                - still return useful ODI findings when the file clearly implies desired progress
+                - if the file states no customer desired outcome in its own words, return an empty findings array
+                - a target the company sets for its own results (revenue or funding mix, donor or member counts, donor retention, staffing) is never an ODI finding, even when it is written without a subject
                 - internal strategy files describe the COMPANY's own intent, not customer needs; from them extract ONLY the customer frictions or desired progress the file explicitly describes (what the target customer struggles with or wants), NEVER the company's aspirations, positioning, or how-we-win statements
-                - every finding's subject must be the CUSTOMER (buyer/operator/end-user); if the subject is the company ("we", "Cafe Barra", "our brand") describing what it aims to do or how it wins, it is NOT an ODI finding — omit it
+                - every finding's subject must be the CUSTOMER (the people or organizations the company serves); if the subject is the company ("we", the company's own name, "our brand") describing what it aims to do or how it wins, it is NOT an ODI finding — omit it
                 - only interview or survey files count as primary customer validation
                 - do not claim customer validation unless the source explicitly supports it
 
@@ -1372,8 +1375,7 @@ workflow:
                 - evidence must be a verbatim sentence or passage copied from "Uploaded file content" above — never from the grounded read, never a paraphrase, never a description of what the file lacks
                 - if no sentence in the file supports a finding, set evidence to "" (empty string) and lower confidence
                 - express findings as directional outcome opportunities, not generic absence statements
-                - do not say “no desired outcomes” if the file clearly implies a desired end state
-                - if scoring evidence is missing, keep confidence low but still return outcome-oriented findings when justified
+                - if scoring evidence is missing, keep confidence low
                 - use only file evidence
                 - do not use markdown
                 - return only raw JSON
