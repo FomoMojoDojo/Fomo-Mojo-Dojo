@@ -22,10 +22,23 @@ const require = createRequire(import.meta.url);
 // (scripts/ocr/vision-ocr.swift, built by scripts/ocr/build-vision-ocr.sh). Its version is checked once,
 // at boot, and stamped into versions.ocr — an OS update that changes Vision's model then shows as a new
 // parser version, beside the SP-283 reuse check, and a sidecar is never silently re-read under it.
+// THE PARSER'S LIMITS (T1, 2026-11-17) — every number that bounds a read, by name, in one place to look.
+// A cap on TEXT exists exactly once (TEXT_CHAR_CAP); everything else here bounds TIME, PAGES, SHEETS,
+// ROWS or the REQUEST, never the characters of a document. ingest-chunking-guard (c1) proves the text
+// half BEHAVIOURALLY against the served parser, so a second text cap fails it however it is spelled.
+//   TEXT_CHAR_CAP          350,000 characters — the one text cap, reported as chars_capped (SP-231, SP-267)
+//   OCR_PAGE_CAP           200 OCR'd pages (Decision 7; env override for the guard's cap test only)
+//   OCR_MIN_TEXT_CHARS     20 — below it a page with images is a scan (S2)
+//   OCR_CALL_TIMEOUT_MS    2 minutes per helper call — a TIME limit, not a character cap
+//   OCR_VERSION_TIMEOUT_MS 20 seconds for the boot-time version probe
+//   XLSX_SHEET_CAP         50 sheets; XLSX_ROW_CAP 5,000 rows per sheet (S4, reported as rows_capped)
+//   MAX_BODY_BYTES         35 MiB request body (env override)
+const OCR_CALL_TIMEOUT_MS = 2 * 60 * 1000;
+const OCR_VERSION_TIMEOUT_MS = 20 * 1000;
 const OCR_BIN = process.env.VISION_OCR_BIN || path.join(path.dirname(fileURLToPath(import.meta.url)), "ocr", "bin", "vision-ocr");
 const OCR_VERSION = (() => {
   try {
-    const v = JSON.parse(execFileSync(OCR_BIN, ["--version"], { encoding: "utf8", timeout: 20_000 }));
+    const v = JSON.parse(execFileSync(OCR_BIN, ["--version"], { encoding: "utf8", timeout: OCR_VERSION_TIMEOUT_MS }));
     const macos = execFileSync("sw_vers", ["-productVersion"], { encoding: "utf8" }).trim();
     return `vision-rev${v.revision}-${(v.languages || []).join("+")}-macOS-${macos}`;
   } catch {
@@ -127,7 +140,7 @@ const IMAGE_OPS = new Set(["paintImageXObject", "paintImageXObjectRepeat", "pain
 const OCR_MIN_TEXT_CHARS = 20;
 const OCR_PAGE_CAP = Number(process.env.LOCAL_PARSER_OCR_PAGE_CAP || 200);   // env override exists for the guard's cap test only
 const execFileP = (cmd, args) => new Promise((resolve, reject) => {
-  execFile(cmd, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 2 * 60_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  execFile(cmd, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: OCR_CALL_TIMEOUT_MS }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
 });
 /** Vision's lines for each image path, in order; an image it could not load reads as no lines. */
 async function ocrImageFiles(paths) {

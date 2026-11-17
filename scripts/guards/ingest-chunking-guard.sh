@@ -3,8 +3,9 @@
 # one window (SP-231..SP-234; 2026-11-13).
 #
 # WHAT IT PROVES, and why each half is here.
-#   PART A  the caps. The page cap is GONE from the parser, the one remaining cap is 400,000
-#           characters, and nothing is written INTO the text to mark a cut (the old `[truncated]`
+#   PART A  the caps. The page cap is GONE from the parser, the one remaining cap is 350,000
+#           characters (proved against the served parser, T1), and nothing is written INTO the
+#           text to mark a cut (the old `[truncated]`
 #           string was produced by the parser and read by nothing).
 #   PART B  the windower, on a GENERATED document — exact coverage, the cap honoured, no cut inside a
 #           block, and WINDOW_CHARS pinned to interview-parser/segment.ts so the two cannot drift.
@@ -16,7 +17,8 @@
 #
 # D4: NOTHING HERE INVOKES A WRITER OR A MODEL. The windower is PURE — no I/O, no clock, no model — so
 # it is run directly under deno. The table checks are inserts on a HELD throwaway company, read back
-# and removed; the parser checks are static reads of the file.
+# and removed; the parser checks are static reads of the file plus two read-only extractions from the
+# local parser on :8789 (no model, no write).
 #
 # Read the printed verdict, not only the exit code — this guard sets both (SP-59).
 set -uo pipefail
@@ -60,14 +62,63 @@ else
 fi
 
 if grep -q 'const TEXT_CHAR_CAP = 350_000;' "$PARSER"; then
-  ok "(c1) the one remaining cap is 400,000 characters"
+  ok "(c1) the one remaining cap is named TEXT_CHAR_CAP and is 350,000 characters"
 else
-  bad "(c1) TEXT_CHAR_CAP is not 400_000 in $PARSER"
+  bad "(c1) TEXT_CHAR_CAP is not 350_000 in $PARSER"
 fi
-if grep -q '120_000' "$PARSER"; then
-  bad "(c1) the old 120,000-character cap is still in $PARSER"
+# T1 (2026-11-17): every timeout in the parser is a NAMED constant. The old check here grepped for the
+# literal 120_000 and went RED on the OCR call's two-minute timeout, which is a time limit and was never
+# a character cap — while a real 120k cap spelled 120000 or 120e3 would have passed it. Timeouts are now
+# named, and the text half is proved by BEHAVIOUR below, whatever a constant is called.
+if grep -q 'const OCR_CALL_TIMEOUT_MS = ' "$PARSER" && grep -q 'timeout: OCR_CALL_TIMEOUT_MS' "$PARSER"; then
+  ok "(c1) the OCR call's timeout is the named OCR_CALL_TIMEOUT_MS"
 else
-  ok "(c1) the old 120,000-character cap is gone"
+  bad "(c1) the OCR call's timeout is not the named OCR_CALL_TIMEOUT_MS in $PARSER"
+fi
+if grep -nE 'timeout:\s*[0-9]' "$PARSER" | grep -vE '^\s*[0-9]+:\s*//' | grep -q .; then
+  bad "(c1) a timeout in $PARSER is a bare number — name it in the LIMITS list"
+else
+  ok "(c1) no timeout in the parser is a bare number"
+fi
+
+# T1: THE BEHAVIOURAL CAP CHECK, against the parser SERVING on :8789 (read-only, local, no model, no
+# write). A generated plain-text document of 200,000 characters must come back whole — chars 200,000,
+# chars_capped false, its last line intact — and one of 360,000 must come back capped at no more than
+# 350,000 with chars_capped true. Any second cap on the text, in any spelling, turns the first RED. Every
+# format path in the parser ends in the same normalizeTextCapped, so the text path proves the shared
+# cap; a cap written into ONE format's path alone is the residual this does not see (T1-review.md).
+PARSER_URL="${LOCAL_PARSER_URL:-http://127.0.0.1:8789/extract}"
+cap_probe() {  # <chars> → "chars capped last_line_intact" from the served parser, or "unreachable"
+  node -e '
+    const n = Number(process.argv[1]);
+    const end = `END-OF-T1-DOCUMENT-${n}`;
+    let body = "";
+    let i = 0;
+    while (body.length < n - end.length - 1) { i += 1; body += `line ${String(i).padStart(7, "0")} plain words for the cap probe and nothing else\n`; }
+    body = body.slice(0, n - end.length - 1);
+    body = body.replace(/\s+$/, "");
+    while (body.length < n - end.length - 1) body += "x";
+    const text = body + "\n" + end;
+    if (text.length !== n) { console.log("generator-wrong " + text.length); process.exit(0); }
+    fetch(process.argv[2], { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file_name: `t1-cap-probe-${n}.txt`, file_type: "text/plain", content_base64: Buffer.from(text, "utf8").toString("base64") }) })
+      .then((r) => r.json())
+      .then((j) => console.log(`${j.chars} ${j.chars_capped} ${String(j.text || "").endsWith(end)}`))
+      .catch(() => console.log("unreachable"));
+  ' "$1" "$PARSER_URL" 2>/dev/null
+}
+P200=$(cap_probe 200000)
+if [ "$P200" = "200000 false true" ]; then
+  ok "(c1) the served parser reads a 200,000-character document whole (chars 200000, chars_capped false, last line intact)"
+else
+  bad "(c1) a 200,000-character document did not come back whole from $PARSER_URL — got '$P200' (chars capped last_line_intact); a second cap on the text, or the parser is down"
+fi
+P360=$(cap_probe 360000)
+read -r C360 F360 _ <<<"$P360"
+if [ "$F360" = "true" ] && [ -n "$C360" ] && [ "$C360" -le 350000 ] 2>/dev/null && [ "$C360" -gt 340000 ]; then
+  ok "(c1) a 360,000-character document comes back capped at $C360 with chars_capped true — the one cap, and it says so"
+else
+  bad "(c1) a 360,000-character document came back '$P360' — expected chars ≤ 350000 (and > 340000) with chars_capped true"
 fi
 # The marker was written into the document body and read by nothing. It must not come back.
 if grep -q '\[truncated\]' "$PARSER"; then
