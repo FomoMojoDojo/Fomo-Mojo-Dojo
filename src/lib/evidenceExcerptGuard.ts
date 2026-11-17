@@ -59,6 +59,20 @@ export function applyExcerptGuard<T extends { evidence_excerpt: string; claim_te
   return { evidence_excerpt: "", claim_text: draft.claim_text, dropped: true };
 }
 
+// D5 (2026-11-16): THE MERGE STEP'S SECTION TAG IS NOT THE DOCUMENT'S WORDS. A multi-section document
+// reaches the framework pass as a merged extract whose lines read "- [section 4] <the passage>" or
+// "- [sections 2, 7] <the passage>" (mergeExtracts.ts buildMergedExtractText). A framework node that
+// quotes such a line verbatim carries the tag into its evidence, the tagged excerpt is then not a
+// substring of the sidecar, and E4 blanked a quote that is otherwise word for word (3 of 22 quotes in the
+// 2026-11-15 rehearsal; part of SP-F44). The tag — and the list bullet before it — is stripped before the
+// check, and what is stored is the stripped passage: the document's words, without ours.
+const MERGE_SECTION_TAG = /^\s*(?:-\s*)?\[sections?\s+\d+(?:\s*,\s*\d+)*\]\s*/i;
+
+/** The excerpt without a leading merge-step section tag ("- [section 4] …", "[sections 2, 7] …"). */
+export function stripMergeSectionTag(excerpt: string | null | undefined): string {
+  return String(excerpt ?? "").replace(MERGE_SECTION_TAG, "");
+}
+
 /** UPLOAD variant (rulings 5–7, 2026-09-14). On the upload path claim_text is the FINDING (the model's
  *  interpretation) and evidence_excerpt is the quote it attributes to the document — two different things.
  *  When the excerpt does not trace to the sidecar the signal is KEPT as interpretation-only: the excerpt is
@@ -72,8 +86,15 @@ export function applyUploadExcerptGuard<T extends { evidence_excerpt: string; cl
   const hasBasis = !!normalizeForHash(String(sidecarText ?? ""));
   if (!hasBasis) return { evidence_excerpt: draft.evidence_excerpt, raw_payload: draft.raw_payload, dropped: false };
   const rp = draft.raw_payload && typeof draft.raw_payload === "object" ? (draft.raw_payload as Record<string, unknown>) : {};
-  if (excerptTracesToSource(draft.evidence_excerpt, sidecarText)) {
-    return { evidence_excerpt: draft.evidence_excerpt, raw_payload: { ...rp, excerpt_guard: { basis: "sidecar", traced: true } }, dropped: false };
+  // D5: judge — and keep — the passage without the merge step's section tag.
+  const excerpt = stripMergeSectionTag(draft.evidence_excerpt);
+  const tagStripped = excerpt !== String(draft.evidence_excerpt ?? "");
+  if (excerptTracesToSource(excerpt, sidecarText)) {
+    return {
+      evidence_excerpt: excerpt,
+      raw_payload: { ...rp, excerpt_guard: { basis: "sidecar", traced: true, ...(tagStripped ? { section_tag_stripped: true } : {}) } },
+      dropped: false,
+    };
   }
   return {
     evidence_excerpt: "",
