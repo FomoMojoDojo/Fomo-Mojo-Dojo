@@ -1,0 +1,15 @@
+[Sheet 1 of 3: Volunteers] 4 rows x 7 columns
+[Sheet 1 of 3: Volunteers, columns withheld] Volunteer name, Email, Date of birth, SSN, Contacto
+Row 2: Volunteer ID: V-101 | Age: 41 | Program: Mentor Match | Hours FY25: 64 | Hours FY26: 72 | Total hours: 136 | Joined: 2023-10-01
+Row 3: Volunteer ID: V-102 | Age: 29 | Program: Crisis Respite Beds | Hours FY25: 40 | Hours FY26: 55 | Total hours: 95 | Joined: 2024-02-29
+Row 4: Volunteer ID: V-103 | Age: 48 | Program: Teen Drop-in Center | Hours FY25: 120 | Hours FY26: 98 | Total hours: 218 | Joined: 2023-01-01
+Row 5: Volunteer ID: V-104 | Age: 23 | Program: Mentor Match | Hours FY25: 18 | Hours FY26: 30 | Total hours: 48 | Joined: 2024-10-01
+
+[Sheet 2 of 3: Totals] 2 rows x 2 columns
+Row 2: Measure: All volunteer hours FY26 | Value: 255
+Row 3: Measure: Hours per volunteer FY26 | Value: (formula, no saved value)
+
+[Sheet 3 of 3: Lookups (hidden)] 3 rows x 2 columns
+Row 2: Program code: MM | Program: Mentor Match
+Row 3: Program code: CRB | Program: Crisis Respite Beds
+Row 4: Program code: TDC | Program: Teen Drop-in Center

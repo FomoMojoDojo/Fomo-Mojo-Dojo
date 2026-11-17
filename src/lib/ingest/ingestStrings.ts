@@ -160,5 +160,29 @@ export const PARTIAL_SLIDES_STRING = "Only the first {n} of {m} slides were read
 /** S-ING-1 or S-ING-1b by the read's unit, with its two numbers substituted and nothing else done. */
 export function partialReadLineFor(unit: string | null | undefined, read: number, total: number): string {
   if (unit === "slide") return PARTIAL_SLIDES_STRING.replace("{n}", String(read)).replace("{m}", String(total));
+  // S4: a workbook's pair counts sheets.
+  if (unit === "sheet") return PARTIAL_SHEETS_STRING.replace("{n}", String(read)).replace("{m}", String(total));
   return partialReadLine(read, total);
+}
+
+// ── A SPREADSHEET (S4, signed 2026-11-16) ──────────────────────────────────────────────────────────
+//
+// S-ING-1c (sheets past the 50-sheet cap) and S-ING-6 (rows past the 5,000-row cap of one sheet) describe
+// something that was NOT read — warning styling, like S-ING-1. S-ING-8 says personal columns were
+// withheld before analysis — info styling, like S-ING-5: it is a deliberate rule, not a failure.
+export const PARTIAL_SHEETS_STRING = "Only the first {n} of {m} sheets were read.";
+export const ROWS_CAPPED_STRING = 'Only the first {n} of {m} rows of sheet "{sheet}" were read.';
+export const WITHHELD_COLUMNS_STRING = "Columns holding personal details were withheld from the analysis.";
+
+/** S-ING-6, one line per sheet whose rows were capped, numbers and sheet name substituted, nothing else. */
+export function rowsCappedLines(rowsCapped: ReadonlyArray<{ sheet?: unknown; read?: unknown; total?: unknown }> | null | undefined): string[] {
+  if (!Array.isArray(rowsCapped)) return [];
+  return rowsCapped
+    .filter((r) => typeof r?.read === "number" && typeof r?.total === "number" && (r.read as number) < (r.total as number))
+    .map((r) => ROWS_CAPPED_STRING.replace("{n}", String(r.read)).replace("{m}", String(r.total)).replace("{sheet}", String(r.sheet ?? "")));
+}
+
+/** S-ING-8 when any column was withheld (file_proposals.columns_withheld > 0), else null. */
+export function withheldColumnsLine(columnsWithheld: number | null | undefined): string | null {
+  return typeof columnsWithheld === "number" && columnsWithheld > 0 ? WITHHELD_COLUMNS_STRING : null;
 }

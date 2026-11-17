@@ -132,3 +132,14 @@ Deno.test("a deck-shaped document tiles its text with nothing dropped", async ()
   assert(windows.length > 1, "a 60-slide deck needs more than one window");
   assertEquals(coverageFailures(text, windows), []);
 });
+
+// S4 (2026-11-16): a workbook's [Sheet …] markers — plain, hidden, columns withheld, row blocks — are cuts.
+Deno.test("sheet markers (plain, hidden, withheld, row blocks) are cut before on a single newline", () => {
+  const book = "[Sheet 1 of 2: Giving FY25] 8 rows x 6 columns\n[Sheet 1 of 2: Giving FY25, columns withheld] Email\nRow 2: a\n[Sheet 1 of 2: Giving FY25, rows 72-141]\nRow 72: b\n[Sheet 2 of 2: Lookups (hidden)] 3 rows x 2 columns";
+  const cuts = blockBoundaries(book);
+  for (const m of ["[Sheet 1 of 2: Giving FY25, columns withheld]", "[Sheet 1 of 2: Giving FY25, rows 72-141]", "[Sheet 2 of 2: Lookups (hidden)]"]) {
+    assert(cuts.includes(book.indexOf(m)), `no cut before ${m}`);
+  }
+  const prose = "intro\n[Sheet music] is not a marker";
+  assert(!blockBoundaries(prose).includes(prose.indexOf("[Sheet music]")));
+});

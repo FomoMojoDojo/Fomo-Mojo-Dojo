@@ -177,7 +177,10 @@ async function extractTextViaLocalParser(params: {
     // report it (before S2) records null, never a guess.
     ocrPages: num(data?.ocr_pages),
     // S6 (2026-11-16): what the page pair counts — "slide" for a PowerPoint. Anything else is a page.
-    pageUnit: data?.page_unit === "slide" ? "slide" : (pairKnown ? "page" : null),
+    pageUnit: data?.page_unit === "slide" || data?.page_unit === "sheet" ? data.page_unit : (pairKnown ? "page" : null),
+    // S4 (2026-11-16): personal columns withheld before analysis, and sheets whose row cap bit.
+    columnsWithheld: Array.isArray(data?.withheld_columns) ? data.withheld_columns.length : null,
+    rowsCapped: Array.isArray(data?.rows_capped) && data.rows_capped.length ? data.rows_capped : null,
   };
 }
 
@@ -628,6 +631,8 @@ async function refreshReadAndWindow(args: {
         chars_capped: extraction.charsCapped,
         ocr_pages: extraction.ocrPages,
         page_unit: extraction.pageUnit,
+        columns_withheld: extraction.columnsWithheld,
+        rows_capped: extraction.rowsCapped,
       }).eq("id", proposalId);
     }
   } catch (error) {
@@ -2724,7 +2729,10 @@ serve(async (req) => {
       ocrPages: number | null;
       // S6: likewise — "slide" for a deck.
       pageUnit: string | null;
-    } = { images: 0, pages: null, source: "local_text_reader", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null, ocrPages: null, pageUnit: null };
+      // S4: likewise.
+      columnsWithheld: number | null;
+      rowsCapped: unknown;
+    } = { images: 0, pages: null, source: "local_text_reader", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null, ocrPages: null, pageUnit: null, columnsWithheld: null, rowsCapped: null };
     try {
       const ext = extensionFromName(fileName ?? "");
       const normalizedType = String(fileType || downloaded.type || "").toLowerCase();
@@ -2753,6 +2761,8 @@ serve(async (req) => {
           charsCapped: parsed.charsCapped,
           ocrPages: parsed.ocrPages,
           pageUnit: parsed.pageUnit,
+          columnsWithheld: parsed.columnsWithheld,
+          rowsCapped: parsed.rowsCapped,
         };
       }
     } catch (extractError) {
@@ -2760,7 +2770,7 @@ serve(async (req) => {
       fileText = "";
       // A failed extraction knows nothing about pages, and says nothing rather than zero.
       // A failed extraction knows nothing — not whether pages were missed, and not whether the cap bit.
-      extraction = { images: 0, pages: null, source: "local_parser_error", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null, ocrPages: null, pageUnit: null };
+      extraction = { images: 0, pages: null, source: "local_parser_error", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null, ocrPages: null, pageUnit: null, columnsWithheld: null, rowsCapped: null };
     }
 
     console.log("[dify-analyze-file] extracted file_text length:", fileText.length, "shape:", JSON.stringify({ chars: fileText.length, ...extraction }));
@@ -2904,6 +2914,9 @@ serve(async (req) => {
         ocr_pages:           extraction.ocrPages,
         // S6: "slide" for a deck, so the partial-read line says slides.
         page_unit:           extraction.pageUnit,
+        // S4: what a spreadsheet's read withheld and capped.
+        columns_withheld:    extraction.columnsWithheld,
+        rows_capped:         extraction.rowsCapped,
       })
       .select()
       .single();

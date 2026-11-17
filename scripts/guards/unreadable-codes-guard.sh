@@ -39,7 +39,7 @@ FILES="50000000-0000-4000-8000-0000000000d1|has-sidecar.pdf|-
 50000000-0000-4000-8000-0000000000d4|empty-file.pdf|empty
 50000000-0000-4000-8000-0000000000d5|encrypted.docx|cfb
 50000000-0000-4000-8000-0000000000d6|truncated.pdf|truncated
-50000000-0000-4000-8000-0000000000d7|sheet.xlsx|zip
+50000000-0000-4000-8000-0000000000d7|sheet.xls|cfb
 50000000-0000-4000-8000-0000000000d8|readable.pdf|pdf"
 ids_sql=$(printf '%s\n' "$FILES" | cut -d'|' -f1 | sed "s/.*/'&'/" | paste -sd, -)
 cleanup() {
@@ -62,7 +62,8 @@ psqlq "insert into public.companies (id, name, created_by, fixture_hold)
 while IFS='|' read -r id n _; do
   psqlq "insert into public.input_files (id, input_id, file_name, file_type, file_path, tags, uploaded_at, extraction_error_code)
            values ('$id', '$IN', '$n', '', '$PREFIX/$n', '{}', now(), null)
-           on conflict (id) do update set extraction_error_code = null, archived_at = null;" >/dev/null
+           on conflict (id) do update set extraction_error_code = null, archived_at = null,
+             file_name = excluded.file_name, file_path = excluded.file_path;  -- the guard's own rows: a renamed fixture (S4) takes effect" >/dev/null
 done <<< "$FILES"
 psqlq "delete from public.file_proposals where file_id in ($ids_sql);" >/dev/null
 [ "$(psqlq "select count(*) from public.companies where id='$CO' and fixture_hold is not null;")" = 1 ] \
@@ -73,22 +74,24 @@ node scripts/guards/throwaway-pdf.mjs "$TMP/readable.pdf" 0 2 >/dev/null
 : > "$TMP/empty-file.pdf"
 head -c 600 "$TMP/readable.pdf" > "$TMP/truncated.pdf"
 { printf '\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'; head -c 1500 /dev/zero; } > "$TMP/encrypted.docx"
-printf 'PK\x03\x04 not a real workbook' > "$TMP/sheet.xlsx"
+# S4 (2026-11-16): .xlsx is read now, so a broken one is unreadable_corrupt. The format case is an old
+# binary .xls, which stays unsupported (out of S4's scope).
+{ printf '\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'; printf ' not a real xls workbook'; } > "$TMP/sheet.xls"
 up() { curl -s -o /dev/null -w '%{http_code}' -X POST "$API/storage/v1/object/input-files/$PREFIX/$1" -H "Authorization: Bearer $SR" -H "x-upsert: true" -H "Content-Type: application/octet-stream" --data-binary "@$2"; }
-for n in empty-file.pdf encrypted.docx truncated.pdf sheet.xlsx readable.pdf; do up "$n" "$TMP/$n" >/dev/null; done
+for n in empty-file.pdf encrypted.docx truncated.pdf sheet.xls readable.pdf; do up "$n" "$TMP/$n" >/dev/null; done
 printf 'sidecar text for the guard' > "$TMP/side.txt"; up "has-sidecar.pdf.extracted.txt" "$TMP/side.txt" >/dev/null
 
 echo "── (u1) the served parser names each unreadable case ──"
 parse() { node -e 'const fs=require("fs");const [f,n]=process.argv.slice(1);process.stdout.write(JSON.stringify({file_name:n,file_type:"",content_base64:fs.readFileSync(f).toString("base64")}))' "$1" "$2" > "$TMP/req.json"
           curl -s -m 60 -X POST "$PARSER" -H 'content-type: application/json' --data-binary "@$TMP/req.json" \
             | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.stdout.write((j.unreadable&&j.unreadable.code)||(j.chars>0?"read":"none"))}catch{process.stdout.write("bad-json")}})'; }
-for pair in "empty-file.pdf:unreadable_empty" "encrypted.docx:unreadable_password" "truncated.pdf:unreadable_corrupt" "sheet.xlsx:unreadable_format" "readable.pdf:read"; do
+for pair in "empty-file.pdf:unreadable_empty" "encrypted.docx:unreadable_password" "truncated.pdf:unreadable_corrupt" "sheet.xls:unreadable_format" "readable.pdf:read"; do
   n=${pair%%:*}; want=${pair#*:}; got=$(parse "$TMP/$n" "$n")
   [ "$got" = "$want" ] && ok "(u1) $n → $got" || bad "(u1) $n → $got, expected $want (is the parser restarted on the S0 build?)"
 done
 
 echo "── (u2) analyze-file records the code on the file, and clears it on a read ──"
-for pair in "50000000-0000-4000-8000-0000000000d4|empty-file.pdf|unreadable_empty" "50000000-0000-4000-8000-0000000000d5|encrypted.docx|unreadable_password" "50000000-0000-4000-8000-0000000000d6|truncated.pdf|unreadable_corrupt" "50000000-0000-4000-8000-0000000000d7|sheet.xlsx|unreadable_format" "50000000-0000-4000-8000-0000000000d8|readable.pdf|"; do
+for pair in "50000000-0000-4000-8000-0000000000d4|empty-file.pdf|unreadable_empty" "50000000-0000-4000-8000-0000000000d5|encrypted.docx|unreadable_password" "50000000-0000-4000-8000-0000000000d6|truncated.pdf|unreadable_corrupt" "50000000-0000-4000-8000-0000000000d7|sheet.xls|unreadable_format" "50000000-0000-4000-8000-0000000000d8|readable.pdf|"; do
   IFS='|' read -r id n want <<< "$pair"
   code=$(curl -s -m 300 -o "$TMP/af.json" -w '%{http_code}' -X POST "$API/functions/v1/analyze-file" -H "Authorization: Bearer $SR" -H 'Content-Type: application/json' \
           --data "{\"fileName\":\"$n\",\"filePath\":\"$PREFIX/$n\",\"fileType\":\"\",\"inputAreas\":[]}")

@@ -37,8 +37,9 @@ export const WINDOW_CHARS = 12_000;
 /** Cut before a markdown heading even without a blank line: a heading is its own unit. */
 const HEADING_LINE = /^#{1,6}\s/;
 /** The local parser's section markers, the only boundaries a PDF or a deck has: `[Page 12] …` and, since S6
- *  (2026-11-16), `[Slide 3 of 12] …`, `[Slide 3 of 12, hidden] …` and `[Slide 3 of 12, notes] …`. */
-const PAGE_MARKER = /^\[(?:Page \d+|Slide \d+ of \d+(?:, (?:hidden|notes))?)\]/;
+ *  (2026-11-16), `[Slide 3 of 12] …`, `[Slide 3 of 12, hidden] …` and `[Slide 3 of 12, notes] …`, and since S4
+ *  `[Sheet 1 of 3: Name] …` with its `(hidden)`, `, columns withheld` and `, rows 2-71` forms (an ASCII hyphen: the parser's normalizer turns an en dash into " - "). */
+const PAGE_MARKER = /^\[(?:Page \d+|Slide \d+ of \d+(?:, (?:hidden|notes))?|Sheet \d+ of \d+: [^\]\n]+)\]/;
 
 export type DocumentWindow = {
   /** 0-based, document order. */
@@ -70,7 +71,8 @@ export function blockBoundaries(text: string): number[] {
   const line = /\n/g;
   for (let m = line.exec(text); m; m = line.exec(text)) {
     const at = m.index + 1;
-    const rest = text.slice(at, at + 32);
+    // 160, not 32 (S4): a sheet marker carries its sheet name (≤ 31 chars in Excel) and its form.
+    const rest = text.slice(at, at + 160);
     if (HEADING_LINE.test(rest) || PAGE_MARKER.test(rest)) cuts.add(at);
   }
   return [...cuts].sort((a, b) => a - b);

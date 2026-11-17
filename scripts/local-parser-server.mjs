@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { withholdReason } from "./parser/xlsxWithhold.mjs";
 import mammoth from "mammoth";
 import JSZip from "jszip";
 
@@ -38,7 +39,7 @@ const PARSER_VERSIONS = Object.freeze({
   // 2026-11-13, so a date alone could not tell a 30-page read from a whole one, and a SIDECAR carries
   // no version of its own: the stored extraction_version on the proposal is the only record of which
   // parser wrote the text a later run reads. `-whole` is how a run says "this text is every page".
-  server: "local-parser-server-2026-11-16-pptx",
+  server: "local-parser-server-2026-11-16-xlsx",
   ocr: OCR_VERSION,
   pdfjs: (() => { try { return String(require("pdfjs-dist/package.json").version); } catch { return "unknown"; } })(),
   mammoth: (() => { try { return String(require("mammoth/package.json").version); } catch { return "unknown"; } })(),
@@ -315,6 +316,133 @@ async function extractPptxText(buffer) {
   return { text: hasText ? normalized.text : "", images, slidesRead, slidesTotal: total, charsTotal: joined.length, charsCapped: normalized.capped };
 }
 
+// S4 (2026-11-16): A SPREADSHEET (.xlsx) is read sheet by sheet in the workbook's order, every row as
+// "Header: value" pairs so a quote carries its column. Formula cells give their CACHED value (a formula is
+// never evaluated; with no saved value it reads "(formula, no saved value)"); a number whose cell format is
+// a date reads as ISO YYYY-MM-DD; a merged range keeps its value under the top-left cell, as the file does.
+// The header row is the first non-empty row, unless it is mostly numbers (then column letters).
+// HIDDEN sheets are read and labelled (operator ruling). Rows go out in blocks of ROW_BLOCK under a
+// [Sheet i of n: name, rows a-b] marker so the windower can cut a long sheet; caps: 50 sheets (pages_read
+// / pages_total with page_unit "sheet") and 5,000 rows per sheet (rows_capped, per sheet).
+// PERSONAL COLUMNS ARE WITHHELD BEFORE ANYTHING IS WRITTEN (scripts/parser/xlsxWithhold.mjs, signed): their
+// header and cells never reach the sidecar; the sheet's block carries a marker naming the withheld headers.
+const XLSX_SHEET_CAP = 50;
+const XLSX_ROW_CAP = 5000;
+const XLSX_ROW_BLOCK = 70;
+const BUILTIN_DATE_FMTS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
+const colLetters = (ref) => String(ref || "").replace(/\d+$/, "");
+const colIndex = (letters) => letters.split("").reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
+const colName = (i) => { let s = ""; for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s; return s; };
+function excelSerialToIso(serial) {
+  const ms = Math.round((Number(serial) - 25569) * 86400 * 1000);   // 1900 system; serials past 60 skip the leap bug
+  const d = new Date(ms);
+  return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : String(serial);
+}
+async function extractXlsxText(buffer) {
+  const { DOMParser } = await import("@xmldom/xmldom");
+  const zip = await JSZip.loadAsync(buffer);
+  const read = async (p) => { const f = zip.file(p); return f ? f.async("string") : null; };
+  const parse = (xml) => new DOMParser({ onError: () => {} }).parseFromString(xml, "text/xml");
+  const all = (node, tag) => Array.from(node.getElementsByTagName(tag));
+  const wbXml = await read("xl/workbook.xml");
+  if (!wbXml) throw new Error("not a workbook");
+  const rels = new Map();
+  const relsXml = await read("xl/_rels/workbook.xml.rels");
+  if (relsXml) for (const r of all(parse(relsXml), "Relationship")) {
+    const t = r.getAttribute("Target") || "";
+    rels.set(r.getAttribute("Id"), t.startsWith("/") ? t.slice(1) : "xl/" + t.replace(/^\.\//, ""));
+  }
+  const shared = [];
+  const ssXml = await read("xl/sharedStrings.xml");
+  if (ssXml) for (const si of all(parse(ssXml), "si")) shared.push(all(si, "t").map((t) => t.textContent || "").join(""));
+  // which cell styles are dates: built-in date formats, or a custom format code with d / m / y and no 0.00
+  const dateStyles = new Set();
+  const stXml = await read("xl/styles.xml");
+  if (stXml) {
+    const st = parse(stXml);
+    const custom = new Map(all(st, "numFmt").map((f) => [Number(f.getAttribute("numFmtId")), String(f.getAttribute("formatCode") || "")]));
+    const xfsNode = all(st, "cellXfs")[0];
+    if (xfsNode) all(xfsNode, "xf").forEach((xf, i) => {
+      const id = Number(xf.getAttribute("numFmtId") || 0);
+      const code = custom.get(id) || "";
+      const isDate = BUILTIN_DATE_FMTS.has(id) || (/[dmy]/i.test(code.replace(/"[^"]*"|\[[^\]]*\]/g, "")) && !/0\.0|#/.test(code));
+      if (isDate) dateStyles.add(i);
+    });
+  }
+  const sheets = all(parse(wbXml), "sheet");
+  const total = sheets.length;
+  const blocks = [];
+  const rowsCapped = [];
+  const withheld = [];
+  let sheetsRead = 0;
+  for (let si = 0; si < Math.min(total, XLSX_SHEET_CAP); si += 1) {
+    const sh = sheets[si];
+    const name = String(sh.getAttribute("name") || `Sheet${si + 1}`).replace(/[\]\n]/g, " ");
+    const hidden = /hidden/i.test(String(sh.getAttribute("state") || ""));
+    const xml = await read(rels.get(sh.getAttribute("r:id")) || "");
+    sheetsRead += 1;
+    const label = `${si + 1} of ${total}: ${name}${hidden ? " (hidden)" : ""}`;
+    if (!xml) { blocks.push(`[Sheet ${label}] (sheet could not be read)`); continue; }
+    // rows → { rowNumber, cells: Map(colIndex → text) }
+    const grid = [];
+    for (const row of all(parse(xml), "row")) {
+      const cells = new Map();
+      for (const c of all(row, "c")) {
+        const t = c.getAttribute("t") || "";
+        const v = c.getElementsByTagName("v")[0];
+        const f = c.getElementsByTagName("f")[0];
+        let text = "";
+        if (t === "s") text = shared[Number(v?.textContent ?? -1)] ?? "";
+        else if (t === "inlineStr") text = all(c, "t").map((x) => x.textContent || "").join("");
+        else if (t === "b") text = v ? (v.textContent === "1" ? "TRUE" : "FALSE") : "";
+        else if (v && v.textContent !== "") {
+          const raw = v.textContent;
+          const style = Number(c.getAttribute("s") ?? -1);
+          text = (t === "" || t === "n") && dateStyles.has(style) && /^-?\d+(\.\d+)?$/.test(raw) ? excelSerialToIso(raw) : raw;
+        } else if (f) text = "(formula, no saved value)";
+        text = String(text).replace(/\s+/g, " ").trim();
+        if (text) cells.set(colIndex(colLetters(c.getAttribute("r"))), text);
+      }
+      if (cells.size) grid.push({ r: Number(row.getAttribute("r") || grid.length + 1), cells });
+    }
+    if (!grid.length) { blocks.push(`[Sheet ${label}] (empty)`); continue; }
+    const first = grid[0];
+    const numeric = [...first.cells.values()].filter((x) => /^-?[\d.,]+$/.test(x)).length;
+    const useLetters = numeric * 2 > first.cells.size;
+    const body = useLetters ? grid : grid.slice(1);
+    const maxCol = Math.max(...grid.map((g) => Math.max(...g.cells.keys())));
+    const headerOf = (i) => (useLetters ? colName(i) : (first.cells.get(i) || colName(i)));
+    // withholding, per column, BEFORE any row is written
+    const kept = [];
+    const gone = [];
+    for (let i = 0; i <= maxCol; i += 1) {
+      const reason = withholdReason(useLetters ? "" : headerOf(i), body.map((g) => g.cells.get(i)));
+      if (reason) gone.push({ header: headerOf(i), reason }); else kept.push(i);
+    }
+    if (gone.length) withheld.push(...gone.map((g) => ({ sheet: name, header: g.header, reason: g.reason })));
+    const capped = body.slice(0, XLSX_ROW_CAP);
+    if (body.length > XLSX_ROW_CAP) rowsCapped.push({ sheet: name, read: XLSX_ROW_CAP, total: body.length });
+    const head = `[Sheet ${label}] ${body.length} rows x ${kept.length} columns`
+      + (gone.length ? `\n[Sheet ${label}, columns withheld] ${gone.map((g) => g.header).join(", ")}` : "");
+    const lines = capped.map((g) => {
+      const pairs = kept.filter((i) => g.cells.has(i)).map((i) => `${headerOf(i)}: ${g.cells.get(i)}`);
+      return pairs.length ? `Row ${g.r}: ${pairs.join(" | ")}` : null;
+    }).filter(Boolean);
+    if (lines.length <= XLSX_ROW_BLOCK) { blocks.push([head, ...lines].join("\n")); continue; }
+    blocks.push(head);
+    for (let b = 0; b < lines.length; b += XLSX_ROW_BLOCK) {
+      const chunk = lines.slice(b, b + XLSX_ROW_BLOCK);
+      const a = chunk[0].match(/^Row (\d+)/)?.[1], z = chunk[chunk.length - 1].match(/^Row (\d+)/)?.[1];
+      blocks.push([`[Sheet ${label}, rows ${a}-${z}]`, ...chunk].join("\n"));
+    }
+  }
+  const images = Object.keys(zip.files).filter((n) => /^xl\/media\//.test(n) && !zip.files[n].dir).length;
+  const joined = blocks.join("\n\n");
+  const normalized = normalizeTextCapped(joined);
+  const hasRows = /(^|\n)Row \d+: /.test(joined);
+  return { text: hasRows ? normalized.text : "", images, sheetsRead, sheetsTotal: total, charsTotal: joined.length, charsCapped: normalized.capped, rowsCapped, withheld };
+}
+
 async function extractText({ fileName, fileType, contentBase64 }) {
   const buffer = Buffer.from(String(contentBase64 || ""), "base64");
   const ext = extensionFromName(fileName);
@@ -332,7 +460,7 @@ async function extractText({ fileName, fileType, contentBase64 }) {
   //   pages_total  — pages the document has (null likewise)
   //   pages        — retained, and now EXPLICITLY the document's count: it is what the stored
   //                  extraction_pages column has always meant, so old rows keep their meaning
-  const shaped = ({ text, source, images = 0, pagesRead = null, pagesTotal = null, charsTotal = null, charsCapped = false, ocrPages = 0, pageUnit = "page" }) => ({
+  const shaped = ({ text, source, images = 0, pagesRead = null, pagesTotal = null, charsTotal = null, charsCapped = false, ocrPages = 0, pageUnit = "page", rowsCapped = [], withheldColumns = [] }) => ({
     text,
     source,
     chars: text.length,
@@ -348,6 +476,9 @@ async function extractText({ fileName, fileType, contentBase64 }) {
     ocr_pages: ocrPages,
     // S6: what pages_read / pages_total count — "page" (PDF) or "slide" (PowerPoint).
     page_unit: pageUnit,
+    // S4: per sheet, rows read of rows present when the 5,000-row cap bit; and the columns withheld.
+    rows_capped: rowsCapped,
+    withheld_columns: withheldColumns,
     versions: PARSER_VERSIONS,
     unreadable: null,
   });
@@ -433,6 +564,19 @@ async function extractText({ fileName, fileType, contentBase64 }) {
     const { text, images, pagesRead, pagesTotal, charsTotal, charsCapped } = read;
     if (!text) return unreadable(images > 0 ? "unreadable_format" : "unreadable_empty", "local_parser_mammoth", { images });
     return shaped({ text, source: "local_parser_mammoth", images, pagesRead, pagesTotal, charsTotal, charsCapped });
+  }
+
+  const isXlsx = normalizedType.includes("officedocument.spreadsheetml.sheet") || ext === "xlsx";
+  if (isXlsx) {
+    let read;
+    try {
+      read = await extractXlsxText(buffer);
+    } catch {
+      return unreadable("unreadable_corrupt", "local_parser_xlsx");
+    }
+    const { text, images, sheetsRead, sheetsTotal, charsTotal, charsCapped, rowsCapped, withheld } = read;
+    if (!text) return unreadable("unreadable_empty", "local_parser_xlsx", { images, pagesRead: sheetsRead, pagesTotal: sheetsTotal, pageUnit: "sheet" });
+    return shaped({ text, source: "local_parser_xlsx", images, pagesRead: sheetsRead, pagesTotal: sheetsTotal, charsTotal, charsCapped, pageUnit: "sheet", rowsCapped, withheldColumns: withheld });
   }
 
   const isPptx = normalizedType.includes("officedocument.presentationml.presentation") || ext === "pptx";

@@ -124,6 +124,10 @@ export interface FileProposalRow {
   ocr_pages?: number | null;
   /** S6: what pages_read / pages_total count — 'page' or 'slide'; null on a row from before S6. */
   page_unit?: string | null;
+  /** S4: how many spreadsheet columns were withheld as personal details (S-ING-8 when above 0). */
+  columns_withheld?: number | null;
+  /** S4: per sheet whose 5,000-row cap bit, rows read of rows present (S-ING-6). */
+  rows_capped?: Array<{ sheet: string; read: number; total: number }> | null;
   processing_started_at: string | null;
   processing_completed_at: string | null;
   applied_areas: string[];

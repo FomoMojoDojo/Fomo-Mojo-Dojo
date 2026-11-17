@@ -7,7 +7,7 @@ import type { FileProposalRow } from "@/hooks/useFileProposals";
 import { formatAnalysisVersion, formatExtractionShape } from "@/lib/fileAnalysis";
 import {
   INGEST_STRINGS, isBudgetSelected, isPartialRead, partialReadLine,
-  sectionsFailedLine, sectionsProgressLine, showsSectionCounts, unreadableReason, ocrReadLine, partialReadLineFor,
+  sectionsFailedLine, sectionsProgressLine, showsSectionCounts, unreadableReason, ocrReadLine, partialReadLineFor, rowsCappedLines, withheldColumnsLine,
 } from "@/lib/ingest/ingestStrings";
 import { Info } from "lucide-react";
 import { isInternalFileTag, makeAreaSupportTag } from "@/lib/fileTags";
@@ -272,6 +272,9 @@ export function FileAnalysisBadge(
   const unreadable = proposal.processing_state === "failed" ? unreadableReason(proposal.processing_error_code) : null;
   // S2 (S-ING-7): the text of scanned pages was recognised, not read from a text layer. Info, not warning.
   const ocrRead = ocrReadLine(proposal.ocr_pages);
+  // S4: rows a sheet's cap left unread (warning, S-ING-6), and personal columns withheld (info, S-ING-8).
+  const rowsCapped = rowsCappedLines(proposal.rows_capped);
+  const withheld = withheldColumnsLine(proposal.columns_withheld);
   return (
     <>
       <span style={fileProposalProcessingBadgeStyle(proposal)} data-testid={`${testIdPrefix}-analysis-badge`} data-fr-state={proposal.processing_state}>
@@ -290,6 +293,16 @@ export function FileAnalysisBadge(
       {sectionsText ? (
         <span style={{ ...MONO, fontSize: 9, color: "#8a6d3b" }} data-testid={`${testIdPrefix}-analysis-sections`}>
           {sectionsText}
+        </span>
+      ) : null}
+      {rowsCapped.map((line) => (
+        <span key={line} style={{ ...MONO, fontSize: 9, color: "#8a6d3b" }} data-testid={`${testIdPrefix}-analysis-rows`}>
+          {line}
+        </span>
+      ))}
+      {withheld ? (
+        <span style={{ ...MONO, fontSize: 9, color: "#6b7280" }} data-testid={`${testIdPrefix}-analysis-withheld`}>
+          {withheld}
         </span>
       ) : null}
       {ocrRead ? (

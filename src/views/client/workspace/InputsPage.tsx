@@ -46,7 +46,7 @@ import { useFileProposals, type FileProposalRow } from "@/hooks/useFileProposals
 import { getFileSignedUrl, useArchiveInputFile, useArchivedInputFiles, useRestoreInputFile } from "@/hooks/useInputs";
 import { acceptFileProposal, dismissFileProposal, rejectFileProposal, runDifyAnalyzeFile, unlinkNeedsFromFilePath } from "@/hooks/useInputActions";
 import { FileTooLargeError, fileTooLargeMessage, type FileTooLargeRefusal } from "@/lib/fileTooLarge";
-import { ocrReadLine, unreadableReason } from "@/lib/ingest/ingestStrings";
+import { ocrReadLine, rowsCappedLines, unreadableReason, withheldColumnsLine } from "@/lib/ingest/ingestStrings";
 import { useProposalSync } from "@/hooks/useProposalSync";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useRoutes } from "@/hooks/useRoutes";
@@ -421,6 +421,13 @@ export default function InputsPage() {
                                 three strings describe the same kind of thing — something unread. */}
                             {sectionsText ? (
                               <span className="fr-ws-analysis-partial fr-mono" data-testid="inputs-analysis-sections">{sectionsText}</span>
+                            ) : null}
+                            {/* S4: rows a sheet's cap left unread (S-ING-6, the partial-read styling) and withheld personal columns (S-ING-8, info styling). */}
+                            {proposal ? rowsCappedLines(proposal.rows_capped).map((line) => (
+                              <span key={line} className="fr-ws-analysis-partial fr-mono" data-testid="inputs-analysis-rows">{line}</span>
+                            )) : null}
+                            {proposal && withheldColumnsLine(proposal.columns_withheld) ? (
+                              <span className="fr-ws-analysis-confidence fr-mono" data-testid="inputs-analysis-withheld">{withheldColumnsLine(proposal.columns_withheld)}</span>
                             ) : null}
                             {/* S2 (S-ING-7): the scanned-page line. Info styling — the confidence line's, not the warning's. */}
                             {proposal && ocrReadLine(proposal.ocr_pages) ? (
