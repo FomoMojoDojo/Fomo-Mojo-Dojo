@@ -110,3 +110,25 @@ Deno.test("coverageFailures CATCHES a window whose text was edited away from its
   const tampered = windows.map((w, i) => (i === 0 ? { ...w, text: w.text.replace("P1START", "EDITED") } : w));
   assert(coverageFailures(text, tampered).some((f) => f.includes("not its own slice")));
 });
+
+// S6 (2026-11-16): a PowerPoint's [Slide n of m] markers — plain, hidden and notes — are block boundaries
+// exactly as [Page n] is, so a window never starts mid-slide; text that merely LOOKS bracketed is not.
+Deno.test("slide markers (plain, hidden, notes) are cut before on a single newline", () => {
+  const deck = "[Slide 1 of 3] Title\nline\n[Slide 1 of 3, notes] a note\n[Slide 2 of 3, hidden] secret\n[Slide 3 of 3] end";
+  const cuts = blockBoundaries(deck);
+  for (const m of ["[Slide 1 of 3, notes]", "[Slide 2 of 3, hidden]", "[Slide 3 of 3]"]) {
+    assert(cuts.includes(deck.indexOf(m)), `no cut before ${m}`);
+  }
+  const prose = "intro\n[Slideshow] is not a marker\n[Slide 2] lacks its total";
+  assert(!blockBoundaries(prose).includes(prose.indexOf("[Slideshow]")));
+  assert(!blockBoundaries(prose).includes(prose.indexOf("[Slide 2]")));
+});
+
+Deno.test("a deck-shaped document tiles its text with nothing dropped", async () => {
+  const slides: string[] = [];
+  for (let n = 1; n <= 60; n++) slides.push(`[Slide ${n} of 60] Slide ${n} title\n${"word ".repeat(80)}\n[Slide ${n} of 60, notes] note ${n}`);
+  const text = slides.join("\n\n");
+  const windows = await toDocumentWindows(text);
+  assert(windows.length > 1, "a 60-slide deck needs more than one window");
+  assertEquals(coverageFailures(text, windows), []);
+});

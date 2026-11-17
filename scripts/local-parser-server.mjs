@@ -38,7 +38,7 @@ const PARSER_VERSIONS = Object.freeze({
   // 2026-11-13, so a date alone could not tell a 30-page read from a whole one, and a SIDECAR carries
   // no version of its own: the stored extraction_version on the proposal is the only record of which
   // parser wrote the text a later run reads. `-whole` is how a run says "this text is every page".
-  server: "local-parser-server-2026-11-16-doc",
+  server: "local-parser-server-2026-11-16-pptx",
   ocr: OCR_VERSION,
   pdfjs: (() => { try { return String(require("pdfjs-dist/package.json").version); } catch { return "unknown"; } })(),
   mammoth: (() => { try { return String(require("mammoth/package.json").version); } catch { return "unknown"; } })(),
@@ -231,6 +231,90 @@ function pdfErrorCode(error) {
   return "unreadable_corrupt";
 }
 
+// S6 (2026-11-16): A POWERPOINT (.pptx) is read slide by slide, in the deck's own order
+// (ppt/presentation.xml <p:sldIdLst> through its relationships), each paragraph a line. Every slide is
+// marked [Slide n of m]; a HIDDEN slide (show="0") is read and marked [Slide n of m, hidden] (operator
+// ruling: read and label); its speaker notes follow as [Slide n of m, notes] — markers, never words the
+// deck does not contain. Pictures are not read; they are counted into `images` as everywhere else.
+// slides_read / slides_total ride the existing pages_read / pages_total pair with page_unit "slide":
+// a slide that will not parse stops the read there, so "Only the first n of m slides were read." is
+// literally true.
+async function extractPptxText(buffer) {
+  const { DOMParser } = await import("@xmldom/xmldom");
+  const zip = await JSZip.loadAsync(buffer);
+  const read = async (p) => { const f = zip.file(p); return f ? f.async("string") : null; };
+  const parse = (xml) => new DOMParser({ onError: () => {} }).parseFromString(xml, "text/xml");
+  const resolve = (base, target) => {
+    const parts = base.split("/").slice(0, -1);
+    for (const seg of target.split("/")) { if (seg === "..") parts.pop(); else if (seg && seg !== ".") parts.push(seg); }
+    return parts.join("/");
+  };
+  const relsOf = async (part) => {
+    const xml = await read(part.replace(/([^/]+)$/, "_rels/$1.rels"));
+    const out = [];
+    if (!xml) return out;
+    const els = parse(xml).getElementsByTagName("Relationship");
+    for (let i = 0; i < els.length; i += 1) out.push({ id: els[i].getAttribute("Id"), type: els[i].getAttribute("Type") || "", target: resolve(part, els[i].getAttribute("Target") || "") });
+    return out;
+  };
+  const paragraphs = (node) => {
+    const lines = [];
+    const ps = node.getElementsByTagName("a:p");
+    for (let i = 0; i < ps.length; i += 1) {
+      const ts = ps[i].getElementsByTagName("a:t");
+      let line = "";
+      for (let j = 0; j < ts.length; j += 1) line += ts[j].textContent || "";
+      if (line.trim()) lines.push(line.trim());
+    }
+    return lines;
+  };
+  const presXml = await read("ppt/presentation.xml");
+  if (!presXml) throw new Error("not a presentation");
+  const presRels = new Map((await relsOf("ppt/presentation.xml")).map((r) => [r.id, r.target]));
+  const ids = parse(presXml).getElementsByTagName("p:sldId");
+  const total = ids.length;
+  const blocks = [];
+  let slidesRead = 0;
+  for (let i = 0; i < total; i += 1) {
+    const n = i + 1;
+    const partPath = presRels.get(ids[i].getAttribute("r:id"));
+    try {
+      const xml = partPath ? await read(partPath) : null;
+      if (!xml) throw new Error("missing slide");
+      const doc = parse(xml);
+      const root = doc.documentElement;
+      if (!root || root.tagName !== "p:sld") throw new Error("not a slide");
+      const hidden = root.getAttribute("show") === "0";
+      const lines = paragraphs(doc);
+      let block = `[Slide ${n} of ${total}${hidden ? ", hidden" : ""}]` + (lines.length ? ` ${lines.join("\n")}` : "");
+      const notesRel = (await relsOf(partPath)).find((r) => r.type.endsWith("/notesSlide"));
+      if (notesRel) {
+        const notesXml = await read(notesRel.target);
+        if (notesXml) {
+          // only the notes BODY: not the slide-image or slide-number placeholders
+          const nd = parse(notesXml);
+          const sps = nd.getElementsByTagName("p:sp");
+          const notes = [];
+          for (let k = 0; k < sps.length; k += 1) {
+            const ph = sps[k].getElementsByTagName("p:ph")[0];
+            if (ph && ph.getAttribute("type") === "body") notes.push(...paragraphs(sps[k]));
+          }
+          if (notes.length) block += `\n[Slide ${n} of ${total}, notes] ${notes.join("\n")}`;
+        }
+      }
+      blocks.push(block);
+      slidesRead += 1;
+    } catch {
+      break;   // stop at the first slide that will not read: "the first n of m" stays literally true
+    }
+  }
+  const images = Object.keys(zip.files).filter((name) => /^ppt\/media\//.test(name) && !zip.files[name].dir).length;
+  const joined = blocks.join("\n\n");
+  const hasText = blocks.some((b) => b.replace(/\[Slide [^\]]+\]/g, "").trim());
+  const normalized = normalizeTextCapped(joined);
+  return { text: hasText ? normalized.text : "", images, slidesRead, slidesTotal: total, charsTotal: joined.length, charsCapped: normalized.capped };
+}
+
 async function extractText({ fileName, fileType, contentBase64 }) {
   const buffer = Buffer.from(String(contentBase64 || ""), "base64");
   const ext = extensionFromName(fileName);
@@ -248,7 +332,7 @@ async function extractText({ fileName, fileType, contentBase64 }) {
   //   pages_total  — pages the document has (null likewise)
   //   pages        — retained, and now EXPLICITLY the document's count: it is what the stored
   //                  extraction_pages column has always meant, so old rows keep their meaning
-  const shaped = ({ text, source, images = 0, pagesRead = null, pagesTotal = null, charsTotal = null, charsCapped = false, ocrPages = 0 }) => ({
+  const shaped = ({ text, source, images = 0, pagesRead = null, pagesTotal = null, charsTotal = null, charsCapped = false, ocrPages = 0, pageUnit = "page" }) => ({
     text,
     source,
     chars: text.length,
@@ -262,6 +346,8 @@ async function extractText({ fileName, fileType, contentBase64 }) {
     pages_total: pagesTotal,
     // S2: how many pages were read by text recognition (S-ING-7 renders when it is above 0).
     ocr_pages: ocrPages,
+    // S6: what pages_read / pages_total count — "page" (PDF) or "slide" (PowerPoint).
+    page_unit: pageUnit,
     versions: PARSER_VERSIONS,
     unreadable: null,
   });
@@ -347,6 +433,19 @@ async function extractText({ fileName, fileType, contentBase64 }) {
     const { text, images, pagesRead, pagesTotal, charsTotal, charsCapped } = read;
     if (!text) return unreadable(images > 0 ? "unreadable_format" : "unreadable_empty", "local_parser_mammoth", { images });
     return shaped({ text, source: "local_parser_mammoth", images, pagesRead, pagesTotal, charsTotal, charsCapped });
+  }
+
+  const isPptx = normalizedType.includes("officedocument.presentationml.presentation") || ext === "pptx";
+  if (isPptx) {
+    let read;
+    try {
+      read = await extractPptxText(buffer);
+    } catch {
+      return unreadable("unreadable_corrupt", "local_parser_pptx");
+    }
+    const { text, images, slidesRead, slidesTotal, charsTotal, charsCapped } = read;
+    if (!text) return unreadable(images > 0 ? "unreadable_format" : "unreadable_empty", "local_parser_pptx", { images, pagesRead: slidesRead, pagesTotal: slidesTotal, pageUnit: "slide" });
+    return shaped({ text, source: "local_parser_pptx", images, pagesRead: slidesRead, pagesTotal: slidesTotal, charsTotal, charsCapped, pageUnit: "slide" });
   }
 
   // S5 (2026-11-16): an old Word .doc is read by macOS's own textutil (nothing installed). A file textutil

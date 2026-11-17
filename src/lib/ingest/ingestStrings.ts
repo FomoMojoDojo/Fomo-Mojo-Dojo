@@ -149,3 +149,16 @@ export const OCR_READ_STRING = "Some pages were scanned images. Their text was r
 export function ocrReadLine(ocrPages: number | null | undefined): string | null {
   return typeof ocrPages === "number" && Number.isFinite(ocrPages) && ocrPages > 0 ? OCR_READ_STRING : null;
 }
+
+// ── A DECK READ IN PART (S6, signed 2026-11-16) ────────────────────────────────────────────────────
+//
+// S-ING-1b. A PowerPoint's slides ride the same pages_read / pages_total pair as a PDF's pages, with
+// file_proposals.page_unit = 'slide', so the partial-read line names the right thing. Warning styling,
+// like S-ING-1: slides after the n-th were never read.
+export const PARTIAL_SLIDES_STRING = "Only the first {n} of {m} slides were read.";
+
+/** S-ING-1 or S-ING-1b by the read's unit, with its two numbers substituted and nothing else done. */
+export function partialReadLineFor(unit: string | null | undefined, read: number, total: number): string {
+  if (unit === "slide") return PARTIAL_SLIDES_STRING.replace("{n}", String(read)).replace("{m}", String(total));
+  return partialReadLine(read, total);
+}

@@ -7,7 +7,7 @@ import type { FileProposalRow } from "@/hooks/useFileProposals";
 import { formatAnalysisVersion, formatExtractionShape } from "@/lib/fileAnalysis";
 import {
   INGEST_STRINGS, isBudgetSelected, isPartialRead, partialReadLine,
-  sectionsFailedLine, sectionsProgressLine, showsSectionCounts, unreadableReason, ocrReadLine,
+  sectionsFailedLine, sectionsProgressLine, showsSectionCounts, unreadableReason, ocrReadLine, partialReadLineFor,
 } from "@/lib/ingest/ingestStrings";
 import { Info } from "lucide-react";
 import { isInternalFileTag, makeAreaSupportTag } from "@/lib/fileTags";
@@ -185,7 +185,8 @@ export function fileProposalProcessingBadgeText(proposal: FileProposalRow): stri
 export function fileProposalPartialReadText(proposal: FileProposalRow | null | undefined): string | null {
   if (!proposal) return null;
   if (!isPartialRead(proposal.pages_read, proposal.pages_total)) return null;
-  return partialReadLine(proposal.pages_read as number, proposal.pages_total as number);
+  // S6: a deck's pair counts slides (page_unit 'slide'), and says so.
+  return partialReadLineFor(proposal.page_unit, proposal.pages_read as number, proposal.pages_total as number);
 }
 
 /**

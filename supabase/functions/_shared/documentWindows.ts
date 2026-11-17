@@ -36,8 +36,9 @@ export const WINDOW_CHARS = 12_000;
 
 /** Cut before a markdown heading even without a blank line: a heading is its own unit. */
 const HEADING_LINE = /^#{1,6}\s/;
-/** The local parser's per-page marker (`[Page 12] …`), the only boundary a PDF has. */
-const PAGE_MARKER = /^\[Page \d+\]/;
+/** The local parser's section markers, the only boundaries a PDF or a deck has: `[Page 12] …` and, since S6
+ *  (2026-11-16), `[Slide 3 of 12] …`, `[Slide 3 of 12, hidden] …` and `[Slide 3 of 12, notes] …`. */
+const PAGE_MARKER = /^\[(?:Page \d+|Slide \d+ of \d+(?:, (?:hidden|notes))?)\]/;
 
 export type DocumentWindow = {
   /** 0-based, document order. */

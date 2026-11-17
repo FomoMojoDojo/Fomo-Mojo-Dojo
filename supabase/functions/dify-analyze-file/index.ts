@@ -176,6 +176,8 @@ async function extractTextViaLocalParser(params: {
     // S2 (2026-11-16): pages read by text recognition — S-ING-7 renders from it. A parser that does not
     // report it (before S2) records null, never a guess.
     ocrPages: num(data?.ocr_pages),
+    // S6 (2026-11-16): what the page pair counts — "slide" for a PowerPoint. Anything else is a page.
+    pageUnit: data?.page_unit === "slide" ? "slide" : (pairKnown ? "page" : null),
   };
 }
 
@@ -625,6 +627,7 @@ async function refreshReadAndWindow(args: {
         chars_total: extraction.charsTotal ?? fresh.length,
         chars_capped: extraction.charsCapped,
         ocr_pages: extraction.ocrPages,
+        page_unit: extraction.pageUnit,
       }).eq("id", proposalId);
     }
   } catch (error) {
@@ -2710,7 +2713,9 @@ serve(async (req) => {
       charsCapped: boolean | null;
       // S2: on this local type for the SP-231 reason above — the insert reads THIS object.
       ocrPages: number | null;
-    } = { images: 0, pages: null, source: "local_text_reader", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null, ocrPages: null };
+      // S6: likewise — "slide" for a deck.
+      pageUnit: string | null;
+    } = { images: 0, pages: null, source: "local_text_reader", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null, ocrPages: null, pageUnit: null };
     try {
       const ext = extensionFromName(fileName ?? "");
       const normalizedType = String(fileType || downloaded.type || "").toLowerCase();
@@ -2738,6 +2743,7 @@ serve(async (req) => {
           charsTotal: parsed.charsTotal,
           charsCapped: parsed.charsCapped,
           ocrPages: parsed.ocrPages,
+          pageUnit: parsed.pageUnit,
         };
       }
     } catch (extractError) {
@@ -2745,7 +2751,7 @@ serve(async (req) => {
       fileText = "";
       // A failed extraction knows nothing about pages, and says nothing rather than zero.
       // A failed extraction knows nothing — not whether pages were missed, and not whether the cap bit.
-      extraction = { images: 0, pages: null, source: "local_parser_error", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null, ocrPages: null };
+      extraction = { images: 0, pages: null, source: "local_parser_error", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null, ocrPages: null, pageUnit: null };
     }
 
     console.log("[dify-analyze-file] extracted file_text length:", fileText.length, "shape:", JSON.stringify({ chars: fileText.length, ...extraction }));
@@ -2887,6 +2893,8 @@ serve(async (req) => {
         chars_capped:        extraction.charsCapped,
         // S2: pages read by text recognition, recorded at birth as well as on every re-read.
         ocr_pages:           extraction.ocrPages,
+        // S6: "slide" for a deck, so the partial-read line says slides.
+        page_unit:           extraction.pageUnit,
       })
       .select()
       .single();

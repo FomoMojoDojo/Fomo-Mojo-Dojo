@@ -122,6 +122,8 @@ export interface FileProposalRow {
   processing_error_code?: string | null;
   /** S2: pages read by text recognition (S-ING-7 when above 0); null on a row from before S2. */
   ocr_pages?: number | null;
+  /** S6: what pages_read / pages_total count — 'page' or 'slide'; null on a row from before S6. */
+  page_unit?: string | null;
   processing_started_at: string | null;
   processing_completed_at: string | null;
   applied_areas: string[];
