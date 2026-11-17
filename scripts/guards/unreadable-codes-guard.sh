@@ -17,6 +17,11 @@
 #   (u7) R1 (2026-11-16): a file whose READER could not be reached (extraction_error_code reader_unavailable,
 #        no sidecar) closes reader_unavailable, with processing_error NULL — the signed reason renders from it
 #   (u8) R1: analyze-file writes reader_unavailable ONLY where its call to the parser itself fails
+#   (u9) X1 (2026-11-17), LIVE: the start step reads a file that has NO sidecar from its stored path.
+#        A stored file with no sidecar is started through the real dify-analyze-file mode:start; it must
+#        reach the read (this fixture is a truncated PDF, so the read finds no text and the row fails at
+#        "Could not read and split …" — before any window or model), never "No upload sidecar …", which
+#        is what every reader-down upload got on "Analyze again" before X1.
 # Cleanup (SP-264): only the file_proposals rows and storage objects this guard created. Prints
 # "guard: PASS" or "guard: RED". Plant: drop the sidecar branch from unread_file_close_code → (u3) RED.
 set -uo pipefail
@@ -44,7 +49,8 @@ FILES="50000000-0000-4000-8000-0000000000d1|has-sidecar.pdf|-
 50000000-0000-4000-8000-0000000000d6|truncated.pdf|truncated
 50000000-0000-4000-8000-0000000000d7|sheet.xls|cfb
 50000000-0000-4000-8000-0000000000d8|readable.pdf|pdf
-50000000-0000-4000-8000-0000000000d9|reader-was-down.pdf|-"
+50000000-0000-4000-8000-0000000000d9|reader-was-down.pdf|-
+50000000-0000-4000-8000-0000000000da|reader-was-down-stored.pdf|truncated"
 ids_sql=$(printf '%s\n' "$FILES" | cut -d'|' -f1 | sed "s/.*/'&'/" | paste -sd, -)
 cleanup() {
   psqlq "delete from public.file_proposals where file_id in ($ids_sql);" >/dev/null 2>&1 || true
@@ -83,6 +89,7 @@ head -c 600 "$TMP/readable.pdf" > "$TMP/truncated.pdf"
 { printf '\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'; printf ' not a real xls workbook'; } > "$TMP/sheet.xls"
 up() { curl -s -o /dev/null -w '%{http_code}' -X POST "$API/storage/v1/object/input-files/$PREFIX/$1" -H "Authorization: Bearer $SR" -H "x-upsert: true" -H "Content-Type: application/octet-stream" --data-binary "@$2"; }
 for n in empty-file.pdf encrypted.docx truncated.pdf sheet.xls readable.pdf; do up "$n" "$TMP/$n" >/dev/null; done
+up "reader-was-down-stored.pdf" "$TMP/truncated.pdf" >/dev/null
 printf 'sidecar text for the guard' > "$TMP/side.txt"; up "has-sidecar.pdf.extracted.txt" "$TMP/side.txt" >/dev/null
 
 echo "── (u1) the served parser names each unreadable case ──"
@@ -151,5 +158,24 @@ CATCH=$(awk '/parsed = await extractTextViaLocalParser\(/{p=1} p&&/catch \(reade
 { [ "$SET_N" = 1 ] && [ "$WRITE_N" = 1 ] && [ "$CATCH" = ok ]; } \
   && ok "(u8) reader_unavailable is set only in the catch around the parser call, and written once" \
   || bad "(u8) set at $SET_N site(s), written at $WRITE_N, inside the parser-call catch: ${CATCH:-no}"
+
+echo "── (u9) X1: a stored file with no sidecar is READ by the start step ──"
+D10=50000000-0000-4000-8000-0000000000da
+if [ "$(psqlq "select count(*) from public.ingest_single_flight;")" != 0 ]; then
+  bad "(u9) the fleet's single-flight lock is held by another analysis — the start step cannot be claimed; re-run when idle"
+else
+  P9=$(psqlq "insert into public.file_proposals (company_id, file_id, file_name, source_type, summary, signal_type, status, processing_state)
+              values ('$CO', '$D10', 'reader-was-down-stored.pdf', 'uploaded_file', 'X1 guard', 'document', 'pending', 'queued') returning id;" | head -1)
+  psqlq "insert into public.ingest_single_flight (lock_key, proposal_id, company_id, expires_at) values ('file_analysis', '$P9', '$CO', now() + interval '5 minutes');" >/dev/null
+  curl -s -m 120 -o "$TMP/u9.json" -X POST "$API/functions/v1/dify-analyze-file" -H "Authorization: Bearer $SR" -H 'Content-Type: application/json' \
+    --data "{\"mode\":\"start\",\"proposalId\":\"$P9\"}" >/dev/null
+  psqlq "delete from public.ingest_single_flight where proposal_id = '$P9';" >/dev/null
+  R9=$(psqlq "select processing_state || '|' || coalesce(processing_error, '') from public.file_proposals where id = '$P9';")
+  case "$R9" in
+    *"No upload sidecar"*) bad "(u9) the start step refused the file for having no sidecar — 'Analyze again' cannot recover a reader-down upload: $R9";;
+    "failed|Could not read and split this document"*) ok "(u9) the start step read the stored file (no sidecar needed) and stopped at the read: ${R9:0:110}";;
+    *) bad "(u9) unexpected start result: ${R9:0:200} — $(head -c 200 "$TMP/u9.json")";;
+  esac
+fi
 
 if [ "$fails" = 0 ]; then echo "guard: PASS"; else echo "guard: RED ($fails check(s))"; exit 1; fi

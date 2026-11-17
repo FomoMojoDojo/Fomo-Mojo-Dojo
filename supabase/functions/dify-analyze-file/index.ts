@@ -9,7 +9,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
 import { isLocalOllamaUrl as isLocalClassifierUrl, resolveUploadOrigin } from "../_shared/uploadVoiceClassifier.ts";
 import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
-import { loadUploadSidecar } from "../_shared/uploadSidecar.ts";
+import { loadUploadSidecar, resolveStartSource, storedFilePath } from "../_shared/uploadSidecar.ts";
 import { coverageFailures, type DocumentWindow, toDocumentWindows, WINDOW_CHARS } from "../_shared/documentWindows.ts";
 import {
   buildWindowExtractUser, DETERMINISTIC_FAILURE_CODES, EXTRACT_KINDS, halvedCaps,
@@ -2389,9 +2389,11 @@ serve(async (req) => {
         );
       }
 
-      const sidecar = await loadUploadSidecar(
-        supabase as unknown as { from: (t: string) => any; storage: any },
-        r.file_id as string | null,
+      // X1: the sidecar when there is one; otherwise the file's stored path — a file uploaded while the
+      // reader was down has no sidecar, and "Analyze again" must still read it.
+      const sidecar = resolveStartSource(
+        await loadUploadSidecar(supabase as unknown as { from: (t: string) => any; storage: any }, r.file_id as string | null),
+        await storedFilePath(supabase as unknown as { from: (t: string) => any }, r.file_id as string | null),
       );
       if (!sidecar?.filePath) {
         await markProposalFailed({
@@ -2417,7 +2419,8 @@ serve(async (req) => {
       // SAME code the long way round does, rather than a second copy of it that could drift.
       const currentSidecarSha = await contentIdentityOf(sidecar.text);
       const installedParser = await currentParserVersion(LOCAL_PARSER_URL);
-      const reused = await reuseBankedExtracts({
+      // X1: with no sidecar there is no old text, so nothing banked can match it — read the file.
+      const reused = !sidecar.fromSidecar ? null : await reuseBankedExtracts({
         supabase: supabase as unknown as { from: (t: string) => any },
         proposalId: String(r.id),
         companyId: String(r.company_id ?? ""),

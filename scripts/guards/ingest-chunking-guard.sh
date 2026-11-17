@@ -509,8 +509,10 @@ else
 fi
 
 echo "── (c10) SP-279: an unchanged sidecar reuses the banked extracts, with NO window model call ──"
-if grep -q 'const reused = await reuseBankedExtracts({' "$WORKER"; then
-  REUSE_AT=$(grep -n 'const reused = await reuseBankedExtracts({' "$WORKER" | head -1 | cut -d: -f1)
+# X1 (2026-11-17): the call is conditional now — reuse is skipped only when there is NO sidecar to reuse
+# against (a reader-down upload), so the pattern takes either form; the ordering check below is unchanged.
+if grep -qE 'const reused = (!sidecar\.fromSidecar \? null : )?await reuseBankedExtracts\(\{' "$WORKER"; then
+  REUSE_AT=$(grep -nE 'const reused = (!sidecar\.fromSidecar \? null : )?await reuseBankedExtracts\(\{' "$WORKER" | head -1 | cut -d: -f1)
   READ_AT=$(grep -n 'const read = await refreshReadAndWindow({' "$WORKER" | head -1 | cut -d: -f1)
   if [ -n "$REUSE_AT" ] && [ -n "$READ_AT" ] && [ "$REUSE_AT" -lt "$READ_AT" ]; then
     ok "(c10) reuse is attempted BEFORE any re-extraction (line $REUSE_AT < $READ_AT) — so a reused run cannot make a window call"
