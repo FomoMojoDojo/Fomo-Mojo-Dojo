@@ -6,6 +6,8 @@ import {
   ledByAnalystVerb,
   planCandidateQueueWithDrops,
   effectiveAuthorship,
+  excerptBacksEvidence,
+  normalizeEvidence,
   planCandidateQueue,
   type QueueSignal,
   signalVoice,
@@ -165,4 +167,47 @@ Deno.test("G1: each list is judged on the words it is about", () => {
   assertEquals(candidateText("candidate_outcomes", { outcome: "C" }), "C");
   assertEquals(candidateText("possible_routes", { title: "D" }), "D");
   assertEquals(candidateText("candidate_positioning_updates", { suggested_update: "E" }), "E");
+});
+
+// M1: the REAL failing pair — Charter's earnings release, analysis 515ccb3c (workflow 52410e4f), signal
+// 0faa0afc. The framework finding's evidence was cut by C1's 150-character schema cap; the candidate need's
+// evidence (180-character cap) is the whole sentence, which is verbatim in the document's sidecar.
+const CUT = "Spectrum increasingly offers symmetrical and multi-gigabit Internet speeds across its entire footprint and has launched symmetrical Internet service";
+const WHOLE = "Spectrum increasingly offers symmetrical and multi-gigabit Internet speeds across its entire footprint and has launched symmetrical Internet service in several markets.";
+
+Deno.test("M1: a stored excerpt cut at the schema cap still backs the item whose evidence it begins", () => {
+  const rows = planCandidateQueue({
+    companyId: "c1",
+    proposal: { id: "p1", file_id: "f1", candidate_needs: [{ desired_outcome: "To benefit from symmetrical and multi-gigabit internet speeds.", evidence: WHOLE }] },
+    signals: [sig("0faa0afc", CUT, { raw_payload: { evidence: CUT } })],
+    docAuthorship: "client",
+  });
+  assertEquals(rows[0].proposed_state.evidence_signal_ids, ["0faa0afc"]);
+  assertEquals(rows[0].raw_payload.evidence_match, "matched");
+  assertEquals(rows[0].proposed_state.evidence_voice, "company");
+});
+
+Deno.test("M1: the prefix rule is bounded — not mid-sentence, not short, not a small share, not a blank excerpt", () => {
+  const ev = normalizeEvidence(WHOLE);
+  assert(excerptBacksEvidence(normalizeEvidence(CUT), ev));
+  // a piece from the MIDDLE of the quote is not a cut tail
+  assert(!excerptBacksEvidence(normalizeEvidence("multi-gigabit Internet speeds across its entire footprint and has launched symmetrical"), ev));
+  // a prefix under MIN_PREFIX_CHARS names too much
+  assert(!excerptBacksEvidence(normalizeEvidence("Spectrum increasingly offers"), ev));
+  // a prefix of 40+ characters that covers under MIN_PREFIX_SHARE of the item is not its quote
+  assert(!excerptBacksEvidence(normalizeEvidence("Spectrum increasingly offers symmetrical and multi-gigabit"), ev));
+  // blank stays blank (G1 backstop 3)
+  assert(!excerptBacksEvidence("", ev));
+  // the old direction is unchanged
+  assert(excerptBacksEvidence(normalizeEvidence("… " + WHOLE + " More text."), ev));
+});
+
+Deno.test("M1: a blanked excerpt still backs nothing even when raw_payload.evidence is the cut quote", () => {
+  const rows = planCandidateQueue({
+    companyId: "c1",
+    proposal: { id: "p1", file_id: "f1", candidate_needs: [{ desired_outcome: "x", evidence: WHOLE }] },
+    signals: [sig("s1", "", { raw_payload: { evidence: CUT } })],
+    docAuthorship: "client",
+  });
+  assertEquals(rows[0].raw_payload.evidence_match, "unmatched");
 });

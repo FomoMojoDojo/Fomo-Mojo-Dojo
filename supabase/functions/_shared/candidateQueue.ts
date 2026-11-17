@@ -37,7 +37,7 @@ export type CandidateSurfaceType = typeof CANDIDATE_LISTS[number]["surfaceType"]
 export type EvidenceVoice = "company" | "outside" | "mixed" | "unlabeled";
 export type DocAuthorship = "client" | "us" | "third_party" | "uncertain" | null;
 
-export const CANDIDATE_QUEUE_VERSION = "candidate-queue v2";
+export const CANDIDATE_QUEUE_VERSION = "candidate-queue v3";
 export const QUEUE_RETIRE_REASON = "reanalysis:superseded_by_newer_analysis";
 
 /** Lower-case, every run of non-alphanumerics to one space, trimmed — the same normalisation the
@@ -48,6 +48,25 @@ export function normalizeEvidence(text: unknown): string {
 
 /** An item's evidence shorter than this matches too much to name a signal. */
 export const MIN_MATCH_CHARS = 16;
+
+// M1 (2026-11-17): A SIGNAL'S QUOTE MAY BE THE ITEM'S QUOTE CUT AT ITS TAIL. C1's answer schema caps a
+// framework finding's `evidence` at 150 characters and a candidate's at 180, so a sentence between the two
+// is stored on the signal cut mid-word and on the candidate whole. "The excerpt contains the item's
+// evidence" then fails although the excerpt is the item's own quote, verified by E4 against the document.
+// Measured on the 9 analyses made under the caps: 17 of 27 unmatched cards were exactly this — the stored
+// excerpt a strict PREFIX of the card's evidence, covering 0.65–0.99 of it (Charter's earnings release,
+// 5 of its 8). So a signal also backs an item when its stored, non-blank excerpt is a prefix of the item's
+// evidence that is at least MIN_PREFIX_CHARS long and covers at least MIN_PREFIX_SHARE of it. Only the
+// stored excerpt counts, as before (G1 backstop 3): the model's own raw_payload.evidence never matches.
+export const MIN_PREFIX_CHARS = 40;
+export const MIN_PREFIX_SHARE = 0.6;
+
+/** PURE: does a signal's normalised stored excerpt `t` back an item's normalised evidence `ev`? */
+export function excerptBacksEvidence(t: string, ev: string): boolean {
+  if (!t || ev.length < MIN_MATCH_CHARS) return false;
+  if (t.includes(ev)) return true;
+  return t.length >= MIN_PREFIX_CHARS && t.length >= MIN_PREFIX_SHARE * ev.length && ev.startsWith(t);
+}
 
 export type QueueSignal = {
   id: string;
@@ -200,7 +219,7 @@ export function planCandidateQueueWithDrops(args: {
       if (evOwner && evOwner !== list) { drops.push({ list, index, reason: "duplicate_evidence", of: evOwner, text }); return; }
       if (nText && !seenText.has(nText)) seenText.set(nText, list);
       if (ev.length >= MIN_MATCH_CHARS && !seenEvidence.has(ev)) seenEvidence.set(ev, list);
-      const backing = ev.length >= MIN_MATCH_CHARS ? sigText.filter(({ t }) => t.includes(ev)).map(({ s }) => s) : [];
+      const backing = sigText.filter(({ t }) => excerptBacksEvidence(t, ev)).map(({ s }) => s);
       const ids = backing.map((s) => s.id);
       out.push({
         company_id: args.companyId,
