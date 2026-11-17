@@ -99,6 +99,8 @@ async function extractTextViaLocalParser(params: {
 // S0 (2026-11-16): the codes input_files.extraction_error_code admits (its CHECK constraint). Anything
 // else the parser might say is dropped rather than refused by the database.
 const EXTRACTION_ERROR_CODES = new Set([
+  // R1 (2026-11-16): written by THIS function, never by the parser — the parser call itself failed.
+  "reader_unavailable",
   "unreadable_password", "unreadable_corrupt", "unreadable_empty",
   "unreadable_no_text_after_ocr", "unreadable_format", "ocr_unavailable",
 ]);
@@ -296,6 +298,9 @@ serve(async (req) => {
     let effectiveExtractionSource = String(extractionSource || "").trim() || "none";
     // S0: why a stored file read empty; recorded on the file row below and returned to the caller.
     let unreadableCode: string | null = null;
+    // R1: true only when the call to the local parser ITSELF failed (refused, non-2xx, no answer) — not
+    // when the storage download failed, and not when the parser answered that the file is unreadable.
+    let readerUnavailable = false;
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -344,12 +349,18 @@ serve(async (req) => {
           effectiveExtractionSource = "local_text_reader";
           if (!effectiveFileContent.trim()) unreadableCode = "unreadable_empty";
         } else {
-          const parsed = await extractTextViaLocalParser({
-            parserUrl: LOCAL_PARSER_URL,
-            fileName,
-            fileType: normalizedType,
-            blob: downloaded,
-          });
+          let parsed: Awaited<ReturnType<typeof extractTextViaLocalParser>>;
+          try {
+            parsed = await extractTextViaLocalParser({
+              parserUrl: LOCAL_PARSER_URL,
+              fileName,
+              fileType: normalizedType,
+              blob: downloaded,
+            });
+          } catch (readerError) {
+            readerUnavailable = true;
+            throw readerError;
+          }
           effectiveFileContent = parsed.text;
           effectiveExtractionSource = parsed.source;
           if (!parsed.text.trim()) unreadableCode = parsed.unreadableCode;
@@ -380,8 +391,16 @@ serve(async (req) => {
 
       // S0: the file row carries why it could not be read (cleared when a read succeeds), so the enqueue
       // sweep closes it with that code instead of 'voice_not_classified' (public.unread_file_close_code).
-      // A parser that could not be reached records nothing: the sweep then says 'no_text_extracted'.
-      if (effectiveExtractionSource !== "local_parser_error") {
+      // R1 (2026-11-16): a parser that could not be reached records 'reader_unavailable', so the operator is
+      // told to run it again; any OTHER extraction failure (a storage download error) still records nothing,
+      // and the sweep says 'no_text_extracted'.
+      if (readerUnavailable) {
+        unreadableCode = "reader_unavailable";
+        const { error: codeErr } = await supabase.from("input_files")
+          .update({ extraction_error_code: "reader_unavailable" })
+          .eq("file_path", filePath);
+        if (codeErr) console.error("analyze-file could not record extraction_error_code:", codeErr.message);
+      } else if (effectiveExtractionSource !== "local_parser_error") {
         const code = effectiveFileContent.trim() ? null
           : (unreadableCode && EXTRACTION_ERROR_CODES.has(unreadableCode) ? unreadableCode : null);
         unreadableCode = code;

@@ -125,6 +125,8 @@ export const UNREADABLE_STRINGS = {
   unreadable_no_text_after_ocr: "This file is an image, and no text could be recognized in it.",
   unreadable_format: "MojoMap™ cannot read this kind of file yet.",
   ocr_unavailable: "Text recognition is not available right now.",
+  // R1 (signed 2026-11-16): the parser call itself failed — the file was never read.
+  reader_unavailable: "The file reader was not available when this file was uploaded. Use “Analyze again” to read it now.",
 } as const;
 
 export type UnreadableCode = keyof typeof UNREADABLE_STRINGS;

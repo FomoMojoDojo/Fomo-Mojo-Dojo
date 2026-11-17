@@ -14,6 +14,9 @@
 #        from the code, never stored)
 #   (u5) the live sweep closes through close_unread_file and carries no literal voice_not_classified
 #   (u6) fleet-wide, since S0 was applied: no voice_not_classified proposal on a file without a sidecar
+#   (u7) R1 (2026-11-16): a file whose READER could not be reached (extraction_error_code reader_unavailable,
+#        no sidecar) closes reader_unavailable, with processing_error NULL — the signed reason renders from it
+#   (u8) R1: analyze-file writes reader_unavailable ONLY where its call to the parser itself fails
 # Cleanup (SP-264): only the file_proposals rows and storage objects this guard created. Prints
 # "guard: PASS" or "guard: RED". Plant: drop the sidecar branch from unread_file_close_code → (u3) RED.
 set -uo pipefail
@@ -40,7 +43,8 @@ FILES="50000000-0000-4000-8000-0000000000d1|has-sidecar.pdf|-
 50000000-0000-4000-8000-0000000000d5|encrypted.docx|cfb
 50000000-0000-4000-8000-0000000000d6|truncated.pdf|truncated
 50000000-0000-4000-8000-0000000000d7|sheet.xls|cfb
-50000000-0000-4000-8000-0000000000d8|readable.pdf|pdf"
+50000000-0000-4000-8000-0000000000d8|readable.pdf|pdf
+50000000-0000-4000-8000-0000000000d9|reader-was-down.pdf|-"
 ids_sql=$(printf '%s\n' "$FILES" | cut -d'|' -f1 | sed "s/.*/'&'/" | paste -sd, -)
 cleanup() {
   psqlq "delete from public.file_proposals where file_id in ($ids_sql);" >/dev/null 2>&1 || true
@@ -133,5 +137,19 @@ N6=$(psqlq "select count(*) from public.file_proposals p join public.input_files
                and p.processing_state='failed'
                and not exists (select 1 from storage.objects o where o.bucket_id='input-files' and o.name=f.file_path||'.extracted.txt');")
 [ "$N6" = 0 ] && ok "(u6) 0 such rows" || bad "(u6) $N6 voice_not_classified row(s) on files with no sidecar since S0"
+
+echo "── (u7)(u8) R1: the reader could not be reached ──"
+psqlq "update public.input_files set extraction_error_code='reader_unavailable' where id='50000000-0000-4000-8000-0000000000d9';" >/dev/null
+G7=$(psqlq "select public.unread_file_close_code('50000000-0000-4000-8000-0000000000d9');")
+psqlq "select public.close_unread_file('50000000-0000-4000-8000-0000000000d9');" >/dev/null
+R7=$(psqlq "select processing_state||':'||processing_error_code||':'||coalesce(processing_error,'<null>') from public.file_proposals where file_id='50000000-0000-4000-8000-0000000000d9';")
+{ [ "$G7" = reader_unavailable ] && [ "$R7" = "failed:reader_unavailable:<null>" ]; } \
+  && ok "(u7) no sidecar + reader_unavailable → closed reader_unavailable, no stored reason" || bad "(u7) close code '$G7', row '$R7'"
+AF=supabase/functions/analyze-file/index.ts
+SET_N=$(grep -c "readerUnavailable = true" "$AF"); WRITE_N=$(grep -c 'extraction_error_code: "reader_unavailable"' "$AF")
+CATCH=$(awk '/parsed = await extractTextViaLocalParser\(/{p=1} p&&/catch \(readerError\)/{c=1} c&&/readerUnavailable = true/{print "ok"; exit}' "$AF")
+{ [ "$SET_N" = 1 ] && [ "$WRITE_N" = 1 ] && [ "$CATCH" = ok ]; } \
+  && ok "(u8) reader_unavailable is set only in the catch around the parser call, and written once" \
+  || bad "(u8) set at $SET_N site(s), written at $WRITE_N, inside the parser-call catch: ${CATCH:-no}"
 
 if [ "$fails" = 0 ]; then echo "guard: PASS"; else echo "guard: RED ($fails check(s))"; exit 1; fi

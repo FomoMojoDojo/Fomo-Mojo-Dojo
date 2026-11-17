@@ -346,7 +346,6 @@ export default function FileUploadDialog({
   const [isInterview, setIsInterview] = useState(false);
   const [interviewSpeaker, setInterviewSpeaker] = useState<InterviewSpeaker | null>(null);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
-  const [alignmentRunning, setAlignmentRunning] = useState(false);
   const queryClient = useQueryClient();
   const uploadMutation = useUploadInputFile();
   const seedMutation = useSeedInputs();
@@ -391,7 +390,6 @@ export default function FileUploadDialog({
     setIsInterview(false);
     setInterviewSpeaker(null);
     setProgress(null);
-    setAlignmentRunning(false);
     clearNativeInputValue();
   }
 
@@ -716,32 +714,10 @@ export default function FileUploadDialog({
       void queryClient.invalidateQueries({ queryKey: ['company-files', selectedCompanyId] });
     }
 
-    // Gate B: an interview batch calls ONLY record-interview-upload — no local comparison kick either.
-    if (successCount > 0 && selectedCompanyId && !isInterview) {
-      setAlignmentRunning(true);
-      void supabase.functions
-        .invoke("local-alignment", {
-          body: {
-            company_id: selectedCompanyId,
-            areas: ["positioning", "strategy", "market", "odi"],
-            trigger: "upload_batch",
-          },
-        })
-        .then(({ error, data }) => {
-          if (error || data?.error) {
-            toast.error("Local comparison failed (positioning, strategy, market, Strategic Decision System). Uploads were saved.");
-            return;
-          }
-          void queryClient.invalidateQueries({ queryKey: ["local-alignment", selectedCompanyId] });
-          toast.success("Local comparison updated (positioning, strategy, market, Strategic Decision System).");
-        })
-        .catch(() => {
-          toast.error("Local comparison failed (positioning, strategy, market, Strategic Decision System). Uploads were saved.");
-        })
-        .finally(() => {
-          setAlignmentRunning(false);
-        });
-    }
+    // R1 (2026-11-16, reviewer's ruling on four-answers.md (c)): the upload no longer starts a local-alignment
+    // run. It read no document text — only input descriptions, file names and tags — spent up to four
+    // unledgered local model calls, and stored an advisory score that was never applied but read like a
+    // finding. The operator's manual alignment run (useRunLocalAlignment) is unchanged.
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -976,14 +952,6 @@ export default function FileUploadDialog({
                   ETA appears only when pace is stable enough to be reliable.
                 </p>
               ) : null}
-            </div>
-          ) : null}
-
-          {alignmentRunning ? (
-            <div className="border px-3 py-2" style={{ background: '#fffdf7', borderColor: '#e4d8ac' }}>
-              <p className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: '#8a6b12' }}>
-                Running local strategy/positioning comparison…
-              </p>
             </div>
           ) : null}
 
