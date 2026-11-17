@@ -74,6 +74,17 @@ describe("InputsTab calls the lifted input actions with the same arguments", () 
     expect(actions.runDifyAnalyzeFile).toHaveBeenCalledWith({ fileId: "file-1", filePath: "c1/review.md", fileName: FILE.file_name, fileType: "text/markdown", companyId: "c1", sourceType: "uploaded_file" });
   });
 
+  it("L2: Analyze again on a finished row → runDifyAnalyzeFile with the row's file fields", async () => {
+    proposals = [PROPOSAL];
+    const { container } = render(<InputsTab {...props} />);
+    expect(container.textContent).not.toMatch(/re-?run(?:ning)?\s+analysis/i);
+    const btn = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Analyze again");
+    expect(btn).toBeTruthy();
+    fireEvent.click(btn!);
+    await waitFor(() => expect(actions.runDifyAnalyzeFile).toHaveBeenCalledTimes(1));
+    expect(actions.runDifyAnalyzeFile).toHaveBeenCalledWith({ fileId: "file-1", filePath: "c1/review.md", fileName: FILE.file_name, fileType: "text/markdown", companyId: "c1", sourceType: "uploaded_file" });
+  });
+
   it("Review proposal → Accept calls acceptFileProposal with file, tags, proposal and the chosen areas", async () => {
     proposals = [PROPOSAL];
     const { container } = render(<InputsTab {...props} />);

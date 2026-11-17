@@ -1451,7 +1451,8 @@ export default function InputsTab({
                                             textUnderlineOffset: 3,
                                           }}
                                         >
-                                          {difyAnalyzingFileId === row.id ? "Analyzing…" : "Re-run analysis →"}
+                                          {/* L2 (2026-11-17): this control STARTS a run (runDifyAnalyzeFile queues a row), so it reads the signed "Analyze again". */}
+                                          {difyAnalyzingFileId === row.id ? "Analyzing…" : WORKSPACE_STRINGS.analyzeAgain}
                                         </button>
                                         {isFailedProposal && (
                                           <button

@@ -117,7 +117,9 @@ export default function ClientModeNav({
           disabled={rerunning}
           className="rounded-full border border-[#d8e1de] bg-white px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-t-secondary transition-opacity hover:opacity-80 disabled:opacity-60"
         >
-          {rerunning ? "Re-running..." : "Re-run analysis"}
+          {/* L2 (2026-11-17): rerunAnalysis only refetches the company, opportunities and problems — it starts no run.
+              The label is the existing one ClientDecisionSystemView gives the same handler. */}
+          {rerunning ? "Refreshing…" : "Refresh read"}
         </button>
       </div>
 

@@ -243,7 +243,9 @@ export default function ClientScoreView() {
                       disabled={rerunningAnalysis}
                       className="mt-3 inline-flex rounded-full bg-[#233c4b] px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-white transition-opacity hover:opacity-85 disabled:opacity-60"
                     >
-                      {rerunningAnalysis ? "Re-running..." : "Re-run analysis"}
+                      {/* L2 (2026-11-17): rerunAnalysis only refetches the company, opportunities and problems — it starts no run.
+                          The label is the existing one ClientDecisionSystemView gives the same handler. */}
+                      {rerunningAnalysis ? "Refreshing…" : "Refresh read"}
                     </button>
                   </div>
                 </div>
