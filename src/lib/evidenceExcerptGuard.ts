@@ -79,6 +79,40 @@ export function stripMergeSectionTag(excerpt: string | null | undefined): string
  *  blanked (it loses the claim to a quote it cannot produce), claim_text stays, and raw_payload records the
  *  gate. Absence-as-evidence ("missing_information: …") is caught here by TRACEABILITY, whatever the
  *  workflow emitted. No basis ⇒ untouched (honest limit), as with the public gate. Deterministic. */
+// Q1 (2026-11-17): QUOTE MARKS ARE NOT WORDS. The model reprints a quote with different quote marks —
+// the document's "Charter," becomes “Charter,”, its "Company" becomes 'Company' — and the exact check
+// above then refuses a sentence that IS in the document (measured: 4 cards on the 9 analyses under the
+// caps, card-evidence-diagnosis.md). This fold is for the QUOTE CHECK ONLY: normalizeForHash is untouched
+// (it is also the content-identity and blanking-plan hash, so no stored sha changes meaning), and what is
+// STORED is the document's own span, located through the fold — never the model's reprint.
+const QUOTE_MARKS = new Set(["\u0022", "\u0027", "\u201C", "\u201D", "\u201E", "\u201F", "\u2033", "\u2018", "\u2019", "\u201A", "\u201B", "\u2032", "\u00AB", "\u00BB"]);
+
+/** PURE: text folded for the quote check (case, whitespace runs, every quote mark → one), with a map
+ *  from each folded character back to its index in the original. */
+export function foldForQuoteMatch(text: string): { folded: string; map: number[] } {
+  const out: string[] = [];
+  const map: number[] = [];
+  let pendingSpace = -1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (/\s/.test(ch)) { if (out.length > 0 && pendingSpace < 0) pendingSpace = i; continue; }
+    if (pendingSpace >= 0) { out.push(" "); map.push(pendingSpace); pendingSpace = -1; }
+    const f = QUOTE_MARKS.has(ch) ? "\u0022" : ch.toLowerCase();
+    for (const c of f) { out.push(c); map.push(i); }
+  }
+  return { folded: out.join(""), map };
+}
+
+/** PURE: the DOCUMENT'S OWN text for an excerpt that matches it only once quote marks are folded, or null. */
+export function locateByQuoteFold(excerpt: string, sourceText: string): string | null {
+  const e = foldForQuoteMatch(String(excerpt ?? "")).folded;
+  if (!e) return null;
+  const s = foldForQuoteMatch(String(sourceText ?? ""));
+  const at = s.folded.indexOf(e);
+  if (at < 0) return null;
+  return String(sourceText).slice(s.map[at], s.map[at + e.length - 1] + 1);
+}
+
 export function applyUploadExcerptGuard<T extends { evidence_excerpt: string; claim_text: string; voice_class?: string | null; raw_payload?: unknown }>(
   draft: T,
   sidecarText: string | null | undefined,
@@ -93,6 +127,15 @@ export function applyUploadExcerptGuard<T extends { evidence_excerpt: string; cl
     return {
       evidence_excerpt: excerpt,
       raw_payload: { ...rp, excerpt_guard: { basis: "sidecar", traced: true, ...(tagStripped ? { section_tag_stripped: true } : {}) } },
+      dropped: false,
+    };
+  }
+  // Q1: the same words with other quote marks — keep the DOCUMENT'S span, and say so
+  const span = locateByQuoteFold(excerpt, String(sidecarText ?? ""));
+  if (span) {
+    return {
+      evidence_excerpt: span,
+      raw_payload: { ...rp, excerpt_guard: { basis: "sidecar", traced: true, quote_marks_folded: true, model_excerpt: draft.evidence_excerpt, ...(tagStripped ? { section_tag_stripped: true } : {}) } },
       dropped: false,
     };
   }
