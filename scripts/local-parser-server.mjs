@@ -38,7 +38,7 @@ const PARSER_VERSIONS = Object.freeze({
   // 2026-11-13, so a date alone could not tell a 30-page read from a whole one, and a SIDECAR carries
   // no version of its own: the stored extraction_version on the proposal is the only record of which
   // parser wrote the text a later run reads. `-whole` is how a run says "this text is every page".
-  server: "local-parser-server-2026-11-16-ocr",
+  server: "local-parser-server-2026-11-16-images",
   ocr: OCR_VERSION,
   pdfjs: (() => { try { return String(require("pdfjs-dist/package.json").version); } catch { return "unknown"; } })(),
   mammoth: (() => { try { return String(require("mammoth/package.json").version); } catch { return "unknown"; } })(),
@@ -304,6 +304,32 @@ async function extractText({ fileName, fileType, contentBase64 }) {
       return unreadable(code, "local_parser_pdfjs", { images, pagesRead, pagesTotal, ocrPages });
     }
     return shaped({ text, source: ocrPages > 0 ? "local_parser_pdfjs_ocr" : "local_parser_pdfjs", images, pagesRead, pagesTotal, charsTotal, charsCapped, ocrPages });
+  }
+
+  // S3 (2026-11-16): an IMAGE (png, jpg, webp) goes straight to the same Vision helper as a scanned page.
+  // One block, marked [Image 1 of 1]; its lines keep their breaks. Counted as one recognised page, so
+  // S-ING-7 says the text was read by text recognition.
+  const isImage = /^image\/(png|jpe?g|webp)$/.test(normalizedType) || ["png", "jpg", "jpeg", "webp"].includes(ext);
+  if (isImage) {
+    if (OCR_VERSION === "unavailable") return unreadable("ocr_unavailable", "local_ocr_image");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ocr-image-"));
+    let recognised = "";
+    try {
+      const file = path.join(dir, `image.${ext || "png"}`);
+      fs.writeFileSync(file, buffer);
+      const out = JSON.parse(await execFileP(OCR_BIN, [file]));
+      const img = (out.images || [])[0] || {};
+      if (img.error) return unreadable("unreadable_corrupt", "local_ocr_image");   // the image would not load
+      recognised = (img.lines || []).map((l) => String(l.text || "")).filter(Boolean).join("\n").trim();
+    } catch {
+      return unreadable("unreadable_corrupt", "local_ocr_image");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    if (!recognised) return unreadable("unreadable_no_text_after_ocr", "local_ocr_image", { ocrPages: 1 });
+    const raw = `[Image 1 of 1] ${recognised}`;
+    const normalized = normalizeTextCapped(raw);
+    return shaped({ text: normalized.text, source: "local_ocr_image", charsTotal: raw.length, charsCapped: normalized.capped, ocrPages: 1 });
   }
 
   // An encrypted Office file is a CFB container whatever its extension says.
