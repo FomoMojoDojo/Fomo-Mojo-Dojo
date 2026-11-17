@@ -72,6 +72,9 @@ for g in scripts/guards/*.sh; do
 done
 
 ew_out=$(bash scripts/edgewood-unchanged.sh compare "$EW_SNAP" 2>&1); ew_code=$?
+# E1: the comparison's own self-test (an added column cannot move it; a changed value does) runs every sweep.
+st_out=$(bash scripts/edgewood-unchanged.sh selftest 2>&1); st_code=$?
+if [ "$st_code" -ne 0 ]; then ew_code=$st_code; ew_out="$ew_out $st_out"; fi
 rm -f "$EW_SNAP"
 if [ "$ew_code" -eq 0 ] && printf '%s' "$ew_out" | grep -q 'guard: PASS'; then
   green=$((green+1))
