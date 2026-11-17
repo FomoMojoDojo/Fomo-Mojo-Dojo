@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import http from "node:http";
 import { createRequire } from "node:module";
+import { execFile, execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import mammoth from "mammoth";
 import JSZip from "jszip";
 
@@ -12,6 +17,20 @@ const PORT = Number(process.env.LOCAL_PARSER_PORT || 8789);
 // Gate B (R1, 2026-09-19): every extraction reports the parser versions so a transcript record can store
 // extraction_version — { server, pdfjs, mammoth } read once from the installed packages.
 const require = createRequire(import.meta.url);
+// S2 (2026-11-16): scanned pages are read by Apple Vision through a compiled helper
+// (scripts/ocr/vision-ocr.swift, built by scripts/ocr/build-vision-ocr.sh). Its version is checked once,
+// at boot, and stamped into versions.ocr — an OS update that changes Vision's model then shows as a new
+// parser version, beside the SP-283 reuse check, and a sidecar is never silently re-read under it.
+const OCR_BIN = process.env.VISION_OCR_BIN || path.join(path.dirname(fileURLToPath(import.meta.url)), "ocr", "bin", "vision-ocr");
+const OCR_VERSION = (() => {
+  try {
+    const v = JSON.parse(execFileSync(OCR_BIN, ["--version"], { encoding: "utf8", timeout: 20_000 }));
+    const macos = execFileSync("sw_vers", ["-productVersion"], { encoding: "utf8" }).trim();
+    return `vision-rev${v.revision}-${(v.languages || []).join("+")}-macOS-${macos}`;
+  } catch {
+    return "unavailable";
+  }
+})();
 const PARSER_VERSIONS = Object.freeze({
   // bumped for SP-93: the response shape gained pages_read / pages_total / chars_total, so a
   // stored extraction_version distinguishes a record that could say "partial" from one that could not.
@@ -19,7 +38,8 @@ const PARSER_VERSIONS = Object.freeze({
   // 2026-11-13, so a date alone could not tell a 30-page read from a whole one, and a SIDECAR carries
   // no version of its own: the stored extraction_version on the proposal is the only record of which
   // parser wrote the text a later run reads. `-whole` is how a run says "this text is every page".
-  server: "local-parser-server-2026-11-16-unreadable",
+  server: "local-parser-server-2026-11-16-ocr",
+  ocr: OCR_VERSION,
   pdfjs: (() => { try { return String(require("pdfjs-dist/package.json").version); } catch { return "unknown"; } })(),
   mammoth: (() => { try { return String(require("mammoth/package.json").version); } catch { return "unknown"; } })(),
 });
@@ -97,29 +117,80 @@ const IMAGE_OPS = new Set(["paintImageXObject", "paintImageXObjectRepeat", "pain
 // read now opens every page the document has. pages_read is still reported beside pages_total — they
 // are simply equal now for a PDF that parses, and the pair stays the honest way to say otherwise if a
 // page ever fails to open.
+// S2 (2026-11-16): A PAGE WITH IMAGES AND (ALMOST) NO TEXT LAYER IS A SCAN, and is read by Vision —
+// page by page, so a mixed PDF keeps its text pages as they were and only its image pages are OCR'd.
+// Both keep the [Page n] marker. An OCR'd page keeps its LINE BREAKS (one recognised line per line), so
+// the sidecar reads line for line like the page; a text-layer page reads as before.
+// THE OCR CAP: 200 OCR'd pages (operator ruling, Decision 7). Past it the read stops, pages_read <
+// pages_total, and S-ING-1 says so — the existing partial-read honesty, no new string.
+const OCR_MIN_TEXT_CHARS = 20;
+const OCR_PAGE_CAP = Number(process.env.LOCAL_PARSER_OCR_PAGE_CAP || 200);   // env override exists for the guard's cap test only
+const execFileP = (cmd, args) => new Promise((resolve, reject) => {
+  execFile(cmd, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 2 * 60_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+});
+/** Vision's lines for each image path, in order; an image it could not load reads as no lines. */
+async function ocrImageFiles(paths) {
+  const out = JSON.parse(await execFileP(OCR_BIN, paths));
+  return (out.images || []).map((img) => (img.lines || []).map((l) => String(l.text || "")).filter(Boolean).join("\n"));
+}
+const STANDARD_FONTS = (() => {
+  try { return path.join(path.dirname(require.resolve("pdfjs-dist/package.json")), "standard_fonts") + path.sep; } catch { return undefined; }
+})();
+
+async function ocrPdfPage(pdfPage) {
+  const { createCanvas } = await import("@napi-rs/canvas");
+  const vp = pdfPage.getViewport({ scale: 300 / 72 });
+  const canvas = createCanvas(Math.ceil(vp.width), Math.ceil(vp.height));
+  await pdfPage.render({ canvasContext: canvas.getContext("2d"), viewport: vp, canvas }).promise;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ocr-page-"));
+  const file = path.join(dir, "page.png");
+  try {
+    fs.writeFileSync(file, canvas.toBuffer("image/png"));
+    return (await ocrImageFiles([file]))[0] ?? "";
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function extractPdfText(buffer) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const task = pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true });
+  const task = pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true, standardFontDataUrl: STANDARD_FONTS });
   const doc = await task.promise;
   const pagesTotal = doc.numPages;
-  const pagesRead = pagesTotal;
+  let pagesRead = pagesTotal;
   const chunks = [];
   let images = 0;
+  let ocrPages = 0;
+  let ocrUnavailable = false;
   const opNames = new Map(Object.entries(pdfjs.OPS).map(([name, code]) => [code, name]));
-  for (let page = 1; page <= pagesRead; page += 1) {
+  for (let page = 1; page <= pagesTotal; page += 1) {
     const p = await doc.getPage(page);
     const content = await p.getTextContent();
     const text = content.items
       .map((item) => (item && typeof item === "object" && "str" in item ? String(item.str || "") : ""))
       .filter(Boolean)
       .join(" ");
-    if (text.trim()) chunks.push(`[Page ${page}] ${text.trim()}`);
+    let pageImages = 0;
     try {
       const ops = await p.getOperatorList();
-      for (const fn of ops.fnArray) if (IMAGE_OPS.has(opNames.get(fn))) images += 1;
+      for (const fn of ops.fnArray) if (IMAGE_OPS.has(opNames.get(fn))) pageImages += 1;
     } catch {
       // image count is best-effort; text extraction is the authority
     }
+    images += pageImages;
+    if (text.trim().length < OCR_MIN_TEXT_CHARS && pageImages > 0) {
+      if (OCR_VERSION === "unavailable") {
+        ocrUnavailable = true;
+      } else if (ocrPages >= OCR_PAGE_CAP) {
+        pagesRead = page - 1;     // the cap: stop here, and let pages_read < pages_total say so
+        break;
+      } else {
+        const ocrText = (await ocrPdfPage(p)).trim();
+        ocrPages += 1;
+        if (ocrText) { chunks.push(`[Page ${page}] ${ocrText}`); continue; }
+      }
+    }
+    if (text.trim()) chunks.push(`[Page ${page}] ${text.trim()}`);
   }
   // Was `pages: doc.numPages` — the DOCUMENT's count returned beside text covering only the first 30
   // of them, so a 77-page filing recorded "77 pages" for a 30-page read (SP-93). Both are now the
@@ -127,7 +198,7 @@ async function extractPdfText(buffer) {
   // sayable at all.
   const joined = chunks.join("\n\n");
   const normalized = normalizeTextCapped(joined);
-  return { text: normalized.text, images, pagesRead, pagesTotal, charsTotal: joined.length, charsCapped: normalized.capped };
+  return { text: normalized.text, images, pagesRead, pagesTotal, charsTotal: joined.length, charsCapped: normalized.capped, ocrPages, ocrUnavailable };
 }
 
 async function extractDocxText(buffer) {
@@ -177,7 +248,7 @@ async function extractText({ fileName, fileType, contentBase64 }) {
   //   pages_total  — pages the document has (null likewise)
   //   pages        — retained, and now EXPLICITLY the document's count: it is what the stored
   //                  extraction_pages column has always meant, so old rows keep their meaning
-  const shaped = ({ text, source, images = 0, pagesRead = null, pagesTotal = null, charsTotal = null, charsCapped = false }) => ({
+  const shaped = ({ text, source, images = 0, pagesRead = null, pagesTotal = null, charsTotal = null, charsCapped = false, ocrPages = 0 }) => ({
     text,
     source,
     chars: text.length,
@@ -189,6 +260,8 @@ async function extractText({ fileName, fileType, contentBase64 }) {
     pages: pagesTotal,
     pages_read: pagesRead,
     pages_total: pagesTotal,
+    // S2: how many pages were read by text recognition (S-ING-7 renders when it is above 0).
+    ocr_pages: ocrPages,
     versions: PARSER_VERSIONS,
     unreadable: null,
   });
@@ -220,13 +293,17 @@ async function extractText({ fileName, fileType, contentBase64 }) {
     } catch (error) {
       return unreadable(pdfErrorCode(error), "local_parser_pdfjs");
     }
-    const { text, images, pagesRead, pagesTotal, charsTotal, charsCapped } = read;
+    const { text, images, pagesRead, pagesTotal, charsTotal, charsCapped, ocrPages, ocrUnavailable } = read;
     if (!text) {
-      // pages of images and no text layer: a scan, which needs OCR (S2) — not an empty document
-      const code = images > 0 ? "unreadable_format" : "unreadable_empty";
-      return unreadable(code, "local_parser_pdfjs", { images, pagesRead, pagesTotal });
+      // S2: a scan whose recognition found nothing, a scan with no recognition available, or a document
+      // with genuinely nothing in it.
+      const code = ocrUnavailable ? "ocr_unavailable"
+        : ocrPages > 0 ? "unreadable_no_text_after_ocr"
+        : images > 0 ? "unreadable_format"
+        : "unreadable_empty";
+      return unreadable(code, "local_parser_pdfjs", { images, pagesRead, pagesTotal, ocrPages });
     }
-    return shaped({ text, source: "local_parser_pdfjs", images, pagesRead, pagesTotal, charsTotal, charsCapped });
+    return shaped({ text, source: ocrPages > 0 ? "local_parser_pdfjs_ocr" : "local_parser_pdfjs", images, pagesRead, pagesTotal, charsTotal, charsCapped, ocrPages });
   }
 
   // An encrypted Office file is a CFB container whatever its extension says.

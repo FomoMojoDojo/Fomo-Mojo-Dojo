@@ -173,6 +173,9 @@ async function extractTextViaLocalParser(params: {
     // SP-283: which parser produced this text. Recorded beside sidecar_sha, because reuse is sound
     // only when BOTH the text and the parser that would read it today are unchanged.
     parserVersion: typeof data?.versions?.server === "string" ? data.versions.server : null,
+    // S2 (2026-11-16): pages read by text recognition — S-ING-7 renders from it. A parser that does not
+    // report it (before S2) records null, never a guess.
+    ocrPages: num(data?.ocr_pages),
   };
 }
 
@@ -621,6 +624,7 @@ async function refreshReadAndWindow(args: {
         pages_total: extraction.pagesTotal,
         chars_total: extraction.charsTotal ?? fresh.length,
         chars_capped: extraction.charsCapped,
+        ocr_pages: extraction.ocrPages,
       }).eq("id", proposalId);
     }
   } catch (error) {
@@ -2704,7 +2708,9 @@ serve(async (req) => {
       // us it did not bite on. Measured on the Charter 10-Q's first whole read before this line
       // existed. NULL is the honest value only for a read that never happened.
       charsCapped: boolean | null;
-    } = { images: 0, pages: null, source: "local_text_reader", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null };
+      // S2: on this local type for the SP-231 reason above — the insert reads THIS object.
+      ocrPages: number | null;
+    } = { images: 0, pages: null, source: "local_text_reader", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null, ocrPages: null };
     try {
       const ext = extensionFromName(fileName ?? "");
       const normalizedType = String(fileType || downloaded.type || "").toLowerCase();
@@ -2731,6 +2737,7 @@ serve(async (req) => {
           pagesTotal: parsed.pagesTotal,
           charsTotal: parsed.charsTotal,
           charsCapped: parsed.charsCapped,
+          ocrPages: parsed.ocrPages,
         };
       }
     } catch (extractError) {
@@ -2738,7 +2745,7 @@ serve(async (req) => {
       fileText = "";
       // A failed extraction knows nothing about pages, and says nothing rather than zero.
       // A failed extraction knows nothing — not whether pages were missed, and not whether the cap bit.
-      extraction = { images: 0, pages: null, source: "local_parser_error", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null };
+      extraction = { images: 0, pages: null, source: "local_parser_error", pagesRead: null, pagesTotal: null, charsTotal: null, charsCapped: null, ocrPages: null };
     }
 
     console.log("[dify-analyze-file] extracted file_text length:", fileText.length, "shape:", JSON.stringify({ chars: fileText.length, ...extraction }));
@@ -2878,6 +2885,8 @@ serve(async (req) => {
         chars_total:         extraction.charsTotal ?? fileText.length,
         // SP-231: the one remaining cap, recorded at birth as well as on every re-read.
         chars_capped:        extraction.charsCapped,
+        // S2: pages read by text recognition, recorded at birth as well as on every re-read.
+        ocr_pages:           extraction.ocrPages,
       })
       .select()
       .single();

@@ -136,3 +136,16 @@ export function unreadableReason(code: string | null | undefined): string | null
     ? UNREADABLE_STRINGS[code as UnreadableCode]
     : null;
 }
+
+// ── PAGES READ BY TEXT RECOGNITION (S2, signed 2026-11-16) ─────────────────────────────────────────
+//
+// S-ING-7. A scanned page has no text layer; S2 reads it with Apple Vision. What was recognised IS the
+// sidecar, and the quote check holds every excerpt to it — but recognition can misread, so the reader is
+// told which document was read this way. INFO styling, like S-ING-5: the document WAS read in full; this
+// is how, not what is missing. Rendered whenever file_proposals.ocr_pages > 0.
+export const OCR_READ_STRING = "Some pages were scanned images. Their text was read by text recognition and may contain mistakes.";
+
+/** S-ING-7 for this proposal's recorded OCR page count, or null (none, or a row from before S2). */
+export function ocrReadLine(ocrPages: number | null | undefined): string | null {
+  return typeof ocrPages === "number" && Number.isFinite(ocrPages) && ocrPages > 0 ? OCR_READ_STRING : null;
+}

@@ -64,3 +64,6 @@ scripts/oneoff/*.sql
 
 # Playwright acceptance captures — regenerated on demand, never source of truth.
 screenshots/
+
+# S2: the compiled Vision OCR helper (built by scripts/ocr/build-vision-ocr.sh)
+scripts/ocr/bin/

@@ -7,7 +7,7 @@ import type { FileProposalRow } from "@/hooks/useFileProposals";
 import { formatAnalysisVersion, formatExtractionShape } from "@/lib/fileAnalysis";
 import {
   INGEST_STRINGS, isBudgetSelected, isPartialRead, partialReadLine,
-  sectionsFailedLine, sectionsProgressLine, showsSectionCounts, unreadableReason,
+  sectionsFailedLine, sectionsProgressLine, showsSectionCounts, unreadableReason, ocrReadLine,
 } from "@/lib/ingest/ingestStrings";
 import { Info } from "lucide-react";
 import { isInternalFileTag, makeAreaSupportTag } from "@/lib/fileTags";
@@ -269,6 +269,8 @@ export function FileAnalysisBadge(
   const sectionsText = fileProposalSectionsText(proposal);
   // S0: a file that could not be read says why, beside "Analysis failed" — rendered from the code.
   const unreadable = proposal.processing_state === "failed" ? unreadableReason(proposal.processing_error_code) : null;
+  // S2 (S-ING-7): the text of scanned pages was recognised, not read from a text layer. Info, not warning.
+  const ocrRead = ocrReadLine(proposal.ocr_pages);
   return (
     <>
       <span style={fileProposalProcessingBadgeStyle(proposal)} data-testid={`${testIdPrefix}-analysis-badge`} data-fr-state={proposal.processing_state}>
@@ -287,6 +289,11 @@ export function FileAnalysisBadge(
       {sectionsText ? (
         <span style={{ ...MONO, fontSize: 9, color: "#8a6d3b" }} data-testid={`${testIdPrefix}-analysis-sections`}>
           {sectionsText}
+        </span>
+      ) : null}
+      {ocrRead ? (
+        <span style={{ ...MONO, fontSize: 9, color: "#6b7280" }} data-testid={`${testIdPrefix}-analysis-ocr`}>
+          {ocrRead}
         </span>
       ) : null}
       {unreadable ? (

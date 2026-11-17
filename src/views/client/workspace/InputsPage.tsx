@@ -46,7 +46,7 @@ import { useFileProposals, type FileProposalRow } from "@/hooks/useFileProposals
 import { getFileSignedUrl, useArchiveInputFile, useArchivedInputFiles, useRestoreInputFile } from "@/hooks/useInputs";
 import { acceptFileProposal, dismissFileProposal, rejectFileProposal, runDifyAnalyzeFile, unlinkNeedsFromFilePath } from "@/hooks/useInputActions";
 import { FileTooLargeError, fileTooLargeMessage, type FileTooLargeRefusal } from "@/lib/fileTooLarge";
-import { unreadableReason } from "@/lib/ingest/ingestStrings";
+import { ocrReadLine, unreadableReason } from "@/lib/ingest/ingestStrings";
 import { useProposalSync } from "@/hooks/useProposalSync";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useRoutes } from "@/hooks/useRoutes";
@@ -421,6 +421,10 @@ export default function InputsPage() {
                                 three strings describe the same kind of thing — something unread. */}
                             {sectionsText ? (
                               <span className="fr-ws-analysis-partial fr-mono" data-testid="inputs-analysis-sections">{sectionsText}</span>
+                            ) : null}
+                            {/* S2 (S-ING-7): the scanned-page line. Info styling — the confidence line's, not the warning's. */}
+                            {proposal && ocrReadLine(proposal.ocr_pages) ? (
+                              <span className="fr-ws-analysis-confidence fr-mono" data-testid="inputs-analysis-ocr">{ocrReadLine(proposal.ocr_pages)}</span>
                             ) : null}
                             {/* S0: a file that could not be read says why, in the refusal styling the size reason already uses. */}
                             {proposal && proposal.processing_state === "failed" && unreadableReason(proposal.processing_error_code) ? (
