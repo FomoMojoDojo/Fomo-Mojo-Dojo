@@ -38,7 +38,7 @@ const PARSER_VERSIONS = Object.freeze({
   // 2026-11-13, so a date alone could not tell a 30-page read from a whole one, and a SIDECAR carries
   // no version of its own: the stored extraction_version on the proposal is the only record of which
   // parser wrote the text a later run reads. `-whole` is how a run says "this text is every page".
-  server: "local-parser-server-2026-11-16-images",
+  server: "local-parser-server-2026-11-16-doc",
   ocr: OCR_VERSION,
   pdfjs: (() => { try { return String(require("pdfjs-dist/package.json").version); } catch { return "unknown"; } })(),
   mammoth: (() => { try { return String(require("mammoth/package.json").version); } catch { return "unknown"; } })(),
@@ -347,6 +347,34 @@ async function extractText({ fileName, fileType, contentBase64 }) {
     const { text, images, pagesRead, pagesTotal, charsTotal, charsCapped } = read;
     if (!text) return unreadable(images > 0 ? "unreadable_format" : "unreadable_empty", "local_parser_mammoth", { images });
     return shaped({ text, source: "local_parser_mammoth", images, pagesRead, pagesTotal, charsTotal, charsCapped });
+  }
+
+  // S5 (2026-11-16): an old Word .doc is read by macOS's own textutil (nothing installed). A file textutil
+  // cannot open — damaged, or saved with a password — closes unreadable_corrupt; the two cannot be told
+  // apart from outside. No page counts, the same as .docx.
+  const isDoc = normalizedType === "application/msword" || ext === "doc";
+  if (isDoc) {
+    // A real .doc is a CFB container (some are RTF). textutil reads ANY file as plain text, so anything
+    // else named .doc is not opened at all — it would otherwise "read" its own garbage.
+    const isRtf = buffer.subarray(0, 5).toString("latin1") === "{\\rtf";
+    if (!isCfbContainer(buffer) && !isRtf) return unreadable("unreadable_corrupt", "local_textutil_doc");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "doc-"));
+    let raw = "";
+    try {
+      const file = path.join(dir, "file.doc");
+      fs.writeFileSync(file, buffer);
+      raw = await execFileP("/usr/bin/textutil", ["-convert", "txt", "-stdout", file]);
+    } catch {
+      return unreadable("unreadable_corrupt", "local_textutil_doc");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    // Paragraphs separated by a blank line, as mammoth writes a .docx — so a .doc reads as its .docx
+    // twin would, and the windows (which cut at blank lines) fall in the same places.
+    const paragraphs = raw.split(/\r?\n/).map((l) => l.trimEnd()).filter((l) => l.trim()).join("\n\n");
+    const normalized = normalizeTextCapped(paragraphs);
+    if (!normalized.text) return unreadable("unreadable_empty", "local_textutil_doc");
+    return shaped({ text: normalized.text, source: "local_textutil_doc", charsTotal: raw.length, charsCapped: normalized.capped });
   }
 
   return unreadable("unreadable_format", "unsupported");
