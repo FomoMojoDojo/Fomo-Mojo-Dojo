@@ -423,7 +423,7 @@ else
 fi
 
 echo "── (c9) SP-278: a framework pass that dies on a CLOCK is retried once, over banked work ──"
-if "$DENO" test --allow-import --no-check supabase/functions/_shared/frameworkRetry.test.ts >/dev/null 2>&1; then
+if "$DENO" test --allow-import --allow-read --no-check supabase/functions/_shared/frameworkRetry.test.ts >/dev/null 2>&1; then
   ok "(c9) frameworkRetry.test.ts passes — the predicate is asserted against the RECORDED error strings"
 else
   bad "(c9) frameworkRetry.test.ts FAILED"

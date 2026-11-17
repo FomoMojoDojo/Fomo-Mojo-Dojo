@@ -58,3 +58,35 @@ Deno.test("SP-294: an ordinary failure is not mistaken for a truncation", () => 
   assertEquals(isFrameworkOutputTruncated("[models] Bad Request: invalid model parameter"), false);
   assertEquals(isFrameworkOutputTruncated(""), false);
 });
+
+// ── C1 (2026-11-16): a cut answer earns ONE whole-run retry, inside SP-278's budget ──────────────────
+import { frameworkFailureAction } from "./frameworkRetry.ts";
+const CUT = "Run failed: ADJUDICATION_OUTPUT_UNPARSEABLE: Adjudication's answer is not a complete JSON object (31216 chars); it was most likely cut by the node output limit";
+
+Deno.test("C1: the first cut answer is retried — a whole new run gives Adjudication different input", () => {
+  assertEquals(frameworkFailureAction("failed", CUT, 1), { action: "retry" });
+});
+
+Deno.test("C1: the second cut answer fails the document with framework_output_truncated", () => {
+  assertEquals(frameworkFailureAction("failed", CUT, 2), { action: "fail", code: "framework_output_truncated" });
+});
+
+Deno.test("C1: a clock still earns its one retry, and is not called a truncation", () => {
+  assertEquals(frameworkFailureAction("failed", "PluginDaemonInternalServerError: killed by timeout", 1), { action: "retry" });
+  assertEquals(frameworkFailureAction("stopped", "", 2), { action: "fail", code: "framework_timeout" });
+});
+
+Deno.test("C1: any other failure earns nothing and carries no code", () => {
+  assertEquals(frameworkFailureAction("failed", "Model Parameter num_predict should be less than or equal to 4096.0", 1), { action: "fail", code: null });
+});
+
+Deno.test("C1: dify-analyze-file's truncation branch starts the retry before it fails the document", async () => {
+  const src = await Deno.readTextFile(new URL("../dify-analyze-file/index.ts", import.meta.url));
+  const at = src.indexOf("if (isFrameworkOutputTruncated(String(detail))) {");
+  assert(at > 0, "the truncation branch is present");
+  const branch = src.slice(at, src.indexOf("return { state: \"failed\" };", at));
+  const retry = branch.indexOf("retryFrameworkPass(");
+  const fail = branch.indexOf("markProposalFailed(");
+  assert(retry > 0, "the truncation branch calls retryFrameworkPass");
+  assert(fail > retry, "the retry is tried before the document is failed");
+});

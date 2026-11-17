@@ -1864,9 +1864,18 @@ async function syncDifyRun(params: {
 
   if (workflowStatus !== "succeeded") {
     const detail = workflowError || `Dify workflow ${workflowStatus}`;
-    // SP-294: the Adjudication output backstop fired and the Code node refused the cut answer. A real
-    // code, and NO retry — at temperature 0 the same input is cut at the same place every time.
+    // SP-294 + C1 (2026-11-16): the Adjudication output backstop fired and the Code node refused the
+    // cut answer. It now earns ONE whole-run retry within SP-278's budget — the framework nodes run at
+    // 0.7, so the second run gives Adjudication different input (frameworkFailureAction decides).
     if (isFrameworkOutputTruncated(String(detail))) {
+      const retried = await retryFrameworkPass({
+        supabase: supabase as unknown as { from: (t: string) => any; storage: any },
+        proposalId, difyApiKey, difyBaseUrl,
+      });
+      if (retried) {
+        console.log("[dify-analyze-file] C1: cut answer — one whole-run retry started:", proposalId);
+        return { state: "running" };
+      }
       await (supabase as unknown as { from: (t: string) => any })
         .from("file_proposals").update({ processing_error_code: FRAMEWORK_TRUNCATED_CODE })
         .eq("id", proposalId).neq("status", "rejected");

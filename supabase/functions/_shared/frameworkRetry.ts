@@ -48,11 +48,29 @@ export const FRAMEWORK_TIMEOUT_CODE = "framework_timeout";
 // with the marker below; before F43 it silently turned every section into [] and the analysis
 // "succeeded" with nothing in it.
 //
-// It is NOT a clock, so it earns no SP-278 retry: at temperature 0 the same input is cut at the same
-// place every time. It ends the document failed, with its own code.
+// C1 (2026-11-16, cut-answer fix 3, approved 2026-11-15): it now earns ONE WHOLE-RUN retry. The old
+// reasoning — "at temperature 0 the same input is cut at the same place every time" — holds for
+// Adjudication alone, but a retry re-runs the WHOLE workflow, and the six framework nodes run at 0.7,
+// so Adjudication's input differs on the second run. Measured on the thin fixture before C1: 11 of 13
+// runs succeeded and standalone reruns b17b6489 / ef1f051f passed. The retry shares SP-278's budget
+// (MAX_FRAMEWORK_ATTEMPTS: the first pass and one retry); a second cut ends the document failed with
+// framework_output_truncated, as before.
 export const FRAMEWORK_TRUNCATED_MARKER = "ADJUDICATION_OUTPUT_UNPARSEABLE";
 export const FRAMEWORK_TRUNCATED_CODE = "framework_output_truncated";
 
 export function isFrameworkOutputTruncated(error: string): boolean {
   return String(error ?? "").includes(FRAMEWORK_TRUNCATED_MARKER);
+}
+
+/** What a failed framework pass does next. Pure: the status and error Dify reported, and the attempts
+ *  already spent on this proposal (framework_attempts, 1 after the first pass). */
+export type FrameworkFailureAction =
+  | { action: "retry" }
+  | { action: "fail"; code: typeof FRAMEWORK_TRUNCATED_CODE | typeof FRAMEWORK_TIMEOUT_CODE | null };
+export function frameworkFailureAction(status: string, error: string, attemptsSpent: number): FrameworkFailureAction {
+  const truncated = isFrameworkOutputTruncated(error);
+  const clock = !truncated && isTimeCeilingFailure(status, error);
+  if (!truncated && !clock) return { action: "fail", code: null };
+  if (attemptsSpent < MAX_FRAMEWORK_ATTEMPTS) return { action: "retry" };
+  return { action: "fail", code: truncated ? FRAMEWORK_TRUNCATED_CODE : FRAMEWORK_TIMEOUT_CODE };
 }
