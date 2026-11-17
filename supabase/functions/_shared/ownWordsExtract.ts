@@ -227,3 +227,16 @@ export async function assembleOwnWords(
   }
   return { survivors, rejections };
 }
+
+// O1 (2026-11-17): THE PLAN RESUMES. A plan run is one run_id across as many calls as it takes; a page
+// that already has candidates under that run_id is never generated or judged again. Measured on Charter
+// before O1: four attempts, each cut by the gateway's 150 s wall after 11–13 of 20 pages, each starting
+// again from page 1 under a NEW run_id — the finished pages were re-judged on every attempt.
+/** PURE: the pages of this plan still to do, in their original order. */
+export function remainingPlanUrls(urls: string[], plannedUrls: Iterable<string>): string[] {
+  const done = new Set(plannedUrls);
+  return urls.filter((u) => !done.has(u));
+}
+/** The plan's own wall: well inside the gateway's 150 s, so a call RETURNS (stopped_for_time) instead
+ *  of being cut with a 504 while a page is still in flight (one page ≈ a generator + a judge call). */
+export const PLAN_WALL_MS = 100_000;

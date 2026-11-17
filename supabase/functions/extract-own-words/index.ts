@@ -26,6 +26,7 @@ import { fetchAndExtract } from "../_shared/fetchAndExtract.ts";
 import { sha256Hex, contentIdentity } from "../_shared/contentIdentity.ts";
 import {
   assembleOwnWords, assertPublicClientVoice, isPersonalProfileUrl, ownWordsDedupKey, PERSONAL_PROFILE_REASON, pickPageSignals,
+  PLAN_WALL_MS, remainingPlanUrls,
   type Candidate, type JudgeVerdict, type SignalGate,
 } from "../_shared/ownWordsExtract.ts";
 import { JUDGE_SYSTEM, callModel, parseJudgeVerdicts, takeLastJudgeUsage } from "../_shared/ownWordsJudge.ts";
@@ -307,7 +308,18 @@ Deno.serve(async (req) => {
     // One run_id groups this logical plan run across its batches (ruling B) — the write reads
     // the LATEST run. The caller passes a shared run_id for all batches; absent → mint one.
     const runId = planRunId ?? crypto.randomUUID();
-    const WALL_MS = 150_000;
+    const WALL_MS = PLAN_WALL_MS;
+    // O1: RESUME — a page already planned under this run_id is skipped, never re-generated or re-judged.
+    let pagesSkippedAsPlanned = 0;
+    if (planRunId) {
+      const { data: done } = await supabase.from("own_words_candidates").select("source_url")
+        .eq("company_id", company_id).eq("run_id", planRunId);
+      const planned = new Set(((done ?? []) as Array<{ source_url: string | null }>).map((r) => String(r.source_url ?? "")));
+      const before = urls.length + registryEntries.length;
+      urls = remainingPlanUrls(urls, planned);
+      registryEntries = registryEntries.filter((e) => !planned.has(e.url));
+      pagesSkippedAsPlanned = before - urls.length - registryEntries.length;
+    }
     const pages: Array<Record<string, unknown>> = [];
     let candidates_total = 0, kept_total = 0, paraphrased_total = 0, rejected_total = 0, guard_rejected_total = 0;
     const wouldBe: Array<{ quote: string; page: string; fidelity: string }> = [];
@@ -479,6 +491,7 @@ Deno.serve(async (req) => {
     return json({
       ok: true, mode, company_id, run_id: runId,
       pages_total: urls.length, pages_processed: processed, stopped_for_time: stoppedForTime,
+      pages_skipped_as_planned: pagesSkippedAsPlanned,
       totals: { candidates: candidates_total, verbatim: kept_total, paraphrased: paraphrased_total, rejected: rejected_total, guard_rejected: guard_rejected_total },
       would_be_own_words: wouldBe,
       pages,

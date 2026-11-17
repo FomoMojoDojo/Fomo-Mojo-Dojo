@@ -145,6 +145,8 @@ const q = {
   website: (id: string) => psql<string | null>(`SELECT coalesce(to_jsonb(website), 'null'::jsonb) FROM companies WHERE id='${id}';`),
   // ADMISSION CRITERION (2026-09-03): the deltas gate counts DECLARED-ELIGIBLE own words only.
   ownWords: (id: string) => count(`SELECT count(*) FROM claims WHERE company_id='${id}' AND claim_type='own_words' AND status='active' AND declared_eligible;`),
+  /** O1: pages that already have candidates under one plan run. */
+  ownWordsPlannedPages: (id: string, runId: string) => count(`SELECT count(DISTINCT source_url) FROM own_words_candidates WHERE company_id='${id}' AND run_id='${runId}';`),
   outsideSignals: (id: string) => count(`SELECT count(*) FROM signals WHERE company_id='${id}' AND signal_band='outside' AND voice_class='outside_voice_about_client' AND superseded_at IS NULL AND length(trim(coalesce(evidence_excerpt,'')))>0;`),
   recurrenceVerdicts: (id: string) => count(`SELECT count(*) FROM signal_recurrence_verdicts WHERE company_id='${id}';`),
   deltasPublic: (id: string) => count(`SELECT count(*) FROM claim_deltas WHERE company_id='${id}' AND pairing_kind='public_vs_public';`),
@@ -209,8 +211,25 @@ async function runOwnWords(c: Company, counts: FillCounts): Promise<{ before: nu
   const before = q.ownWords(c.id);
   const skip = skipReason("own_words", counts);
   if (skip) return { before, after: before, outcome: `skipped:${skip}` };
-  const plan = await invokeFn("extract-own-words", { company_id: c.id, mode: "plan" }, 180_000);
-  if (!plan.ok) return { before, after: q.ownWords(c.id), outcome: `failed:plan_${plan.status}_${plan.data?.error ?? ""}`.slice(0, 200) };
+  // O1 (2026-11-17): ONE plan run across as many calls as it takes. Every call carries the same run_id,
+  // and the function skips a page already planned under it — so a call cut by the gateway, or stopped by
+  // the plan's own wall, is resumed, never redone. It ends when a call finishes inside its wall, or when
+  // two passes in a row plan nothing new (a page that keeps failing is not retried forever).
+  const runId = process.env.OWN_WORDS_RUN_ID || crypto.randomUUID();
+  let plan: Awaited<ReturnType<typeof invokeFn>> | null = null;
+  let stalls = 0;
+  let lastPlanned = q.ownWordsPlannedPages(c.id, runId);
+  for (let pass = 1; pass <= 12; pass++) {
+    plan = await invokeFn("extract-own-words", { company_id: c.id, mode: "plan", run_id: runId }, 180_000).catch(() => null);
+    if (plan?.ok && plan.data?.stopped_for_time === false) break;
+    const planned = q.ownWordsPlannedPages(c.id, runId);
+    stalls = planned > lastPlanned ? 0 : stalls + 1;
+    lastPlanned = planned;
+    if (stalls >= 2) break;
+  }
+  if (!plan || !plan.ok) {
+    if (q.ownWordsPlannedPages(c.id, runId) === 0) return { before, after: q.ownWords(c.id), outcome: `failed:plan_${plan?.status ?? "timeout"}_${plan?.data?.error ?? ""}`.slice(0, 200) };
+  }
   const write = await invokeFn("extract-own-words", { company_id: c.id, mode: "write" }, 120_000);
   const after = q.ownWords(c.id);
   if (!write.ok) return { before, after, outcome: write.status === 409 ? "skipped:no_candidates" : `failed:write_${write.status}` };
