@@ -326,6 +326,15 @@ workflow:
                 - strategy
                 - routes
 
+                ONE LIST PER FINDING:
+                - each framework finding feeds exactly ONE of candidate_positioning_updates, candidate_job_steps, candidate_needs, candidate_outcomes, possible_routes or experiments_to_run — never two
+                - never restate one idea in a second list in different words; when a finding could fit several lists, put it in the single best one and leave it out of the rest
+                - no two items in different lists may cite the same evidence sentence
+
+                ROUTES ARE MOVES:
+                - a possible_route is a change the company itself makes in the world, stated in THIS file
+                - never begin a route, need, job step or outcome with understand, analyze, review or assess — reading, studying or evaluating the file is the reader's activity, never a candidate
+
                 Priority rules:
                 - candidate_positioning_updates must come only from april_dunford findings
                 - candidate_job_steps must come only from jtbd findings
@@ -349,13 +358,10 @@ workflow:
                 - if a statement sounds like a step the team performs, keep it in candidate_job_steps instead of candidate_needs
                 - every candidate_need and candidate_outcome must be DERIVED FROM and EVIDENCED BY a specific customer-friction or desired-progress sentence in THIS file; set evidence to that exact sentence and phrase the need as a faithful restatement of it
                 - a company-strategy or positioning sentence is NOT valid evidence for a need — if that is the only support, omit the need
-                - the following show only the required SHAPE — do NOT copy their wording; derive actual content from this file:
-                  - need shape:    "<the customer> cannot <achieve X> / struggles to <do Y>"
-                  - outcome shape: "<the customer> can <achieve X> reliably"
+                - a candidate_need states what the client's customer is trying to get done better: a direction (less / more), a measure, and the thing the customer is working on — in THIS file's own terms
+                - a candidate_outcome is the wider end state the customer reaches when their needs are met. It is NEVER the negation, the inverse or a restatement of any candidate_need, and it NEVER cites the same evidence sentence as any candidate_need — if the only outcome you can write mirrors a need, return no outcome
                 - if the file contains no sentence stating a customer friction or desired progress, return candidate_needs: [] and candidate_outcomes: [] — never copy an example or invent one
-                - avoid step-like needs such as:
-                  - clarify priorities
-                  - validate customer needs
+                - a need phrased as a step the team performs is not a need — keep it out of candidate_needs
                 - candidate_job_steps.step_description must describe the nature of the work, not what the team should do about it
                 - keep step descriptions short, neutral, and non-prescriptive
                 - each candidate_job_step must be a recurring customer/team work step that THIS file explicitly describes; quote the file sentence as evidence and keep the label short and neutral
@@ -364,19 +370,22 @@ workflow:
                 - if the named action is more specific than the evidence, omit it
                 - prefer one strong explicit route over multiple inferred implementation routes
                 - candidate_job_steps must describe recurring customer or team work, not validation actions, experiments, rollout actions, or delivery actions
-                - do not treat flagship engagements, before/after capture, documentation, proof steps, MVP work, or product delivery actions as candidate_job_steps
+                - do not treat proof steps, documentation, delivery actions or one-off initiatives as candidate_job_steps
                 - if a candidate step sounds like a route or experiment, omit it from candidate_job_steps
+                - candidate_job_steps are steps THE CUSTOMER takes in their own job; an action the company or its staff takes toward donors, families, clients or partners (providing, telling, deepening relationships, streamlining, tracking, measuring, evaluating) is never a job step — if the file states it as a plan it is at most a possible_route
                 SUBJECT GATE — applies to candidate_needs and candidate_outcomes:
-                - the subject of every candidate_need and candidate_outcome MUST be the customer (cafe operator / client / buyer / end-customer), describing a friction, unmet progress, or desired end-state THEY experience
+                - the subject of every candidate_need and candidate_outcome MUST be the client's customer — the people or organizations the company serves — describing a friction, unmet progress, or desired end-state THEY experience
                 - if the subject is the company ("we", "our brand") with an aspirational/strategic verb (aims, wants, positions, wins, focuses, believes, should), it is company strategy — exclude it from candidate_needs and candidate_outcomes; it belongs in framework_results / strategy
                 - do not rescue a company statement by rephrasing it as a customer outcome
                 - one source sentence yields at most one customer need or outcome — never spin multiple from a single strategy or positioning sentence
                 - if you cannot decide whether a statement is customer-subject or company-subject, treat it as company-subject and exclude it from needs and outcomes
+                - the company is never the subject of a candidate_need or candidate_outcome, and the customer is never made the subject of the company's own goal (a company aim rewritten as "customers cannot …" is still the company's aim — exclude it)
+                - a target the company sets for its own results — its revenue or funding mix, donor or member counts, donor retention, staffing, its own systems or programs — is the company's goal, never a candidate_need or candidate_outcome, even when it is written without a subject (it belongs in framework_results / strategy)
 
                 - possible_routes should represent the top-level explicit action only
-                - supporting sub-steps like "capture before/after states" and "document decisions and outcomes" should usually be folded into the parent route rather than returned as separate routes
+                - the supporting sub-steps of one action are folded into that action, never returned as separate routes
                 - possible_routes and experiments_to_run must name an explicit action, initiative, pilot, or test that THIS file literally states; quote that sentence as evidence
-                - if the file names no explicit action, return possible_routes: [] and experiments_to_run: [] — do not emit "run flagship engagements" or any example action that the file does not contain
+                - if the file names no explicit action, return possible_routes: [] and experiments_to_run: [] — never emit an action the file does not contain
 
 
                 - candidate_job_steps must be neutral work statements, not solution statements
@@ -392,27 +401,25 @@ workflow:
                 - a candidate_need is valid ONLY if a specific sentence in THIS file states a customer friction or desired progress; quote that exact sentence as evidence
                 - never emit a generic process need (reduce uncertainty, reduce misalignment, improve clarity, improve decision quality, make better decisions); if no customer-friction sentence exists in the file, return candidate_needs: []
 
-                - candidate_outcomes must describe the improved end state the CLIENT'S CUSTOMER wants (cafe operator / buyer / end-user) — not the company, team, or organization
+                - candidate_outcomes must describe the improved end state the CLIENT'S CUSTOMER wants — not the company, team, or organization
                 - candidate_outcomes must not describe a product category, company ambition, branded system, product usage metric, implementation plan, or internal-process improvement
                 - a candidate_outcome is valid ONLY if a specific sentence in THIS file states the customer's desired progress; quote that exact sentence as evidence
                 - never emit a generic process outcome (improve decision quality, reduce internal misalignment, increase clarity); if no such customer sentence exists, return candidate_outcomes: []
                 - possible_routes must stay very close to explicit file language
                 - possible_routes must be explicit initiatives, actions, or structured approaches stated in the file
-                - if the file says "run flagship engagements", preserve that wording
+                - keep the file's own wording for the action it names
                 - do not turn strategic intent, positioning language, or generic company vision into routes
                 - do not infer product-refinement routes unless directly stated in the file
 
                 - experiments_to_run must stay very close to explicit file language
                 - experiments_to_run must only come from explicit tests, pilots, proof steps, or learning actions named in the file
-                - if the file says "run flagship engagements", "capture before/after states", or "document decisions and outcomes", preserve that wording
-                - do not rewrite "flagship engagements" as "pilots" unless the file explicitly says pilots
+                - keep the file's own wording for the test or pilot it names
                 - do not create experiments from implied ideas alone
                 - if a route or experiment is only a sub-step of a larger explicit action, keep it nested under that larger action rather than returning it as a separate standalone item
-                - "capture before/after states" and "document decisions and outcomes" should usually support "run flagship engagements" rather than appear as separate experiments
-                - do not include system-refinement routes such as refining scoring logic unless explicitly stated in the file
-                - if the file explicitly supports only "run flagship engagements", return only that route/experiment and fold supporting sub-steps into its why_this_could_matter or what_it_tests
+                - do not include routes that refine the company's own systems unless the file states them
+                - if the file supports only one explicit action, return only that action and fold its supporting sub-steps into why_this_could_matter or what_it_tests
                 - if multiple experiment items are sub-steps of one larger explicit action, return one experiment only
-                - fold sub-steps such as "capture before/after states" and "document decisions and outcomes" into what_it_tests or evidence for the parent experiment
+                - fold sub-steps into what_it_tests or evidence for the parent experiment
 
 
 
@@ -428,21 +435,20 @@ workflow:
 
                 Prohibited outputs:
                 - do not use product slogans as candidate_needs
-                - do not use MojoMap, MojoScore, Strategic Decision System, or other product names in candidate_job_steps
+                - do not use product or brand names in candidate_job_steps
                 - do not use implementation recommendations as candidate_job_steps
                 - do not use category-defining or company-aspiration language as candidate_outcomes
                 - do not use product adoption or product usage metrics as candidate_outcomes
                 - do not include strategy in suggested_areas if no strategy section is populated
                 - do not include positioning in suggested_areas if no positioning section is populated
-                - do not rewrite "flagship engagements" as "pilots" unless the file explicitly uses the word pilot
                 - do not create route or experiment wording that is more implementation-specific than the file itself
                 - do not convert generic consulting recommendations into candidate_positioning_updates unless directly supported by the file
                 - do not use prescriptive language such as ensure, gather, use, implement, or provide in candidate_job_steps.step_description
                 - do not split one explicit route into multiple separate route items when the file presents them as sub-steps of the same action
                 - do not include positioning in suggested_areas if candidate_positioning_updates is empty
-                - do not output routes or experiments containing MojoScore, UI, MVP, productize, refine, standardize, or build unless those exact terms appear explicitly in the uploaded file evidence
+                - do not output route or experiment wording that the uploaded file does not itself use
                 - if a route or experiment is not directly supported by quoted file evidence, omit it
-                - do not use run flagship engagements, capture before/after states, document decisions and outcomes, build UI, refine scoring logic, or any proof/rollout action as candidate_job_steps
+                - do not use any proof, rollout or delivery action as candidate_job_steps
                 - do not include positioning in suggested_areas if candidate_positioning_updates is empty
 
 

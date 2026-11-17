@@ -37,7 +37,7 @@ export type CandidateSurfaceType = typeof CANDIDATE_LISTS[number]["surfaceType"]
 export type EvidenceVoice = "company" | "outside" | "mixed" | "unlabeled";
 export type DocAuthorship = "client" | "us" | "third_party" | "uncertain" | null;
 
-export const CANDIDATE_QUEUE_VERSION = "candidate-queue v1";
+export const CANDIDATE_QUEUE_VERSION = "candidate-queue v2";
 export const QUEUE_RETIRE_REASON = "reanalysis:superseded_by_newer_analysis";
 
 /** Lower-case, every run of non-alphanumerics to one space, trimmed — the same normalisation the
@@ -94,6 +94,46 @@ export function effectiveAuthorship(rows: Array<{ authorship: string | null; ope
   return a === "client" || a === "us" || a === "third_party" || a === "uncertain" ? a : null;
 }
 
+// ── G1 (2026-11-16): THE BACKSTOP — no model, applied before anything is queued ─────────────────────
+//
+// The analysis prompt now asks for one list per finding, no mirrored outcomes and no analyst verbs, but a
+// prompt is a request, not a rule. Measured before G1 on Charter's 10-Q proposal 578e9e2f: one idea ("the
+// financial impact of the Cox acquisition") sat in FOUR lists — need 90c52129, job step d3e04ff6, outcome
+// e8b2fc73 with the need's own text, route 572386e1 "Analyze financial impact of acquisitions" — and all
+// 18 rows read evidence_match "matched" although E4 had blanked every excerpt they rested on: the match
+// was made against the model's own raw_payload.evidence, i.e. the item matched itself.
+//   1. an item whose text is led by an analyst verb (understand / analyze / review / assess, with or
+//      without a leading "to") is dropped: that is the reader's activity, not the customer's or a move;
+//   2. within one analysis, an item that repeats an EARLIER kept item of a DIFFERENT list — the same
+//      normalised text, or the same normalised evidence — is dropped; lists are read in CANDIDATE_LISTS
+//      order, so a need outranks the job step, outcome or route that restates it;
+//   3. evidence counts as matched only against a signal's stored, NON-BLANK evidence_excerpt — never
+//      the model's own raw_payload.evidence. A blanked excerpt is evidence E4 could not find in the
+//      document; it backs nothing.
+// Every drop is returned with its reason and logged by the caller. Indices are the analysis's own, so a
+// dropped item leaves a gap and a second call stays idempotent.
+
+const ANALYST_VERB = /^(to\s+)?(understand|understanding|analy[sz]e|analy[sz]ing|review|reviewing|assess|assessing)\b/i;
+
+/** The words an item is ABOUT, by list — what a duplicate or an analyst verb is judged on. */
+export function candidateText(list: CandidateList, item: Record<string, unknown>): string {
+  const pick = (...keys: string[]) => keys.map((k) => String(item[k] ?? "")).find((v) => v.trim()) ?? "";
+  switch (list) {
+    case "candidate_needs": return pick("desired_outcome", "need");
+    case "candidate_job_steps": return pick("step_label", "step_description");
+    case "candidate_outcomes": return pick("outcome");
+    case "possible_routes": return pick("title");
+    case "candidate_positioning_updates": return pick("suggested_update");
+  }
+}
+
+/** True when the item's text is led by an analyst verb ("Understand…", "To analyze…", "Assess…"). */
+export function ledByAnalystVerb(text: string): boolean {
+  return ANALYST_VERB.test(String(text ?? "").trim());
+}
+
+export type CandidateDrop = { list: CandidateList; index: number; reason: "analyst_verb" | "duplicate_text" | "duplicate_evidence"; of?: string; text: string };
+
 export type PlannedQueueRow = {
   company_id: string;
   surface_type: CandidateSurfaceType;
@@ -125,17 +165,41 @@ export function planCandidateQueue(args: {
   signals: QueueSignal[];
   docAuthorship: DocAuthorship;
 }): PlannedQueueRow[] {
-  const sigText = args.signals.map((s) => ({
-    s,
-    t: normalizeEvidence(`${String((s.raw_payload ?? {}).evidence ?? "")} | ${s.evidence_excerpt ?? ""}`),
-  }));
+  return planCandidateQueueWithDrops(args).rows;
+}
+
+/** PURE: the queue rows for one analysis, and every item the backstop dropped, with its reason. */
+export function planCandidateQueueWithDrops(args: {
+  companyId: string;
+  proposal: { id: string; file_id: string | null } & Partial<Record<CandidateList, unknown>>;
+  signals: QueueSignal[];
+  docAuthorship: DocAuthorship;
+}): { rows: PlannedQueueRow[]; drops: CandidateDrop[] } {
+  // backstop 3: only a stored, non-blank excerpt can back an item
+  const sigText = args.signals
+    .map((s) => ({ s, t: normalizeEvidence(s.evidence_excerpt ?? "") }))
+    .filter(({ t }) => t.length > 0);
   const out: PlannedQueueRow[] = [];
+  const drops: CandidateDrop[] = [];
+  const seenText = new Map<string, CandidateList>();
+  const seenEvidence = new Map<string, CandidateList>();
   for (const { list, surfaceType } of CANDIDATE_LISTS) {
     const items = Array.isArray(args.proposal[list]) ? (args.proposal[list] as unknown[]) : [];
     items.forEach((raw, index) => {
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
       const item = raw as Record<string, unknown>;
+      const text = candidateText(list, item);
+      const nText = normalizeEvidence(text);
       const ev = normalizeEvidence(item.evidence);
+      // backstop 1: the reader's activity is not a candidate
+      if (ledByAnalystVerb(text)) { drops.push({ list, index, reason: "analyst_verb", text }); return; }
+      // backstop 2: an earlier list already holds this idea
+      const textOwner = nText ? seenText.get(nText) : undefined;
+      if (textOwner && textOwner !== list) { drops.push({ list, index, reason: "duplicate_text", of: textOwner, text }); return; }
+      const evOwner = ev.length >= MIN_MATCH_CHARS ? seenEvidence.get(ev) : undefined;
+      if (evOwner && evOwner !== list) { drops.push({ list, index, reason: "duplicate_evidence", of: evOwner, text }); return; }
+      if (nText && !seenText.has(nText)) seenText.set(nText, list);
+      if (ev.length >= MIN_MATCH_CHARS && !seenEvidence.has(ev)) seenEvidence.set(ev, list);
       const backing = ev.length >= MIN_MATCH_CHARS ? sigText.filter(({ t }) => t.includes(ev)).map(({ s }) => s) : [];
       const ids = backing.map((s) => s.id);
       out.push({
@@ -163,10 +227,10 @@ export function planCandidateQueue(args: {
       });
     });
   }
-  return out;
+  return { rows: out, drops };
 }
 
-export type QueueResult = { queued: number; already: number; skipped: null | "not_ready" | "not_live" | "not_found" };
+export type QueueResult = { queued: number; already: number; dropped?: number; skipped: null | "not_ready" | "not_live" | "not_found" };
 
 /**
  * Queue the candidates of ONE analysis. Runs after the analysis is ready and minted (its signals are
@@ -207,8 +271,12 @@ export async function queueCandidatesForAnalysis(supabase: Sb, companyId: string
     docAuthorship = effectiveAuthorship((verdicts ?? []) as never);
   }
 
-  const planned = planCandidateQueue({ companyId, proposal: p as never, signals: (sigs ?? []) as QueueSignal[], docAuthorship });
-  if (!planned.length) return { queued: 0, already: 0, skipped: null };
+  const { rows: planned, drops } = planCandidateQueueWithDrops({ companyId, proposal: p as never, signals: (sigs ?? []) as QueueSignal[], docAuthorship });
+  // G1: every backstop drop is logged, item by item, before anything is written.
+  for (const d of drops) {
+    console.log("[candidate-queue] dropped", JSON.stringify({ proposal_id: proposalId, list: d.list, index: d.index, reason: d.reason, of: d.of ?? null, text: d.text.slice(0, 160) }));
+  }
+  if (!planned.length) return { queued: 0, already: 0, dropped: drops.length, skipped: null };
 
   const { data: existing, error: eErr } = await supabase
     .from("surface_proposals").select("raw_payload")
@@ -222,7 +290,7 @@ export async function queueCandidatesForAnalysis(supabase: Sb, companyId: string
     const { error: iErr } = await supabase.from("surface_proposals").insert(fresh);
     if (iErr) throw new Error(`candidate queue: insert failed: ${iErr.message}`);
   }
-  return { queued: fresh.length, already: planned.length - fresh.length, skipped: null };
+  return { queued: fresh.length, already: planned.length - fresh.length, dropped: drops.length, skipped: null };
 }
 
 /**

@@ -88,10 +88,16 @@ else
          values ('$CO','$FILE','$TAG.pdf','uploaded_file','newer','document','pending','running', now(),
          '[{\"desired_outcome\":\"cqg need again\",\"evidence\":\"$EV_NEED\"}]'::jsonb,
          '[{\"outcome\":\"cqg outcome\",\"evidence\":\"$EV_OUT\"}]'::jsonb)")
-  sig() { psql_insert_id "insert into public.signals (company_id, source_id, source_type, signal_band, voice_class, claim_text, raw_payload)
-                          values ('$CO','$1','uploaded_file','outside','outside_voice_about_client','$TAG signal','{\"evidence\":\"…$2…\"}'::jsonb)"; }
+  # G1 (candidate-queue v2): a candidate matches a signal by its STORED evidence_excerpt only, so
+  # each fixture signal carries the excerpt; raw_payload keeps the same text. S_BLANK is the
+  # counter-case: its raw_payload quotes the need's evidence but its excerpt was blanked (E4), so it
+  # must never be named as the need's evidence.
+  sig() { psql_insert_id "insert into public.signals (company_id, source_id, source_type, signal_band, voice_class, claim_text, evidence_excerpt, raw_payload)
+                          values ('$CO','$1','uploaded_file','outside','outside_voice_about_client','$TAG signal','…$2…','{\"evidence\":\"…$2…\"}'::jsonb)"; }
   S_OLD_NEED=$(sig "$OLD" "$EV_NEED"); S_OLD_STEP=$(sig "$OLD" "$EV_STEP"); S_NEW_NEED=$(sig "$NEW" "$EV_NEED"); S_NEW_OUT=$(sig "$NEW" "$EV_OUT")
-  if [ -z "$OLD" ] || [ -z "$NEW" ] || [ -z "$S_OLD_NEED" ] || [ -z "$S_NEW_OUT" ]; then
+  S_BLANK=$(psql_insert_id "insert into public.signals (company_id, source_id, source_type, signal_band, voice_class, claim_text, evidence_excerpt, raw_payload)
+                          values ('$CO','$OLD','uploaded_file','outside','outside_voice_about_client','$TAG blanked signal','','{\"evidence\":\"…${EV_NEED}…\"}'::jsonb)")
+  if [ -z "$OLD" ] || [ -z "$NEW" ] || [ -z "$S_OLD_NEED" ] || [ -z "$S_NEW_OUT" ] || [ -z "$S_BLANK" ]; then
     bad "(q2) could not build the fixture — the checks below would pass on absence"
   else
     eval "$(npx supabase status --output env 2>/dev/null | grep -E '^(SERVICE_ROLE_KEY|API_URL)=')"
@@ -132,6 +138,9 @@ TS
     NEED_ROW="select proposed_state from surface_proposals where company_id='$CO' and raw_payload->>'file_proposal_id'='$OLD' and surface_type='candidate_need'"
     [ "$(q "select proposed_state->'evidence_signal_ids' = '[\"$S_OLD_NEED\"]'::jsonb from ($NEED_ROW) x")" = "t" ] \
       && ok "(q2) the need names exactly the signal its evidence came from" || bad "(q2) the need's evidence ids are wrong: $(q "select proposed_state->'evidence_signal_ids' from ($NEED_ROW) x")"
+    [ "$(q "select coalesce(proposed_state->'evidence_signal_ids' ? '$S_BLANK', false) from ($NEED_ROW) x")" = "f" ] \
+      && ok "(q2) G1: a signal whose excerpt is blank is never named, though its raw_payload quotes the evidence" \
+      || bad "(q2) G1: the blanked signal $S_BLANK was named as evidence"
     [ "$(q "select proposed_state->>'evidence_voice' from ($NEED_ROW) x")" = "company" ] \
       && ok "(q2) SP-321: the company's own document is company voice, though its signal carries an outside label" \
       || bad "(q2) SP-321: voice is $(q "select proposed_state->>'evidence_voice' from ($NEED_ROW) x"), expected company"
