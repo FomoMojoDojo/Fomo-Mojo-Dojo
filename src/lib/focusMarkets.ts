@@ -81,3 +81,32 @@ export async function signFocusMarkets(companyId: string, orderedMarketIds: stri
   return (data ?? []) as SignedFocusMarket[];
 }
 
+// ── F-2: the system proposes, the operator signs (decision 6) ──────────────────────────────────
+export type FocusProposal = {
+  id: string;
+  evidence_total: number;
+  ranking: Array<{ market_definition_id: string; journey_key: string; job_executor: string | null; evidence: number }>;
+};
+
+/** The markets a proposal puts forward: its ranking, in order, those with any evidence at all. */
+export function proposedIds(p: FocusProposal | null): string[] {
+  return (p?.ranking ?? []).filter((r) => r.evidence > 0).map((r) => r.market_definition_id).slice(0, MAX_FOCUS_MARKETS);
+}
+
+/** The latest PENDING focus proposal for the company, or null. A read; nothing is written. */
+export async function fetchPendingFocusProposal(companyId: string): Promise<FocusProposal | null> {
+  // deno-lint-ignore no-explicit-any
+  const { data, error } = await (supabase as any).from("surface_proposals").select("id, proposed_state")
+    .eq("company_id", companyId).eq("surface_type", "focus_market").eq("status", "pending")
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  const ps = (data.proposed_state ?? {}) as { ranking?: FocusProposal["ranking"]; evidence_total?: number };
+  return { id: data.id, evidence_total: Number(ps.evidence_total ?? 0), ranking: ps.ranking ?? [] };
+}
+
+/** Ask the system for a proposal (admin, deterministic, no model). Supersedes an older pending one. */
+export async function proposeFocusMarkets(companyId: string): Promise<void> {
+  const { error } = await rpc("propose_focus_markets", { p_company_id: companyId });
+  if (error) throw new Error(error.message);
+}

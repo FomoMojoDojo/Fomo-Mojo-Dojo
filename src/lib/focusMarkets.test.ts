@@ -1,6 +1,6 @@
 // F-1: the pure parts of the focus-market set — rank ↔ domain, the signed order, reordering.
 import { describe, it, expect } from "vitest";
-import { FOCUS_STRINGS, focusDomain, focusRank, moveInOrder, signedFromOptions, type FocusMarketOption } from "./focusMarkets";
+import { FOCUS_STRINGS, focusDomain, focusRank, moveInOrder, proposedIds, signedFromOptions, type FocusMarketOption } from "./focusMarkets";
 
 const opt = (id: string, signed_rank: number | null): FocusMarketOption => ({
   market_definition_id: id, journey_key: `j-${id}`, job_executor: id, jtbd: null, relationship_kind: null,
@@ -30,5 +30,13 @@ describe("F-1 focus markets", () => {
     expect(FOCUS_STRINGS.proposedFrom(12)).toBe("Proposed by the system from 12 pieces of evidence");
     expect(FOCUS_STRINGS.ranUnfocused).toBe("Ran unfocused");
     expect(FOCUS_STRINGS.otherParty(3)).toBe("3 findings were about another party and were not queued");
+  });
+  it("F-2: a proposal puts forward its ranked markets that have any evidence, in order", () => {
+    expect(proposedIds({ id: "p", evidence_total: 9, ranking: [
+      { market_definition_id: "a", journey_key: "a", job_executor: null, evidence: 8 },
+      { market_definition_id: "b", journey_key: "b", job_executor: null, evidence: 1 },
+      { market_definition_id: "c", journey_key: "c", job_executor: null, evidence: 0 },
+    ] })).toEqual(["a", "b"]);
+    expect(proposedIds(null)).toEqual([]);
   });
 });

@@ -13,6 +13,8 @@
 #   (f7) FLEET: every focus_market row on any company has a 'set' audit row naming its domain and key —
 #        nothing writes these rows except the signing function
 #   (f8) STATIC: no source file outside the migration and src/lib/focusMarkets.ts writes a focus domain
+#   (f9) F-2: an admin's proposal ranks every live market by evidence with no model; a newer one
+#        supersedes the pending one; the signature closes it, recording the set and any reordering
 #
 # D4: no writer of the product is invoked and no model is called. Every write is on a HELD throwaway
 # company (born held in the creating statement, never deleted), inside a transaction that ROLLS BACK.
@@ -106,10 +108,30 @@ begin
   select count(*) into n from public.operator_primary_selection where company_id = co and domain ~ '^focus_market_';
   if n = 0 and jsonb_array_length(r) = 0 then raise notice 'ok (f6) an empty list unsigns every focus market'; else raise notice 'FAIL (f6) % focus rows remain', n; end if;
 
+  -- (f9) F-2: the system proposes (no model), a newer proposal supersedes, the signature closes it
+  insert into public.job_steps (company_id, user_id, journey_key, step_number, step_label)
+    select co, adm, 'fmg-families', g, 'fmg step ' || g from generate_series(1, 3) g;
+  insert into public.job_steps (company_id, user_id, journey_key, step_number, step_label) values (co, adm, 'fmg-donors', 1, 'fmg donor step');
+  r := public.propose_focus_markets(co);
+  r := public.propose_focus_markets(co);
+  select count(*) into n from public.surface_proposals where company_id = co and surface_type = 'focus_market' and status = 'superseded';
+  if n = 1 then raise notice 'ok (f9) a newer proposal supersedes the pending one'; else raise notice 'FAIL (f9) % superseded proposals, expected 1', n; end if;
+  if jsonb_array_length(r->'ranking') = 3 and r->'ranking'->0->>'journey_key' = 'fmg-families' and r->'ranking'->1->>'journey_key' = 'fmg-donors' and (r->>'evidence_total')::int = 4
+    then raise notice 'ok (f9) the proposal ranks EVERY live market by evidence (families 3, donors 1, schools 0; 4 pieces)';
+    else raise notice 'FAIL (f9) proposal read back as %', r; end if;
+  select count(*) into n from public.surface_proposals where company_id = co and surface_type = 'focus_market' and status = 'pending' and raw_payload->>'model' is null and current_state is not null;
+  if n = 1 then raise notice 'ok (f9) one pending proposal, no model, carrying the set it would replace'; else raise notice 'FAIL (f9) % pending proposals', n; end if;
+  r := public.sign_focus_markets(co, array[m_a, m_b]);   -- donors first: the operator changed the order the system proposed
+  select count(*) into n from public.surface_proposals where company_id = co and surface_type = 'focus_market' and status = 'accepted' and (raw_payload->>'order_changed')::boolean and jsonb_array_length(raw_payload->'signed_as') = 2;
+  if n = 1 then raise notice 'ok (f9) signing closes the proposal as accepted, recording the set as signed and that the order was changed'; else raise notice 'FAIL (f9) the signature did not close the proposal (% rows)', n; end if;
+  r := public.sign_focus_markets(co, '{}'::uuid[]);
+
   -- (f4) non-admin and no session
   perform set_config('request.jwt.claims', json_build_object('sub', non, 'role', 'authenticated')::text, true);
   fired := false; begin perform public.sign_focus_markets(co, array[m_a]); exception when insufficient_privilege then fired := true; end;
   if fired then raise notice 'ok (f4) a non-admin is refused (42501)'; else raise notice 'FAIL (f4) a non-admin signed'; end if;
+  fired := false; begin perform public.propose_focus_markets(co); exception when insufficient_privilege then fired := true; end;
+  if fired then raise notice 'ok (f9) a non-admin cannot ask for a proposal'; else raise notice 'FAIL (f9) a non-admin proposed'; end if;
   perform set_config('request.jwt.claims', json_build_object('role', 'authenticated')::text, true);
   fired := false; begin perform public.sign_focus_markets(co, array[m_a]); exception when insufficient_privilege then fired := true; end;
   if fired then raise notice 'ok (f4) no session is refused'; else raise notice 'FAIL (f4) a call with no user signed'; end if;

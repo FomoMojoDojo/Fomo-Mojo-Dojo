@@ -4,8 +4,8 @@
 // audited). Nothing here writes on open.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  FOCUS_STRINGS, MAX_FOCUS_MARKETS, fetchFocusMarketOptions, moveInOrder, signFocusMarkets, signedFromOptions,
-  type FocusMarketOption,
+  FOCUS_STRINGS, MAX_FOCUS_MARKETS, fetchFocusMarketOptions, fetchPendingFocusProposal, moveInOrder, proposeFocusMarkets,
+  proposedIds, signFocusMarkets, signedFromOptions, type FocusMarketOption, type FocusProposal,
 } from "@/lib/focusMarkets";
 
 const c = { panel: "#FFFFFF", line: "#DDE6D1", ink: "#233C4B", muted: "#6E847F", soft: "#F7F6F2", good: "#285f53" };
@@ -15,12 +15,16 @@ export default function FocusMarketPanel({ companyId }: { companyId: string }) {
   const [order, setOrder] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [signing, setSigning] = useState(false);
+  const [proposal, setProposal] = useState<FocusProposal | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const rows = await fetchFocusMarketOptions(companyId);
+      const [rows, prop] = await Promise.all([fetchFocusMarketOptions(companyId), fetchPendingFocusProposal(companyId)]);
       setOptions(rows);
-      setOrder(signedFromOptions(rows).map((r) => r.market_definition_id));
+      setProposal(prop);
+      const signed = signedFromOptions(rows).map((r) => r.market_definition_id);
+      // F-2: with nothing signed, the system's proposal is the starting order — the operator still signs it
+      setOrder(signed.length > 0 ? signed : proposedIds(prop));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -30,10 +34,15 @@ export default function FocusMarketPanel({ companyId }: { companyId: string }) {
 
   const byId = useMemo(() => new Map((options ?? []).map((o) => [o.market_definition_id, o])), [options]);
   const signedIds = useMemo(() => signedFromOptions(options ?? []).map((o) => o.market_definition_id), [options]);
-  const changed = order.join(",") !== signedIds.join(",");
+  const changed = order.join(",") !== signedIds.join(",") || (proposal !== null && order.length > 0);
 
   const toggle = (id: string) =>
     setOrder((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : prev.length >= MAX_FOCUS_MARKETS ? prev : [...prev, id]));
+
+  const propose = async () => {
+    try { await proposeFocusMarkets(companyId); await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
 
   const sign = async () => {
     setSigning(true);
@@ -51,6 +60,7 @@ export default function FocusMarketPanel({ companyId }: { companyId: string }) {
     <section data-testid="focus-market-panel" className="mt-6 rounded-xl border p-5" style={{ background: c.panel, borderColor: c.line }}>
       <h2 className="font-mono text-[11px] uppercase tracking-[0.12em]" style={{ color: c.ink }}>{FOCUS_STRINGS.title}</h2>
       {error ? <p className="mt-2 text-[12px]" style={{ color: "#a12318" }} data-testid="focus-market-error">{error}</p> : null}
+      {proposal ? <p className="mt-2 text-[12px]" style={{ color: c.muted }} data-testid="focus-market-proposed">{FOCUS_STRINGS.proposedFrom(proposal.evidence_total)}</p> : null}
       {options === null ? null : (
         <>
           {order.length > 0 ? (
@@ -87,6 +97,11 @@ export default function FocusMarketPanel({ companyId }: { companyId: string }) {
               ))}
             </tbody>
           </table>
+          <button type="button" data-testid="focus-market-propose"
+            className="mr-2 mt-3 rounded-md border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.1em]"
+            style={{ borderColor: c.line, color: c.muted }} onClick={() => void propose()}>
+            Propose
+          </button>
           <button type="button" data-testid="focus-market-sign" disabled={!changed || signing}
             className="mt-3 rounded-md border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.1em] disabled:opacity-50"
             style={{ borderColor: c.ink, color: c.ink }} onClick={() => void sign()}>
