@@ -50,7 +50,8 @@ function* walk(dir: string): Generator<string> {
 /** Reads of odi_needs that carry journey_key with no guard at all. */
 export function unguardedOdiNeedsReads(src: string): string[] {
   const out: string[] = [];
-  const re = /\.from\(\s*["']odi_needs["']\s*\)/g;
+  // M-2 (2026-11-18): needs_in_market is the same needs read through the link table, so the same rule binds it.
+  const re = /\.from\(\s*["'](?:odi_needs|needs_in_market)["']\s*\)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src)) !== null) {
     const chain = src.slice(m.index, m.index + 900).split(/;\s*\n|\n\s*\n/)[0];
@@ -96,7 +97,7 @@ describe("odi_needs journey_key census (4f-6)", () => {
     let seen = 0;
     for (const scope of SCOPES) {
       for (const file of walk(join(ROOT, scope))) {
-        if (/\.from\(\s*["']odi_needs["']\s*\)/.test(readFileSync(file, "utf8"))) seen++;
+        if (/\.from\(\s*["'](?:odi_needs|needs_in_market)["']\s*\)/.test(readFileSync(file, "utf8"))) seen++;
       }
     }
     expect(seen, "no odi_needs reader found — the pattern or the walk is broken").toBeGreaterThan(5);
@@ -113,5 +114,6 @@ describe("odi_needs journey_key census (4f-6)", () => {
     // select("*") carries journey_key implicitly and IS this wall's business — the useOdiNeeds shape
     expect(unguardedOdiNeedsReads(`supabase.from("odi_needs").select("*").eq("company_id", c).neq("status", "retracted")`)).toHaveLength(1);
     expect(unguardedOdiNeedsReads(`supabase.from("odi_needs").select("*").eq("company_id", c).not("journey_key", "is", null)`)).toEqual([]);
+    expect(unguardedOdiNeedsReads(`supabase.from("needs_in_market").select("*").eq("company_id", c).neq("status", "retracted")`)).toHaveLength(1);
   });
 });

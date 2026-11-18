@@ -9,7 +9,7 @@ import { fulfilledFrom, openWorkspace } from "./helpers";
 
 const SUPABASE = /\/(rest|storage|functions)\/v1\//;
 const CHOICE_READ = /\/rest\/v1\/operator_primary_selection\?.*domain=eq\.job_step_set/;
-const KEYED_NEEDS = /\/rest\/v1\/odi_needs\?.*journey_key=eq\./;
+const KEYED_NEEDS = /\/rest\/v1\/(odi_needs|needs_in_market)\?.*journey_key=eq\./; // M-2: the keyed read is needs_in_market
 const STAKEHOLDER_QUOTE = "FIXTURE QUOTE (not a real interview): families wait days before anyone calls them back after the first form.";
 const MARKET_QUOTE = "FIXTURE QUOTE (not a real donor): I give where I can see the outcome numbers within the year.";
 // The market fixture row belongs to a FUNDER market (its own lens title), served on the viewed set's

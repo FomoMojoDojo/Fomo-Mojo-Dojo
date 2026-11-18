@@ -36,7 +36,7 @@ test("job map 'N High' count drops by one for a planted non-High row in the curr
   const currentStep = await page.getByTestId("jobmap-stage").getAttribute("data-fr-step");
   // Plant: the first public_research row of the CURRENT stage scores 3.
   let plantedId: string | null = null;
-  await page.route(/\/rest\/v1\/odi_needs/, async (route) => {
+  await page.route(/\/rest\/v1\/(odi_needs|needs_in_market)/, async (route) => { // M-2: the keyed read is needs_in_market
     const res = await route.fetch();
     let rows: unknown = null;
     const resText = await res.text(); try { rows = JSON.parse(resText); } catch { /* not json */ }

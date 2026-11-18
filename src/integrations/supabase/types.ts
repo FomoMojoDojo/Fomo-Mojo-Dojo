@@ -7206,6 +7206,105 @@ export type Database = {
       }
     }
     Views: {
+      needs_in_market: {
+        Row: {
+          company_id: string | null
+          confidence: number | null
+          content_identity: string | null
+          created_at: string | null
+          dependency_state: string | null
+          desired_outcome: string | null
+          evidence_baseline_captured_at: string | null
+          evidence_baseline_signal_ids: Json | null
+          evidence_state: string | null
+          evidence_voice: string | null
+          frameworks_used: string[] | null
+          holder: string | null
+          id: string | null
+          importance: number | null
+          interview_record_id: string | null
+          journey_key: string | null
+          last_confirmed_run_id: string | null
+          last_reviewed_at: string | null
+          link_id: string | null
+          link_source: string | null
+          market_definition_id: string | null
+          notes: string | null
+          odi_canonical_statement: string | null
+          operator_edited_at: string | null
+          opportunity_score: number | null
+          provenance_type:
+            | Database["public"]["Enums"]["provenance_type_enum"]
+            | null
+          satisfaction: number | null
+          service_state: string | null
+          social_extraction_json: Json | null
+          sort_order: number | null
+          source_path: string | null
+          source_proposal_id: string | null
+          source_run_id: string | null
+          source_url: string | null
+          stale_reason: string | null
+          stale_since_event_id: string | null
+          status: string | null
+          step_label: string | null
+          step_number: number | null
+          strategy_alignment: string | null
+          strategy_alignment_evaluated_at: string | null
+          strategy_alignment_reason: string | null
+          subject_id: string | null
+          superseded_by_id: string | null
+          superseded_reason: string | null
+          tier: string | null
+          updated_at: string | null
+          user_id: string | null
+          validation_state: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "need_markets_market_definition_id_fkey"
+            columns: ["market_definition_id"]
+            isOneToOne: false
+            referencedRelation: "odi_market_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "odi_needs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "odi_needs_interview_record_id_fkey"
+            columns: ["interview_record_id"]
+            isOneToOne: false
+            referencedRelation: "interview_records"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "odi_needs_source_proposal_id_fkey"
+            columns: ["source_proposal_id"]
+            isOneToOne: false
+            referencedRelation: "surface_proposals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "odi_needs_stale_since_event_id_fkey"
+            columns: ["stale_since_event_id"]
+            isOneToOne: false
+            referencedRelation: "strategic_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "odi_needs_subject_fkey"
+            columns: ["subject_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       derived_tensions_structural: {
         Row: {
           claim_id: string | null

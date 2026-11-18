@@ -7,14 +7,14 @@ const calls = vi.hoisted(() => ({ needs: [] as Array<{ select: string; filters: 
 vi.mock("@/integrations/supabase/client", () => {
   const builder = (table: string) => {
     const rec = { select: "", filters: [] as string[] };
-    if (table === "odi_needs") calls.needs.push(rec);
+    if (table === "needs_in_market") calls.needs.push(rec); // M-2: the reads go through the view
     const b: Record<string, unknown> = {};
     b.select = (c: string) => { rec.select = c; return b; };
     b.eq = (c: string, v: unknown) => { rec.filters.push(`eq ${c}=${v}`); return b; };
     b.neq = (c: string, v: unknown) => { rec.filters.push(`neq ${c}=${v}`); return b; };
     b.not = (c: string, op: string, v: unknown) => { rec.filters.push(`not ${c} ${op} ${v}`); return b; };
     b.order = () => b; b.limit = () => b; b.maybeSingle = () => b;
-    b.then = (res: (v: unknown) => void) => res({ data: table === "odi_needs" ? [] : null, error: null });
+    b.then = (res: (v: unknown) => void) => res({ data: table === "needs_in_market" ? [] : null, error: null });
     return b;
   };
   return { supabase: { from: builder } };

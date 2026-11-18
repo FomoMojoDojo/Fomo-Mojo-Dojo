@@ -146,9 +146,13 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: str
       // record was retracted (status='retracted', set by the retraction trigger). The no-key path
       // (legacy company-wide list) keeps select("*") and ALSO excludes retracted rows (gate 3 delta,
       // ruling 1: a retracted finding vanishes from every surface, the home and the shell included).
+      // M-2 (2026-11-18): both reads go through needs_in_market — one row per need per LIVE market
+      // link, journey_key and the per-market fields taken from the link — so a need in several
+      // markets is found under each of them. Same columns, same rows as odi_needs while every need
+      // has its one home link.
       const needsQuery = journeyKey
         ? supabase
-            .from("odi_needs")
+            .from("needs_in_market")
             .select("*, interview_records(id, speaker_role, person_name, interviewed_at, verbatim, retracted_at)")
             .eq("company_id", companyId)
             .eq("journey_key", journeyKey)
@@ -157,7 +161,7 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: str
             .order("sort_order", { ascending: true, nullsFirst: false })
             .order("opportunity_score", { ascending: false })
         : supabase
-            .from("odi_needs")
+            .from("needs_in_market")
             .select("*")
             .eq("company_id", companyId)
             .not("journey_key", "is", null)

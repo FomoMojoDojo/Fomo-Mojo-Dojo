@@ -42,7 +42,7 @@ async function guardWrites(page: Page, state: GuardState): Promise<Captured[]> {
         const rows = state.chosen ? [{ item_key: state.chosen }] : [];
         return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(rows) });
       }
-      if (/\/rest\/v1\/odi_needs\?/.test(url) && (state.plantReviewOnFirstNeed || state.reviewed.size > 0)) {
+      if (/\/rest\/v1\/(odi_needs|needs_in_market)\?/.test(url) && (state.plantReviewOnFirstNeed || state.reviewed.size > 0)) {
         const res = await route.fetch();
         let rows: Array<Record<string, unknown>> = [];
         const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }

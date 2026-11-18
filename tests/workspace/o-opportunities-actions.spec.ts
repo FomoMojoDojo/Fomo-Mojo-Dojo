@@ -91,7 +91,7 @@ async function guardWrites(page: Page, plants: Plants = {}): Promise<Guard> {
     const method = req.method();
     const url = req.url();
     if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
-      if (/\/rest\/v1\/odi_needs\?/.test(url) && /select=\*/.test(url)) {
+      if (/\/rest\/v1\/(odi_needs|needs_in_market)\?/.test(url) && /select=\*/.test(url)) { // M-2: the read is needs_in_market
         const res = await route.fetch();
         let rows: NeedRow[] = [];
         const resText = await res.text(); try { rows = JSON.parse(resText); } catch { return route.fulfill(fulfilledFrom(res, resText, false)); }

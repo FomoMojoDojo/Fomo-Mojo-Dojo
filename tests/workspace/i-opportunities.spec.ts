@@ -10,7 +10,7 @@ type NeedRow = { id: string; desired_outcome: string; provenance_type?: string |
 /** Rewrites every odi_needs response so the first public_research row scores 3 (band Low). */
 async function plantLowRow(page: Page): Promise<{ planted: () => NeedRow | null }> {
   let planted: NeedRow | null = null;
-  await page.route(/\/rest\/v1\/odi_needs/, async (route) => {
+  await page.route(/\/rest\/v1\/(odi_needs|needs_in_market)/, async (route) => { // M-2: the reads are needs_in_market
     const res = await route.fetch();
     const body = await res.text();
     let rows: unknown;
