@@ -195,3 +195,15 @@ Deno.test("pages corrected after the run, from the URLs it cited", () => {
   assertEquals(pageForUrl(L, "https://play.google.com/store/apps/details/Spectrum+TV?id=com.TWCableTV&hl=en_GB")?.entity, "spectrum");
   assertEquals(pageForUrl(L, "https://www.yelp.com/biz/charter-communications-watsonville-2")?.entity, "spectrum");
 });
+
+Deno.test("the company's own reply is never a customer quote", () => {
+  const page = "Please DM us on X @Ask_Spectrum or through facebook.com/spectrum, so we can review your account with you-Greg\n\n- ### I hate it here\n\n  Jun 24\n\nThe app itself is actually fine but I hate Cox as a whole and the price keeps going up for no reason.";
+  const url = "https://apps.apple.com/us/app/cox-app/id1";
+  const t = L.targets.find((x) => x.key === "cox-appstore")!;
+  const cite = (c: string) => textBlock("x", [{ type: "char_location", document_index: 0, cited_text: c }]);
+  const r = buildReviewLaneRows({ list: L, target: t, callId: "c", fetchedAt: "t", excludeHosts: [], existingExcerpts: new Set(), decide: outside,
+    response: resp([fetchBlock(url, page), cite(page), cite("Please DM us on X @Ask_Spectrum or through facebook.com/spectrum, so we can review your account")]) });
+  assertEquals(r.rows.length, 1);
+  assertEquals(r.rows[0].quote, "The app itself is actually fine but I hate Cox as a whole and the price keeps going up for no reason.");
+  assertEquals(r.stats.company_reply, 1);
+});

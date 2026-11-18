@@ -1,6 +1,6 @@
 // review-lane-guard's pure half (V1, 2026-11-18). Reads { rows, calls } JSON on stdin (the stored lane rows and their
 // calls' responses), prints one OK/FAIL line per check. r1 is the PLANTED CASE, r2 its CONTROL.
-import { buildReviewLaneRows } from "../../supabase/functions/_shared/reviewHostLane.ts";
+import { buildReviewLaneRows, COMPANY_REPLY } from "../../supabase/functions/_shared/reviewHostLane.ts";
 import { pageForUrl, REVIEW_LISTS, CHARTER_REVIEW_LIST as L } from "../../supabase/functions/_shared/reviewPages.ts";
 
 const out: string[] = [];
@@ -85,5 +85,17 @@ const input = JSON.parse(await new Response(Deno.stdin.readable).text()) as {
 {
   const markup = input.rows.filter((r) => r.live && r.quote != null && /^(?:!\[|#{1,6}\s|\[[^\]]*\]\()/.test(r.quote));
   if (markup.length) bad("r8", `${markup.length} live stored quote(s) begin with page markup`);
+}
+// r9: the company's own reply is never a customer quote — planted shape, then every LIVE stored row
+{
+  const page = "Please DM us on X @Ask_Spectrum so we can review your account with you-Greg\n\nI hate Cox as a whole and the price keeps going up every single month for no reason.";
+  const t = L.targets.find((x) => x.key === "cox-appstore")!;
+  const r = buildReviewLaneRows({ list: L, target: t, callId: "guard", fetchedAt: "t", excludeHosts: [], existingExcerpts: new Set(), decide: outside,
+    response: { content: [{ type: "web_fetch_tool_result", content: { type: "web_fetch_result", url: "https://apps.apple.com/us/app/cox-app/id1", content: { type: "document", source: { type: "text", data: page } } } },
+      { type: "text", text: "x", citations: [{ type: "char_location", document_index: 0, cited_text: page }] }] } });
+  const live = input.rows.filter((x) => x.live && COMPANY_REPLY.test(x.quote ?? x.evidence_excerpt));
+  if (r.rows.some((x) => COMPANY_REPLY.test(String(x.quote ?? x.evidence_excerpt)))) bad("r9", "a company reply reached a quote (planted shape)");
+  else if (live.length) bad("r9", `${live.length} live stored quote(s) carry the company's own reply`);
+  else ok("r9", "no quote carries the company's own reply (planted shape and every live row)");
 }
 console.log(out.join("\n"));

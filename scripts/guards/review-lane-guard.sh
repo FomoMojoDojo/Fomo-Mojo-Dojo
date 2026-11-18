@@ -15,6 +15,7 @@
 #   r5. fleet-wide: every lane row's excerpt is a cited_text of its own stored call (review_lane_calls.response).
 #   r7. fleet-wide: every stored quote is word for word on a page fetched in its own call (review_lane_calls.response).
 #   r8. a cited span across a rating image / title quotes only the review body; no stored quote begins with markup.
+#   r9. the company's own reply ("Please DM us…", "We apologize…") is never a customer quote — planted shape and live rows.
 #   r6. inside ONE rolled-back transaction: an about_entity_id of another company's entity is refused; a brand with no
 #       page is refused; authenticated cannot write review_lane_calls; the trigger function is not executable by clients.
 #
@@ -36,7 +37,7 @@ JSON=$(psql "select json_build_object(
            from signals where review_lane_call_id is not null), '[]'::json),
   'calls', coalesce((select json_agg(json_build_object('id', id, 'response', response)) from review_lane_calls), '[]'::json))")
 OUT=$(printf '%s' "$JSON" | deno run --quiet --allow-read scripts/guards/review-lane-check.ts) || fail check "the check script failed: $OUT"
-for k in r1 r2 r3 r5 r7 r8; do
+for k in r1 r2 r3 r5 r7 r8 r9; do
   bad=$(echo "$OUT" | grep -E "^FAIL $k:" | head -1 || true)
   [ -z "$bad" ] || fail "$k" "${bad#FAIL $k: }"
   line=$(echo "$OUT" | grep -E "^OK $k:" | head -1 || true)

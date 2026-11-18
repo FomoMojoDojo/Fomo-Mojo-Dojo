@@ -279,16 +279,19 @@ export function datedReviewBlocks(text: string): number {
 /** A cited span can run across a page's paragraphs (a rating image, a title, then the review). The review is the part
  *  from the first paragraph holding a review sentence to the last; markup paragraphs around it are not the customer's
  *  words. A span with no such paragraph is returned whole (it fails the review-sentence test downstream). */
+/** The company's own reply on a review page ("Please DM us…", "We apologize…", a signed "-Greg") — not a customer's words. */
+export const COMPANY_REPLY = /(\bDM us\b|@Ask_?Spectrum|@CoxHelp|\bwe (?:apologize|are sorry|['’]re sorry)\b|\bsorry to hear\b|\bthank you for (?:your|reaching|taking|choosing)\b|\bthanks for choosing\b|\bplease (?:reach out|contact us|send us)\b|\bour apologies\b|\bDeveloper Response\b|\bResponse from (?:Spectrum|Cox|Charter)\b)/i;
+
 export function reviewBody(cited: string): string {
   const parts = cited.split(/(\n\s*\n)/);
-  const idx = parts.map((p, i) => (i % 2 === 0 && hasReviewSentence(p) ? i : -1)).filter((i) => i >= 0);
+  const idx = parts.map((p, i) => (i % 2 === 0 && hasReviewSentence(p) && !COMPANY_REPLY.test(p) ? i : -1)).filter((i) => i >= 0);
   if (!idx.length) return cited;
   return parts.slice(idx[0], idx[idx.length - 1] + 1).join("").trim();
 }
 
 export type ReviewLaneStats = {
   text_blocks: number; cited_blocks: number; citations: number; fetched_pages: number;
-  no_url: number; off_host: number; excluded: number; not_company: number; no_review_sentence: number; not_review_block: number; heading: number; not_outside: number;
+  no_url: number; off_host: number; excluded: number; not_company: number; no_review_sentence: number; not_review_block: number; heading: number; company_reply: number; not_outside: number;
   duplicate_in_run: number; duplicate_existing: number; minted: number; branded: number; brand_not_recorded: number;
   quote_expanded: number; dated: number;
 };
@@ -302,7 +305,7 @@ export function buildReviewLaneRows(a: {
   const docs = fetchedDocuments(a.response);
   const { citations, text_blocks, cited_blocks } = laneCitations(a.response);
   const stats: ReviewLaneStats = { text_blocks, cited_blocks, citations: citations.length, fetched_pages: docs.length, no_url: 0, off_host: 0, excluded: 0,
-    not_company: 0, no_review_sentence: 0, not_review_block: 0, heading: 0, not_outside: 0, duplicate_in_run: 0, duplicate_existing: 0, minted: 0, branded: 0, brand_not_recorded: 0, quote_expanded: 0, dated: 0 };
+    not_company: 0, no_review_sentence: 0, not_review_block: 0, heading: 0, company_reply: 0, not_outside: 0, duplicate_in_run: 0, duplicate_existing: 0, minted: 0, branded: 0, brand_not_recorded: 0, quote_expanded: 0, dated: 0 };
   const seen = new Set<string>();
   const rows: Array<Record<string, unknown>> = [];
   const listPages = new Map(docs.map((d) => [d.url, datedReviewBlocks(d.text)] as const));
@@ -323,6 +326,7 @@ export function buildReviewLaneRows(a: {
     const words = expanded?.quote ?? body;
     if (!page && !a.list.names.test(`${c.cited_text} ${c.title} ${url}`)) { stats.not_company++; continue; }
     if (!hasReviewSentence(words)) { stats.no_review_sentence++; continue; }
+    if (COMPANY_REPLY.test(words)) { stats.company_reply++; continue; }
     // a review's title line repeats its body's opening: the body is the quote
     if (expanded && /^#{1,6}\s/.test(expanded.quote)) { stats.heading++; continue; }
     if (expanded && !expanded.in_review_block && (listPages.get(expanded.url) ?? 0) >= 3) { stats.not_review_block++; continue; }
