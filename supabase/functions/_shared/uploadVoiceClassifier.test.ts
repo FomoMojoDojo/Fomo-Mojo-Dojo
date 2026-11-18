@@ -93,3 +93,14 @@ Deno.test("content_sha is deterministic through the TS authority (normalize coll
   assertEquals(a, "99c440898555b8a86a15a2ae525fad617657f7c77f8fe67758de6d2364571495");
   assert(a.length === 64);
 });
+
+// F-5 (decision 7): the classifier is told the client's name and its focus markets, when known.
+import { buildClassifyUser } from "./uploadVoiceClassifier.ts";
+Deno.test("F-5: the classifier's prompt names the client and its focus markets", () => {
+  const u = buildClassifyUser({ file_name: "annual-report.pdf", file_type: "application/pdf", excerpt: "…", client_name: "Edgewood", focus_markets: "1. Individual donors — support youth mental health" });
+  assertEquals(u.startsWith("CLIENT COMPANY: Edgewood\nCLIENT'S FOCUS MARKETS (its customers): \n1. Individual donors — support youth mental health\n\nFILE NAME: annual-report.pdf"), true);
+  const none = buildClassifyUser({ file_name: "x.pdf", file_type: "", excerpt: "…", client_name: "Edgewood", focus_markets: "" });
+  assertEquals(none.includes("CLIENT'S FOCUS MARKETS (its customers): none named"), true);
+  // with no company context the prompt is exactly what it was before F-5
+  assertEquals(buildClassifyUser({ file_name: "x.pdf", file_type: "", excerpt: "e" }).startsWith("FILE NAME: x.pdf"), true);
+});

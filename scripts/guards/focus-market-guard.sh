@@ -15,6 +15,7 @@
 #   (f8) STATIC: no source file outside the migration and src/lib/focusMarkets.ts writes a focus domain
 #   (f10) F-4: accept lands a focus card in its focus market's journey; a stale journey is refused
 #   (f11) STATIC: the worker injects the focus at every framework start; the workflow requires the labels
+#   (f12) the deno tests of the stamp, the labels, the queue and the classifier's inputs pass
 #   (f9) F-2: an admin's proposal ranks every live market by evidence with no model; a newer one
 #        supersedes the pending one; the signature closes it, recording the set and any reordering
 #
@@ -202,6 +203,12 @@ NREQ=$(grep -o '"subject_party","focus_index"\]' "$DSL" | wc -l | tr -d ' ')
 if [ "$NREQ" = "3" ] && grep -q "variable: focus_markets" "$DSL" && grep -q "variable: client_name" "$DSL" && [ "$(grep -c 'subject_party: \["focus", "company", "other"\]' "$DSL")" = "3" ]; then
   ok "(f11) the workflow declares client_name + focus_markets, requires subject_party + focus_index on needs, steps and outcomes, and its Code node keeps them"
 else bad "(f11) the workflow does not carry the focus fields (required in $NREQ of 3 lists)"; fi
+
+echo "── (f12) the pure halves under deno: stamp, labels, queue, classifier inputs ──"
+DENO="${DENO_BIN:-$HOME/.deno/bin/deno}"
+if [ -x "$DENO" ] && (cd supabase/functions/_shared && "$DENO" test --allow-read focusMarkets.test.ts candidateQueue.test.ts uploadVoiceClassifier.test.ts >/dev/null 2>&1); then
+  ok "(f12) focusMarkets, candidateQueue and uploadVoiceClassifier tests pass (F-3 stamp, F-4 labels, F-5 inputs)"
+else bad "(f12) a focus / queue / classifier deno test failed (or deno is not at $DENO)"; fi
 
 echo "  -- $oks ok / $fails FAIL --"
 if [ "$fails" -eq 0 ]; then echo "guard: PASS"; exit 0; else echo "guard: RED ($fails check(s)) — see above"; exit 1; fi

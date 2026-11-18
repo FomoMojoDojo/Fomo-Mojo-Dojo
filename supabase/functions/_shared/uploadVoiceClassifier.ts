@@ -16,6 +16,7 @@
 //   immutable-per-content). Lookups are exact — never latest-wins-by-created_at.
 
 import { loadContributingDocs, type ContributingDoc } from "./uploadCorpus.ts";
+import { focusMarketsInput, loadSignedFocus } from "./focusMarkets.ts";
 
 export const CLASSIFIER_MODEL = "qwen2.5:14b-instruct";
 /** Version of the classifier's judgment (doc_voice_verdicts.classifier_version): 2 = authorship + subject (a779766). */
@@ -49,7 +50,7 @@ export function authorshipFromVoice(v: string | null | undefined): Authorship {
 }
 
 const CLASSIFY_SYSTEM =
-  "You classify a single uploaded business document on two independent facts. The client company is the organization this workspace belongs to; its name appears in the file name or the text. " +
+  "You classify a single uploaded business document on two independent facts. The client company is the organization this workspace belongs to; when CLIENT COMPANY is given it is that organization (its name usually appears in the file name or the text), and CLIENT'S FOCUS MARKETS, when given, are the customers it serves — a document written for or about those customers by someone else is still not the client's own words. " +
   "FACT 1 — AUTHORSHIP: WHOSE WORDS are these? Exactly one of:\n" +
   "- client: the document IS the client company's own words — their brand/strategy deck, their memo, their mission statement, their website copy, their leadership speaking in the first person, their board materials. First-party.\n" +
   "- us: written BY AN ADVISOR, CONSULTANT OR ANALYST WORKING FOR THE CLIENT, addressed to or about the client — a landscape analysis prepared for them, a strategic framing or job-map hypothesis drafted for them, an advisor's meeting notes or update memo, a proposal. Signs: the client is referred to in the third person or as 'you'; the author recommends, frames, drafts or reports to the client.\n" +
@@ -62,8 +63,15 @@ const CLASSIFY_SYSTEM =
   "Judge authorship by voice and role, never by topic: a document ABOUT the client written by someone else is not 'client'. When the excerpt is too thin, answer uncertain — never guess client. " +
   'Return JSON only: {"authorship":"client|us|third_party|uncertain","basis":"one sentence, in your own words, citing what in the document shows who wrote it","subject":"this_company|the_sector|uncertain","subject_basis":"one sentence citing what shows what it is about"}.';
 
-function buildClassifyUser(doc: { file_name: string; file_type: string; excerpt: string; operator_tags?: string[] }): string {
+// F-5 (2026-11-17, Proposal A decision 7): the classifier is told WHO the client is and whom it serves.
+// CLASSIFIER_VERSION is deliberately NOT bumped: a bump marks every stored verdict stale, so the next
+// classification run on any company would re-classify its documents — real companies included. The new
+// inputs apply to classifications made from now on.
+export type ClassifyDoc = { file_name: string; file_type: string; excerpt: string; operator_tags?: string[]; client_name?: string; focus_markets?: string };
+export function buildClassifyUser(doc: ClassifyDoc): string {
   return (
+    (doc.client_name ? `CLIENT COMPANY: ${doc.client_name}\n` : "") +
+    (doc.client_name ? `CLIENT'S FOCUS MARKETS (its customers): ${doc.focus_markets ? `\n${doc.focus_markets}` : "none named"}\n\n` : "") +
     `FILE NAME: ${doc.file_name || "(none)"}\n` +
     `FILE TYPE: ${doc.file_type || "(unknown)"}\n\n` +
     (doc.operator_tags && doc.operator_tags.length > 0 ? `OPERATOR TAGS AT UPLOAD (a hint, not a verdict): ${doc.operator_tags.join(", ")}\n` : "") +
@@ -118,7 +126,7 @@ export async function callClassifier(ollamaUrl: string, model: string, system: s
 // authorship 'uncertain' and subject 'uncertain' (never declared, never corroborating).
 export type ClassifyResult = { verdict: VoiceVerdict; basis: string; model: string; authorship: Authorship; subject: Subject; subject_basis: string };
 export async function classifyUploadVoice(
-  doc: { file_name: string; file_type: string; excerpt: string; operator_tags?: string[] },
+  doc: ClassifyDoc,
   opts: { ollamaUrl: string; model?: string },
 ): Promise<ClassifyResult> {
   const model = opts.model ?? CLASSIFIER_MODEL;
@@ -287,6 +295,8 @@ export async function runUploadVoiceClassification(
     for (const r of ((tagRows ?? []) as Array<{ id: string; tags: string[] | null }>)) tagsByFile.set(r.id, (r.tags ?? []).filter((t) => typeof t === "string" && !t.startsWith("__area:")));
   }
   const forceReclassify = opts.force === true && !write;
+  // F-5: who the client is and whom it serves, read once per run (never written here)
+  const clientCtx = docs.length > 0 ? await loadSignedFocus(supabase, companyId) : { stamp: [], clientName: "" };
   const totals = { contributing: docs.length, classified_now: 0, skipped_existing: 0, external: 0, client_voice: 0, uncertain: 0 };
   const out: DocVoiceStatus[] = [];
 
@@ -307,7 +317,7 @@ export async function runUploadVoiceClassification(
       });
       continue;
     }
-    const res = await classifyUploadVoice({ file_name: d.file_name, file_type: d.file_type, excerpt: d.excerpt, operator_tags: tagsByFile.get(d.input_file_id) ?? [] }, { ollamaUrl: opts.ollamaUrl, model: opts.model });
+    const res = await classifyUploadVoice({ file_name: d.file_name, file_type: d.file_type, excerpt: d.excerpt, operator_tags: tagsByFile.get(d.input_file_id) ?? [], client_name: clientCtx.clientName, focus_markets: focusMarketsInput(clientCtx.stamp) }, { ollamaUrl: opts.ollamaUrl, model: opts.model });
     totals.classified_now++;
     totals[res.verdict]++;
     if (write) {

@@ -51,6 +51,27 @@ export function buildFocusStamp(
     .map((e, i) => ({ rank: i + 1, ...e }));
 }
 
+/** The company's SIGNED focus set as it stands now (no stamp, no write), and its name. Read failures → []. */
+export async function loadSignedFocus(supabase: Sb, companyId: string): Promise<{ stamp: FocusStampEntry[]; clientName: string }> {
+  let clientName = "";
+  try {
+    const { data: co } = await supabase.from("companies").select("name").eq("id", companyId).maybeSingle();
+    clientName = String((co as { name?: string } | null)?.name ?? "");
+  } catch { /* the name is context, not a gate */ }
+  try {
+    const { data: sel } = await supabase.from("operator_primary_selection")
+      .select("domain, item_id, item_key, chosen_at").eq("company_id", companyId).like("domain", "focus_market_%");
+    const rows = (sel ?? []) as Array<{ domain: string; item_id: string | null; item_key: string | null; chosen_at: string | null }>;
+    const ids = rows.map((r) => r.item_id).filter((x): x is string => !!x);
+    if (!ids.length) return { stamp: [], clientName };
+    const { data: md } = await supabase.from("odi_market_definitions")
+      .select("id, journey_key, job_executor, jtbd, retracted_at").eq("company_id", companyId).in("id", ids);
+    return { stamp: buildFocusStamp(rows, (md ?? []) as Array<{ id: string; journey_key: string; job_executor: string | null; jtbd: string | null; retracted_at: string | null }>), clientName };
+  } catch {
+    return { stamp: [], clientName };
+  }
+}
+
 /**
  * The run's focus: the stamp already on the row, or — on the first start — the signed set, stamped now.
  * Also the company's name for `client_name`. Never throws: a read failure is an UNFOCUSED run, said so
