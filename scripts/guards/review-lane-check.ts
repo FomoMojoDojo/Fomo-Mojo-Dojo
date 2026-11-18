@@ -50,14 +50,14 @@ const input = JSON.parse(await new Response(Deno.stdin.readable).text()) as {
 };
 {
   const wrong: string[] = [];
-  for (const r of input.rows) {
+  for (const r of input.rows.filter((x) => x.live)) {   // a superseded row keeps the brand it was minted with (history)
     const list = REVIEW_LISTS[r.company_id];
     const page = list ? pageForUrl(list, r.source_url) : null;
     const want = page ? list!.entities[page.entity] : null;
     if ((page?.key ?? null) !== r.about_entity_page || want !== r.about_entity_id) wrong.push(r.id);
   }
   if (wrong.length) bad("r3", `${wrong.length} stored row(s) carry a brand their URL's listed page does not give: ${wrong.slice(0, 3).join(", ")}`);
-  else ok("r3", `${input.rows.length} stored lane row(s): each brand is exactly what its URL's listed page gives (${input.rows.filter((r) => r.about_entity_id).length} branded)`);
+  else ok("r3", `${input.rows.filter((r) => r.live).length} live lane row(s): each brand is exactly what its URL's listed page gives (${input.rows.filter((r) => r.live && r.about_entity_id).length} branded)`);
 }
 {
   const cited = new Map<string, Set<string>>();

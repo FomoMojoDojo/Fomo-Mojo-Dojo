@@ -183,3 +183,15 @@ Deno.test("a cited span that runs across a rating image and a title quotes only 
   assertEquals(r.rows[0].quote, "Expensive, always raising rates, service is marginal at best.");
   assertEquals(r.rows[0].event_date, "2026-08-28");
 });
+
+Deno.test("pages corrected after the run, from the URLs it cited", () => {
+  assertEquals(pageForUrl(L, "https://www.bbb.org/us/ok/tulsa/profile/cable-tv/cox-communications-inc-1025-27000073/customer-reviews")?.entity, "cox");
+  assertEquals(pageForUrl(L, "https://apps.apple.com/us/app/cox-contour-tv/id995486362?see-all=reviews&platform=iphone")?.entity, "cox");
+  assertEquals(pageForUrl(L, "https://apps.apple.com/us/app/cox-automotive-mobile/id123"), null);
+  assertEquals(pageForUrl(L, "https://play.google.com/store/apps/details/Cox?id=com.cox.android.mobileconnect&hl=en_NZ")?.entity, "cox");
+  assertEquals(pageForUrl(L, "https://www.allconnect.com/providers/cox-communications/customer-reviews")?.entity, "cox");
+  assertEquals(pageForUrl(L, "https://www.allconnect.com/local/nv/enterprise"), null);
+  assertEquals(pageForUrl(L, "https://play.google.com/store/apps/details?id=com.brighthouse.mybhn&hl=en_IE&gl=US")?.entity, "spectrum");
+  assertEquals(pageForUrl(L, "https://play.google.com/store/apps/details/Spectrum+TV?id=com.TWCableTV&hl=en_GB")?.entity, "spectrum");
+  assertEquals(pageForUrl(L, "https://www.yelp.com/biz/charter-communications-watsonville-2")?.entity, "spectrum");
+});

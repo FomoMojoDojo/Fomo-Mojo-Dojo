@@ -12,6 +12,11 @@
 //   * Cox's own community (forums.cox.com, any cox.com page) is NOT a target and NOT listed (decision 6): cox.com is a
 //     confirmed Charter-related host, so the voice rule would read a customer's post there as Charter's own words.
 //   * DSLReports threads carry no brand in their path, so a thread citation is "brand not recorded" by construction.
+//   * corrected 2026-11-18 after the run, from the page URLs the run actually cited (no quote text read): BBB's
+//     "cox-communications-inc-…" profiles; App Store cox-* apps (Cox Contour, Cox Mobile Connect, "Cox WiFi by Spectrum");
+//     Google Play's /store/apps/details/<App name> path; AllConnect's /providers/cox-communications; Yelp's Charter store
+//     pages (/biz/charter-communications-…); the My Spectrum app (Google Play id com.brighthouse.mybhn — its legacy Bright
+//     House id; the page names it My Spectrum) and the Spectrum TV app (com.spectrum.tv.*).
 //   * Reddit: only r/Spectrum and r/CoxCommunications name a brand. Any other subreddit (a city's, a general one) is
 //     "brand not recorded"; its name is kept as `forum`, uninterpreted. Reddit and DSLReports are LEADS only
 //     (searchLeads.ts): the paid page fetch cannot read them (measured 2026-11-18).
@@ -46,12 +51,12 @@ export const CHARTER_REVIEW_LIST: CompanyReviewList = {
     // ── Cox ──
     { key: "cox-trustpilot", entity: "cox", label: "Trustpilot — Cox", host: TRUSTPILOT, path: /^\/review\/(?:www\.)?cox\.(?:com|net)\/?$/i },
     { key: "cox-consumeraffairs", entity: "cox", label: "ConsumerAffairs — Cox", host: CONSUMERAFFAIRS, path: /^\/(?:cable_tv|internet|homeowners|cell_phones)\/cox(?:_[a-z_]+)?\.html$/i },
-    { key: "cox-bbb", entity: "cox", label: "BBB — Cox Communications", host: BBB, path: /^\/us\/[a-z]{2}\/[a-z0-9-]+\/profile\/[a-z0-9-]+\/cox-communications-[0-9-]+(?:\/.*)?$/i },
+    { key: "cox-bbb", entity: "cox", label: "BBB — Cox Communications", host: BBB, path: /^\/us\/[a-z]{2}\/[a-z0-9-]+\/profile\/[a-z0-9-]+\/cox-communications(?:-inc)?-[0-9-]+(?:\/.*)?$/i },
     { key: "cox-yelp", entity: "cox", label: "Yelp — Cox", host: YELP, path: /^\/(?:biz\/cox-(?:communications|solutions-store)[a-z0-9-]*|brands\/cox-communications)\/?$/i },
     { key: "cox-pissedconsumer", entity: "cox", label: "PissedConsumer — Cox", host: /^cox(?:-communications)?\.pissedconsumer\.com$/, path: /^\/.*/ },
-    { key: "cox-appstore", entity: "cox", label: "App Store — Cox apps", host: APPLE, path: /^\/[a-z]{2}\/app\/(?:cox-app|cox-mobile|cox-panoramic-wifi|contour[a-z0-9-]*)\/id[0-9]+\/?$/i },
-    { key: "cox-googleplay", entity: "cox", label: "Google Play — Cox apps", host: PLAY, path: /^\/store\/apps\/details\/?$/, appId: /^com\.cox\.(?!.*(?:auto|manheim|kbb|kelley))[a-z0-9._]+$/i },
-    { key: "cox-allconnect", entity: "cox", label: "AllConnect — Cox customer reviews", host: /^(?:www\.)?allconnect\.com$/, path: /^\/providers\/cox\/customer-reviews\/?$/i },
+    { key: "cox-appstore", entity: "cox", label: "App Store — Cox apps", host: APPLE, path: /^\/[a-z]{2}\/app\/(?:cox-(?!auto)[a-z0-9-]+|contour[a-z0-9-]*)\/id[0-9]+\/?$/i },
+    { key: "cox-googleplay", entity: "cox", label: "Google Play — Cox apps", host: PLAY, path: /^\/store\/apps\/details(?:\/[^/]+)?\/?$/, appId: /^com\.cox\.(?!.*(?:auto|manheim|kbb|kelley))[a-z0-9._]+$/i },
+    { key: "cox-allconnect", entity: "cox", label: "AllConnect — Cox customer reviews", host: /^(?:www\.)?allconnect\.com$/, path: /^\/providers\/cox(?:-communications)?\/customer-reviews\/?$/i },
     { key: "cox-highspeedinternet", entity: "cox", label: "HighSpeedInternet.com — Cox reviews", host: /^(?:www\.)?highspeedinternet\.com$/, path: /^\/providers\/cox\/reviews\/?$/i },
     { key: "cox-dslreports", entity: "cox", label: "DSLReports — Cox forum", host: DSL, path: /^\/forum\/cox[a-z0-9]*\/?$/i },
     { key: "cox-reddit", entity: "cox", label: "Reddit — r/CoxCommunications", host: /^(?:www\.|old\.)?reddit\.com$/, path: /^\/r\/coxcommunications(?:\/.*)?$/i },
@@ -61,10 +66,10 @@ export const CHARTER_REVIEW_LIST: CompanyReviewList = {
     { key: "spectrum-consumeraffairs", entity: "spectrum", label: "ConsumerAffairs — Spectrum / Charter", host: CONSUMERAFFAIRS, path: /^\/(?:cable_tv|internet|cell_phones)\/(?:charter|spectrum)(?:_[a-z_]+)?\.html$/i },
     { key: "spectrum-bbb", entity: "spectrum", label: "BBB — Charter Communications", host: BBB, path: /^\/us\/[a-z]{2}\/[a-z0-9-]+\/profile\/[a-z0-9-]+\/(?:charter-communications|charter-spectrum)-[0-9-]+(?:\/.*)?$/i },
     { key: "spectrum-bbb-ny", entity: "spectrum", label: "BBB — Spectrum (New York profile)", host: BBB, path: /^\/us\/ny\/new-york\/profile\/cable-tv\/spectrum-0121-460(?:\/.*)?$/i },
-    { key: "spectrum-yelp", entity: "spectrum", label: "Yelp — Spectrum / Charter", host: YELP, path: /^\/(?:brands\/(?:charter-communications|spectrum)|biz\/spectrum-(?:store|mobile-store|internet)[a-z0-9-]*)\/?$/i },
+    { key: "spectrum-yelp", entity: "spectrum", label: "Yelp — Spectrum / Charter", host: YELP, path: /^\/(?:brands\/(?:charter-communications|spectrum)|biz\/spectrum-(?:store|mobile-store|internet)[a-z0-9-]*|biz\/charter-communications[a-z0-9-]*)\/?$/i },
     { key: "spectrum-pissedconsumer", entity: "spectrum", label: "PissedConsumer — Spectrum / Charter", host: /^(?:spectrum|charter-communications|charter-spectrum)\.pissedconsumer\.com$/, path: /^\/.*/ },
     { key: "spectrum-appstore", entity: "spectrum", label: "App Store — Spectrum apps", host: APPLE, path: /^\/[a-z]{2}\/app\/(?:my-spectrum|spectrum-tv|spectrum-tv-app|spectrum-mobile|spectrum-access)\/id[0-9]+\/?$/i },
-    { key: "spectrum-googleplay", entity: "spectrum", label: "Google Play — Spectrum apps", host: PLAY, path: /^\/store\/apps\/details\/?$/, appId: /^(?:com\.TWCableTV|com\.charter\.[a-z0-9._]+)$/i },
+    { key: "spectrum-googleplay", entity: "spectrum", label: "Google Play — Spectrum apps", host: PLAY, path: /^\/store\/apps\/details(?:\/[^/]+)?\/?$/, appId: /^(?:com\.TWCableTV|com\.charter\.[a-z0-9._]+|com\.spectrum\.[a-z0-9._]+|com\.brighthouse\.mybhn)$/i },
     { key: "spectrum-allconnect", entity: "spectrum", label: "AllConnect — Spectrum customer reviews", host: /^(?:www\.)?allconnect\.com$/, path: /^\/providers\/spectrum\/customer-reviews\/?$/i },
     { key: "spectrum-highspeedinternet", entity: "spectrum", label: "HighSpeedInternet.com — Spectrum reviews", host: /^(?:www\.)?highspeedinternet\.com$/, path: /^\/providers\/spectrum\/reviews\/?$/i },
     { key: "spectrum-dslreports", entity: "spectrum", label: "DSLReports — Charter/Spectrum forum", host: DSL, path: /^\/forum\/(?:charter|spectrum)[a-z0-9]*\/?$/i },
