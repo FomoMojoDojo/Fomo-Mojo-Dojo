@@ -23,6 +23,12 @@
 #       snapshot) is planned; no frozen company
 #   e7. after the probes the audit table holds exactly what it held before (rollback proven) and signals' md5 is unchanged
 #
+# e6's SQL (2026-11-18, brief "verify search-cited quotes", slice 2): it mirrors the planner's normalizeForHash
+# (lowercase, every whitespace run to one space, trimmed) and tests containment with strpos, not LIKE. The old
+# SQL trimmed spaces only — an excerpt ending in a blank line kept a trailing space the page did not have (9
+# review-lane rows) — and LIKE read a backslash in the excerpt as its escape character (the two 2026-10-22
+# rows of SP-F5). Both were rows the planner rightly left alone. The planner is unchanged.
+#
 # Plants (each injected live, in-place write, confirmed to move a measured value, RED, restored md5-identical):
 #   remove the no_plan / not_confirmed refusal (excerptBlanking.ts applyExcerptBlanking)   => e1 red
 #   remove the frozen loop in apply                                                        => e2 red (the DB trigger
@@ -106,9 +112,9 @@ for r in d['rows']: print(r['signal_id'])
 EOF
 [ $? -eq 0 ] || fail e5 "fleet plan: an analysis row is not stamped_only, or a non-analysis row is"
 echo "e5. analysis rows: stamped (analysis_carve_out), excerpt kept in the sample; fleet plan actions match voice_class"
-psql "with live as (select s.id, s.company_id, s.source_url, lower(regexp_replace(trim(s.evidence_excerpt),'\s+',' ','g')) ex, s.quote_source_text from signals s join companies c on c.id=s.company_id where s.signal_band='outside' and s.superseded_at is null and s.held_at is null and nullif(trim(s.evidence_excerpt),'') is not null and nullif(trim(s.source_url),'') is not null and not c.frozen and c.id<>'58b2b15b-bada-4bcd-9c12-b7e66a37d0bc' and coalesce(s.raw_payload->'excerpt_guard'->>'backfill_run_ref','')=''),
+psql "with live as (select s.id, s.company_id, s.source_url, btrim(lower(regexp_replace(s.evidence_excerpt,'\s+',' ','g'))) ex, s.quote_source_text from signals s join companies c on c.id=s.company_id where s.signal_band='outside' and s.superseded_at is null and s.held_at is null and nullif(trim(s.evidence_excerpt),'') is not null and nullif(trim(s.source_url),'') is not null and not c.frozen and c.id<>'58b2b15b-bada-4bcd-9c12-b7e66a37d0bc' and coalesce(s.raw_payload->'excerpt_guard'->>'backfill_run_ref','')=''),
  snap as (select company_id, source_url, string_agg(lower(regexp_replace(clean_text,'\s+',' ','g')),' ||| ') t from outside_page_snapshots where fetch_status='ok' and clean_text is not null group by 1,2)
- select l.id from live l join snap on snap.company_id=l.company_id and snap.source_url=l.source_url where snap.t not like '%'||l.ex||'%' and (l.quote_source_text is null or lower(regexp_replace(l.quote_source_text,'\s+',' ','g')) not like '%'||l.ex||'%') order by 1" | sort > "$TMP/sql_ids.txt"
+ select l.id from live l join snap on snap.company_id=l.company_id and snap.source_url=l.source_url where strpos(snap.t, l.ex) = 0 and (l.quote_source_text is null or strpos(lower(regexp_replace(l.quote_source_text,'\s+',' ','g')), l.ex) = 0) order by 1" | sort > "$TMP/sql_ids.txt"
 sort "$TMP/plan_ids.txt" > "$TMP/plan_ids_sorted.txt"
 if ! diff -q "$TMP/plan_ids_sorted.txt" "$TMP/sql_ids.txt" >/dev/null; then fail e6 "plan ids ≠ SQL set: only_in_plan=$(comm -23 "$TMP/plan_ids_sorted.txt" "$TMP/sql_ids.txt" | wc -l | tr -d ' ') only_in_sql=$(comm -13 "$TMP/plan_ids_sorted.txt" "$TMP/sql_ids.txt" | wc -l | tr -d ' ')"; fi
 echo "e6. plan = SQL set by id ($(wc -l < "$TMP/sql_ids.txt" | tr -d ' ') rows); no frozen company planned"
