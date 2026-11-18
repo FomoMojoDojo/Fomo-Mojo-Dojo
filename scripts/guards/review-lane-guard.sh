@@ -33,7 +33,7 @@ fail() { echo "FAIL $1: $2"; echo "guard: FAIL"; exit 1; }
 
 JSON=$(psql "select json_build_object(
   'rows', coalesce((select json_agg(json_build_object('id', id, 'company_id', company_id, 'source_url', source_url, 'about_entity_id', about_entity_id,
-            'about_entity_page', about_entity_page, 'evidence_excerpt', evidence_excerpt, 'quote', quote, 'live', superseded_at is null, 'review_lane_call_id', review_lane_call_id))
+            'about_entity_page', about_entity_page, 'evidence_excerpt', evidence_excerpt, 'quote', quote, 'review_body', raw_payload->>'review_body', 'live', superseded_at is null, 'review_lane_call_id', review_lane_call_id))
            from signals where review_lane_call_id is not null), '[]'::json),
   'calls', coalesce((select json_agg(json_build_object('id', id, 'response', response)) from review_lane_calls), '[]'::json))")
 OUT=$(printf '%s' "$JSON" | deno run --quiet --allow-read scripts/guards/review-lane-check.ts) || fail check "the check script failed: $OUT"

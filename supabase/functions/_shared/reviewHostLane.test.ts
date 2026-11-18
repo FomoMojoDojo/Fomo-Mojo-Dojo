@@ -3,7 +3,7 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import { CHARTER_REVIEW_LIST as L, pageForUrl } from "./reviewPages.ts";
 import {
   buildReviewLaneRows, clampReviewLaneCap, expandQuote, hasReviewSentence, locate, parseSpendSince, printedDates, projectReviewLaneUsd,
-  REVIEW_LANE_CAP_CEILING_USD, reviewDate, reviewLaneTools,
+  REVIEW_LANE_CAP_CEILING_USD, reviewBody, reviewDate, reviewLaneTools,
 } from "./reviewHostLane.ts";
 
 Deno.test("brand: a listed page names its entity; the same host's other pages and unlisted hosts name none", () => {
@@ -206,4 +206,36 @@ Deno.test("the company's own reply is never a customer quote", () => {
   assertEquals(r.rows.length, 1);
   assertEquals(r.rows[0].quote, "The app itself is actually fine but I hate Cox as a whole and the price keeps going up for no reason.");
   assertEquals(r.stats.company_reply, 1);
+});
+
+Deno.test("a search fragment's review body skips headings, listing headers, signatures and replies, line by line", () => {
+  // reviewBody is imported at the top
+  assertEquals(reviewBody("-Rob\n  # Been pretty good\n  Oct 27\n  Tavi96\n  Because of the price I gave five stars still, the wifi at home works well."), "Because of the price I gave five stars still, the wifi at home works well.");
+  assertEquals(reviewBody("# Cox Contour TV\nCox Communications, Inc.\n\n3.0*star*\n\n4.04K reviews\n\nThe app freezes every night and the guide never loads for me."), "The app freezes every night and the guide never loads for me.");
+  const reply = "Please email me at cox.help@cox.com, so we can investigate this, and I will also be glad to review your bill with you.-G";
+  assertEquals(reviewBody(reply), reply);   // nothing but a reply: returned whole, and dropped downstream
+  const cox = "https://apps.apple.com/us/app/cox-app/id1";
+  const t = L.targets.find((x) => x.key === "cox-appstore")!;
+  const r = buildReviewLaneRows({ list: L, target: t, callId: "c", fetchedAt: "t", excludeHosts: [], existingExcerpts: new Set(), decide: outside,
+    response: resp([textBlock("x", [{ url: cox, cited_text: reply }])]) });
+  assertEquals([r.rows.length, r.stats.company_reply], [0, 1]);
+});
+
+Deno.test("widening on a page with no sentence end before the review stops at the review, not the listing header", () => {
+  const page = "# Cox Contour TV\nCox Communications, Inc.\n\n3.0*star*\n\n4.04K reviews\n\nThe guide freezes every night and the app logs me out constantly";
+  const url = "https://play.google.com/store/apps/details?id=com.cox.contour2";
+  const t = L.targets.find((x) => x.key === "cox-googleplay")!;
+  const r = buildReviewLaneRows({ list: L, target: t, callId: "c", fetchedAt: "t", excludeHosts: [], existingExcerpts: new Set(), decide: outside,
+    response: resp([fetchBlock(url, page), textBlock("x", [{ type: "char_location", document_index: 0, cited_text: "4.04K reviews\n\nThe guide freezes every night and the app logs me out" }])]) });
+  assertEquals(r.rows[0]?.quote, "The guide freezes every night and the app logs me out constantly");
+});
+
+Deno.test("a Title Case listing header is not a review sentence", () => {
+  assert(!hasReviewSentence("# Cox Contour TV\nCox Communications, Inc.\n\n3.0*star*\n\n4.04K reviews\n\nCan't ..."));
+  assert(hasReviewSentence("Cox Contour keeps crashing and the guide is useless most nights."));
+});
+
+Deno.test("a review written in capitals is still a review sentence", () => {
+  assert(hasReviewSentence("THEY WILL CLAIM YOUR RATE WILL NOT N GO UP FOR 3 YEARS BUT THAT IS A LIE. MY SERVICE JUST INCREASED $15"));
+  assert(!hasReviewSentence("Cox Contour TV Cox Communications Inc Downloads Content Rating Teen"));
 });

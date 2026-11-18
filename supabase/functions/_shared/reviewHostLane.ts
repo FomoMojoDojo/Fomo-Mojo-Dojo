@@ -208,7 +208,8 @@ export function expandQuote(docs: FetchedDoc[], url: string | null, fragment: st
     if (!at) continue;
     const [ps, pe] = paragraphAround(d.text, at[0], at[1]);
     const [s, e] = sentencesAround(d.text, at[0], at[1], ps, pe);
-    const quote = d.text.slice(s, e).trim();
+    // widening never walks back into page structure (a heading, a listing header): the review body of the slice
+    const quote = reviewBody(d.text.slice(s, e).trim());
     const source = d.text.slice(ps, pe);
     if (!quote || !source.includes(quote)) continue;
     const header_date = headerDate(d.text, ps);
@@ -218,14 +219,18 @@ export function expandQuote(docs: FetchedDoc[], url: string | null, fragment: st
 }
 
 // ── review sentence and printed date ──
-/** A review sentence: at least six consecutive words of letters, three of them carrying lower case. A list of reviewer
- *  names, dates and ratings has none. */
+/** A review sentence: at least six consecutive words of letters, three of them written wholly in lower case or common
+ *  function words in any case (prose has "the", "and", "my"… — so does a review in capitals). A list of reviewer names,
+ *  dates and ratings, or a Title Case header ("Cox Contour TV Cox Communications Inc"), has none. */
+const FUNCTION_WORDS = new Set(("the and to a an of my i i'm is was it for not but that they you your will with on in at have has had be are " +
+  "this me we our us them their there so or if no when just get got all from what do did don't can't won't").split(" "));
 export function hasReviewSentence(s: string): boolean {
   const toks = s.split(/\s+/);
   let run = 0, lower = 0;
   for (const t of toks) {
-    const w = t.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, "");
-    if (w && /^[\p{L}'’-]+$/u.test(w)) { run++; if (/\p{Ll}/u.test(w)) lower++; if (run >= 6 && lower >= 3) return true; }
+    // strip punctuation only: a token with a digit in it ("3.0*star*", "4.04K") is not a word
+    const w = t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+    if (w && /^[\p{L}'’-]+$/u.test(w)) { run++; if (/^[\p{Ll}'’-]+$/u.test(w) || FUNCTION_WORDS.has(w.toLowerCase())) lower++; if (run >= 6 && lower >= 3) return true; }
     else { run = 0; lower = 0; }
   }
   return false;
@@ -280,11 +285,15 @@ export function datedReviewBlocks(text: string): number {
  *  from the first paragraph holding a review sentence to the last; markup paragraphs around it are not the customer's
  *  words. A span with no such paragraph is returned whole (it fails the review-sentence test downstream). */
 /** The company's own reply on a review page ("Please DM us…", "We apologize…", a signed "-Greg") — not a customer's words. */
-export const COMPANY_REPLY = /(\bDM us\b|@Ask_?Spectrum|@CoxHelp|\bwe (?:apologize|are sorry|['’]re sorry)\b|\bsorry to hear\b|\bthank you for (?:your|reaching|taking|choosing)\b|\bthanks for choosing\b|\bplease (?:reach out|contact us|send us)\b|\bour apologies\b|\bDeveloper Response\b|\bResponse from (?:Spectrum|Cox|Charter)\b)/i;
+export const COMPANY_REPLY = /(\bDM us\b|@Ask_?Spectrum|@CoxHelp|\bwe (?:apologize|are sorry|['’]re sorry)\b|\bsorry to hear\b|\bthank you for (?:your|reaching|taking|choosing)\b|\bthanks for choosing\b|\bplease (?:reach out|contact us|send us)\b|\bour apologies\b|\bDeveloper Response\b|\bResponse from (?:Spectrum|Cox|Charter)\b|\bso we can (?:investigate|review|look into|help)\b|\bplease email (?:me|us)\b|\bglad to (?:review|help|assist)\b)/i;
 
 export function reviewBody(cited: string): string {
-  const parts = cited.split(/(\n\s*\n)/);
-  const idx = parts.map((p, i) => (i % 2 === 0 && hasReviewSentence(p) && !COMPANY_REPLY.test(p) ? i : -1)).filter((i) => i >= 0);
+  // LINE by line (a search fragment flattens a page's blocks onto single lines): from the first line holding a
+  // customer's review sentence to the last — a heading, an app listing's header, a reply's signature or the
+  // company's own reply is skipped. A verbatim slice of the span.
+  const parts = cited.split(/(\n+)/);
+  const isReview = (p: string) => hasReviewSentence(p) && !COMPANY_REPLY.test(p) && !/^\s*(?:[-*]\s*)?#{1,6}\s/.test(p);
+  const idx = parts.map((p, i) => (i % 2 === 0 && isReview(p) ? i : -1)).filter((i) => i >= 0);
   if (!idx.length) return cited;
   return parts.slice(idx[0], idx[idx.length - 1] + 1).join("").trim();
 }
@@ -332,9 +341,10 @@ export function buildReviewLaneRows(a: {
     if (expanded && !expanded.in_review_block && (listPages.get(expanded.url) ?? 0) >= 3) { stats.not_review_block++; continue; }
     const d = a.decide(url);
     if (!d?.ok || d.voice_class !== "outside_voice_about_client") { stats.not_outside++; continue; }
-    const norm = normalizeForHash(c.cited_text);
-    if (!norm || seen.has(norm)) { stats.duplicate_in_run++; continue; }
-    seen.add(norm);
+    // one row per customer's words: the span and the words shown (the quote, else the review body) both dedupe
+    const norm = normalizeForHash(c.cited_text), shown = normalizeForHash(words);
+    if (!norm || seen.has(norm) || seen.has(`w:${shown}`)) { stats.duplicate_in_run++; continue; }
+    seen.add(norm); seen.add(`w:${shown}`);
     if (a.existingExcerpts.has(norm)) { stats.duplicate_existing++; continue; }
     const date = reviewDate(c.cited_text, expanded?.quote_source_text ?? null, expanded?.header_date ?? null);
     const row: Record<string, unknown> = {
@@ -370,6 +380,7 @@ export function buildReviewLaneRows(a: {
         lane: REVIEW_LANE_VERSION,
         target_key: a.target.key,
         url, title: c.title, sentence: c.sentence, cited_text: c.cited_text, citation: true,
+        review_body: body,
         fetched_at: a.fetchedAt,
         quote_basis: expanded ? "web_fetch_page_text" : null,
         date_basis: date?.basis ?? null,

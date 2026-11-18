@@ -40,12 +40,16 @@ const cite = (url: string, cited_text: string) => ({ type: "text", text: "A cust
   const r = buildReviewLaneRows({ list: L, target: t, callId: "guard", fetchedAt: "t", excludeHosts: [], existingExcerpts: new Set(), decide: outside,
     response: { content: [{ type: "web_fetch_tool_result", content: { type: "web_fetch_result", url: "https://www.trustpilot.com/review/cox.net", content: { type: "document", source: { type: "text", data: page } } } },
       { type: "text", text: "x", citations: [{ type: "char_location", document_index: 0, cited_text: cited }] }] } });
-  if (r.rows.length === 1 && r.rows[0].quote === "Expensive, always raising rates, service is marginal at best.") ok("r8", "a cited span across markup quotes only the review body");
-  else bad("r8", `markup reached the quote: ${JSON.stringify(r.rows.map((x) => x.quote))}`);
+  // and an app listing's header ("# Cox Contour TV / Cox Communications, Inc. / 3.0*star* / 4.04K reviews …") is no review
+  const listing = "# Cox Contour TV\nCox Communications, Inc.\n\n3.0*star*\n\n4.04K reviews\n\n500K+\n\nDownloads\n\nContent rating\n\nTeen\n\nCan't ...";
+  const r2 = buildReviewLaneRows({ list: L, target: L.targets.find((x) => x.key === "cox-googleplay")!, callId: "guard", fetchedAt: "t", excludeHosts: [], existingExcerpts: new Set(), decide: outside,
+    response: { content: [{ type: "text", text: "x", citations: [{ url: "https://play.google.com/store/apps/details?id=com.cox.contour2", cited_text: listing }] }] } });
+  if (r.rows.length === 1 && r.rows[0].quote === "Expensive, always raising rates, service is marginal at best." && r2.rows.length === 0) ok("r8", "a cited span across markup quotes only the review body; an app listing header is no review");
+  else bad("r8", `markup reached the quote: ${JSON.stringify([...r.rows, ...r2.rows].map((x) => x.quote ?? x.evidence_excerpt))}`);
 }
 // r3/r5: every STORED lane row
 const input = JSON.parse(await new Response(Deno.stdin.readable).text()) as {
-  rows: Array<{ id: string; company_id: string; source_url: string; about_entity_id: string | null; about_entity_page: string | null; evidence_excerpt: string; quote: string | null; live: boolean; review_lane_call_id: string }>;
+  rows: Array<{ id: string; company_id: string; source_url: string; about_entity_id: string | null; about_entity_page: string | null; evidence_excerpt: string; quote: string | null; review_body: string | null; live: boolean; review_lane_call_id: string }>;
   calls: Array<{ id: string; response: unknown }>;
 };
 {
@@ -83,8 +87,9 @@ const input = JSON.parse(await new Response(Deno.stdin.readable).text()) as {
   else ok("r7", `every stored quote (${input.rows.filter((r) => r.quote != null).length}) is word for word on a page its own call fetched`);
 }
 {
-  const markup = input.rows.filter((r) => r.live && r.quote != null && /^(?:!\[|#{1,6}\s|\[[^\]]*\]\()/.test(r.quote));
-  if (markup.length) bad("r8", `${markup.length} live stored quote(s) begin with page markup`);
+  const shown = (r: (typeof input.rows)[number]) => r.quote ?? r.review_body ?? null;
+  const markup = input.rows.filter((r) => r.live && shown(r) != null && /^(?:!\[|[-*]?\s*#{1,6}\s|\[[^\]]*\]\(|-[A-Z][a-z]+\s*$|-[A-Z][a-z]+\n)/.test(shown(r)!));
+  if (markup.length) bad("r8", `${markup.length} live stored quote(s) or review bodies begin with page markup or a signature`);
 }
 // r9: the company's own reply is never a customer quote — planted shape, then every LIVE stored row
 {
@@ -93,7 +98,7 @@ const input = JSON.parse(await new Response(Deno.stdin.readable).text()) as {
   const r = buildReviewLaneRows({ list: L, target: t, callId: "guard", fetchedAt: "t", excludeHosts: [], existingExcerpts: new Set(), decide: outside,
     response: { content: [{ type: "web_fetch_tool_result", content: { type: "web_fetch_result", url: "https://apps.apple.com/us/app/cox-app/id1", content: { type: "document", source: { type: "text", data: page } } } },
       { type: "text", text: "x", citations: [{ type: "char_location", document_index: 0, cited_text: page }] }] } });
-  const live = input.rows.filter((x) => x.live && COMPANY_REPLY.test(x.quote ?? x.evidence_excerpt));
+  const live = input.rows.filter((x) => x.live && COMPANY_REPLY.test(x.quote ?? x.review_body ?? x.evidence_excerpt));
   if (r.rows.some((x) => COMPANY_REPLY.test(String(x.quote ?? x.evidence_excerpt)))) bad("r9", "a company reply reached a quote (planted shape)");
   else if (live.length) bad("r9", `${live.length} live stored quote(s) carry the company's own reply`);
   else ok("r9", "no quote carries the company's own reply (planted shape and every live row)");
