@@ -2,6 +2,7 @@
 // calls' responses), prints one OK/FAIL line per check. r1 is the PLANTED CASE, r2 its CONTROL.
 import { buildReviewLaneRows, COMPANY_REPLY } from "../../supabase/functions/_shared/reviewHostLane.ts";
 import { pageForUrl, REVIEW_LISTS, CHARTER_REVIEW_LIST as L } from "../../supabase/functions/_shared/reviewPages.ts";
+import { LEAD_BASIS_LABEL as LEAD_LABEL } from "../../supabase/functions/_shared/searchLeads.ts";
 
 const out: string[] = [];
 const ok = (k: string, m: string) => out.push(`OK ${k}: ${m}`);
@@ -62,7 +63,6 @@ for (const c of input.calls) {
 // a row's words are on a fetched page when they are on a page its own call fetched, or the verify call that promoted it
 const onFetchedPage = (r: { quote: string | null; review_lane_call_id: string; verified_by_call_id: string | null }) =>
   r.quote != null && [r.review_lane_call_id, r.verified_by_call_id].some((id) => id != null && (fetchedPages.get(id) ?? []).some((t) => t.includes(r.quote!)));
-export const LEAD_LABEL = "search summary, not checked against the page";
 {
   const wrong: string[] = [];
   for (const r of input.rows.filter((x) => x.live)) {   // a superseded row keeps the brand it was minted with (history)

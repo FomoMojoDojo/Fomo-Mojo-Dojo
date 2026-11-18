@@ -397,3 +397,70 @@ export function buildReviewLaneRows(a: {
   }
   return { rows, stats };
 }
+
+// ── VERIFY (brief "verify search-cited quotes", slice 4, 2026-11-18; ruling R1) ─────────────────────────────────────────
+// A lead row (held: "search summary, not checked against the page") rests on the search tool's cited_text. To verify
+// it, the lane fetches the cited page itself with its existing page fetch — the same web_fetch tool, content ceiling,
+// citations and allowed domain, one use, NO search tool — and the row is promoted only when the existing rules
+// (buildReviewLaneRows: expandQuote's match on the fetched page, then the review-sentence, reply, heading and
+// review-block rules) give it a quote from that page. Nothing is loosened: the lead's own stored citation is run
+// through buildReviewLaneRows with the fetched page as the call's only document.
+export const REVIEW_LANE_VERIFY_MAX_TOKENS = 256;
+export const REVIEW_LANE_VERIFY_TARGET_PREFIX = "verify:" as const;
+
+export function reviewLaneVerifyTools(host: string): Array<Record<string, unknown>> {
+  return reviewLaneTools(host).filter((t) => t.name === "web_fetch").map((t) => ({ ...t, max_uses: 1 }));
+}
+
+export function reviewLaneVerifyPrompt(url: string): string {
+  return `Use web fetch to read this page, copying the URL exactly: ${url}\nThen reply with the single word: read. No other text.`;
+}
+
+/** The cap check's upper estimate for one verify call: one fetch at its content ceiling plus the prompt and tool overhead,
+ *  output at its max_tokens. No search fee: the call carries no search tool. */
+export function projectReviewLaneVerifyUsd(price: { input: number; output: number } | null, promptChars: number): number | null {
+  if (!price) return null;
+  const input = Math.ceil(promptChars / 4) + 2_000 + REVIEW_LANE_FETCH_MAX_CONTENT_TOKENS;
+  return (input * price.input + REVIEW_LANE_VERIFY_MAX_TOKENS * price.output) / 1e6;
+}
+
+export type VerifyFetch = { status: "ok"; url: string; chars: number } | { status: "error"; code: string } | { status: "no_fetch" };
+
+/** What the verify call's one fetch returned. */
+export function verifyFetchOutcome(response: unknown): VerifyFetch {
+  const blocks = Array.isArray((response as { content?: unknown })?.content) ? (response as { content: Array<Record<string, any>> }).content : [];
+  const r = blocks.find((b) => b?.type === "web_fetch_tool_result");
+  if (!r) return { status: "no_fetch" };
+  if (r.content?.type === "web_fetch_tool_result_error") return { status: "error", code: String(r.content.error_code ?? "unknown") };
+  const docs = fetchedDocuments(response);
+  return docs.length ? { status: "ok", url: docs[0].url, chars: docs[0].text.length } : { status: "error", code: "empty_document" };
+}
+
+export type LeadToVerify = { url: string; title: string; sentence: string; cited_text: string };
+export type LeadVerdict =
+  | { promoted: true; quote: string; quote_source_text: string; page_url: string; event_date: string | null; event_date_precision: string; date_basis: string | null; review_body: string }
+  | { promoted: false; reason: string };
+
+const EXCLUSION_STATS = ["no_url", "off_host", "excluded", "not_company", "no_review_sentence", "company_reply", "heading", "not_review_block", "not_outside", "duplicate_in_run"] as const;
+
+/** Promote a lead only when the existing rules give it a quote from the page the verify call fetched. */
+export function verifyLead(a: {
+  list: CompanyReviewList; target: ReviewTarget; lead: LeadToVerify; verifyResponse: unknown;
+  decide: (url: string) => { ok?: boolean; voice_class?: string; authority?: string };
+}): LeadVerdict {
+  const f = verifyFetchOutcome(a.verifyResponse);
+  if (f.status !== "ok") return { promoted: false, reason: f.status === "error" ? `fetch_error:${f.code}` : "no_fetch" };
+  const docs = ((a.verifyResponse as { content?: unknown[] }).content ?? []).filter((b) => (b as { type?: unknown })?.type === "web_fetch_tool_result");
+  const response = { content: [...docs, { type: "text", text: a.lead.sentence, citations: [{ type: "web_search_result_location", url: a.lead.url, title: a.lead.title, cited_text: a.lead.cited_text }] }] };
+  const { rows, stats } = buildReviewLaneRows({ list: a.list, target: a.target, callId: "verify", response, fetchedAt: "verify", excludeHosts: [], existingExcerpts: new Set(), decide: a.decide });
+  const row = rows[0];
+  if (!row) {
+    const why = EXCLUSION_STATS.find((k) => (stats as Record<string, number>)[k] > 0);
+    return { promoted: false, reason: why ? `rule:${why}` : "rule:no_row" };
+  }
+  if (row.quote == null || row.quote_source_text == null) return { promoted: false, reason: "not_on_fetched_page" };
+  const p = row.raw_payload as Record<string, unknown>;
+  return { promoted: true, quote: String(row.quote), quote_source_text: String(row.quote_source_text), page_url: f.url,
+    event_date: (row.event_date as string | null) ?? null, event_date_precision: String(row.event_date_precision ?? "day"),
+    date_basis: (p.date_basis as string | null) ?? null, review_body: String(p.review_body ?? "") };
+}

@@ -16,9 +16,11 @@ import { loadConfirmedRelatedEntities, loadEntityExcludeHosts } from "./ownHosts
 import { normalizeHost } from "./firstReadProvenance.ts";
 import { decideVoiceClassBeforeJudge } from "./voiceClassAtMint.ts";
 import { REVIEW_LISTS, type CompanyReviewList, type ReviewTarget } from "./reviewPages.ts";
-import { leadQueries, leadRows, LEAD_SITES, type LeadSite, type SearxResult } from "./searchLeads.ts";
+import { LEAD_BASIS_LABEL, leadQueries, leadRows, LEAD_SITES, type LeadSite, type SearxResult } from "./searchLeads.ts";
 import {
-  buildReviewLaneRows, projectReviewLaneUsd, REVIEW_LANE_BETA, REVIEW_LANE_CALL_SITE, REVIEW_LANE_MAX_TOKENS, reviewLanePrompt, reviewLaneTools,
+  buildReviewLaneRows, projectReviewLaneUsd, projectReviewLaneVerifyUsd, REVIEW_LANE_BETA, REVIEW_LANE_CALL_SITE, REVIEW_LANE_MAX_TOKENS,
+  REVIEW_LANE_VERIFY_MAX_TOKENS, REVIEW_LANE_VERIFY_TARGET_PREFIX, reviewLanePrompt, reviewLaneTools, reviewLaneVerifyPrompt, reviewLaneVerifyTools,
+  verifyFetchOutcome,
 } from "./reviewHostLane.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -121,6 +123,7 @@ export async function runReviewLane(a: {
     const out = await mintFromCall(a.db, list, a.request.mint_call_id, reason);
     return { httpStatus: String(out.status).endsWith("refused") || out.status === "mint_failed" ? 409 : 200, body: { review_lane: out } };
   }
+  if (a.request.verify !== undefined) return await verifyLeadPage(a, list);
   const target: ReviewTarget | undefined = list.targets.find((t) => t.key === a.request.target);
   if (!target) return { httpStatus: 400, body: { status: "review_lane_refused", error: `review lane: unknown target (known: ${list.targets.map((t) => t.key).join(", ")})` } };
   if (!a.apiKey) return { httpStatus: 500, body: { status: "review_lane_refused", error: "review lane: ANTHROPIC_API_KEY missing" } };
@@ -165,4 +168,67 @@ export async function runReviewLane(a: {
   if (!mint) return { httpStatus: 200, body: { review_lane: { status: "stored", call_id: callRow.id, target: target.key, usd } } };
   const out = await mintFromCall(a.db, list, callRow.id);
   return { httpStatus: 200, body: { review_lane: { ...out, target: target.key, usd } } };
+}
+
+/** VERIFY (slice 4; ruling R1): fetch ONE page a held lead row cites, with the lane's own page fetch and no search, and
+ *  store the response. No signal is written here: scripts/review-lane/promote-verified.ts reads the stored call and
+ *  promotes a lead only under the existing rules (verifyLead). The URL must be the page of a live lead row of this
+ *  company held "search summary, not checked against the page", on its call's target host. */
+async function verifyLeadPage(a: Parameters<typeof runReviewLane>[0], list: CompanyReviewList): Promise<{ httpStatus: number; body: Record<string, unknown> }> {
+  const v = a.request.verify as { url?: unknown } | null;
+  const url = typeof v?.url === "string" ? v.url.trim() : "";
+  const refuse = (error: string) => ({ httpStatus: 400, body: { status: "review_lane_refused", error } });
+  if (!url) return refuse("verify needs { url }");
+  const { data: leads } = await a.db.from("signals").select("id, review_lane_call_id").eq("company_id", list.companyId).eq("source_url", url)
+    .eq("held_reason", LEAD_BASIS_LABEL).is("superseded_at", null).not("review_lane_call_id", "is", null);
+  if (!leads?.length) return refuse("verify: no live lead row of this company cites that url");
+  const { data: calls } = await a.db.from("review_lane_calls").select("id, target_key").in("id", [...new Set((leads as Array<{ review_lane_call_id: string }>).map((l) => l.review_lane_call_id))]);
+  const target = list.targets.find((t) => t.key === (calls ?? [])[0]?.target_key);
+  if (!target) return refuse("verify: the lead's call has no target on the list");
+  let host = "";
+  try { host = new URL(url).hostname.toLowerCase().replace(/^www\./, ""); } catch { /* refused below */ }
+  const th = target.host.toLowerCase().replace(/^www\./, "");
+  if (!host || !(host === th || host.endsWith(`.${th}`))) return refuse("verify: the url is off its target host");
+  if (!a.apiKey) return { httpStatus: 500, body: { status: "review_lane_refused", error: "review lane: ANTHROPIC_API_KEY missing" } };
+  if (a.capUsd == null) return refuse("review lane requires spend_cap_usd");
+  if (!a.spendSince) return refuse("review lane requires spend_since: the research run's start, an ISO time in the last 24 hours");
+
+  const cap = makeSpendCap({ capUsd: a.capUsd, companyId: a.companyId, since: a.spendSince, supabase: a.db });
+  const prompt = reviewLaneVerifyPrompt(url);
+  const ledger = webSearchLedgerFor(a.db, { companyId: a.companyId, runId: null, callSite: REVIEW_LANE_CALL_SITE });
+  requireWebSearchLedger(ledger, REVIEW_LANE_CALL_SITE);
+  const promptSha = await promptShaOf(prompt);
+  try {
+    await assertSpendable(cap, { site: REVIEW_LANE_CALL_SITE, model: a.model, projectedUsd: projectReviewLaneVerifyUsd(anthropicPriceFor(a.model), prompt.length) });
+  } catch (e) {
+    if (e instanceof SpendCapRefused) return { httpStatus: 200, body: { review_lane: { status: "refused_by_cap", verify_url: url, reason: e.message, refusals: cap.refusals } } };
+    throw e;
+  }
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": a.apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": REVIEW_LANE_BETA, "content-type": "application/json" },
+    body: JSON.stringify({ model: a.model, max_tokens: REVIEW_LANE_VERIFY_MAX_TOKENS, tools: reviewLaneVerifyTools(target.host), messages: [{ role: "user", content: prompt }] }),
+  }).catch((e) => e as Error);
+  if (res instanceof Error || !res.ok) {
+    const raw = res instanceof Error ? "" : await res.text().catch(() => "");
+    const errText = res instanceof Error ? String(res) : `Anthropic HTTP ${res.status} ${raw.slice(0, 300)}`;
+    // an unbilled refusal (HTTP 400 invalid_request_error) is ledgered at zero tokens, as the forum test was; anything
+    // else is ledgered unpriced, which stops the cap until it is priced
+    let unbilled = false;
+    try { unbilled = !(res instanceof Error) && res.status === 400 && JSON.parse(raw)?.error?.type === "invalid_request_error"; } catch { unbilled = false; }
+    await ledgerOrRefuse(ledger, { model: a.model, usage: unbilled ? { input_tokens: 0, output_tokens: 0 } : null, attempt: 1, promptSha }, REVIEW_LANE_CALL_SITE);
+    return { httpStatus: 502, body: { review_lane: { status: "call_failed", verify_url: url, error: errText.slice(0, 300) } } };
+  }
+  const d = await res.json();
+  await ledgerOrRefuse(ledger, { model: a.model, usage: d?.usage ?? null, attempt: 1, promptSha }, REVIEW_LANE_CALL_SITE);
+  const usd = anthropicUsd(a.model, d?.usage ?? null);
+  const fetchOutcome = verifyFetchOutcome(d);
+  const { data: callRow, error: callErr } = await a.db.from("review_lane_calls").insert({
+    company_id: a.companyId, target_key: `${REVIEW_LANE_VERIFY_TARGET_PREFIX}${target.key}`, host: target.host, model: a.model, usd, response: d,
+    // never minted: a verify call's rows are promoted leads, not new rows (minted_at set so mint_call_id refuses it)
+    outcome: { status: "verify_stored", verify_url: url, fetch: fetchOutcome, stop_reason: d?.stop_reason ?? null, usage: d?.usage ?? null, prompt_sha: promptSha },
+    minted_at: new Date().toISOString(), created_by: a.actingUserId,
+  }).select("id").single();
+  if (callErr || !callRow) return { httpStatus: 500, body: { review_lane: { status: "store_failed", verify_url: url, error: callErr?.message ?? "no row", usd } } };
+  return { httpStatus: 200, body: { review_lane: { status: "verify_stored", call_id: callRow.id, verify_url: url, fetch: fetchOutcome, usd } } };
 }

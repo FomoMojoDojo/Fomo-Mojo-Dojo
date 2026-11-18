@@ -2332,8 +2332,9 @@ Deno.serve(async (req) => {
       return json({ error: "This is a frozen reference company — outside signals aren't refreshed for it." }, 403);
     }
 
-    // ── REVIEW-HOST LANE (V1, 2026-11-18) ── review_lane: { target } | { mint_call_id } — one capped web_search + web_fetch
-    // call aimed at one listed review page, or the mint of a stored call (_shared/reviewHostLaneRun.ts). ADMIN ONLY. No
+    // ── REVIEW-HOST LANE (V1, 2026-11-18) ── review_lane: { target } | { mint_call_id } | { verify: { url } } — one capped web_search + web_fetch
+    // call aimed at one listed review page, the mint of a stored call, or ONE fetch (no search) of a page a held lead cites
+    // (_shared/reviewHostLaneRun.ts). ADMIN ONLY. No
     // search, no crawl, no main call, no profile write, no claim rebuild.
     if (body?.review_lane !== undefined) {
       const refused = await adminOnlyGate(req, corsHeaders);
