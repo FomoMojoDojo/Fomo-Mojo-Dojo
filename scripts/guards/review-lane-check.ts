@@ -49,9 +49,20 @@ const cite = (url: string, cited_text: string) => ({ type: "text", text: "A cust
 }
 // r3/r5: every STORED lane row
 const input = JSON.parse(await new Response(Deno.stdin.readable).text()) as {
-  rows: Array<{ id: string; company_id: string; source_url: string; about_entity_id: string | null; about_entity_page: string | null; evidence_excerpt: string; quote: string | null; review_body: string | null; live: boolean; review_lane_call_id: string }>;
+  rows: Array<{ id: string; company_id: string; source_url: string; about_entity_id: string | null; about_entity_page: string | null; evidence_excerpt: string; quote: string | null; review_body: string | null; live: boolean; review_lane_call_id: string; held: boolean; held_reason: string | null; verified_by_call_id: string | null }>;
   calls: Array<{ id: string; response: unknown }>;
+  counted: Array<{ id: string; quote: string | null; review_lane_call_id: string; verified_by_call_id: string | null }>;
 };
+// the pages each stored call fetched (web_fetch page text), shared by r7 and r10
+const fetchedPages = new Map<string, string[]>();
+for (const c of input.calls) {
+  const blocks = Array.isArray((c.response as { content?: unknown })?.content) ? (c.response as { content: Array<Record<string, any>> }).content : [];
+  fetchedPages.set(c.id, blocks.filter((b) => b?.type === "web_fetch_tool_result").map((b) => String(b?.content?.content?.source?.data ?? "")).filter(Boolean));
+}
+// a row's words are on a fetched page when they are on a page its own call fetched, or the verify call that promoted it
+const onFetchedPage = (r: { quote: string | null; review_lane_call_id: string; verified_by_call_id: string | null }) =>
+  r.quote != null && [r.review_lane_call_id, r.verified_by_call_id].some((id) => id != null && (fetchedPages.get(id) ?? []).some((t) => t.includes(r.quote!)));
+export const LEAD_LABEL = "search summary, not checked against the page";
 {
   const wrong: string[] = [];
   for (const r of input.rows.filter((x) => x.live)) {   // a superseded row keeps the brand it was minted with (history)
@@ -77,14 +88,20 @@ const input = JSON.parse(await new Response(Deno.stdin.readable).text()) as {
 // r7: every stored QUOTE is word for word on a page fetched in its own call (stronger than signals_quote_verbatim, which
 // only ties the quote to its stored paragraph)
 {
-  const pages = new Map<string, string[]>();
-  for (const c of input.calls) {
-    const blocks = Array.isArray((c.response as { content?: unknown })?.content) ? (c.response as { content: Array<Record<string, any>> }).content : [];
-    pages.set(c.id, blocks.filter((b) => b?.type === "web_fetch_tool_result").map((b) => String(b?.content?.content?.source?.data ?? "")).filter(Boolean));
-  }
-  const off = input.rows.filter((r) => r.quote != null && !(pages.get(r.review_lane_call_id) ?? []).some((t) => t.includes(r.quote!)));
-  if (off.length) bad("r7", `${off.length} stored quote(s) are not on any page their own call fetched: ${off.slice(0, 3).map((r) => r.id).join(", ")}`);
-  else ok("r7", `every stored quote (${input.rows.filter((r) => r.quote != null).length}) is word for word on a page its own call fetched`);
+  const off = input.rows.filter((r) => r.quote != null && !onFetchedPage(r));
+  if (off.length) bad("r7", `${off.length} stored quote(s) are not on any page their own call (or its verify call) fetched: ${off.slice(0, 3).map((r) => r.id).join(", ")}`);
+  else ok("r7", `every stored quote (${input.rows.filter((r) => r.quote != null).length}) is word for word on a page its own call (or its verify call) fetched`);
+}
+// r10 (ruling R1): ONLY words on a fetched page are counted. (a) every row scripts/review-lane/counted-quotes.sql returns
+// is word for word on a page fetched by its own call or its verify call, and is live and not held; (b) every live lane
+// row WITHOUT such a match is held as a lead with the lead label, so it cannot be released into the counts unverified.
+{
+  const byId = new Map(input.rows.map((r) => [r.id, r] as const));
+  const countedBad = input.counted.filter((c) => { const r = byId.get(c.id); return !r || !r.live || r.held || !onFetchedPage(c); });
+  const loose = input.rows.filter((r) => r.live && !onFetchedPage(r) && !(r.held && r.held_reason === LEAD_LABEL));
+  if (countedBad.length) bad("r10", `${countedBad.length} counted row(s) are not on a fetched page, or are held or superseded: ${countedBad.slice(0, 3).map((r) => r.id).join(", ")}`);
+  else if (loose.length) bad("r10", `${loose.length} live lane row(s) with no fetched-page match are not held as leads ("${LEAD_LABEL}"): ${loose.slice(0, 3).map((r) => r.id).join(", ")}`);
+  else ok("r10", `${input.counted.length} counted quote(s), each on a fetched page; ${input.rows.filter((r) => r.live && r.held && r.held_reason === LEAD_LABEL).length} live row(s) without a match held as leads`);
 }
 {
   const shown = (r: (typeof input.rows)[number]) => r.quote ?? r.review_body ?? null;

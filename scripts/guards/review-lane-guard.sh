@@ -15,6 +15,12 @@
 #   r5. fleet-wide: every lane row's excerpt is a cited_text of its own stored call (review_lane_calls.response).
 #   r7. fleet-wide: every stored quote is word for word on a page fetched in its own call (review_lane_calls.response).
 #   r8. a cited span across a rating image / title quotes only the review body; no stored quote begins with markup.
+#   r10. (ruling R1, 2026-11-18) ONLY words on a fetched page are counted: every row scripts/review-lane/counted-quotes.sql
+#       returns is word for word on a page its own call (or its verify call) fetched, live and not held; every live lane
+#       row without such a match is held as a lead ("search summary, not checked against the page").
+#       Plant: bash scripts/plant.sh save scripts/review-lane/counted-quotes.sql; delete its four page lines (`held_at`,
+#       `quote`, `quote_source_text`, `quote_basis`) so leads are selected; the guard → r10 RED (deleting only two
+#       stays GREEN: the others still exclude a lead); bash scripts/plant.sh restore scripts/review-lane/counted-quotes.sql.
 #   r9. the company's own reply ("Please DM us…", "We apologize…") is never a customer quote — planted shape and live rows.
 #   r6. inside ONE rolled-back transaction: an about_entity_id of another company's entity is refused; a brand with no
 #       page is refused; authenticated cannot write review_lane_calls; the trigger function is not executable by clients.
@@ -31,13 +37,18 @@ DB=supabase_db_dzlgyxcvuwiulgifbmew
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atc "$1"; }
 fail() { echo "FAIL $1: $2"; echo "guard: FAIL"; exit 1; }
 
+# the counted-quote selection (ruling R1): comment lines dropped, one SELECT wrapped as a subquery by r10
+COUNTED=$(grep -vE '^[[:space:]]*--' scripts/review-lane/counted-quotes.sql | tr '\n' ' ')
 JSON=$(psql "select json_build_object(
   'rows', coalesce((select json_agg(json_build_object('id', id, 'company_id', company_id, 'source_url', source_url, 'about_entity_id', about_entity_id,
-            'about_entity_page', about_entity_page, 'evidence_excerpt', evidence_excerpt, 'quote', quote, 'review_body', raw_payload->>'review_body', 'live', superseded_at is null, 'review_lane_call_id', review_lane_call_id))
+            'about_entity_page', about_entity_page, 'evidence_excerpt', evidence_excerpt, 'quote', quote, 'review_body', raw_payload->>'review_body', 'live', superseded_at is null, 'review_lane_call_id', review_lane_call_id,
+            'held', held_at is not null, 'held_reason', held_reason, 'verified_by_call_id', raw_payload->>'verified_by_call_id'))
            from signals where review_lane_call_id is not null), '[]'::json),
-  'calls', coalesce((select json_agg(json_build_object('id', id, 'response', response)) from review_lane_calls), '[]'::json))")
+  'calls', coalesce((select json_agg(json_build_object('id', id, 'response', response)) from review_lane_calls), '[]'::json),
+  'counted', coalesce((select json_agg(json_build_object('id', c.id, 'quote', c.quote, 'review_lane_call_id', c.review_lane_call_id, 'verified_by_call_id', c.verified_by_call_id))
+           from ($COUNTED) c), '[]'::json))")
 OUT=$(printf '%s' "$JSON" | deno run --quiet --allow-read scripts/guards/review-lane-check.ts) || fail check "the check script failed: $OUT"
-for k in r1 r2 r3 r5 r7 r8 r9; do
+for k in r1 r2 r3 r5 r7 r8 r9 r10; do
   bad=$(echo "$OUT" | grep -E "^FAIL $k:" | head -1 || true)
   [ -z "$bad" ] || fail "$k" "${bad#FAIL $k: }"
   line=$(echo "$OUT" | grep -E "^OK $k:" | head -1 || true)
