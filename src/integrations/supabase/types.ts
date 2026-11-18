@@ -4415,6 +4415,146 @@ export type Database = {
           },
         ]
       }
+      need_markets: {
+        Row: {
+          canonical_statement: string | null
+          company_id: string
+          evidence_signal_ids: Json | null
+          evidence_state: string | null
+          id: string
+          importance: number | null
+          journey_key: string
+          market_definition_id: string | null
+          need_id: string
+          opportunity_score: number | null
+          retired_at: string | null
+          retired_by: string | null
+          retired_reason: string | null
+          satisfaction: number | null
+          service_state: string | null
+          step_label: string | null
+          step_number: number | null
+          strategy_alignment: string | null
+          strategy_alignment_reason: string | null
+          tag_source: string
+          tagged_at: string
+          tagged_by: string
+          validation_state: string | null
+        }
+        Insert: {
+          canonical_statement?: string | null
+          company_id: string
+          evidence_signal_ids?: Json | null
+          evidence_state?: string | null
+          id?: string
+          importance?: number | null
+          journey_key: string
+          market_definition_id?: string | null
+          need_id: string
+          opportunity_score?: number | null
+          retired_at?: string | null
+          retired_by?: string | null
+          retired_reason?: string | null
+          satisfaction?: number | null
+          service_state?: string | null
+          step_label?: string | null
+          step_number?: number | null
+          strategy_alignment?: string | null
+          strategy_alignment_reason?: string | null
+          tag_source: string
+          tagged_at?: string
+          tagged_by: string
+          validation_state?: string | null
+        }
+        Update: {
+          canonical_statement?: string | null
+          company_id?: string
+          evidence_signal_ids?: Json | null
+          evidence_state?: string | null
+          id?: string
+          importance?: number | null
+          journey_key?: string
+          market_definition_id?: string | null
+          need_id?: string
+          opportunity_score?: number | null
+          retired_at?: string | null
+          retired_by?: string | null
+          retired_reason?: string | null
+          satisfaction?: number | null
+          service_state?: string | null
+          step_label?: string | null
+          step_number?: number | null
+          strategy_alignment?: string | null
+          strategy_alignment_reason?: string | null
+          tag_source?: string
+          tagged_at?: string
+          tagged_by?: string
+          validation_state?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "need_markets_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "need_markets_market_definition_id_fkey"
+            columns: ["market_definition_id"]
+            isOneToOne: false
+            referencedRelation: "odi_market_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "need_markets_need_id_fkey"
+            columns: ["need_id"]
+            isOneToOne: false
+            referencedRelation: "needs_in_market"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "need_markets_need_id_fkey"
+            columns: ["need_id"]
+            isOneToOne: false
+            referencedRelation: "odi_needs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      need_markets_deleted_audit: {
+        Row: {
+          company_id: string
+          deleted_at: string
+          deleted_by: string | null
+          how: string
+          id: number
+          journey_key: string
+          link_id: string
+          need_id: string
+        }
+        Insert: {
+          company_id: string
+          deleted_at?: string
+          deleted_by?: string | null
+          how: string
+          id?: number
+          journey_key: string
+          link_id: string
+          need_id: string
+        }
+        Update: {
+          company_id?: string
+          deleted_at?: string
+          deleted_by?: string | null
+          how?: string
+          id?: number
+          journey_key?: string
+          link_id?: string
+          need_id?: string
+        }
+        Relationships: []
+      }
       odi_needs: {
         Row: {
           company_id: string
