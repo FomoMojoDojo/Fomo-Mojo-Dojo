@@ -7608,6 +7608,8 @@ Deno.serve(async (req) => {
       user,
       opportunities,
       customerStepLabelByNumber,
+      // M-3: the needs go under the journey their step labels were read from (unchanged when that is "customer")
+      journeyKey: String(normalizedCustomerJourney?.journey_key || "customer"),
       odiFrameworkKeys,
       artifactSourcePath,
       reconcileRunId,

@@ -243,6 +243,13 @@ export async function writeReconciledNeeds(args: {
   user: { id: string };
   opportunities: Array<Record<string, any>>;
   customerStepLabelByNumber: Map<number, string>;
+  /**
+   * M-3 (2026-11-18): the market these needs are written under — the journey whose steps
+   * customerStepLabelByNumber was read from. It used to be the literal "customer" here, which
+   * filed the needs under "customer" even when the steps came from a "customer-…" journey. The
+   * need's home need_markets link is created from it by trigger (M-1).
+   */
+  journeyKey: string;
   odiFrameworkKeys: string[];
   artifactSourcePath: string;
   reconcileRunId: string | null;
@@ -257,6 +264,8 @@ export async function writeReconciledNeeds(args: {
     supabase, company_id, user, opportunities, customerStepLabelByNumber,
     odiFrameworkKeys, artifactSourcePath, reconcileRunId,
   } = args;
+  const journeyKey = String(args.journeyKey || "").trim();
+  if (!journeyKey) throw new Error("writeReconciledNeeds: journeyKey required (the market the needs are written under)");
   const { clamp, normalizeOutcomeLanguage, odiServiceState, JTBD_CHECKPOINT_COUNT } = args.helpers;
   let odiNeedsInserted = 0;
 
@@ -296,7 +305,7 @@ export async function writeReconciledNeeds(args: {
           step_number: Number(rr.step_number) || 0,
         };
       }),
-      needPrepared.map((p) => ({ ref: `n:${p.needIndex}`, statement: p.statement, journey_key: "customer", step_number: p.stepNumber })),
+      needPrepared.map((p) => ({ ref: `n:${p.needIndex}`, statement: p.statement, journey_key: journeyKey, step_number: p.stepNumber })),
     );
     const needEntryByRef = new Map(needPlan.entries.map((e) => [e.ref, e]));
     for (const b of needPlan.identityBackfill) {
@@ -315,7 +324,7 @@ export async function writeReconciledNeeds(args: {
         tier: "need",
         desired_outcome: p.desiredOutcome,
         odi_canonical_statement: p.canonical,
-        journey_key: "customer",
+        journey_key: journeyKey,
         step_number: p.stepNumber,
         step_label: p.stepLabel,
         importance: p.importance,
