@@ -6010,8 +6010,172 @@ export type Database = {
           },
         ]
       }
+      signal_judgement_overrides: {
+        Row: {
+          actor: string
+          company_id: string
+          created_at: string
+          id: string
+          judgement: string
+          reason: string | null
+          signal_id: string
+          superseded_at: string | null
+          value: Json
+        }
+        Insert: {
+          actor: string
+          company_id: string
+          created_at?: string
+          id?: string
+          judgement: string
+          reason?: string | null
+          signal_id: string
+          superseded_at?: string | null
+          value: Json
+        }
+        Update: {
+          actor?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          judgement?: string
+          reason?: string | null
+          signal_id?: string
+          superseded_at?: string | null
+          value?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_judgement_overrides_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_judgement_overrides_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signal_market_tags: {
+        Row: {
+          company_id: string
+          id: string
+          journey_key: string | null
+          market_definition_id: string | null
+          reason: string | null
+          retired_at: string | null
+          retired_by: string | null
+          retired_reason: string | null
+          signal_id: string
+          tag_source: string
+          tagged_at: string
+          tagged_by: string
+          unlisted_group: string | null
+          version: string
+        }
+        Insert: {
+          company_id: string
+          id?: string
+          journey_key?: string | null
+          market_definition_id?: string | null
+          reason?: string | null
+          retired_at?: string | null
+          retired_by?: string | null
+          retired_reason?: string | null
+          signal_id: string
+          tag_source: string
+          tagged_at?: string
+          tagged_by: string
+          unlisted_group?: string | null
+          version: string
+        }
+        Update: {
+          company_id?: string
+          id?: string
+          journey_key?: string | null
+          market_definition_id?: string | null
+          reason?: string | null
+          retired_at?: string | null
+          retired_by?: string | null
+          retired_reason?: string | null
+          signal_id?: string
+          tag_source?: string
+          tagged_at?: string
+          tagged_by?: string
+          unlisted_group?: string | null
+          version?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_market_tags_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_market_tags_market_definition_id_fkey"
+            columns: ["market_definition_id"]
+            isOneToOne: false
+            referencedRelation: "odi_market_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_market_tags_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signal_market_tags_deleted_audit: {
+        Row: {
+          company_id: string
+          deleted_at: string
+          deleted_by: string | null
+          how: string
+          id: number
+          market_definition_id: string | null
+          signal_id: string
+          tag_id: string
+          unlisted_group: string | null
+        }
+        Insert: {
+          company_id: string
+          deleted_at?: string
+          deleted_by?: string | null
+          how: string
+          id?: number
+          market_definition_id?: string | null
+          signal_id: string
+          tag_id: string
+          unlisted_group?: string | null
+        }
+        Update: {
+          company_id?: string
+          deleted_at?: string
+          deleted_by?: string | null
+          how?: string
+          id?: number
+          market_definition_id?: string | null
+          signal_id?: string
+          tag_id?: string
+          unlisted_group?: string | null
+        }
+        Relationships: []
+      }
       signals: {
         Row: {
+          stance: string | null
+          stance_judged_at: string | null
+          stance_reason: string | null
+          stance_version: string | null
           claim_text: string
           company_id: string
           confidence_to_use: string
@@ -6054,6 +6218,10 @@ export type Database = {
           voice_class: string | null
         }
         Insert: {
+          stance?: string | null
+          stance_judged_at?: string | null
+          stance_reason?: string | null
+          stance_version?: string | null
           claim_text: string
           company_id: string
           confidence_to_use?: string
@@ -6096,6 +6264,10 @@ export type Database = {
           voice_class?: string | null
         }
         Update: {
+          stance?: string | null
+          stance_judged_at?: string | null
+          stance_reason?: string | null
+          stance_version?: string | null
           claim_text?: string
           company_id?: string
           confidence_to_use?: string
