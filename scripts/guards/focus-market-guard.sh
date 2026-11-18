@@ -13,6 +13,7 @@
 #   (f7) FLEET: every focus_market row on any company has a 'set' audit row naming its domain and key —
 #        nothing writes these rows except the signing function
 #   (f8) STATIC: no source file outside the migration and src/lib/focusMarkets.ts writes a focus domain
+#   (f10) F-4: accept lands a focus card in its focus market's journey; a stale journey is refused
 #   (f11) STATIC: the worker injects the focus at every framework start; the workflow requires the labels
 #   (f9) F-2: an admin's proposal ranks every live market by evidence with no model; a newer one
 #        supersedes the pending one; the signature closes it, recording the set and any reordering
@@ -126,6 +127,27 @@ begin
   select count(*) into n from public.surface_proposals where company_id = co and surface_type = 'focus_market' and status = 'accepted' and (raw_payload->>'order_changed')::boolean and jsonb_array_length(raw_payload->'signed_as') = 2;
   if n = 1 then raise notice 'ok (f9) signing closes the proposal as accepted, recording the set as signed and that the order was changed'; else raise notice 'FAIL (f9) the signature did not close the proposal (% rows)', n; end if;
   r := public.sign_focus_markets(co, '{}'::uuid[]);
+
+  -- (f10) F-4: accept lands a focus card in the journey of ITS focus market; a stale journey is refused
+  declare pid uuid; nid uuid; begin
+    insert into public.surface_proposals (company_id, surface_type, current_state, proposed_state, status, reason, raw_payload)
+    values (co, 'candidate_need', null,
+            jsonb_build_object('item', jsonb_build_object('desired_outcome', 'fmg minimize the steps to give monthly', 'evidence', 'x'),
+                               'evidence_signal_ids', '[]'::jsonb, 'evidence_voice', 'company', 'journey_key', 'fmg-donors'),
+            'pending', 'fmg guard', jsonb_build_object('file_proposal_id', gen_random_uuid()))
+    returning id into pid;
+    r := public.accept_candidate_proposal(pid);
+    select journey_key into k from public.odi_needs where id = (r->>'row_id')::uuid;
+    if k = 'fmg-donors' then raise notice 'ok (f10) an accepted focus card lands in its focus market''s journey (fmg-donors)'; else raise notice 'FAIL (f10) accepted into journey %', k; end if;
+    insert into public.surface_proposals (company_id, surface_type, current_state, proposed_state, status, reason, raw_payload)
+    values (co, 'candidate_need', null,
+            jsonb_build_object('item', jsonb_build_object('desired_outcome', 'fmg stale', 'evidence', 'x'),
+                               'evidence_signal_ids', '[]'::jsonb, 'evidence_voice', 'company', 'journey_key', 'fmg-retracted'),
+            'pending', 'fmg guard', jsonb_build_object('file_proposal_id', gen_random_uuid()))
+    returning id into pid;
+    fired := false; begin perform public.accept_candidate_proposal(pid); exception when others then fired := true; msg := sqlerrm; end;
+    if fired and msg like '%no longer a live market%' then raise notice 'ok (f10) a card whose focus market was retracted is refused, not guessed'; else raise notice 'FAIL (f10) stale journey: fired=% %', fired, msg; end if;
+  end;
 
   -- (f4) non-admin and no session
   perform set_config('request.jwt.claims', json_build_object('sub', non, 'role', 'authenticated')::text, true);

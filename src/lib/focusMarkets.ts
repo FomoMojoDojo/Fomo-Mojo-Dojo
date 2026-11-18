@@ -119,3 +119,7 @@ export function focusRunLine(focus: Array<{ job_executor: string; journey_key: s
   return `${FOCUS_STRINGS.title}: ${set.map((m) => m.job_executor || m.journey_key).join(" · ")}`;
 }
 
+/** F-4: the other-party line for a READY focused analysis, or null when there is nothing to say. */
+export function otherPartyLine(n: number | null | undefined): string | null {
+  return typeof n === "number" && n > 0 ? FOCUS_STRINGS.otherParty(n) : null;
+}

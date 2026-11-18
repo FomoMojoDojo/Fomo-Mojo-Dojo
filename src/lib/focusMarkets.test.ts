@@ -50,3 +50,11 @@ describe("F-3 focusRunLine", () => {
   });
 });
 
+describe("F-4 otherPartyLine", () => {
+  it("says how many findings were about another party; says nothing at zero or unfocused", async () => {
+    const { otherPartyLine } = await import("./focusMarkets");
+    expect(otherPartyLine(3)).toBe("3 findings were about another party and were not queued");
+    expect(otherPartyLine(0)).toBeNull();
+    expect(otherPartyLine(null)).toBeNull();
+  });
+});

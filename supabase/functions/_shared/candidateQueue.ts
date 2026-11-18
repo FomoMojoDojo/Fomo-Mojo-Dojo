@@ -21,6 +21,7 @@
 // file has replaced is skipped.
 
 type Sb = { from: (t: string) => any };
+import { resolveFocusParty, type FocusParty, type FocusStampEntry } from "./focusMarkets.ts";
 
 export const CANDIDATE_LISTS = [
   { list: "candidate_needs", surfaceType: "candidate_need" },
@@ -37,7 +38,7 @@ export type CandidateSurfaceType = typeof CANDIDATE_LISTS[number]["surfaceType"]
 export type EvidenceVoice = "company" | "outside" | "mixed" | "unlabeled";
 export type DocAuthorship = "client" | "us" | "third_party" | "uncertain" | null;
 
-export const CANDIDATE_QUEUE_VERSION = "candidate-queue v3";
+export const CANDIDATE_QUEUE_VERSION = "candidate-queue v4";
 export const QUEUE_RETIRE_REASON = "reanalysis:superseded_by_newer_analysis";
 
 /** Lower-case, every run of non-alphanumerics to one space, trimmed — the same normalisation the
@@ -151,7 +152,13 @@ export function ledByAnalystVerb(text: string): boolean {
   return ANALYST_VERB.test(String(text ?? "").trim());
 }
 
-export type CandidateDrop = { list: CandidateList; index: number; reason: "analyst_verb" | "duplicate_text" | "duplicate_evidence"; of?: string; text: string };
+export type CandidateDrop = { list: CandidateList; index: number; reason: "analyst_verb" | "duplicate_text" | "duplicate_evidence" | "company_subject" | "other_party"; of?: string; text: string };
+
+// F-4 (2026-11-17, decisions 3/4/5): the customer-side lists — the ones whose subject must be the client's
+// customer — carry Adjudication's subject_party + focus_index. On a FOCUSED run (a non-empty stamp) a
+// company-subject card is dropped, an other-party card is counted and never queued, and a focus card
+// carries its focus market's journey to accept. An unfocused run is queued exactly as before.
+export const FOCUS_LISTS: ReadonlySet<CandidateList> = new Set(["candidate_needs", "candidate_job_steps", "candidate_outcomes"]);
 
 export type PlannedQueueRow = {
   company_id: string;
@@ -162,6 +169,8 @@ export type PlannedQueueRow = {
     item: Record<string, unknown>;
     evidence_signal_ids: string[];
     evidence_voice: EvidenceVoice;
+    /** F-4: the focus market's journey, for a focus card of a focused run; absent otherwise. */
+    journey_key?: string;
   };
   status: "pending";
   reason: string;
@@ -174,6 +183,8 @@ export type PlannedQueueRow = {
     signal_ids: string[];
     document_authorship: DocAuthorship;
     queued_by: string;
+    /** F-4: what the card's label resolved to (customer-side lists only). */
+    subject_party?: FocusParty;
   };
 };
 
@@ -183,6 +194,7 @@ export function planCandidateQueue(args: {
   proposal: { id: string; file_id: string | null } & Partial<Record<CandidateList, unknown>>;
   signals: QueueSignal[];
   docAuthorship: DocAuthorship;
+  focus?: FocusStampEntry[] | null;
 }): PlannedQueueRow[] {
   return planCandidateQueueWithDrops(args).rows;
 }
@@ -193,6 +205,8 @@ export function planCandidateQueueWithDrops(args: {
   proposal: { id: string; file_id: string | null } & Partial<Record<CandidateList, unknown>>;
   signals: QueueSignal[];
   docAuthorship: DocAuthorship;
+  /** F-3/F-4: the run's focus stamp — null/[] = unfocused (no party filter). */
+  focus?: FocusStampEntry[] | null;
 }): { rows: PlannedQueueRow[]; drops: CandidateDrop[] } {
   // backstop 3: only a stored, non-blank excerpt can back an item
   const sigText = args.signals
@@ -212,6 +226,10 @@ export function planCandidateQueueWithDrops(args: {
       const ev = normalizeEvidence(item.evidence);
       // backstop 1: the reader's activity is not a candidate
       if (ledByAnalystVerb(text)) { drops.push({ list, index, reason: "analyst_verb", text }); return; }
+      // F-4: on a focused run, the card's own label decides (decision 5: another party is counted, not queued)
+      const focus = FOCUS_LISTS.has(list) ? resolveFocusParty(args.focus, item.subject_party, item.focus_index) : null;
+      if (focus?.party === "company") { drops.push({ list, index, reason: "company_subject", text }); return; }
+      if (focus?.party === "other") { drops.push({ list, index, reason: "other_party", text }); return; }
       // backstop 2: an earlier list already holds this idea
       const textOwner = nText ? seenText.get(nText) : undefined;
       if (textOwner && textOwner !== list) { drops.push({ list, index, reason: "duplicate_text", of: textOwner, text }); return; }
@@ -230,6 +248,7 @@ export function planCandidateQueueWithDrops(args: {
           item,
           evidence_signal_ids: ids,
           evidence_voice: combineVoices(backing.map((s) => signalVoice(s, args.docAuthorship))),
+          ...(focus?.journey_key ? { journey_key: focus.journey_key } : {}),
         },
         status: "pending",
         reason: `file_proposal:${args.proposal.id} ${list}[${index}]`,
@@ -242,6 +261,7 @@ export function planCandidateQueueWithDrops(args: {
           signal_ids: ids,
           document_authorship: args.docAuthorship,
           queued_by: CANDIDATE_QUEUE_VERSION,
+          ...(focus ? { subject_party: focus.party } : {}),
         },
       });
     });
@@ -258,7 +278,7 @@ export type QueueResult = { queued: number; already: number; dropped?: number; s
 export async function queueCandidatesForAnalysis(supabase: Sb, companyId: string, proposalId: string): Promise<QueueResult> {
   const { data: p, error } = await supabase
     .from("file_proposals")
-    .select("id, company_id, file_id, processing_state, created_at, candidate_needs, candidate_job_steps, candidate_outcomes, possible_routes, candidate_positioning_updates")
+    .select("id, company_id, file_id, processing_state, created_at, focus_markets, candidate_needs, candidate_job_steps, candidate_outcomes, possible_routes, candidate_positioning_updates")
     .eq("id", proposalId).eq("company_id", companyId).maybeSingle();
   if (error) throw new Error(`candidate queue: proposal read failed: ${error.message}`);
   if (!p) return { queued: 0, already: 0, skipped: "not_found" };
@@ -290,7 +310,14 @@ export async function queueCandidatesForAnalysis(supabase: Sb, companyId: string
     docAuthorship = effectiveAuthorship((verdicts ?? []) as never);
   }
 
-  const { rows: planned, drops } = planCandidateQueueWithDrops({ companyId, proposal: p as never, signals: (sigs ?? []) as QueueSignal[], docAuthorship });
+  const focusStamp = Array.isArray(p.focus_markets) ? (p.focus_markets as FocusStampEntry[]) : null;
+  const { rows: planned, drops } = planCandidateQueueWithDrops({ companyId, proposal: p as never, signals: (sigs ?? []) as QueueSignal[], docAuthorship, focus: focusStamp });
+  // F-4: the other-party count is recorded on the analysis (decision 5) — on a focused run only
+  if (focusStamp && focusStamp.length > 0) {
+    const otherParty = drops.filter((d) => d.reason === "other_party").length;
+    const { error: oErr } = await supabase.from("file_proposals").update({ items_other_party: otherParty }).eq("id", proposalId);
+    if (oErr) throw new Error(`candidate queue: other-party count write failed: ${oErr.message}`);
+  }
   // G1: every backstop drop is logged, item by item, before anything is written.
   for (const d of drops) {
     console.log("[candidate-queue] dropped", JSON.stringify({ proposal_id: proposalId, list: d.list, index: d.index, reason: d.reason, of: d.of ?? null, text: d.text.slice(0, 160) }));

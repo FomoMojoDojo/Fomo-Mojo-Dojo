@@ -211,3 +211,50 @@ Deno.test("M1: a blanked excerpt still backs nothing even when raw_payload.evide
   });
   assertEquals(rows[0].raw_payload.evidence_match, "unmatched");
 });
+
+// F-4: on a FOCUSED run the customer-side cards obey their own label; an unfocused run is unchanged.
+const STAMP = [
+  { rank: 1, market_definition_id: "m-d", journey_key: "pmk-donors", job_executor: "Individual donors", jtbd: "", signed_at: null },
+  { rank: 2, market_definition_id: "m-f", journey_key: "customer", job_executor: "Families", jtbd: "", signed_at: null },
+];
+const LISTS = {
+  id: "p1", file_id: "f1",
+  candidate_needs: [
+    { desired_outcome: "Minimize the effort to give monthly", evidence: "Donors told us monthly giving takes too many steps to set up.", subject_party: "focus", focus_index: 1 },
+    { desired_outcome: "Increase the foundation's grantmaking reach", evidence: "The foundation aims to expand its grantmaking across the region.", subject_party: "other", focus_index: 0 },
+    { desired_outcome: "Increase unrestricted giving to Edgewood", evidence: "Edgewood plans to raise unrestricted giving by twenty percent.", subject_party: "company", focus_index: 0 },
+  ],
+  candidate_job_steps: [{ step_label: "Find a support group", evidence: "Families search for a support group near home before calling us.", subject_party: "focus", focus_index: 2 }],
+  candidate_outcomes: [{ outcome: "Feel confident the gift helped", evidence: "Donors want to know their gift made a difference to a child.", subject_party: "focus", focus_index: 7 }],
+  possible_routes: [{ title: "Launch a monthly giving page", evidence: "A monthly giving page could make setup a single step for donors." }],
+};
+
+Deno.test("F-4: a focused run drops company cards, counts other-party cards, and gives focus cards their journey", () => {
+  const { rows, drops } = planCandidateQueueWithDrops({ companyId: "c1", proposal: LISTS as never, signals: [], docAuthorship: "client", focus: STAMP });
+  assertEquals(drops.map((d) => d.reason).sort(), ["company_subject", "other_party"]);
+  const need = rows.find((r) => r.surface_type === "candidate_need")!;
+  assertEquals(need.proposed_state.journey_key, "pmk-donors");
+  assertEquals(need.raw_payload.subject_party, "focus");
+  assertEquals(rows.find((r) => r.surface_type === "candidate_job_step")!.proposed_state.journey_key, "customer");
+  const outcome = rows.find((r) => r.surface_type === "candidate_outcome")!;
+  assertEquals(outcome.raw_payload.subject_party, "focus_unresolved");   // index 7 of a 2-market set
+  assertEquals(outcome.proposed_state.journey_key, undefined);
+  const route = rows.find((r) => r.surface_type === "candidate_route")!;
+  assertEquals(route.raw_payload.subject_party, undefined);              // routes are the company's moves: no label
+});
+
+Deno.test("F-4: an unfocused run (decision 4) queues every card as before — no party filter, no journey", () => {
+  for (const focus of [null, []]) {
+    const { rows, drops } = planCandidateQueueWithDrops({ companyId: "c1", proposal: LISTS as never, signals: [], docAuthorship: "client", focus });
+    assertEquals(drops.length, 0);
+    assertEquals(rows.length, 6);
+    assert(rows.every((r) => r.proposed_state.journey_key === undefined));
+  }
+});
+
+Deno.test("F-4: a focused run whose workflow emits no label withholds nothing", () => {
+  const unlabelled = { ...LISTS, candidate_needs: LISTS.candidate_needs.map(({ subject_party: _s, focus_index: _f, ...rest }) => rest) };
+  const { rows, drops } = planCandidateQueueWithDrops({ companyId: "c1", proposal: unlabelled as never, signals: [], docAuthorship: "client", focus: STAMP });
+  assertEquals(drops.length, 0);
+  assertEquals(rows.filter((r) => r.surface_type === "candidate_need").every((r) => r.raw_payload.subject_party === "unlabelled"), true);
+});

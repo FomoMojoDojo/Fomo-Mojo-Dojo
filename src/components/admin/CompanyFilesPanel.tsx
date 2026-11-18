@@ -18,7 +18,7 @@ import { runDifyAnalyzeFile } from "@/hooks/useInputActions";
 import { FileTooLargeError, fileTooLargeMessage, type FileTooLargeRefusal } from "@/lib/fileTooLarge";
 import { FileAnalysisBadge, MONO, latestProposalByFile } from "@/views/client/workshop/inputsShared";
 import { WORKSPACE_STRINGS } from "@/views/client/workspace/workspaceNav";
-import { focusRunLine } from "@/lib/focusMarkets";
+import { focusRunLine, otherPartyLine } from "@/lib/focusMarkets";
 
 const c = {
   panel: "#FFFFFF",
@@ -1374,6 +1374,17 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
                               {proposalByFile.get(file.id)?.processing_state === "ready" ? (
                                 <span style={{ ...MONO, fontSize: 9, color: c.secondary }} data-testid="files-analysis-focus">
                                   {focusRunLine(proposalByFile.get(file.id)!.focus_markets)}
+                                </span>
+                              ) : null}
+                              {/* F-4: findings about another party, counted and not queued (decision 5) */}
+                              {proposalByFile.get(file.id)?.processing_state === "ready" && otherPartyLine(proposalByFile.get(file.id)!.items_other_party) ? (
+                                <span style={{ ...MONO, fontSize: 9, color: c.secondary }} data-testid="files-analysis-other-party">
+                                  {otherPartyLine(proposalByFile.get(file.id)!.items_other_party)}
+                                </span>
+                              ) : null}
+                              {refusedById.has(file.id) ? (
+                                <span style={{ ...MONO, fontSize: 9, color: "#8a6d3b" }} data-testid="files-analysis-refused">
+                                  {fileTooLargeMessage(refusedById.get(file.id)!)}
                                 </span>
                               ) : null}
                             </div>
