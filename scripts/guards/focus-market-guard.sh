@@ -13,6 +13,7 @@
 #   (f7) FLEET: every focus_market row on any company has a 'set' audit row naming its domain and key —
 #        nothing writes these rows except the signing function
 #   (f8) STATIC: no source file outside the migration and src/lib/focusMarkets.ts writes a focus domain
+#   (f11) STATIC: the worker injects the focus at every framework start; the workflow requires the labels
 #   (f9) F-2: an admin's proposal ranks every live market by evidence with no model; a newer one
 #        supersedes the pending one; the signature closes it, recording the set and any reordering
 #
@@ -52,7 +53,7 @@ declare
   co uuid := '$FIX_CO'; other uuid := '$OTHER_CO'; adm uuid := '$ADMIN'; non uuid := '${NONADMIN_ID}';
   m_a uuid := gen_random_uuid(); m_b uuid := gen_random_uuid(); m_c uuid := gen_random_uuid();
   m_ret uuid := gen_random_uuid(); m_oth uuid := gen_random_uuid();
-  r jsonb; n int; fired boolean; msg text;
+  r jsonb; n int; k text; fired boolean; msg text;
 begin
   insert into public.odi_market_definitions (id, company_id, user_id, job_executor, journey_key, market_register) values
     (m_a, co, adm, 'fmg donors', 'fmg-donors', 'public_inferred'),
@@ -161,8 +162,24 @@ echo "── (f8) static: one write path ──"
 HITS=$(grep -rlE "focus_market_[0-9]|focus_market_\\$|'focus_market_'|\"focus_market_\"" src supabase/functions scripts --include='*.ts' --include='*.tsx' --include='*.mjs' 2>/dev/null \
   | grep -vE '\.test\.|src/lib/focusMarkets\.ts$|scripts/guards/' || true)
 WRITES=""
-for f in $HITS; do grep -qE "\.(insert|upsert|update)\(" "$f" && grep -qE "operator_primary_selection" "$f" && WRITES="$WRITES $f"; done
+# a write CHAINED onto operator_primary_selection itself (a file that reads the selection and writes some
+# other table — the worker's stamp on file_proposals — is not a focus writer)
+for f in $HITS; do
+  perl -0ne 'exit((/from\(\s*["\x27]operator_primary_selection["\x27]\s*\)\s*\.\s*(insert|upsert|update|delete)\s*\(/s) ? 0 : 1)' "$f" && WRITES="$WRITES $f"
+done
 if [ -z "$WRITES" ]; then ok "(f8) no source file outside the migration and focusMarkets.ts writes a focus domain"; else bad "(f8) focus domains written outside the one path:$WRITES"; fi
+
+echo "── (f11) static: the worker and the workflow carry the focus ──"
+W="supabase/functions/dify-analyze-file/index.ts"
+# The focus workflow is a CANDIDATE file until its content test promotes it into mojomap-file-analysis.v2.yml.
+DSL="supabase/dify-workflows/candidates/mojomap-file-analysis.v2.focus.yml"; [ -f "$DSL" ] || DSL="supabase/dify-workflows/mojomap-file-analysis.v2.yml"
+if grep -q "const focus = await focusForRun(" "$W" && grep -q "focus_markets: focusMarketsInput(focus.stamp)" "$W" && grep -q "journey_key: leadJourneyKey(focus.stamp)" "$W"; then
+  ok "(f11) startDifyRun stamps the run's focus and sends client_name, focus_markets and the lead's journey"
+else bad "(f11) startDifyRun does not inject the run's focus (F-3)"; fi
+NREQ=$(grep -o '"subject_party","focus_index"\]' "$DSL" | wc -l | tr -d ' ')
+if [ "$NREQ" = "3" ] && grep -q "variable: focus_markets" "$DSL" && grep -q "variable: client_name" "$DSL" && [ "$(grep -c 'subject_party: \["focus", "company", "other"\]' "$DSL")" = "3" ]; then
+  ok "(f11) the workflow declares client_name + focus_markets, requires subject_party + focus_index on needs, steps and outcomes, and its Code node keeps them"
+else bad "(f11) the workflow does not carry the focus fields (required in $NREQ of 3 lists)"; fi
 
 echo "  -- $oks ok / $fails FAIL --"
 if [ "$fails" -eq 0 ]; then echo "guard: PASS"; exit 0; else echo "guard: RED ($fails check(s)) — see above"; exit 1; fi

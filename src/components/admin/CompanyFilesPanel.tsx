@@ -18,6 +18,7 @@ import { runDifyAnalyzeFile } from "@/hooks/useInputActions";
 import { FileTooLargeError, fileTooLargeMessage, type FileTooLargeRefusal } from "@/lib/fileTooLarge";
 import { FileAnalysisBadge, MONO, latestProposalByFile } from "@/views/client/workshop/inputsShared";
 import { WORKSPACE_STRINGS } from "@/views/client/workspace/workspaceNav";
+import { focusRunLine } from "@/lib/focusMarkets";
 
 const c = {
   panel: "#FFFFFF",
@@ -1369,9 +1370,10 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
                           {proposalByFile.get(file.id) || refusedById.has(file.id) ? (
                             <div className="mt-1 flex flex-wrap items-center gap-2" data-testid="files-analysis" data-fr-file-id={file.id}>
                               {proposalByFile.get(file.id) ? <FileAnalysisBadge proposal={proposalByFile.get(file.id)!} testIdPrefix="files" /> : null}
-                              {refusedById.has(file.id) ? (
-                                <span style={{ ...MONO, fontSize: 9, color: "#8a6d3b" }} data-testid="files-analysis-refused">
-                                  {fileTooLargeMessage(refusedById.get(file.id)!)}
+                              {/* F-3: the focus the analysis ran under (admin-only; decision 4 — an unfocused run says so) */}
+                              {proposalByFile.get(file.id)?.processing_state === "ready" ? (
+                                <span style={{ ...MONO, fontSize: 9, color: c.secondary }} data-testid="files-analysis-focus">
+                                  {focusRunLine(proposalByFile.get(file.id)!.focus_markets)}
                                 </span>
                               ) : null}
                             </div>

@@ -27,6 +27,7 @@ import {
 } from "../_shared/frameworkRetry.ts";
 import { retireEarlierAnalysesOfFile } from "../_shared/retireProposals.ts";
 import { queueCandidatesForAnalysis } from "../_shared/candidateQueue.ts";
+import { focusForRun, focusMarketsInput, leadJourneyKey } from "../_shared/focusMarkets.ts";
 import { FILE_ANALYSIS_VERSION } from "../../../src/lib/fileAnalysis.ts";
 
 const corsHeaders = {
@@ -396,6 +397,9 @@ type PersistContext = {
       company_id: string;
       trigger_type: string;
       journey_key: string;
+      // F-3: the client and its signed focus markets (decision 3), filled by startDifyRun from the run's stamp
+      client_name?: string;
+      focus_markets?: string;
     };
     response_mode: string;
     user: string;
@@ -1965,7 +1969,24 @@ async function monitorDifyRunInBackground(params: {
 }
 
 async function startDifyRun(params: PersistContext) {
-  const { supabase, difyApiKey, difyBaseUrl, difyRequestBody, proposalId } = params;
+  const { supabase, difyApiKey, difyBaseUrl, proposalId } = params;
+  // F-3 (2026-11-17): EVERY framework start passes through here — first pass, C1/SP-278 retry, window
+  // path, legacy path — so the focus is read and stamped in ONE place. The first start stamps the signed
+  // set on the row (or [] = ran unfocused); a retry reads the same stamp, never the selection again.
+  const focus = await focusForRun(
+    supabase as unknown as { from: (t: string) => any },
+    proposalId,
+    String(params.difyRequestBody.inputs.company_id ?? ""),
+  );
+  const difyRequestBody: PersistContext["difyRequestBody"] = {
+    ...params.difyRequestBody,
+    inputs: {
+      ...params.difyRequestBody.inputs,
+      client_name: focus.clientName,
+      focus_markets: focusMarketsInput(focus.stamp),
+      journey_key: leadJourneyKey(focus.stamp),
+    },
+  };
   const difyEndpoint = buildDifyWorkflowsRunEndpoint(difyBaseUrl);
   const { workflowRunId, taskId } = await startDifyWorkflowStreaming({
     difyApiKey,

@@ -110,3 +110,12 @@ export async function proposeFocusMarkets(companyId: string): Promise<void> {
   const { error } = await rpc("propose_focus_markets", { p_company_id: companyId });
   if (error) throw new Error(error.message);
 }
+
+// ── F-3: what a file analysis ran under (Admin Files) ──────────────────────────────────────────
+/** The focus line for a READY analysis: "Ran unfocused", or the signed markets in rank order. */
+export function focusRunLine(focus: Array<{ job_executor: string; journey_key: string }> | null | undefined): string {
+  const set = focus ?? [];
+  if (set.length === 0) return FOCUS_STRINGS.ranUnfocused;
+  return `${FOCUS_STRINGS.title}: ${set.map((m) => m.job_executor || m.journey_key).join(" · ")}`;
+}
+

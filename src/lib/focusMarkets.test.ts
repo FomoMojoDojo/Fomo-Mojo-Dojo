@@ -40,3 +40,13 @@ describe("F-1 focus markets", () => {
     expect(proposedIds(null)).toEqual([]);
   });
 });
+
+describe("F-3 focusRunLine", () => {
+  it("an unfocused run says so; a focused one names its markets in rank order", async () => {
+    const { focusRunLine } = await import("./focusMarkets");
+    expect(focusRunLine(null)).toBe("Ran unfocused");
+    expect(focusRunLine([])).toBe("Ran unfocused");
+    expect(focusRunLine([{ job_executor: "Individual donors", journey_key: "d" }, { job_executor: "", journey_key: "customer" }])).toBe("Focus market: Individual donors · customer");
+  });
+});
+

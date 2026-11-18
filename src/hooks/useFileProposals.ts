@@ -128,6 +128,10 @@ export interface FileProposalRow {
   columns_withheld?: number | null;
   /** S4: per sheet whose 5,000-row cap bit, rows read of rows present (S-ING-6). */
   rows_capped?: Array<{ sheet: string; read: number; total: number }> | null;
+  /** F-3: the focus markets the run was stamped with — null = predates F-3, [] = ran unfocused. */
+  focus_markets?: Array<{ rank: number; journey_key: string; job_executor: string }> | null;
+  /** F-4: findings about another party, counted and not queued (decision 5). */
+  items_other_party?: number | null;
   processing_started_at: string | null;
   processing_completed_at: string | null;
   applied_areas: string[];
