@@ -2,6 +2,9 @@
 # client_name + focus_markets declared; JTBD/ODI/Adjudication name the focus; subject_party + focus_index on the
 # customer-side lists. It becomes mojomap-file-analysis.v2.yml (and the live pointer) ONLY after the focus content
 # test meets its targets. Until then the live workflow is unchanged.
+# SP-F45 (operator ruling 2026-11-17): the six framework nodes (Grounding, April Dunford, JTBD, ODI, Teresa
+# Torres, Strategy Cascade) run at temperature 0.2; Adjudication stays 0. Pinned by
+# src/lib/ingest/frameworkTemperature.test.ts.
 app:
   description: Fetches company data from Supabase, runs framework analysis through Ollama, adjudicates signals, and triggers re-scoring.
   icon: 🤖
@@ -1063,7 +1066,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
@@ -1138,7 +1141,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
@@ -1222,7 +1225,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
@@ -1334,7 +1337,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
@@ -1456,7 +1459,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
@@ -1666,7 +1669,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
