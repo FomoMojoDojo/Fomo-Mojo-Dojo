@@ -172,3 +172,14 @@ Deno.test("review header dates on a fetched list page: own header only; a relati
   assert(!r.rows.some((x) => String(x.quote).startsWith("##")));
   for (const x of r.rows) assert(LIST_PAGE.includes(String(x.quote)), "every quote is on the fetched page");
 });
+
+Deno.test("a cited span that runs across a rating image and a title quotes only the review body", () => {
+  const page = "MZ\n\n[mike Aug 28, 2026](https://www.trustpilot.com/users/1)\n\n![Rated 1 out of 5 stars](https://cdn/stars-1.svg)\n\n## [Expensive](/reviews/2)\n\nExpensive, always raising rates, service is marginal at best. If you can get service from another provider, you should do that.";
+  const cox = "https://www.trustpilot.com/review/cox.net";
+  const cited = "![Rated 1 out of 5 stars](https://cdn/stars-1.svg)\n\n## [Expensive](/reviews/2)\n\nExpensive, always raising rates, service is marginal at best. ";
+  const r = build(resp([fetchBlock(cox, page), textBlock("A customer says prices keep rising.", [{ type: "char_location", document_index: 0, cited_text: cited }])]));
+  assertEquals(r.rows.length, 1);
+  assertEquals(r.rows[0].evidence_excerpt, cited);  // the tool's span, verbatim (ruling 4)
+  assertEquals(r.rows[0].quote, "Expensive, always raising rates, service is marginal at best.");
+  assertEquals(r.rows[0].event_date, "2026-08-28");
+});

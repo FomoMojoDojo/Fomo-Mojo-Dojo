@@ -28,11 +28,20 @@ export function reviewListFor(companyId: string): CompanyReviewList | null {
   return REVIEW_LISTS[companyId] ?? null;
 }
 
-async function mintFromCall(db: Db, list: CompanyReviewList, callId: string): Promise<Record<string, unknown>> {
+async function mintFromCall(db: Db, list: CompanyReviewList, callId: string, remintReason: string | null = null): Promise<Record<string, unknown>> {
   const { data: call, error } = await db.from("review_lane_calls").select("id, company_id, target_key, response, minted_at, created_at").eq("id", callId).maybeSingle();
   if (error || !call) return { status: "mint_refused", error: `review lane: call ${callId} not found` };
   if (call.company_id !== list.companyId) return { status: "mint_refused", error: "review lane: the call belongs to another company" };
-  if (call.minted_at) return { status: "mint_refused", error: "review lane: this call already minted its rows" };
+  if (call.minted_at && !remintReason) return { status: "mint_refused", error: "review lane: this call already minted its rows" };
+  let superseded = 0;
+  if (call.minted_at && remintReason) {
+    // RE-MINT (v2.1): the call's live rows are superseded — kept, never deleted — with the stated reason, then the rows
+    // are rebuilt from the SAME stored response (no new call). Their excerpts no longer count as live for the dedupe.
+    const { data: sup, error: supErr } = await db.from("signals").update({ superseded_at: new Date().toISOString(), superseded_reason: `review lane re-mint: ${remintReason}`.slice(0, 300) })
+      .eq("review_lane_call_id", callId).is("superseded_at", null).select("id");
+    if (supErr) return { status: "mint_failed", error: supErr.message };
+    superseded = (sup ?? []).length;
+  }
   const target = list.targets.find((t) => t.key === call.target_key);
   if (!target) return { status: "mint_refused", error: `review lane: target ${call.target_key} is not on the list` };
   const { data: co } = await db.from("companies").select("website").eq("id", list.companyId).maybeSingle();
@@ -60,7 +69,7 @@ async function mintFromCall(db: Db, list: CompanyReviewList, callId: string): Pr
       return { status: "mint_failed", error: insErr.message, stats };
     }
   }
-  const outcome = { status: rows.length ? "minted" : "empty", stats };
+  const outcome = { status: rows.length ? "minted" : "empty", stats, ...(remintReason ? { reminted: { reason: remintReason, superseded } } : {}) };
   await db.from("review_lane_calls").update({ outcome, minted_at: new Date().toISOString() }).eq("id", callId);
   return { ...outcome, call_id: callId };
 }
@@ -108,7 +117,8 @@ export async function runReviewLane(a: {
     return { httpStatus: 200, body: { review_lane: await gatherLeads(a.db, list, site, brand) } };
   }
   if (typeof a.request.mint_call_id === "string") {
-    const out = await mintFromCall(a.db, list, a.request.mint_call_id);
+    const reason = typeof a.request.remint_reason === "string" && a.request.remint_reason.trim() ? a.request.remint_reason.trim() : null;
+    const out = await mintFromCall(a.db, list, a.request.mint_call_id, reason);
     return { httpStatus: String(out.status).endsWith("refused") || out.status === "mint_failed" ? 409 : 200, body: { review_lane: out } };
   }
   const target: ReviewTarget | undefined = list.targets.find((t) => t.key === a.request.target);

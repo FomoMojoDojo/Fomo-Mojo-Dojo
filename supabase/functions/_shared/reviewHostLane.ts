@@ -165,7 +165,10 @@ export function sentencesAround(text: string, a: number, b: number, ps: number, 
   while (s > ps) { const ch = text[s - 1]; if (/[.!?]/.test(ch) && s < a && /\s/.test(text[s] ?? "")) break; s--; }
   while (s < a && /\s/.test(text[s])) s++;
   let e = b;
+  // a fragment that already ends a sentence ends the quote there
+  if (/[.!?]/.test(text[b - 1] ?? "")) e = pe + 1;
   while (e < pe) { const ch = text[e]; e++; if (/[.!?]/.test(ch) && (e >= pe || /[\s"”')\]]/.test(text[e]))) { while (e < pe && /["”')\]]/.test(text[e])) e++; break; } }
+  if (e > pe) e = b;
   if (e - s > MAX_QUOTE_CHARS) return [a, b];
   return [s, e];
 }
@@ -273,6 +276,16 @@ export function datedReviewBlocks(text: string): number {
   return n;
 }
 
+/** A cited span can run across a page's paragraphs (a rating image, a title, then the review). The review is the part
+ *  from the first paragraph holding a review sentence to the last; markup paragraphs around it are not the customer's
+ *  words. A span with no such paragraph is returned whole (it fails the review-sentence test downstream). */
+export function reviewBody(cited: string): string {
+  const parts = cited.split(/(\n\s*\n)/);
+  const idx = parts.map((p, i) => (i % 2 === 0 && hasReviewSentence(p) ? i : -1)).filter((i) => i >= 0);
+  if (!idx.length) return cited;
+  return parts.slice(idx[0], idx[idx.length - 1] + 1).join("").trim();
+}
+
 export type ReviewLaneStats = {
   text_blocks: number; cited_blocks: number; citations: number; fetched_pages: number;
   no_url: number; off_host: number; excluded: number; not_company: number; no_review_sentence: number; not_review_block: number; heading: number; not_outside: number;
@@ -305,8 +318,9 @@ export function buildReviewLaneRows(a: {
     if (!host || !(host === targetHost || host.endsWith(`.${targetHost}`))) { stats.off_host++; continue; }
     if (a.excludeHosts.some((x) => { const d = x.toLowerCase().replace(/^www\./, ""); return host === d || host.endsWith(`.${d}`); })) { stats.excluded++; continue; }
     const page = pageForUrl(a.list, url);
-    const expanded = expandQuote(docs, url, c.cited_text);
-    const words = expanded?.quote ?? c.cited_text;
+    const body = reviewBody(c.cited_text);
+    const expanded = expandQuote(docs, url, body);
+    const words = expanded?.quote ?? body;
     if (!page && !a.list.names.test(`${c.cited_text} ${c.title} ${url}`)) { stats.not_company++; continue; }
     if (!hasReviewSentence(words)) { stats.no_review_sentence++; continue; }
     // a review's title line repeats its body's opening: the body is the quote

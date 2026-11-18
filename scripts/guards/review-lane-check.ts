@@ -32,9 +32,20 @@ const cite = (url: string, cited_text: string) => ({ type: "text", text: "A cust
   else bad("r2", `control did not get its brand: ${JSON.stringify(r.rows.map((x) => [x.about_entity_id, x.about_entity_page]))}`);
 }
 
+// r8 (planted-case shape): a cited span across a rating image and a title quotes the review body only
+{
+  const page = "[A Aug 28, 2026](https://www.trustpilot.com/users/1)\n\n![Rated 1 out of 5 stars](https://cdn/s.svg)\n\n## [Expensive](/reviews/2)\n\nExpensive, always raising rates, service is marginal at best. Another sentence.";
+  const cited = "![Rated 1 out of 5 stars](https://cdn/s.svg)\n\n## [Expensive](/reviews/2)\n\nExpensive, always raising rates, service is marginal at best. ";
+  const t = L.targets.find((x) => x.key === "cox-trustpilot-net")!;
+  const r = buildReviewLaneRows({ list: L, target: t, callId: "guard", fetchedAt: "t", excludeHosts: [], existingExcerpts: new Set(), decide: outside,
+    response: { content: [{ type: "web_fetch_tool_result", content: { type: "web_fetch_result", url: "https://www.trustpilot.com/review/cox.net", content: { type: "document", source: { type: "text", data: page } } } },
+      { type: "text", text: "x", citations: [{ type: "char_location", document_index: 0, cited_text: cited }] }] } });
+  if (r.rows.length === 1 && r.rows[0].quote === "Expensive, always raising rates, service is marginal at best.") ok("r8", "a cited span across markup quotes only the review body");
+  else bad("r8", `markup reached the quote: ${JSON.stringify(r.rows.map((x) => x.quote))}`);
+}
 // r3/r5: every STORED lane row
 const input = JSON.parse(await new Response(Deno.stdin.readable).text()) as {
-  rows: Array<{ id: string; company_id: string; source_url: string; about_entity_id: string | null; about_entity_page: string | null; evidence_excerpt: string; quote: string | null; review_lane_call_id: string }>;
+  rows: Array<{ id: string; company_id: string; source_url: string; about_entity_id: string | null; about_entity_page: string | null; evidence_excerpt: string; quote: string | null; live: boolean; review_lane_call_id: string }>;
   calls: Array<{ id: string; response: unknown }>;
 };
 {
@@ -70,5 +81,9 @@ const input = JSON.parse(await new Response(Deno.stdin.readable).text()) as {
   const off = input.rows.filter((r) => r.quote != null && !(pages.get(r.review_lane_call_id) ?? []).some((t) => t.includes(r.quote!)));
   if (off.length) bad("r7", `${off.length} stored quote(s) are not on any page their own call fetched: ${off.slice(0, 3).map((r) => r.id).join(", ")}`);
   else ok("r7", `every stored quote (${input.rows.filter((r) => r.quote != null).length}) is word for word on a page its own call fetched`);
+}
+{
+  const markup = input.rows.filter((r) => r.live && r.quote != null && /^(?:!\[|#{1,6}\s|\[[^\]]*\]\()/.test(r.quote));
+  if (markup.length) bad("r8", `${markup.length} live stored quote(s) begin with page markup`);
 }
 console.log(out.join("\n"));
