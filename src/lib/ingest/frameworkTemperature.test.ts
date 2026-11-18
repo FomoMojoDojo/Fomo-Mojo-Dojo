@@ -7,7 +7,10 @@ import { join } from "node:path";
 import yaml from "js-yaml";
 
 const FRAMEWORK_NODES = ["Grounding", "April Dunford", "JTBD", "ODI", "Teresa Torres", "Strategy Cascade"];
-const DSLS = ["supabase/dify-workflows/candidates/mojomap-file-analysis.v2.focus.yml"];
+const DSLS = [
+  "supabase/dify-workflows/mojomap-file-analysis.v2.yml",
+  "supabase/dify-workflows/candidates/mojomap-file-analysis.v2.focus.yml",
+];
 
 type Dsl = { workflow: { graph: { nodes: Array<{ data: { type: string; title: string; model?: { completion_params?: { temperature?: number } } } }> } } };
 

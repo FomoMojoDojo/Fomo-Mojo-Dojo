@@ -1,3 +1,8 @@
+# LIVE file-analysis workflow (rule 1a: this file IS the published graph; dify-workflow-guard compares them).
+# SP-F45 (operator ruling 2026-11-17): the six framework nodes (Grounding, April Dunford, JTBD, ODI, Teresa
+# Torres, Strategy Cascade) run at temperature 0.2; Adjudication stays 0. Pinned by
+# src/lib/ingest/frameworkTemperature.test.ts. This workflow carries NO focus market: the focus is the
+# candidate in candidates/mojomap-file-analysis.v2.focus.yml, which is not live.
 app:
   description: Fetches company data from Supabase, runs framework analysis through Ollama, adjudicates signals, and triggers re-scoring.
   icon: 🤖
@@ -1026,7 +1031,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
@@ -1101,7 +1106,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
@@ -1185,7 +1190,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
@@ -1291,7 +1296,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
@@ -1407,7 +1412,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
@@ -1617,7 +1622,7 @@ workflow:
             variable_selector: []
           model:
             completion_params:
-              temperature: 0.7
+              temperature: 0.2
             mode: chat
             name: qwen2.5:14b-instruct
             provider: langgenius/ollama/ollama
