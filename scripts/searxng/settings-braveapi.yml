@@ -1,0 +1,10 @@
+# The braveapi block in ~/searxng/config/settings.yml (that file is outside the repo). It replaces the stock
+# `name: braveapi … api_key: "" … inactive: true` block. NO api_key here: the key is read from
+# /run/secrets/brave_api_key by scripts/searxng/braveapi_keyfile.py.
+  - name: braveapi
+    engine: braveapi_keyfile
+    shortcut: bra
+    categories: [general, web]
+    results_per_page: 20
+    timeout: 6.0
+    inactive: false

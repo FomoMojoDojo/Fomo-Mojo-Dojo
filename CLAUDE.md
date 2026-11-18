@@ -543,22 +543,23 @@ rows and runs the local Ollama authorship judge (qwen2.5:14b-instruct) on each �
 runs to the 400 s wall clock and burns judge time (three probes on 2026-09-21 = 156 judged rows, 0 model_calls rows;
 the judge is not ledgered). Exclude it from any fleet-wide boot sweep; its boot is proven by `deno check`.
 
-### Search-health check (2026-09-18)
+### Search-health check (2026-09-18; keyed Brave engine since 2026-11-18)
 
-Before any outside read, one control query against the SearXNG the runner uses:
+Before any outside read: `bash scripts/guards/search-health-guard.sh ["<control query>"]` (default: the active company
+name). It spends ONE paid Brave query (~$0.005).
 
-```bash
-curl -s -m 40 "http://localhost:8888/search?q=<active company name>&format=json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);const G=["google","duckduckgo","startpage","brave"];const r=(j.results||[]);console.log(JSON.stringify({results:r.length,general_results:r.filter(x=>G.includes(x.engine)).length,engines:[...new Set(r.map(x=>x.engine))],unresponsive_engines:j.unresponsive_engines}))})'
-```
-
-- **Pass:** at least one result from a GENERAL engine — google, duckduckgo, startpage or brave (check `results[].engine`).
-  Results from wikipedia (or any other non-general engine) alone do NOT count: on 2026-09-21 the query returned
-  `results: 1` from wikipedia while all four general engines were suspended — that is a FAIL.
-- **Fail:** zero general-engine results and every general `unresponsive_engines` entry is a captcha / too-many-requests / access-denied
-  (the egress is T-Mobile CGNAT; brave, duckduckgo, startpage and google captcha or 403 it — a per-engine cooldown
-  that re-triggers on the first request after expiry, i.e. IP reputation, not self-healing). Print the engine table and
-  the line **"SearXNG dead this session — name-only plans run on the web_search lane; domain plans unaffected"**.
-  No per-company retries that session. Name-only plans (`no_public_site`) run the Anthropic web_search lane as
-  discovery before the thin gate (ruling 2026-09-18; `_shared/nameOnlyLane.ts`); the run ledger carries
-  `search: { searx, lane }` and `search_status: lane_only` when the lane carried it. Domain plans never depended on
-  SearXNG for the lane (own-site crawl bootstraps the gate).
+- **Since 2026-11-18 search rests on ONE keyed engine, `braveapi`.** The four general engines (google, duckduckgo,
+  startpage, brave) still captcha / 403 this egress (T-Mobile CGNAT, IP reputation, not self-healing); they stay
+  configured and are reported, never relied on. The key lives ONLY in `~/.mojomap/brave-api-key` (mode 600), mounted
+  read-only at `/run/secrets/brave_api_key` by `scripts/searxng/run-searxng.sh`, and read at start by the engine wrapper
+  `scripts/searxng/braveapi_keyfile.py`. It is in no settings file, log or commit — never print or echo it.
+- **Pass:** at least one result through `braveapi`. **Fail** names the cause: the engine not enabled, its start-up failed
+  (no key file), the daily ceiling reached, or the engine's own refusal; it then prints
+  **"SearXNG dead this session — name-only plans run on the web_search lane; domain plans unaffected"** and the
+  2026-09-18 rule applies: no per-company retries that session; name-only plans run the Anthropic web_search lane as
+  discovery before the thin gate (`_shared/nameOnlyLane.ts`).
+- **Daily ceiling: 200 Brave queries per UTC day** (`daily_ceiling` in the wrapper; counter in
+  `~/searxng/data/braveapi-usage.json`). At the ceiling the engine refuses before anything is sent; SearXNG reports it as
+  `braveapi: server API error`, and this check reads the counter to say why.
+- After a Docker restart SearXNG comes back with its mounts (`--restart always`); if it was recreated by hand without
+  the script, the key mount is missing and this check fails at s2.
