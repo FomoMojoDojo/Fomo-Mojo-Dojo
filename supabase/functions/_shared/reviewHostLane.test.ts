@@ -133,3 +133,42 @@ Deno.test("summary sentence: the uncited lead-in is read with the cited words", 
   ]));
   assertEquals(r.rows[0].claim_text, "One customer described a drawn-out cancellation, reporting that it took more than an hour to cancel via live chat.");
 });
+
+const LIST_PAGE = [
+  "Review summary", "Reviewers express profound dissatisfaction regarding customer service, highlighting long wait times and more.",
+  "JR", "[Jennifer R. 7 days ago](https://www.trustpilot.com/users/1)", "![Rated 1 out of 5 stars](https://cdn/x.svg)",
+  "Cox is the worst and they charge hundreds of dollars more than they promised me at signup.",
+  "TW", "[Trecia Williams Jul 25, 2026](https://www.trustpilot.com/users/2)", "![Rated 1 out of 5 stars](https://cdn/x.svg)",
+  "## [Never again](https://www.trustpilot.com/reviews/3)",
+  "The customer service representatives do not want to talk to you when you call them at all.",
+  "A second paragraph of the same review says the bill went up again in August without any notice.",
+  "July 25, 2026",
+  "DP", "[Diane Parker US•2 reviews](https://www.trustpilot.com/users/4)", "Jul 16, 2026", "![Rated 1 out of 5 stars](https://cdn/x.svg)",
+  "Terrible company with hidden fees and bad customer service that never fixes the outages here.",
+  "MA", "[Mo A. Jul 15, 2026](https://www.trustpilot.com/users/5)",
+  "My internet and phone package costs eighty five dollars a month and drops every single night.",
+].join("\n\n");
+
+Deno.test("review header dates on a fetched list page: own header only; a relative age is undated; summaries and titles are not reviews", () => {
+  const cox = "https://www.trustpilot.com/review/www.cox.com?page=7";
+  const cite = (t: string) => textBlock("A customer says this.", [{ type: "char_location", document_index: 0, cited_text: t }]);
+  const r = build(resp([
+    fetchBlock(cox, LIST_PAGE),
+    cite("Reviewers express profound dissatisfaction regarding customer service"),
+    cite("Cox is the worst and they charge hundreds of dollars more"),
+    cite("Never again"),
+    cite("The customer service representatives do not want to talk to you"),
+    cite("the bill went up again in August without any notice"),
+    cite("Terrible company with hidden fees and bad customer service"),
+    cite("costs eighty five dollars a month and drops every single night"),
+  ]));
+  const by = (s: string) => r.rows.find((x) => String(x.quote).includes(s));
+  assertEquals(r.stats.not_review_block, 1);              // the site's own summary
+  assertEquals(by("Cox is the worst")?.event_date, null);  // "7 days ago" — never turned into a date, never borrowed
+  assertEquals(by("representatives do not want")?.event_date, "2026-07-25");
+  assertEquals(by("bill went up again")?.event_date, "2026-07-25"); // the review's second paragraph keeps its header
+  assertEquals(by("hidden fees")?.event_date, "2026-07-16");
+  assertEquals(by("eighty five dollars")?.event_date, "2026-07-15");
+  assert(!r.rows.some((x) => String(x.quote).startsWith("##")));
+  for (const x of r.rows) assert(LIST_PAGE.includes(String(x.quote)), "every quote is on the fetched page");
+});

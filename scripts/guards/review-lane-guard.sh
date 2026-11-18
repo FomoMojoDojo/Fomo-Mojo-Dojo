@@ -13,6 +13,7 @@
 #   r4. fleet-wide: every lane row is public by source (public_baseline_run), outside voice, band outside, with a
 #       non-blank excerpt; a quote only with its source text (signals_quote_verbatim).
 #   r5. fleet-wide: every lane row's excerpt is a cited_text of its own stored call (review_lane_calls.response).
+#   r7. fleet-wide: every stored quote is word for word on a page fetched in its own call (review_lane_calls.response).
 #   r6. inside ONE rolled-back transaction: an about_entity_id of another company's entity is refused; a brand with no
 #       page is refused; authenticated cannot write review_lane_calls; the trigger function is not executable by clients.
 #
@@ -30,11 +31,11 @@ fail() { echo "FAIL $1: $2"; echo "guard: FAIL"; exit 1; }
 
 JSON=$(psql "select json_build_object(
   'rows', coalesce((select json_agg(json_build_object('id', id, 'company_id', company_id, 'source_url', source_url, 'about_entity_id', about_entity_id,
-            'about_entity_page', about_entity_page, 'evidence_excerpt', evidence_excerpt, 'review_lane_call_id', review_lane_call_id))
+            'about_entity_page', about_entity_page, 'evidence_excerpt', evidence_excerpt, 'quote', quote, 'review_lane_call_id', review_lane_call_id))
            from signals where review_lane_call_id is not null), '[]'::json),
   'calls', coalesce((select json_agg(json_build_object('id', id, 'response', response)) from review_lane_calls), '[]'::json))")
 OUT=$(printf '%s' "$JSON" | deno run --quiet --allow-read scripts/guards/review-lane-check.ts) || fail check "the check script failed: $OUT"
-for k in r1 r2 r3 r5; do
+for k in r1 r2 r3 r5 r7; do
   line=$(echo "$OUT" | grep -E "^(OK|FAIL) $k:" || true)
   [ -n "$line" ] || fail "$k" "no verdict"
   case "$line" in OK*) echo "${line#OK }" ;; *) fail "$k" "${line#FAIL $k: }" ;; esac

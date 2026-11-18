@@ -12,6 +12,9 @@
 //   * Cox's own community (forums.cox.com, any cox.com page) is NOT a target and NOT listed (decision 6): cox.com is a
 //     confirmed Charter-related host, so the voice rule would read a customer's post there as Charter's own words.
 //   * DSLReports threads carry no brand in their path, so a thread citation is "brand not recorded" by construction.
+//   * Reddit: only r/Spectrum and r/CoxCommunications name a brand. Any other subreddit (a city's, a general one) is
+//     "brand not recorded"; its name is kept as `forum`, uninterpreted. Reddit and DSLReports are LEADS only
+//     (searchLeads.ts): the paid page fetch cannot read them (measured 2026-11-18).
 //   * pages added 2026-11-18 from the source URLs behind the "Spectrum" company record's customer reviews (used as LEADS
 //     only — nothing copied): Trustpilot charter.net, BBB's New York "spectrum-0121-460" profile, AllConnect and
 //     HighSpeedInternet.com (and the same two sites' Cox pages). Left OFF the list: editorial reviews (Forbes,
@@ -51,7 +54,9 @@ export const CHARTER_REVIEW_LIST: CompanyReviewList = {
     { key: "cox-allconnect", entity: "cox", label: "AllConnect — Cox customer reviews", host: /^(?:www\.)?allconnect\.com$/, path: /^\/providers\/cox\/customer-reviews\/?$/i },
     { key: "cox-highspeedinternet", entity: "cox", label: "HighSpeedInternet.com — Cox reviews", host: /^(?:www\.)?highspeedinternet\.com$/, path: /^\/providers\/cox\/reviews\/?$/i },
     { key: "cox-dslreports", entity: "cox", label: "DSLReports — Cox forum", host: DSL, path: /^\/forum\/cox[a-z0-9]*\/?$/i },
+    { key: "cox-reddit", entity: "cox", label: "Reddit — r/CoxCommunications", host: /^(?:www\.|old\.)?reddit\.com$/, path: /^\/r\/coxcommunications(?:\/.*)?$/i },
     // ── Spectrum (and Charter-named pages) ──
+    { key: "spectrum-reddit", entity: "spectrum", label: "Reddit — r/Spectrum", host: /^(?:www\.|old\.)?reddit\.com$/, path: /^\/r\/spectrum(?:\/.*)?$/i },
     { key: "spectrum-trustpilot", entity: "spectrum", label: "Trustpilot — Spectrum", host: TRUSTPILOT, path: /^\/review\/(?:www\.)?(?:spectrum\.net|spectrum\.com|charterspectrum\.com|charter\.com|charter\.net)\/?$/i },
     { key: "spectrum-consumeraffairs", entity: "spectrum", label: "ConsumerAffairs — Spectrum / Charter", host: CONSUMERAFFAIRS, path: /^\/(?:cable_tv|internet|cell_phones)\/(?:charter|spectrum)(?:_[a-z_]+)?\.html$/i },
     { key: "spectrum-bbb", entity: "spectrum", label: "BBB — Charter Communications", host: BBB, path: /^\/us\/[a-z]{2}\/[a-z0-9-]+\/profile\/[a-z0-9-]+\/(?:charter-communications|charter-spectrum)-[0-9-]+(?:\/.*)?$/i },

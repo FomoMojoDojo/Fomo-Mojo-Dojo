@@ -170,7 +170,33 @@ export function sentencesAround(text: string, a: number, b: number, ps: number, 
   return [s, e];
 }
 
-export type QuoteVerdict = { quote: string; quote_source_text: string; url: string } | null;
+/** The date printed in a review's own HEADER on a fetched page: walking back at most 8 paragraphs from the review's
+ *  paragraph, the nearest short paragraph carrying exactly one date and at most 40 other characters (the reviewer's
+ *  line "Name Jul 25, 2026", or a date alone); a rating, a title or the review's own earlier paragraphs may sit between
+ *  — a review's header always precedes its body. None found ⇒ null. No name is kept. */
+export function headerDate(text: string, paragraphStart: number): PrintedDate | null {
+  const before = text.slice(0, paragraphStart).split(/\n\s*\n/).reverse();
+  for (const p of before.slice(0, 8)) {
+    // a markdown link's target is not text on the page ("[Name Jul 25, 2026](…/users/…)" reads "Name Jul 25, 2026")
+    const t = p.replace(/\]\([^)]*\)/g, "]").replace(/[[\]]/g, "").trim();
+    if (!t) continue;
+    if (hasReviewSentence(t)) continue;
+    // this review's own header carries a relative age only: it is undated — never another review's date
+    if (/\b\d+\s+(?:minutes?|hours?|days?|weeks?|months?)\s+ago\b/i.test(t)) return null;
+    const ds = printedDates(t);
+    const rest = t.replace(new RegExp(`\\b${MON}\\.?\\s+\\d{1,2},?\\s+\\d{4}\\b|\\b\\d{1,2}\\s+${MON}\\.?,?\\s+\\d{4}\\b|\\b20\\d{2}-\\d{2}-\\d{2}\\b`, "gi"), "").replace(/[^\p{L}\p{N}]/gu, "");
+    if (ds.length === 1 && ds[0].precision === "day" && rest.length <= 40) return ds[0];
+  }
+  return null;
+}
+
+/** A review header with only a RELATIVE age ("7 days ago") within the 8 paragraphs before: the paragraph is a review,
+ *  undated (a relative age is never turned into a date). */
+export function headerRelativeAge(text: string, paragraphStart: number): boolean {
+  return text.slice(0, paragraphStart).split(/\n\s*\n/).slice(-8).some((p) => /\b\d+\s+(?:minutes?|hours?|days?|weeks?|months?)\s+ago\b/i.test(p) && !hasReviewSentence(p));
+}
+
+export type QuoteVerdict = { quote: string; quote_source_text: string; url: string; header_date: PrintedDate | null; in_review_block: boolean } | null;
 /** The verbatim review sentence(s) for a cited fragment, from a fetched page (the citation's own url first). */
 export function expandQuote(docs: FetchedDoc[], url: string | null, fragment: string): QuoteVerdict {
   const order = [...docs].sort((x, y) => (x.url === url ? -1 : 0) - (y.url === url ? -1 : 0));
@@ -182,7 +208,8 @@ export function expandQuote(docs: FetchedDoc[], url: string | null, fragment: st
     const quote = d.text.slice(s, e).trim();
     const source = d.text.slice(ps, pe);
     if (!quote || !source.includes(quote)) continue;
-    return { quote, quote_source_text: source, url: d.url };
+    const header_date = headerDate(d.text, ps);
+    return { quote, quote_source_text: source, url: d.url, header_date, in_review_block: !!header_date || headerRelativeAge(d.text, ps) };
   }
   return null;
 }
@@ -226,19 +253,29 @@ export function printedDates(s: string): PrintedDate[] {
   }
   return [...months].sort().map((date) => ({ date, precision: "month" as const }));
 }
-/** The review's printed date: the one date in the fragment, else the one date in its paragraph; none or several ⇒ null. */
-export function reviewDate(fragment: string, paragraph: string | null): (PrintedDate & { basis: "cited_text" | "page_paragraph" }) | null {
+/** The review's printed date: the one date in the fragment, else the review header's date on the fetched page, else the
+ *  one date in its paragraph; none or several ⇒ null. */
+export function reviewDate(fragment: string, paragraph: string | null, header: PrintedDate | null = null): (PrintedDate & { basis: "cited_text" | "review_header" | "page_paragraph" }) | null {
   const a = printedDates(fragment);
   if (a.length === 1) return { ...a[0], basis: "cited_text" };
   if (a.length > 1) return null;
+  if (header) return { ...header, basis: "review_header" };
   if (!paragraph) return null;
   const b = printedDates(paragraph);
   return b.length === 1 ? { ...b[0], basis: "page_paragraph" } : null;
 }
 
+/** How many dated review blocks a fetched page holds — a page with ≥ 3 is a review list, so a fragment of it that sits in
+ *  no dated block (the site's own summary, page chrome) is not a customer's review. */
+export function datedReviewBlocks(text: string): number {
+  let n = 0, at = 0;
+  for (const p of text.split(/\n\s*\n/)) { if (hasReviewSentence(p) && headerDate(text, text.indexOf(p, at))) n++; at += p.length; }
+  return n;
+}
+
 export type ReviewLaneStats = {
   text_blocks: number; cited_blocks: number; citations: number; fetched_pages: number;
-  no_url: number; off_host: number; excluded: number; not_company: number; no_review_sentence: number; not_outside: number;
+  no_url: number; off_host: number; excluded: number; not_company: number; no_review_sentence: number; not_review_block: number; heading: number; not_outside: number;
   duplicate_in_run: number; duplicate_existing: number; minted: number; branded: number; brand_not_recorded: number;
   quote_expanded: number; dated: number;
 };
@@ -252,9 +289,10 @@ export function buildReviewLaneRows(a: {
   const docs = fetchedDocuments(a.response);
   const { citations, text_blocks, cited_blocks } = laneCitations(a.response);
   const stats: ReviewLaneStats = { text_blocks, cited_blocks, citations: citations.length, fetched_pages: docs.length, no_url: 0, off_host: 0, excluded: 0,
-    not_company: 0, no_review_sentence: 0, not_outside: 0, duplicate_in_run: 0, duplicate_existing: 0, minted: 0, branded: 0, brand_not_recorded: 0, quote_expanded: 0, dated: 0 };
+    not_company: 0, no_review_sentence: 0, not_review_block: 0, heading: 0, not_outside: 0, duplicate_in_run: 0, duplicate_existing: 0, minted: 0, branded: 0, brand_not_recorded: 0, quote_expanded: 0, dated: 0 };
   const seen = new Set<string>();
   const rows: Array<Record<string, unknown>> = [];
+  const listPages = new Map(docs.map((d) => [d.url, datedReviewBlocks(d.text)] as const));
   const targetHost = a.target.host.toLowerCase().replace(/^www\./, "");
   for (const c of citations) {
     // a fetched document's citation names its page by index or by containing the words
@@ -271,13 +309,16 @@ export function buildReviewLaneRows(a: {
     const words = expanded?.quote ?? c.cited_text;
     if (!page && !a.list.names.test(`${c.cited_text} ${c.title} ${url}`)) { stats.not_company++; continue; }
     if (!hasReviewSentence(words)) { stats.no_review_sentence++; continue; }
+    // a review's title line repeats its body's opening: the body is the quote
+    if (expanded && /^#{1,6}\s/.test(expanded.quote)) { stats.heading++; continue; }
+    if (expanded && !expanded.in_review_block && (listPages.get(expanded.url) ?? 0) >= 3) { stats.not_review_block++; continue; }
     const d = a.decide(url);
     if (!d?.ok || d.voice_class !== "outside_voice_about_client") { stats.not_outside++; continue; }
     const norm = normalizeForHash(c.cited_text);
     if (!norm || seen.has(norm)) { stats.duplicate_in_run++; continue; }
     seen.add(norm);
     if (a.existingExcerpts.has(norm)) { stats.duplicate_existing++; continue; }
-    const date = reviewDate(c.cited_text, expanded?.quote_source_text ?? null);
+    const date = reviewDate(c.cited_text, expanded?.quote_source_text ?? null, expanded?.header_date ?? null);
     const row: Record<string, unknown> = {
       company_id: a.list.companyId,
       source_id: a.callId,

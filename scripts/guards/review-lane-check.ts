@@ -34,7 +34,7 @@ const cite = (url: string, cited_text: string) => ({ type: "text", text: "A cust
 
 // r3/r5: every STORED lane row
 const input = JSON.parse(await new Response(Deno.stdin.readable).text()) as {
-  rows: Array<{ id: string; company_id: string; source_url: string; about_entity_id: string | null; about_entity_page: string | null; evidence_excerpt: string; review_lane_call_id: string }>;
+  rows: Array<{ id: string; company_id: string; source_url: string; about_entity_id: string | null; about_entity_page: string | null; evidence_excerpt: string; quote: string | null; review_lane_call_id: string }>;
   calls: Array<{ id: string; response: unknown }>;
 };
 {
@@ -58,5 +58,17 @@ const input = JSON.parse(await new Response(Deno.stdin.readable).text()) as {
   const untraced = input.rows.filter((r) => !cited.get(r.review_lane_call_id)?.has(r.evidence_excerpt));
   if (untraced.length) bad("r5", `${untraced.length} stored row(s) whose excerpt is not a cited_text of their own call`);
   else ok("r5", `every stored lane row's excerpt is a cited_text of its own stored call`);
+}
+// r7: every stored QUOTE is word for word on a page fetched in its own call (stronger than signals_quote_verbatim, which
+// only ties the quote to its stored paragraph)
+{
+  const pages = new Map<string, string[]>();
+  for (const c of input.calls) {
+    const blocks = Array.isArray((c.response as { content?: unknown })?.content) ? (c.response as { content: Array<Record<string, any>> }).content : [];
+    pages.set(c.id, blocks.filter((b) => b?.type === "web_fetch_tool_result").map((b) => String(b?.content?.content?.source?.data ?? "")).filter(Boolean));
+  }
+  const off = input.rows.filter((r) => r.quote != null && !(pages.get(r.review_lane_call_id) ?? []).some((t) => t.includes(r.quote!)));
+  if (off.length) bad("r7", `${off.length} stored quote(s) are not on any page their own call fetched: ${off.slice(0, 3).map((r) => r.id).join(", ")}`);
+  else ok("r7", `every stored quote (${input.rows.filter((r) => r.quote != null).length}) is word for word on a page its own call fetched`);
 }
 console.log(out.join("\n"));

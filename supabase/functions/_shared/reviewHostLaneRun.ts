@@ -16,6 +16,7 @@ import { loadConfirmedRelatedEntities, loadEntityExcludeHosts } from "./ownHosts
 import { normalizeHost } from "./firstReadProvenance.ts";
 import { decideVoiceClassBeforeJudge } from "./voiceClassAtMint.ts";
 import { REVIEW_LISTS, type CompanyReviewList, type ReviewTarget } from "./reviewPages.ts";
+import { leadQueries, leadRows, LEAD_SITES, type LeadSite, type SearxResult } from "./searchLeads.ts";
 import {
   buildReviewLaneRows, projectReviewLaneUsd, REVIEW_LANE_BETA, REVIEW_LANE_CALL_SITE, REVIEW_LANE_MAX_TOKENS, reviewLanePrompt, reviewLaneTools,
 } from "./reviewHostLane.ts";
@@ -64,6 +65,35 @@ async function mintFromCall(db: Db, list: CompanyReviewList, callId: string): Pr
   return { ...outcome, call_id: callId };
 }
 
+/** LEADS (V2): one SearXNG query per topic for one forum site and one brand; rows into search_leads, never signals.
+ *  Each query is one Brave request (the engine's own daily ceiling applies). */
+async function gatherLeads(db: Db, list: CompanyReviewList, site: LeadSite, brand: "spectrum" | "cox"): Promise<Record<string, unknown>> {
+  const searx = Deno.env.get("SEARXNG_URL") || "http://host.docker.internal:8888";
+  const seen = new Set<string>();
+  const perQuery: Array<Record<string, unknown>> = [];
+  let inserted = 0;
+  for (const q of leadQueries(site, brand)) {
+    const u = new URL("/search", searx);
+    u.searchParams.set("q", q); u.searchParams.set("format", "json"); u.searchParams.set("language", "en"); u.searchParams.set("safesearch", "0");
+    let results: SearxResult[] = [], refused: string | null = null;
+    try {
+      const r = await fetch(u.toString(), { signal: AbortSignal.timeout(30_000) });
+      const j = await r.json();
+      results = Array.isArray(j?.results) ? j.results : [];
+      const un = (Array.isArray(j?.unresponsive_engines) ? j.unresponsive_engines : []).find((e: unknown[]) => e?.[0] === "braveapi");
+      refused = un ? String(un[1] ?? "refused") : null;
+    } catch (e) { refused = String(e).slice(0, 120); }
+    const { rows, stats } = leadRows({ list, site, query: q, results, seen });
+    if (rows.length) {
+      const { data, error } = await db.from("search_leads").upsert(rows, { onConflict: "company_id,url", ignoreDuplicates: true }).select("id");
+      if (error) return { status: "leads_failed", error: error.message, per_query: perQuery };
+      inserted += (data ?? []).length;
+    }
+    perQuery.push({ query: q, braveapi_refused: refused, ...stats });
+  }
+  return { status: "leads_gathered", site, brand, inserted, per_query: perQuery };
+}
+
 export async function runReviewLane(a: {
   db: Db; companyId: string; request: Record<string, unknown>; capUsd: number | null; spendSince: string | null;
   apiKey: string | undefined; model: string; actingUserId: string | null;
@@ -71,6 +101,12 @@ export async function runReviewLane(a: {
   const list = reviewListFor(a.companyId);
   if (!list) return { httpStatus: 400, body: { status: "review_lane_refused", error: "review lane: this company has no reviewed page list" } };
   const mint = a.request.mint !== false;
+  const gl = a.request.gather_leads as { site?: unknown; brand?: unknown } | undefined;
+  if (gl !== undefined) {
+    const site = String(gl?.site ?? "") as LeadSite, brand = String(gl?.brand ?? "");
+    if (!(site in LEAD_SITES) || (brand !== "spectrum" && brand !== "cox")) return { httpStatus: 400, body: { status: "review_lane_refused", error: "gather_leads needs { site: reddit | dslreports, brand: spectrum | cox }" } };
+    return { httpStatus: 200, body: { review_lane: await gatherLeads(a.db, list, site, brand) } };
+  }
   if (typeof a.request.mint_call_id === "string") {
     const out = await mintFromCall(a.db, list, a.request.mint_call_id);
     return { httpStatus: String(out.status).endsWith("refused") || out.status === "mint_failed" ? 409 : 200, body: { review_lane: out } };
