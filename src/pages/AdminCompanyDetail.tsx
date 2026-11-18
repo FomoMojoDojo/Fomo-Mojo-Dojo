@@ -5,6 +5,7 @@ import { PublicBaselinePanel } from "@/components/PublicBaselinePanel";
 import FrameworkProvenancePanel from "@/components/admin/FrameworkProvenancePanel";
 import CompanyFilesPanel from "@/components/admin/CompanyFilesPanel";
 import CouncilRecommendationsPanel from "@/components/admin/CouncilRecommendationsPanel";
+import FocusMarketPanel from "@/components/admin/FocusMarketPanel";
 import EvidenceInspectorPanel from "@/components/admin/EvidenceInspectorPanel";
 import StrategicHypothesesPanel from "@/components/admin/StrategicHypothesesPanel";
 import PublicSourceFiltersPanel from "@/components/admin/PublicSourceFiltersPanel";
@@ -189,6 +190,8 @@ export default function AdminCompanyDetail() {
         </section>
 
         <PublicBaselinePanel companyId={company.id} />
+
+        <FocusMarketPanel companyId={company.id} />
 
         <PublicSourceFiltersPanel
           companyId={company.id}
