@@ -30,6 +30,9 @@ import { buildNameOnlyBrief, claudeWebSearchPrompt, laneSourcesFromResult, laneS
 import { INTERNAL_CALL_HEADER, isInternalServiceCall } from "../_shared/internalCall.ts";
 import { BASELINE_BODY_KEYS, parseSearchTopics, topicsRefusalForRun } from "../_shared/searchTopics.ts";
 import { unknownBodyKeys } from "../_shared/bodyMode.ts";
+import { runReviewLane } from "../_shared/reviewHostLaneRun.ts";
+import { clampReviewLaneCap, parseSpendSince } from "../_shared/reviewHostLane.ts";
+import { adminOnlyGate } from "../_shared/callerGate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2327,6 +2330,20 @@ Deno.serve(async (req) => {
     // caught it. This is the authoritative refusal; the client courtesy check is advisory only.
     if (FROZEN_COMPANY_IDS.has(company_id)) {
       return json({ error: "This is a frozen reference company — outside signals aren't refreshed for it." }, 403);
+    }
+
+    // ── REVIEW-HOST LANE (V1, 2026-11-18) ── review_lane: { target } | { mint_call_id } — one capped web_search + web_fetch
+    // call aimed at one listed review page, or the mint of a stored call (_shared/reviewHostLaneRun.ts). ADMIN ONLY. No
+    // search, no crawl, no main call, no profile write, no claim rebuild.
+    if (body?.review_lane !== undefined) {
+      const refused = await adminOnlyGate(req, corsHeaders);
+      if (refused) return refused;
+      if (body.search_topics !== undefined) return json({ error: "review_lane does not take search_topics", status: "search_topics_refused" }, 400);
+      const rl = body.review_lane && typeof body.review_lane === "object" && !Array.isArray(body.review_lane) ? body.review_lane as Record<string, unknown> : null;
+      if (!rl) return json({ error: "review_lane must be an object: { target } or { mint_call_id }", status: "review_lane_refused" }, 400);
+      const out = await runReviewLane({ db: supabase, companyId: company_id, request: rl, capUsd: clampReviewLaneCap(body.spend_cap_usd),
+        spendSince: parseSpendSince(body.spend_since), apiKey: anthropicKey, model: anthropicModel, actingUserId });
+      return json(out.body, out.httpStatus);
     }
 
     const { data: companyRow, error: companyFetchError } = await supabase

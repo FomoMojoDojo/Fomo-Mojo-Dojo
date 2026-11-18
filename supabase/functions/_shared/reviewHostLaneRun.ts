@@ -1,0 +1,122 @@
+// ── THE REVIEW-HOST LANE, end to end (V1, 2026-11-18) — the I/O half of reviewHostLane.ts ───────────────────────────────
+//
+// Two steps, so a response can be read before anything is minted from it and no row is ever rebuilt by a second call:
+//   1. CALL (target): spend cap checked BEFORE the request is sent (ledgered spend since spend_since + this call's
+//      projection ≤ the cap, ceiling REVIEW_LANE_CAP_CEILING_USD); the model_calls row is written before the answer is
+//      parsed (unledgered ⇒ refused); the raw response is stored VERBATIM in review_lane_calls. Then, unless mint:false,
+//      step 2 runs on it.
+//   2. MINT (call id): the rows are built from the STORED response (buildReviewLaneRows) and inserted; the call's outcome
+//      and minted_at are set. A call that already minted is refused. No model, no spend.
+// A refused, failed or empty call writes no signal; its outcome says why.
+import { normalizeForHash } from "./contentIdentity.ts";
+import { anthropicPriceFor, anthropicUsd } from "./modelPricing.ts";
+import { assertSpendable, makeSpendCap, SpendCapRefused } from "./spendCap.ts";
+import { ledgerOrRefuse, promptShaOf, requireWebSearchLedger, webSearchLedgerFor } from "./webSearchLedger.ts";
+import { loadConfirmedRelatedEntities, loadEntityExcludeHosts } from "./ownHosts.ts";
+import { normalizeHost } from "./firstReadProvenance.ts";
+import { decideVoiceClassBeforeJudge } from "./voiceClassAtMint.ts";
+import { REVIEW_LISTS, type CompanyReviewList, type ReviewTarget } from "./reviewPages.ts";
+import {
+  buildReviewLaneRows, projectReviewLaneUsd, REVIEW_LANE_BETA, REVIEW_LANE_CALL_SITE, REVIEW_LANE_MAX_TOKENS, reviewLanePrompt, reviewLaneTools,
+} from "./reviewHostLane.ts";
+
+// deno-lint-ignore no-explicit-any
+type Db = any;
+
+export function reviewListFor(companyId: string): CompanyReviewList | null {
+  return REVIEW_LISTS[companyId] ?? null;
+}
+
+async function mintFromCall(db: Db, list: CompanyReviewList, callId: string): Promise<Record<string, unknown>> {
+  const { data: call, error } = await db.from("review_lane_calls").select("id, company_id, target_key, response, minted_at, created_at").eq("id", callId).maybeSingle();
+  if (error || !call) return { status: "mint_refused", error: `review lane: call ${callId} not found` };
+  if (call.company_id !== list.companyId) return { status: "mint_refused", error: "review lane: the call belongs to another company" };
+  if (call.minted_at) return { status: "mint_refused", error: "review lane: this call already minted its rows" };
+  const target = list.targets.find((t) => t.key === call.target_key);
+  if (!target) return { status: "mint_refused", error: `review lane: target ${call.target_key} is not on the list` };
+  const { data: co } = await db.from("companies").select("website").eq("id", list.companyId).maybeSingle();
+  let companyHost: string | null = null;
+  try { companyHost = normalizeHost(new URL(String(co?.website || "")).hostname); } catch { companyHost = null; }
+  const related = await loadConfirmedRelatedEntities(db, list.companyId);
+  const { data: ex } = await db.from("signals").select("evidence_excerpt").eq("company_id", list.companyId).is("superseded_at", null).neq("evidence_excerpt", "");
+  const existing = new Set<string>(((ex ?? []) as Array<{ evidence_excerpt: string | null }>).map((r) => normalizeForHash(String(r.evidence_excerpt ?? ""))).filter(Boolean));
+  const excludeHosts = await loadEntityExcludeHosts(db, list.companyId);
+  const { rows, stats } = buildReviewLaneRows({
+    list, target, callId, response: call.response, fetchedAt: String(call.created_at), excludeHosts, existingExcerpts: existing,
+    decide: (url) => {
+      const d = decideVoiceClassBeforeJudge({ url, item: null, labeledClass: "outside_voice_about_client", pageText: null, judgedText: null,
+        company: { name: "", host: companyHost, ...(related.length ? { related } : {}) }, registry: null, judge: null, gate: "profile", onJudgeFailure: "keep_label" });
+      // as the main run does: a gated URL with no judge keeps the label
+      if ("needs_judge" in d) return { ok: true, voice_class: d.label ?? undefined, authority: "extractor_label" };
+      if ("ok" in d && d.ok === true) return { ok: true, voice_class: d.voice_class ?? undefined, authority: d.authority };
+      return { ok: false };
+    },
+  });
+  if (rows.length > 0) {
+    const { error: insErr } = await db.from("signals").insert(rows);
+    if (insErr) {
+      await db.from("review_lane_calls").update({ outcome: { status: "mint_failed", error: insErr.message.slice(0, 300), stats } }).eq("id", callId);
+      return { status: "mint_failed", error: insErr.message, stats };
+    }
+  }
+  const outcome = { status: rows.length ? "minted" : "empty", stats };
+  await db.from("review_lane_calls").update({ outcome, minted_at: new Date().toISOString() }).eq("id", callId);
+  return { ...outcome, call_id: callId };
+}
+
+export async function runReviewLane(a: {
+  db: Db; companyId: string; request: Record<string, unknown>; capUsd: number | null; spendSince: string | null;
+  apiKey: string | undefined; model: string; actingUserId: string | null;
+}): Promise<{ httpStatus: number; body: Record<string, unknown> }> {
+  const list = reviewListFor(a.companyId);
+  if (!list) return { httpStatus: 400, body: { status: "review_lane_refused", error: "review lane: this company has no reviewed page list" } };
+  const mint = a.request.mint !== false;
+  if (typeof a.request.mint_call_id === "string") {
+    const out = await mintFromCall(a.db, list, a.request.mint_call_id);
+    return { httpStatus: String(out.status).endsWith("refused") || out.status === "mint_failed" ? 409 : 200, body: { review_lane: out } };
+  }
+  const target: ReviewTarget | undefined = list.targets.find((t) => t.key === a.request.target);
+  if (!target) return { httpStatus: 400, body: { status: "review_lane_refused", error: `review lane: unknown target (known: ${list.targets.map((t) => t.key).join(", ")})` } };
+  if (!a.apiKey) return { httpStatus: 500, body: { status: "review_lane_refused", error: "review lane: ANTHROPIC_API_KEY missing" } };
+  if (a.capUsd == null) return { httpStatus: 400, body: { status: "review_lane_refused", error: "review lane requires spend_cap_usd" } };
+  if (!a.spendSince) return { httpStatus: 400, body: { status: "review_lane_refused", error: "review lane requires spend_since: the research run's start, an ISO time in the last 24 hours" } };
+
+  const cap = makeSpendCap({ capUsd: a.capUsd, companyId: a.companyId, since: a.spendSince, supabase: a.db });
+  const prompt = reviewLanePrompt(target);
+  const ledger = webSearchLedgerFor(a.db, { companyId: a.companyId, runId: null, callSite: REVIEW_LANE_CALL_SITE });
+  requireWebSearchLedger(ledger, REVIEW_LANE_CALL_SITE);
+  const promptSha = await promptShaOf(prompt);
+  try {
+    await assertSpendable(cap, { site: REVIEW_LANE_CALL_SITE, model: a.model, projectedUsd: projectReviewLaneUsd(anthropicPriceFor(a.model), prompt.length) });
+  } catch (e) {
+    if (e instanceof SpendCapRefused) return { httpStatus: 200, body: { review_lane: { status: "refused_by_cap", target: target.key, reason: e.message, refusals: cap.refusals } } };
+    throw e;
+  }
+  let res: Response;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": a.apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": REVIEW_LANE_BETA, "content-type": "application/json" },
+      body: JSON.stringify({ model: a.model, max_tokens: REVIEW_LANE_MAX_TOKENS, tools: reviewLaneTools(target.host), messages: [{ role: "user", content: prompt }] }),
+    });
+  } catch (netErr) {
+    await ledgerOrRefuse(ledger, { model: a.model, usage: null, attempt: 1, promptSha }, REVIEW_LANE_CALL_SITE);
+    return { httpStatus: 502, body: { review_lane: { status: "call_failed", target: target.key, error: String(netErr).slice(0, 300) } } };
+  }
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    await ledgerOrRefuse(ledger, { model: a.model, usage: null, attempt: 1, promptSha }, REVIEW_LANE_CALL_SITE);
+    return { httpStatus: 502, body: { review_lane: { status: "call_failed", target: target.key, error: `Anthropic HTTP ${res.status} ${errText.slice(0, 300)}` } } };
+  }
+  const d = await res.json();
+  await ledgerOrRefuse(ledger, { model: a.model, usage: d?.usage ?? null, attempt: 1, promptSha }, REVIEW_LANE_CALL_SITE);
+  const usd = anthropicUsd(a.model, d?.usage ?? null);
+  const { data: callRow, error: callErr } = await a.db.from("review_lane_calls").insert({
+    company_id: a.companyId, target_key: target.key, host: target.host, model: a.model, usd, response: d,
+    outcome: { status: "stored", stop_reason: d?.stop_reason ?? null, usage: d?.usage ?? null, prompt_sha: promptSha }, created_by: a.actingUserId,
+  }).select("id").single();
+  if (callErr || !callRow) return { httpStatus: 500, body: { review_lane: { status: "store_failed", target: target.key, error: callErr?.message ?? "no row", usd } } };
+  if (!mint) return { httpStatus: 200, body: { review_lane: { status: "stored", call_id: callRow.id, target: target.key, usd } } };
+  const out = await mintFromCall(a.db, list, callRow.id);
+  return { httpStatus: 200, body: { review_lane: { ...out, target: target.key, usd } } };
+}

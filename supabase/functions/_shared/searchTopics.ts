@@ -21,7 +21,7 @@ export const MAX_TOPIC_CHARS = 160;
 /** Every key public-baseline reads off the body. A key not here is refused rather than ignored. */
 export const BASELINE_BODY_KEYS: readonly string[] = [
   "company_id", "company_name", "website", "skip_mojo_analysis", "chain", "parent_run_id", "spend_cap_usd",
-  "synthesis_engine", "public_source_filters_json", "seed_lane_only", SEARCH_TOPICS_KEY,
+  "synthesis_engine", "public_source_filters_json", "seed_lane_only", SEARCH_TOPICS_KEY, "review_lane", "spend_since",
 ];
 
 /** Every key run-public-research (the wrapper) reads off the body. */
