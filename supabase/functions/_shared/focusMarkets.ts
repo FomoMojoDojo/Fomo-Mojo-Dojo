@@ -105,6 +105,19 @@ export async function focusForRun(supabase: Sb, proposalId: string, companyId: s
   }
 }
 
+/**
+ * P-0 (D1, 2026-11-18): the save path KEEPS the labels the workflow emitted on a candidate card. The
+ * need / job step / outcome normalizers used to rebuild each card from named fields and dropped
+ * `subject_party` and `focus_index`, so every focused card reached the queue unlabelled.
+ */
+export function keepEmittedLabels(from: Record<string, unknown>, to: Record<string, unknown>): Record<string, unknown> {
+  const party = typeof from.subject_party === "string" ? from.subject_party.trim().toLowerCase() : "";
+  if (party) to.subject_party = party;
+  const i = Number(from.focus_index);
+  if (from.focus_index !== null && from.focus_index !== "" && Number.isInteger(i)) to.focus_index = i;
+  return to;
+}
+
 export type FocusParty = "focus" | "focus_unresolved" | "company" | "other" | "unlabelled" | "unfocused";
 
 /**

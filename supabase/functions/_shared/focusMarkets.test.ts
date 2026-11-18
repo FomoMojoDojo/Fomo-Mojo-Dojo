@@ -1,6 +1,6 @@
 // F-3/F-4: the focus a run is stamped with, what the generator is sent, and what a card's label means.
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { buildFocusStamp, focusForRun, focusMarketsInput, leadJourneyKey, resolveFocusParty, type FocusStampEntry } from "./focusMarkets.ts";
+import { buildFocusStamp, focusForRun, focusMarketsInput, keepEmittedLabels, leadJourneyKey, resolveFocusParty, type FocusStampEntry } from "./focusMarkets.ts";
 
 const DONORS = { id: "m-d", journey_key: "pmk-donors", job_executor: "Individual donors", jtbd: "support youth mental health", retracted_at: null };
 const FAMILIES = { id: "m-f", journey_key: "customer", job_executor: "Families", jtbd: "", retracted_at: null };
@@ -77,4 +77,19 @@ Deno.test("F-4: a card's label → what the queue does (decisions 4/5)", () => {
   // unfocused: no filter at all, whatever the label
   assertEquals(resolveFocusParty([], "other", 0).party, "unfocused");
   assertEquals(resolveFocusParty(null, "company", 0).party, "unfocused");
+});
+
+Deno.test("P-0: the save path keeps the emitted subject_party and focus_index; a card without them gains nothing", () => {
+  assertEquals(keepEmittedLabels({ subject_party: " Focus ", focus_index: "2" }, { desired_outcome: "x" }), { desired_outcome: "x", subject_party: "focus", focus_index: 2 });
+  assertEquals(keepEmittedLabels({ subject_party: "other", focus_index: 0 }, { step_label: "s" }), { step_label: "s", subject_party: "other", focus_index: 0 });
+  assertEquals(keepEmittedLabels({ desired_outcome: "x" }, { desired_outcome: "x" }), { desired_outcome: "x" });
+  assertEquals(keepEmittedLabels({ subject_party: "", focus_index: null }, { outcome: "o" }), { outcome: "o" });
+});
+
+Deno.test("P-0: every candidate normalizer on the save path returns through keepEmittedLabels", async () => {
+  const src = await Deno.readTextFile(new URL("../dify-analyze-file/index.ts", import.meta.url));
+  for (const fn of ["normalizeCandidateNeed", "normalizeJobStep", "normalizeCandidateOutcome"]) {
+    const body = src.slice(src.indexOf(`function ${fn}(`), src.indexOf("\n}\n", src.indexOf(`function ${fn}(`)));
+    assertEquals(/return keepEmittedLabels\(value, /.test(body), true, fn);
+  }
 });

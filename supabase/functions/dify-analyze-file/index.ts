@@ -27,7 +27,7 @@ import {
 } from "../_shared/frameworkRetry.ts";
 import { retireEarlierAnalysesOfFile } from "../_shared/retireProposals.ts";
 import { queueCandidatesForAnalysis } from "../_shared/candidateQueue.ts";
-import { focusForRun, focusMarketsInput, leadJourneyKey } from "../_shared/focusMarkets.ts";
+import { focusForRun, focusMarketsInput, keepEmittedLabels, leadJourneyKey } from "../_shared/focusMarkets.ts";
 import { FILE_ANALYSIS_VERSION } from "../../../src/lib/fileAnalysis.ts";
 
 const corsHeaders = {
@@ -270,7 +270,7 @@ function normalizeCandidateNeed(value: Record<string, unknown>): Record<string, 
   ).trim();
   if (evidence) next.evidence = evidence;
 
-  return next;
+  return keepEmittedLabels(value, next);
 }
 
 function normalizeFrameworkFinding(value: Record<string, unknown>): Record<string, unknown> {
@@ -304,21 +304,21 @@ function normalizePositioningUpdate(value: Record<string, unknown>): Record<stri
 }
 
 function normalizeJobStep(value: Record<string, unknown>): Record<string, unknown> {
-  return {
+  return keepEmittedLabels(value, {
     step_label: String(value.step_label ?? "").trim(),
     step_description: String(value.step_description ?? "").trim(),
     evidence: String(value.evidence ?? "").trim(),
     confidence: String(value.confidence ?? "low").trim().toLowerCase(),
-  };
+  });
 }
 
 function normalizeCandidateOutcome(value: Record<string, unknown>): Record<string, unknown> {
-  return {
+  return keepEmittedLabels(value, {
     outcome: String(value.outcome ?? "").trim(),
     related_opportunities: readStringArray(value.related_opportunities),
     evidence: String(value.evidence ?? "").trim(),
     confidence: String(value.confidence ?? "low").trim().toLowerCase(),
-  };
+  });
 }
 
 function normalizePossibleRoute(value: unknown): Record<string, unknown> {
