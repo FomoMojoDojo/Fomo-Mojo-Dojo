@@ -11,15 +11,12 @@
 #       from the engine's own counter (~/searxng/data/braveapi-usage.json)
 #   s3. the four blocked engines are reported as they stand — informational, never relied on
 #
-#   bash scripts/guards/search-health-guard.sh ["<control query>"]     (default: the active company name)
+#   bash scripts/guards/search-health-guard.sh ["<control query>"]     (default: "Charter Communications")
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 URL="${SEARXNG_HOST_URL:-http://localhost:8888}"
-Q="${1:-}"
-if [ -z "$Q" ]; then
-  Q=$(docker exec -i supabase_db_dzlgyxcvuwiulgifbmew psql -U postgres -At -c "select name from companies where id='3dd2cfbb-0792-4bf1-9cd4-15db9646874b'" 2>/dev/null || true)
-  Q="${Q:-Charter Communications}"
-fi
+# a fixed public name: a guard never reads a client's row to build its query (edgewood-reference-guard, D4b)
+Q="${1:-Charter Communications}"
 fail() { echo "FAIL $1: $2"; echo "SearXNG dead this session — name-only plans run on the web_search lane; domain plans unaffected"; echo "guard: FAIL"; exit 1; }
 
 CFG=$(curl -s -m 15 "$URL/config" || true)

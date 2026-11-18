@@ -545,8 +545,8 @@ the judge is not ledgered). Exclude it from any fleet-wide boot sweep; its boot 
 
 ### Search-health check (2026-09-18; keyed Brave engine since 2026-11-18)
 
-Before any outside read: `bash scripts/guards/search-health-guard.sh ["<control query>"]` (default: the active company
-name). It spends ONE paid Brave query (~$0.005).
+Before any outside read: `bash scripts/guards/search-health-guard.sh ["<control query>"]` (default:
+"Charter Communications", a fixed public name — a guard never reads a client row). It spends ONE paid Brave query (~$0.005).
 
 - **Since 2026-11-18 search rests on ONE keyed engine, `braveapi`.** The four general engines (google, duckduckgo,
   startpage, brave) still captcha / 403 this egress (T-Mobile CGNAT, IP reputation, not self-healing); they stay
