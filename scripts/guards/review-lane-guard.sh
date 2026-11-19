@@ -21,6 +21,7 @@
 #       Plant: bash scripts/plant.sh save scripts/review-lane/counted-quotes.sql; delete its four page lines (`held_at`,
 #       `quote`, `quote_source_text`, `quote_basis`) so leads are selected; the guard → r10 RED (deleting only two
 #       stays GREEN: the others still exclude a lead); bash scripts/plant.sh restore scripts/review-lane/counted-quotes.sql.
+#   r11. (A5) scripts/review-lane/counted-quotes.test.ts and promotion.test.ts pass.
 #   r9. the company's own reply ("Please DM us…", "We apologize…") is never a customer quote — planted shape and live rows.
 #   r6. inside ONE rolled-back transaction: an about_entity_id of another company's entity is refused; a brand with no
 #       page is refused; a lane row with no quote saved unheld is refused (A2, signals_lane_quote_or_held), held it is saved; authenticated cannot write review_lane_calls; the trigger function is not executable by clients.
@@ -112,4 +113,8 @@ echo "$OUT" | grep -q "OK r6d" || fail r6 "a quote-less lane row held as a lead 
   || fail r6 "a client role can execute signals_about_entity_check()"
 [ "$(psql "select count(*) from companies where id='00000000-0000-4000-8000-00000000d1a3'")" = 0 ] || fail rollback "the guard's company persisted"
 echo "r6. another company's entity, a brand with no page, and a quote-less lane row saved unheld (A2) are refused; held as a lead it is saved; clients cannot write the call ledger or run the trigger"
+# r11 (A5): the counted-quote selection and promote-verified's decision have their own tests
+deno test --quiet --allow-all scripts/review-lane/counted-quotes.test.ts scripts/review-lane/promotion.test.ts >/dev/null 2>&1 \
+  || fail r11 "counted-quotes.test.ts or promotion.test.ts failed"
+echo "r11. counted-quotes.sql (rolled back, one row per exclusion) and promote-verified's decision pass their tests"
 echo "GUARD OK"

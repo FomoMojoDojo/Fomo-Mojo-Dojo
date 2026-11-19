@@ -16,6 +16,7 @@ import { lit, PsqlSession } from "../lib/psqlBlankingStore.ts";
 import { REVIEW_LISTS } from "../../supabase/functions/_shared/reviewPages.ts";
 import { LEAD_BASIS_LABEL } from "../../supabase/functions/_shared/searchLeads.ts";
 import { REVIEW_LANE_VERIFY_TARGET_PREFIX, verifyLead } from "../../supabase/functions/_shared/reviewHostLane.ts";
+import { promotionWrite } from "./promotion.ts";
 
 const out = (o: unknown) => console.log(JSON.stringify(o, null, 1));
 const body = argvBody(Deno.args);
@@ -51,16 +52,14 @@ try {
   const at = new Date().toISOString();
   if (v.mode === "write") {
     for (const { id, verdict } of verdicts) {
-      if (verdict.promoted) {
-        const patch = { quote_basis: "web_fetch_page_text", date_basis: verdict.date_basis, review_body: verdict.review_body, verified_by_call_id: callId,
-          lead_verify: { call: callId, result: "promoted", page_url: verdict.page_url, at } };
-        await s.mutate(`update signals set quote=${lit(verdict.quote)}, quote_source_text=${lit(verdict.quote_source_text)},
-            event_date=${verdict.event_date ? `${lit(verdict.event_date)}::date` : "event_date"}, event_date_precision=${lit(verdict.event_date_precision)},
-            raw_payload = raw_payload || ${lit(JSON.stringify(patch))}::jsonb
+      const w = promotionWrite(verdict, callId, at);
+      if (w.kind === "promote") {
+        await s.mutate(`update signals set quote=${lit(w.quote)}, quote_source_text=${lit(w.quote_source_text)},
+            event_date=${w.event_date ? `${lit(w.event_date)}::date` : "event_date"}, event_date_precision=${lit(w.event_date_precision)},
+            raw_payload = raw_payload || ${lit(JSON.stringify(w.payload))}::jsonb
           where id=${lit(id)}::uuid and held_reason=${lit(LEAD_BASIS_LABEL)} and quote is null returning id`);
       } else {
-        await s.mutate(`update signals set raw_payload = raw_payload || ${lit(JSON.stringify({ lead_verify: { call: callId, result: "lead", reason: verdict.reason, at } }))}::jsonb
-          where id=${lit(id)}::uuid returning id`);
+        await s.mutate(`update signals set raw_payload = raw_payload || ${lit(JSON.stringify(w.payload))}::jsonb where id=${lit(id)}::uuid returning id`);
       }
     }
     await s.exec("commit;");
