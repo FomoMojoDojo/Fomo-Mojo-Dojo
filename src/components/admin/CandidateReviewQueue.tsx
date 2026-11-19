@@ -6,14 +6,21 @@
 // route and positioning candidates can be reviewed and rejected here, and have no accept in this slice.
 //
 // Operator-only labels (SP-331): this panel is mounted only on the admin company-files page.
+//
+// SP-433 (2026-11-19): the queue also holds OUTSIDE-VOICE need cards, read out of customers' own
+// public words rather than an uploaded file. Such a card carries proposed_state.origin =
+// 'outside_voice_read' and shows the mark "Only the outside shows it"; on accept the need lands
+// with source_path 'outside_voice_read' and provenance 'outside_review_derived', neither of which
+// is on any public list. Accept is still one admin click through accept_candidate_proposal().
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { OUTSIDE_VOICE_MARK, isOutsideVoiceCard } from "@/lib/outsideVoiceMark";   // SP-433 (2026-11-19)
 
 type QueueRow = {
   id: string;
   surface_type: string;
   status: string;
-  proposed_state: { item?: Record<string, unknown>; evidence_signal_ids?: string[]; evidence_voice?: string } | null;
+  proposed_state: { item?: Record<string, unknown>; evidence_signal_ids?: string[]; evidence_voice?: string; origin?: string } | null;
   raw_payload: { file_proposal_id?: string; candidate_list?: string; evidence_match?: string } | null;
   created_at: string;
 };
@@ -93,7 +100,7 @@ export default function CandidateReviewQueue({ companyId }: { companyId: string 
 
   return (
     <section className="mt-8 rounded-lg border p-5" data-testid="candidate-review-queue">
-      <h2 className="text-sm font-semibold">Review queue — from file analyses</h2>
+      <h2 className="text-sm font-semibold">Review queue — from file analyses and the outside-voice read</h2>
       {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
       {loading ? null : rows.length === 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">No pending candidates.</p>
@@ -109,6 +116,11 @@ export default function CandidateReviewQueue({ companyId }: { companyId: string 
                   <span>{TYPE_LABEL[row.surface_type] ?? row.surface_type}</span>
                   <span>· {VOICE_LABEL[voice] ?? voice}</span>
                   <span>· {ids.length} {ids.length === 1 ? "signal" : "signals"}</span>
+                  {/* SP-433: rendered from the card's own origin — the value accept writes into
+                      source_path — so the mark cannot disagree with what the row rests on. */}
+                  {isOutsideVoiceCard(row.proposed_state) && (
+                    <span data-testid="outside-voice-mark">· {OUTSIDE_VOICE_MARK}</span>
+                  )}
                 </div>
                 <p className="mt-1 text-sm">{candidateHeadline(row)}</p>
                 <div className="mt-2 flex gap-2">

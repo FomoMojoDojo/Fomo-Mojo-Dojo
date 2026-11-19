@@ -58,13 +58,19 @@ MEMBERS=$(printf '%s' "$LINE" | sed 's/.*new Set(\[//; s/\]).*//' | tr -d ' "' |
 echo "n3. PUBLIC_NEED_SOURCE_PATHS is exactly {public_research} ($EP)"
 
 # n4 ── outside_voice_read is nowhere near public
+# SP-433 (2026-11-19) SPLIT THIS CHECK IN TWO, because the two halves now differ.
+#   · The value is PERMITTED IN THE COLUMN: the accept path writes it (SP-433 widened the CHECK).
+#   · The value is NOT PUBLIC: it is absent from PUBLIC_NEED_SOURCE_PATHS, so needRestsOnPrivateSource
+#     returns private for it, and n3 above pins that set to {public_research}.
+# Permitting a value in a column is not the same as that value being public, and conflating the two
+# is exactly the mistake the original n4 would now enforce.
 grep -q 'outside_voice_read' "$EP" \
-  && fail n4 "'outside_voice_read' appears in $EP — SP-404 signs it private by default, so it must be absent"
+  && fail n4 "'outside_voice_read' appears in $EP — SP-404 signs it private, so it must never join a list there"
 CHECKDEF=$(q "select pg_get_constraintdef(oid) from pg_constraint
               where conrelid='public.odi_needs'::regclass and conname='odi_needs_source_path_shape'")
 printf '%s' "$CHECKDEF" | grep -q 'outside_voice_read' \
-  && fail n4 "the CHECK permits 'outside_voice_read'; SP-415 signed it absent"
-echo "n4. 'outside_voice_read' is in neither the TS public set nor the CHECK"
+  || fail n4 "the CHECK does NOT permit 'outside_voice_read' — the SP-433 accept path cannot write a need"
+echo "n4. 'outside_voice_read' is absent from the TS public set (private by SP-404) and permitted by the CHECK (writable by SP-433)"
 
 # n5 ── every odi_needs INSERT site names source_path
 # An insert site is `from("odi_needs")` with `.insert(`/`.upsert(` on the same line or within the

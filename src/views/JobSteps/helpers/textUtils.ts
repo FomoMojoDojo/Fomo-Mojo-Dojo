@@ -1,3 +1,5 @@
+import { OUTSIDE_VOICE_MARK, isOutsideVoiceSourced } from "@/lib/outsideVoiceMark";   // SP-433 (2026-11-19)
+
 export function safeText(value: string | null | undefined, fallback = "") {
   return value?.trim() || fallback;
 }
@@ -11,6 +13,9 @@ export function sourcePathLabel(sourcePath?: string | null) {
   if (!value) return "Unknown source";
   const lower = value.toLowerCase();
   if (lower.includes("social")) return "From social conversations";
+  // SP-433: an outside-voice need is neither public nor uploaded/company. Without this arm it read
+  // "Uploaded/company: outside_voice_read", which names a file that does not exist.
+  if (isOutsideVoiceSourced(value)) return OUTSIDE_VOICE_MARK;
   return isPublicSourcePath(value) ? `Public: ${value}` : `Uploaded/company: ${value}`;
 }
 

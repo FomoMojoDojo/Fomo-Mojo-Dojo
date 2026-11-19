@@ -163,7 +163,7 @@ TS
     ACC=$(docker exec -i "$DB" psql -U postgres -X -v ON_ERROR_STOP=1 2>&1 <<SQL
 BEGIN;
 DO \$g\$
-DECLARE r jsonb; n record; fired boolean; msg text;
+DECLARE r jsonb; n record; fired boolean; msg text; rev text;
 BEGIN
   -- a non-admin is refused
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '${NA:-00000000-0000-0000-0000-000000000000}', 'role', 'authenticated')::text, true);
@@ -204,18 +204,63 @@ BEGIN
   PERFORM set_config('role', 'postgres', true);
   IF NOT fired THEN RAISE EXCEPTION 'GUARD-FAIL (q3d) a route candidate was accepted — it has no insert-type accept'; END IF;
   RAISE NOTICE 'OK q3d a second accept, a superseded row and a route candidate are each refused';
+  -- SP-433: an OUTSIDE-VOICE card lands as what it rests on, never as a file. Same rolled-back
+  -- transaction, same throwaway company — Charter is never written by a guard.
+  PERFORM set_config('role', 'postgres', true);
+  -- a REVIEW-LANE shaped signal to cite: the outside-voice path rests on public review-lane rows, not
+  -- on the file-analysis fixture the company-voice checks above use.
+  INSERT INTO public.signals (company_id, source_type, signal_band, voice_class, claim_text, evidence_excerpt, topic, source_url)
+  VALUES ('$CO', 'public_baseline_run', 'outside', 'outside_voice_about_client',
+          'GUARD review quote', 'GUARD review quote', 'customer_review', 'https://www.trustpilot.com/review/guard.example')
+  RETURNING id::text INTO rev;
+  INSERT INTO public.surface_proposals (company_id, surface_type, proposed_state, status, raw_payload)
+  VALUES ('$CO', 'candidate_need',
+          jsonb_build_object('item', jsonb_build_object('desired_outcome', 'GUARD outside-voice need'),
+                             'evidence_signal_ids', jsonb_build_array(rev),
+                             'evidence_voice', 'outside',
+                             'origin', 'outside_voice_read'),
+          'pending', jsonb_build_object('candidate_list', 'outside_voice_read'))
+  RETURNING id INTO msg;
+  PERFORM set_config('role', 'authenticated', true);
+  r := public.accept_candidate_proposal(msg::uuid);
+  PERFORM set_config('role', 'postgres', true);
+  SELECT source_path, provenance_type::text AS p, evidence_voice, evidence_baseline_signal_ids AS ids,
+         source_proposal_id INTO n FROM public.odi_needs WHERE id = (r->>'row_id')::uuid;
+  IF n.source_path <> 'outside_voice_read' THEN RAISE EXCEPTION 'GUARD-FAIL (q3e) source_path is %, expected outside_voice_read', n.source_path; END IF;
+  IF n.source_path LIKE 'file_proposal:%' THEN RAISE EXCEPTION 'GUARD-FAIL (q3e) an outside-voice need was recorded as file-derived'; END IF;
+  IF n.p <> 'outside_review_derived' THEN RAISE EXCEPTION 'GUARD-FAIL (q3e) provenance is %, expected outside_review_derived', n.p; END IF;
+  IF n.evidence_voice <> 'outside' THEN RAISE EXCEPTION 'GUARD-FAIL (q3e) voice %', n.evidence_voice; END IF;
+  IF n.ids <> jsonb_build_array(rev) THEN RAISE EXCEPTION 'GUARD-FAIL (q3e) evidence ids %', n.ids; END IF;
+  IF n.source_proposal_id IS NULL THEN RAISE EXCEPTION 'GUARD-FAIL (q3e) source_proposal_id is NULL — the need would not be private by that gate'; END IF;
+  -- every cited id is a signal of THIS company, from the public review lane
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements_text(n.ids) x
+              WHERE NOT EXISTS (SELECT 1 FROM public.signals s
+                                 WHERE s.id = x::uuid AND s.company_id = '$CO'
+                                   AND s.source_type = 'public_baseline_run'))
+  THEN RAISE EXCEPTION 'GUARD-FAIL (q3e) a cited evidence id is not a public review-lane signal of this company'; END IF;
+  RAISE NOTICE 'OK q3e accepted outside-voice need: source_path outside_voice_read (never file_proposal:), outside_review_derived, outside voice, its own evidence ids, linked back';
 END
 \$g\$;
 ROLLBACK;
 SQL
 )
-    for k in q3a q3b q3c q3d; do
+    for k in q3a q3b q3c q3d q3e; do
       echo "$ACC" | grep -q "OK $k" && ok "($k) $(echo "$ACC" | grep "OK $k" | sed "s/.*OK $k //")" || bad "($k) $(echo "$ACC" | grep -m1 -E 'GUARD-FAIL|ERROR' || echo 'did not run')"
     done
     [ "$(q "select count(*) from odi_needs where source_proposal_id='$NEW_NEED'")" = "0" ] \
       && ok "(q3) the accept checks were rolled back — no map row left on the fixture" || bad "(q3) the rolled-back accept left a map row"
   fi
 fi
+
+echo "── (q3f) SP-433: the TS predicates refuse an outside-voice need ──"
+# The accept path writes a row that must be PRIVATE by source and REFUSED by the external gate. Both
+# are TS predicates, so they are exercised in TS rather than restated in SQL. The row is synthetic:
+# this check is about the predicates, not about live data.
+Q3F=$(PATH="$HOME/.deno/bin:$PATH" deno run -A scripts/guards/helpers/outsideVoiceNeedPredicates.ts 2>&1 || true)
+case "$Q3F" in
+  Q3F-OK*) ok "(q3f) ${Q3F#Q3F-OK }" ;;
+  *) bad "(q3f) ${Q3F:-did not run}" ;;
+esac
 
 echo "── (q4) SP-327, fleet-wide: no map row rests on a proposal that is not accepted ──"
 ORPHANS=$(psqlq "select count(*) from (

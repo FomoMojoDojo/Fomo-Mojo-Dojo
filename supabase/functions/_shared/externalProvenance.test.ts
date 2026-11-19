@@ -35,6 +35,8 @@ Deno.test("subject lanes partition the enum + NULL (XOR)", () => {
 Deno.test("local lane = exact enum complement of external-admissible", () => {
   const expectedLocal = new Set([
     "framework_adjudicated", "odi_survey", "manual", "internal_declared", "internal_hypothesis",
+    // SP-417: an outside-voice need is local-lane — never external, judged locally.
+    "outside_review_derived",
   ]);
   for (const p of PROVENANCE_TYPE_ENUM) {
     const inLocal = isSubjectLocalAdmissible(p, null);

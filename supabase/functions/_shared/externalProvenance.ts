@@ -45,6 +45,11 @@ export const PROVENANCE_TYPE_ENUM = [
   "manual",
   "internal_declared",
   "internal_hypothesis",
+  // SP-417 (2026-11-19): an outside-voice need — adjudicated from a read of outside customer
+  // REVIEWS. It is NOT external-admissible: it is absent from EXTERNAL_ADMISSIBLE_PROVENANCE, so
+  // isSubjectExternallyAdmissible refuses it and the local lane (the literal negation) is its home.
+  // Listing it here is what keeps the subject partition total over the values this code can meet.
+  "outside_review_derived",
 ] as const;
 
 // `public_baseline` is in EXTERNAL_ADMISSIBLE_PROVENANCE but is a strategy
