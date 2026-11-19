@@ -22,6 +22,11 @@
 #       url, not on its quote_source_text, and not already carrying a backfill stamp; every such row (with ≥1 ok
 #       snapshot) is planned; no frozen company
 #   e7. after the probes the audit table holds exactly what it held before (rollback proven) and signals' md5 is unchanged
+#   e8. (A6, 2026-11-18) CENSUS: a stored search snippet (outside_page_snapshots.structured.basis_kind 'cited_text') is
+#       never read as the page. Every file that reads outside_page_snapshots is either a PAGE READER that applies the rule
+#       (_shared/snapshotBasis.ts isPageSnapshot / pageSnapshotSql, or the literal SQL predicate) or is named EXEMPT with
+#       its reason; a new reader on neither list fails. Plant: drop the predicate from scripts/lib/psqlBlankingStore.ts →
+#       the live plan grows back by the 40 snippet-only rows (the real-document check); remove a reader's rule → e8 RED.
 #
 # e6's SQL (2026-11-18, brief "verify search-cited quotes", slice 2): it mirrors the planner's normalizeForHash
 # (lowercase, every whitespace run to one space, trimmed) and tests containment with strpos, not LIKE. The old
@@ -116,7 +121,7 @@ EOF
 [ $? -eq 0 ] || fail e5 "fleet plan: an analysis row is not stamped_only, or a non-analysis row is"
 echo "e5. analysis rows: stamped (analysis_carve_out), excerpt kept in the sample; fleet plan actions match voice_class"
 psql "with live as (select s.id, s.company_id, s.source_url, btrim(lower(regexp_replace(s.evidence_excerpt,'\s+',' ','g'))) ex, s.quote_source_text, s.review_lane_call_id from signals s join companies c on c.id=s.company_id where s.signal_band='outside' and s.superseded_at is null and s.held_at is null and nullif(trim(s.evidence_excerpt),'') is not null and nullif(trim(s.source_url),'') is not null and not c.frozen and c.id<>'58b2b15b-bada-4bcd-9c12-b7e66a37d0bc' and coalesce(s.raw_payload->'excerpt_guard'->>'backfill_run_ref','')=''),
- snap as (select company_id, source_url, string_agg(lower(regexp_replace(clean_text,'\s+',' ','g')),' ||| ') t from outside_page_snapshots where fetch_status='ok' and clean_text is not null group by 1,2)
+ snap as (select company_id, source_url, string_agg(lower(regexp_replace(clean_text,'\s+',' ','g')),' ||| ') t from outside_page_snapshots where fetch_status='ok' and clean_text is not null and coalesce(structured->>'basis_kind','') <> 'cited_text' group by 1,2)
  select l.id from live l join snap on snap.company_id=l.company_id and snap.source_url=l.source_url where strpos(snap.t, l.ex) = 0 and (l.quote_source_text is null or strpos(lower(regexp_replace(l.quote_source_text,'\s+',' ','g')), l.ex) = 0)
    and not exists (select 1 from review_lane_calls c cross join lateral jsonb_array_elements(case when jsonb_typeof(c.response->'content')='array' then c.response->'content' else '[]'::jsonb end) b
                     where c.id = l.review_lane_call_id and b->>'type'='web_fetch_tool_result' and b->'content'->>'type'='web_fetch_result'
@@ -129,4 +134,14 @@ echo "e6. plan = SQL set by id ($(wc -l < "$TMP/sql_ids.txt" | tr -d ' ') rows);
 [ "$(psql "select count(*) from signal_excerpt_blankings")" = "$AUDIT_N0" ] || fail e7 "audit table changed"
 [ "$(psql "select md5(string_agg(id::text||'|'||evidence_excerpt||'|'||claim_text||'|'||coalesce(raw_payload::text,''), ',' order by id)) from signals")" = "$SIG_MD5_0" ] || fail e7 "signals changed"
 echo "e7. rollback proven: audit table and signals byte-identical to before the probes"
+# e8 — the census
+PAGE_READERS="supabase/functions/_shared/excerptBlanking.ts scripts/lib/psqlBlankingStore.ts supabase/functions/verify-excerpts/index.ts supabase/functions/_shared/outsideRegenHandler.ts supabase/functions/_shared/listingRegen.ts scripts/b3-review-decide.ts scripts/first-read-outside-recrawl.ts scripts/guards/excerpt-blanking-guard.sh"
+# EXEMPT, each with its reason: writers of snapshots, readers of structure/identity only, and readers that use the text for
+# something other than "is this on the page" (registry section spans, own-words spans, the authorship judge's context)
+EXEMPT_RE='^(supabase/functions/_shared/snapshotBasis\.ts|supabase/functions/_shared/excerptVerification\.ts|supabase/functions/crawl-outside-pages/index\.ts|supabase/functions/_shared/outsidePageStore\.ts|scripts/r52/apply\.ts|scripts/r52/psqlSweepStore\.ts|scripts/entity-voice-restamp\.ts|src/lib/firstRead/channelAdmission\.ts|src/views/client/firstReadPreview/useFirstReadPreviewData\.ts|supabase/functions/_shared/aggregatorAuthorship\.ts|supabase/functions/_shared/listingDetect\.ts|supabase/functions/_shared/outsideEvidenceRegen\.ts|supabase/functions/_shared/ownHosts\.ts|supabase/functions/_shared/registryClassifier\.ts|supabase/functions/_shared/registryIngest\.ts|supabase/functions/_shared/registryOwnWords\.ts|supabase/functions/extract-own-words/index\.ts|supabase/functions/extract-outside-evidence/index\.ts)$'
+for f in $PAGE_READERS; do grep -qE "isPageSnapshot|pageSnapshotSql|basis_kind','') <> 'cited_text'" "$f" || fail e8 "page reader $f does not skip stored search snippets"; done
+UNLISTED=$(git ls-files -co --exclude-standard -- supabase/functions scripts src | grep -vE "\.test\.|/migrations/|^scripts/guards/|integrations/supabase/types\.ts$" | xargs grep -l "outside_page_snapshots" 2>/dev/null \
+  | while read -r f; do echo " $PAGE_READERS " | grep -q " $f " && continue; echo "$f" | grep -qE "$EXEMPT_RE" && continue; echo "$f"; done)
+[ -z "$UNLISTED" ] || fail e8 "outside_page_snapshots is read by a file on neither the page-reader nor the exempt list: $(echo $UNLISTED)"
+echo "e8. census: $(echo $PAGE_READERS | wc -w | tr -d ' ') page readers skip stored search snippets; every other reader is named exempt"
 echo "GUARD OK"

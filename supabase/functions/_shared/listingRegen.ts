@@ -5,6 +5,7 @@
 // content identity = host + product + price, dedup by identity. mode 'dry' prints would-mint rows and refusals
 // and writes the ledger ONLY (status planned). Never touches held rows (supersede is a separate act). Frozen
 // refused before any read. No model call anywhere.
+import { isPageSnapshot } from "./snapshotBasis.ts";
 import { FROZEN_COMPANY_IDS } from "./frozenCompanies.ts";
 import { gateRegenUrls, type ReviewRefusal } from "./outsideRecrawlReview.ts";
 import { buildAnchors } from "./outsideRecrawlAnchors.ts";
@@ -58,7 +59,8 @@ export async function runListingRegen(args: { supabase: Store; companyId: string
   if (error) return { ok: false, error: String(error.message ?? error) };
   type Snap = { source_url: string; clean_text: string | null; text_sha256: string; crawled_at: string | null; structured: StructuredBlock | null };
   const newest = new Map<string, Snap>();
-  for (const r of (snapRows ?? []) as Snap[]) if (!newest.has(r.source_url)) newest.set(r.source_url, r);
+  // A6: a stored search snippet is not the page
+  for (const r of (snapRows ?? []) as Snap[]) if (!newest.has(r.source_url) && isPageSnapshot(r.structured)) newest.set(r.source_url, r);
   let urls = [...newest.keys()];
   if (Array.isArray(args.urls) && args.urls.length) urls = urls.filter((u) => args.urls!.includes(u));
   const urlsConsidered = Array.isArray(args.urls) && args.urls.length ? args.urls.length : urls.length;

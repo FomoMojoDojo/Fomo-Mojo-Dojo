@@ -12,6 +12,8 @@
 // Literals are dollar-quoted with a tag the value cannot contain — excerpt text goes in verbatim.
 import type { BlankingAuditRow, BlankingCompany, BlankingSignal, BlankingSnapshot, BlankingStore } from "../../supabase/functions/_shared/excerptBlanking.ts";
 
+import { pageSnapshotSql } from "../../supabase/functions/_shared/snapshotBasis.ts";
+
 export const DB_CONTAINER = "supabase_db_dzlgyxcvuwiulgifbmew";
 
 export class PsqlSession {
@@ -102,7 +104,7 @@ export function makePsqlBlankingStore(s: PsqlSession): BlankingStore {
       const vals = pairs.map((p) => `(${lit(p.company_id)}::uuid, ${lit(p.source_url)})`).join(",");
       return await s.query<BlankingSnapshot>(`select p.company_id, p.source_url, p.clean_text, p.text_sha256, p.crawled_at from outside_page_snapshots p
         join (values ${vals}) w(company_id, source_url) on w.company_id=p.company_id and w.source_url=p.source_url
-        where p.fetch_status='ok' and p.clean_text is not null`);
+        where p.fetch_status='ok' and p.clean_text is not null and ${pageSnapshotSql("p")}`); // A6: a search snippet is not a page
     },
     async loadLaneFetchedPages(callIds) {
       const out = new Map<string, string[]>();

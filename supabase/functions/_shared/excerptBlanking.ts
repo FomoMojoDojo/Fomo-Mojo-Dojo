@@ -31,6 +31,7 @@
 //
 // Deterministic. ZERO model calls. The store is injected (supabase-js for the edge; a psql session for
 // the local runner, which can wrap a whole apply + revert in one rolled-back transaction).
+import { isPageSnapshot } from "./snapshotBasis.ts";
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { FROZEN_COMPANY_IDS } from "./frozenCompanies.ts";
 import { EXCERPT_GUARD_VERSION } from "./excerptVerification.ts";
@@ -390,9 +391,10 @@ export function makeSupabaseBlankingStore(supabase: SupabaseLike): BlankingStore
       for (let i = 0; i < urls.length; i += URL_IN_CHUNK) {
         const slice = urls.slice(i, i + URL_IN_CHUNK);
         const { data, error } = await supabase.from("outside_page_snapshots")
-          .select("company_id, source_url, clean_text, text_sha256, crawled_at").eq("fetch_status", "ok").not("clean_text", "is", null).in("source_url", slice);
+          .select("company_id, source_url, clean_text, text_sha256, crawled_at, structured").eq("fetch_status", "ok").not("clean_text", "is", null).in("source_url", slice);
         if (error) throw new Error(`snapshot read failed (${slice.length} urls): ${error.message}`);
-        for (const r of ((data ?? []) as BlankingSnapshot[])) if (wanted.has(`${r.company_id}|${r.source_url}`)) out.push(r);
+        // A6: a stored search snippet (basis_kind cited_text) is not a page
+        for (const r of ((data ?? []) as Array<BlankingSnapshot & { structured?: unknown }>)) if (wanted.has(`${r.company_id}|${r.source_url}`) && isPageSnapshot(r.structured)) out.push(r);
       }
       return out;
     },

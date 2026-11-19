@@ -143,7 +143,8 @@ if (fromSnapshots) {
     const snap = JSON.parse(psql(
       `select coalesce(row_to_json(t)::text,'null') from (select id, text_sha256, http_status, clean_text from outside_page_snapshots
          where company_id=:'c' and source_url=:'u' and fetch_status='ok' and clean_text is not null and length(clean_text)>0
-         order by crawled_at desc limit 1) t;`, { c: company!, u: r.url })) as { id: string; text_sha256: string; http_status: number | null; clean_text: string } | null;
+           and coalesce(structured->>'basis_kind','') <> 'cited_text'
+         order by crawled_at desc limit 1) t;`, { c: company!, u: r.url })) as { id: string; text_sha256: string; http_status: number | null; clean_text: string } | null; // A6: a search snippet is not the page
     if (!snap) { refused.push({ url: r.url, reason: "no ok snapshot stored for this url" }); continue; }
     const live: Array<{ id: string; quote: string | null }> = JSON.parse(psql(
       `select coalesce(json_agg(json_build_object('id', id, 'quote', quote)),'[]') from signals

@@ -13,6 +13,7 @@
 // Idempotent: a key that already has a row is skipped before any fetch. Bounded: max_urls re-fetches per call
 // (Kong 150 s); call again with the same body until done=true.
 //   { company_id, dry_run?=true, refetch?=true, max_urls?=25, actor? }
+import { isPageSnapshot } from "../_shared/snapshotBasis.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fetchOutsidePage } from "../_shared/outsidePageStore.ts";
@@ -70,8 +71,9 @@ serve(async (req) => {
     const snapByUrl = new Map<string, { text: string; at: string }>();
     for (const tbl of ["outside_page_snapshots", "own_words_page_snapshots"]) {
       const atCol = tbl === "outside_page_snapshots" ? "crawled_at" : "fetched_at";
-      const { data: snaps } = await supabase.from(tbl).select(`source_url, clean_text, ${atCol}`).eq("company_id", company_id).not("clean_text", "is", null).order(atCol, { ascending: false });
+      const { data: snaps } = await supabase.from(tbl).select(`source_url, clean_text, structured, ${atCol}`).eq("company_id", company_id).not("clean_text", "is", null).order(atCol, { ascending: false });
       for (const r of ((snaps ?? []) as Array<Record<string, string | null>>)) {
+        if (!isPageSnapshot(r.structured)) continue; // A6: a stored search snippet is not the page
         const url = String(r.source_url ?? ""), text = String(r.clean_text ?? "");
         if (url && normalizeForHash(text) && !snapByUrl.has(url)) snapByUrl.set(url, { text, at: String(r[atCol]) });
       }

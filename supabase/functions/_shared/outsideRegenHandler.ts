@@ -15,6 +15,7 @@
 //     review-gate state with the reason the gate would give — and writes NOTHING: no signal, no
 //     integrity row, no model call. The transport is never constructed on this path;
 //   * WRITE runs as before (R4 ledger, R3 review gate, E4+E2 admission, per-URL cap, wall clock).
+import { isPageSnapshot } from "./snapshotBasis.ts";
 import { gateRegenUrls, requireRunId } from "./outsideRecrawlReview.ts";
 import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
 import { admitOutsideEvidence, detectAttribution, isBareAttribution, snapshotReadDate } from "./outsideEvidenceRegen.ts";
@@ -280,6 +281,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
   for (const r of (snapRows ?? []) as Array<{ id?: string | null; source_url: string; signal_id: string | null; clean_text: string | null; text_sha256: string; crawled_at?: string | null; structured?: unknown }>) {
     if (newestByUrl.has(r.source_url)) continue;
     if (!r.clean_text || r.text_sha256 === EMPTY_SHA) continue;
+    if (!isPageSnapshot(r.structured)) continue; // A6: a stored search snippet is not the page
     newestByUrl.set(r.source_url, { id: r.id ?? null, clean_text: r.clean_text, sha: r.text_sha256, signal_id: r.signal_id, readDate: snapshotReadDate(r.crawled_at), structured: r.structured ?? null });
   }
   /** The registry classification of one excerpt (or of the page when no excerpt is given) on a registry URL; null elsewhere. */

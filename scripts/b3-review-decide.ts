@@ -150,7 +150,7 @@ if (systemMode) {
   for (const r of rows) {
     if (touched.has(r.id)) continue;
     const snap = JSON.parse(psql(
-      `select coalesce(row_to_json(t)::text,'null') from (select text_sha256, clean_text from outside_page_snapshots where company_id=:'c' and source_url=:'u' and fetch_status='ok' and clean_text is not null and length(clean_text)>0 order by crawled_at desc limit 1) t;`, { c: company!, u: r.source_url })) as { text_sha256: string; clean_text: string } | null;
+      `select coalesce(row_to_json(t)::text,'null') from (select text_sha256, clean_text from outside_page_snapshots where company_id=:'c' and source_url=:'u' and fetch_status='ok' and clean_text is not null and length(clean_text)>0 and coalesce(structured->>'basis_kind','') <> 'cited_text' order by crawled_at desc limit 1) t;`, { c: company!, u: r.source_url })) as { text_sha256: string; clean_text: string } | null;
     const verdict = systemRule({ disposition: r.disposition, url: r.source_url, basis_is_newest_ok: !!snap && snap.text_sha256 === r.baseline_sha256, snapshot_text: snap?.clean_text ?? null, plan_exclude: planPath ? (planExcludeByUrl.get(r.source_url) ?? null) : null });
     lines.push({ row: r, row_id: r.id, current: currentOf(r), source: "system", rule: `${verdict.rule} — ${verdict.detail}`, plan: applyPrecedence(r, { decision: verdict.decision, by: "system" }), page_id: r.notion_page_id });
   }
