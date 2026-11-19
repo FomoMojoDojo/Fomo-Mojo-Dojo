@@ -842,8 +842,8 @@ else
             insert into public.routes (id, company_id, user_id, title, category, short_description, provenance_type)
               values ('0c900000-0000-4000-8000-00000c008b01','$C8','$OWNER_E','Synthetic fixture: open a Saturday clinic','improve','Synthetic fixture: an internal route','internal_hypothesis')
               on conflict (id) do nothing;
-            insert into public.odi_needs (id, company_id, user_id, holder, journey_key, desired_outcome, provenance_type, status)
-              values ('0c900000-0000-4000-8000-00000c008c01','$C8','$OWNER_E','market','customer','Synthetic fixture: minimize the time a family waits for a first call','public_research','active')
+            insert into public.odi_needs (id, company_id, user_id, holder, journey_key, desired_outcome, provenance_type, status, source_path)
+              values ('0c900000-0000-4000-8000-00000c008c01','$C8','$OWNER_E','market','customer','Synthetic fixture: minimize the time a family waits for a first call','public_research','active','public_research')
               on conflict (id) do nothing;
             update public.odi_needs set odi_canonical_statement = null where id = '0c900000-0000-4000-8000-00000c008c01';
             delete from public.model_calls where company_id in ('$C8','$C9');") || bad "(e1–e4) fixture SQL failed: $(echo "$out" | head -2 | tr '\n' ' ')"

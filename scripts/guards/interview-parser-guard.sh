@@ -41,7 +41,7 @@ SQL=$(mktemp)
 echo "begin;"
 echo "insert into companies (id, name, created_by) values ('$CO','zz-parser-guard','$ADMIN');"
 echo "insert into interview_records (id, company_id, speaker_role, person_name, person_role, interviewed_at, interviewer, consent_basis, verbatim, created_by) values ('$REC','$CO','client_stakeholder','P','R',now(),'I','verbal','FIXTURE transcript text','$ADMIN');"
-echo "insert into odi_needs (company_id, user_id, journey_key, desired_outcome, interview_record_id, status, provenance_type) values ('$CO','$ADMIN','customer','FIXTURE need','$REC','active','client_attested');"
+echo "insert into odi_needs (company_id, user_id, journey_key, desired_outcome, interview_record_id, status, provenance_type, source_path) values ('$CO','$ADMIN','customer','FIXTURE need','$REC','active','client_attested','public_research');"
 
 if [ "$PLANT" = "reach" ]; then
   echo "create or replace function public.interview_records_retraction_propagates() returns trigger language plpgsql as \$f\$ begin if old.retracted_at is null and new.retracted_at is not null then update public.odi_needs set status='retracted', updated_at=now() where interview_record_id=new.id and status<>'retracted'; end if; return new; end; \$f\$;"

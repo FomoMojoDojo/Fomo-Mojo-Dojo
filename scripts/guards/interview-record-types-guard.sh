@@ -81,11 +81,11 @@ echo "reset role;"
 
 # ── (w6)(w7) the need pairing ──
 echo "savepoint w6;"
-echo "insert into odi_needs (company_id, user_id, journey_key, desired_outcome, interview_record_id, status, provenance_type) values ('$CO','$ADMIN','customer','FIXTURE need from a working session','$R1','active','client_attested');"
+echo "insert into odi_needs (company_id, user_id, journey_key, desired_outcome, interview_record_id, status, provenance_type, source_path) values ('$CO','$ADMIN','customer','FIXTURE need from a working session','$R1','active','client_attested','public_research');"
 echo "select 'W6 need_client_attested='||(select count(*) from odi_needs where interview_record_id='$R1' and provenance_type='client_attested');"
 echo "rollback to w6;"
 echo "savepoint w7;"
-echo "insert into odi_needs (company_id, user_id, journey_key, desired_outcome, interview_record_id, status, provenance_type) values ('$CO','$ADMIN','customer','FIXTURE need mis-typed','$R1','active','market_interviewed');"
+echo "insert into odi_needs (company_id, user_id, journey_key, desired_outcome, interview_record_id, status, provenance_type, source_path) values ('$CO','$ADMIN','customer','FIXTURE need mis-typed','$R1','active','market_interviewed','public_research');"
 echo "select 'W7 market_interviewed_accepted';"
 echo "rollback to w7;"
 

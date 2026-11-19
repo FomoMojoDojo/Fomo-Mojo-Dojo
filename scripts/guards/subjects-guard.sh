@@ -212,10 +212,10 @@ SA=$(psql_val "insert into public.subjects (company_id, role, name) values ('$CO
 SB=$(psql_val "insert into public.subjects (company_id, role, name) values ('$CO_B','account','$PREFIX B subject') returning id")
 ins_signal() { psql "insert into public.signals (company_id, claim_text, signal_band, source_type, subject_id) values ('$1','$PREFIX signal','organization','intake', $2);"; }
 ins_claim()  { psql "insert into public.claims (company_id, statement, subject_id) values ('$1','$PREFIX claim', $2);"; }
-ins_need()   { psql "insert into public.odi_needs (company_id, user_id, desired_outcome, subject_id) values ('$1','$OWNER','$PREFIX need', $2);"; }
+ins_need()   { psql "insert into public.odi_needs (company_id, user_id, desired_outcome, subject_id, source_path) values ('$1','$OWNER','$PREFIX need', $2, 'public_research');"; }
 ins_signal_err() { psql_err "insert into public.signals (company_id, claim_text, signal_band, source_type, subject_id) values ('$1','$PREFIX signal','organization','intake', $2);"; }
 ins_claim_err()  { psql_err "insert into public.claims (company_id, statement, subject_id) values ('$1','$PREFIX claim', $2);"; }
-ins_need_err()   { psql_err "insert into public.odi_needs (company_id, user_id, desired_outcome, subject_id) values ('$1','$OWNER','$PREFIX need', $2);"; }
+ins_need_err()   { psql_err "insert into public.odi_needs (company_id, user_id, desired_outcome, subject_id, source_path) values ('$1','$OWNER','$PREFIX need', $2, 'public_research');"; }
 
 for spec in "signals|signals_subject_fkey" "claims|claims_subject_fkey" "odi_needs|odi_needs_subject_fkey"; do
   IFS='|' read -r tbl con <<< "$spec"

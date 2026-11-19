@@ -1,4 +1,4 @@
-# THE SWEEP'S EXPECTED MEMBERS (operator ruling R2, 2026-11-18: 66 GREEN / 4 RED of 70).
+# THE SWEEP'S EXPECTED MEMBERS (operator ruling R2, 2026-11-18, amended SP-415 2026-11-19: 71 members).
 # One name per line; '#' lines and blank lines are ignored. scripts/guards-sweep.sh refuses to report a
 # result when the members it finds or runs differ from this list — a guard added, removed or excluded
 # moves this file in the same commit, or the sweep fails. The last line is the before/after pair the
@@ -42,6 +42,7 @@ interview-text-leak-guard.sh
 large-file-guard.sh
 member-read-guard.sh
 need-markets-guard.sh
+need-source-path-guard.sh
 network-guard.sh
 notion-client-sync-guard.sh
 ocr-read-guard.sh

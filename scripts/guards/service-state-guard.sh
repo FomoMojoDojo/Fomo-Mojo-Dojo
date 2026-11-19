@@ -65,16 +65,16 @@ echo "s1. $CON exists and is NOT VALID (convalidated=f)"
 
 # ── s2 ───────────────────────────────────────────────────────────────────────────────────────────
 for v in underserved served overserved monitor; do
-  psql "insert into odi_needs (company_id, user_id, desired_outcome, service_state)
-        values ('$CO', '$OWNER', 'guard accepts $v', '$v');" >/dev/null \
+  psql "insert into odi_needs (company_id, user_id, desired_outcome, service_state, source_path)
+        values ('$CO', '$OWNER', 'guard accepts $v', '$v', 'public_research');" >/dev/null \
     || fail s2 "the admitted value '$v' was REFUSED"
 done
 N=$(psql "select count(*) from odi_needs where company_id='$CO'")
 [ "$N" = "4" ] || fail s2 "expected 4 accepted rows, found $N"
 
 for v in under_served appropriately_served over_served x; do
-  ERR=$(psql_err "insert into odi_needs (company_id, user_id, desired_outcome, service_state)
-                  values ('$CO', '$OWNER', 'guard refuses $v', '$v');")
+  ERR=$(psql_err "insert into odi_needs (company_id, user_id, desired_outcome, service_state, source_path)
+                  values ('$CO', '$OWNER', 'guard refuses $v', '$v', 'public_research');")
   [ -n "$ERR" ] || fail s2 "'$v' was ACCEPTED — the vocabulary is not enforced"
   echo "$ERR" | grep -q "$CON" \
     || fail s2 "'$v' failed, but not on $CON: $(echo "$ERR" | head -1)"

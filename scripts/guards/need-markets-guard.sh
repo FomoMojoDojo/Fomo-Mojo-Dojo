@@ -54,8 +54,8 @@ insert into companies (id, name, website, created_by, fixture_hold)
           (select id from auth.users where email='bob2@fomomojodojo.com' limit 1), 'NM:need-markets-guard');
 insert into odi_market_definitions (company_id, user_id, journey_key, job_executor, jtbd, market_register)
   values ('00000000-0000-4000-8000-00000000d1a1', (select id from auth.users where email='bob2@fomomojodojo.com' limit 1), 'nm-donors', 'Donors', 'give', 'internal_declared');
-insert into odi_needs (id, company_id, user_id, desired_outcome, journey_key, importance, status)
-  values ('00000000-0000-4000-8000-00000000d1c1', '00000000-0000-4000-8000-00000000d1a1', (select id from auth.users where email='bob2@fomomojodojo.com' limit 1), 'Know what the gift achieved', 'customer', 3, 'active');
+insert into odi_needs (id, company_id, user_id, desired_outcome, journey_key, importance, status, source_path)
+  values ('00000000-0000-4000-8000-00000000d1c1', '00000000-0000-4000-8000-00000000d1a1', (select id from auth.users where email='bob2@fomomojodojo.com' limit 1), 'Know what the gift achieved', 'customer', 3, 'active', 'public_research');
 do $$ begin
   if (select count(*) from need_markets where need_id='00000000-0000-4000-8000-00000000d1c1' and journey_key='customer' and importance=3 and tag_source='home') <> 1
     then raise exception 'FAIL k5: the insert did not create its home link'; end if;
@@ -73,8 +73,8 @@ do $$ begin
   update odi_needs set journey_key = 'nm-donors', holder = 'market' where id='00000000-0000-4000-8000-00000000d1c1';
   if not exists (select 1 from need_markets where need_id='00000000-0000-4000-8000-00000000d1c1' and journey_key='nm-donors' and retired_at is null)
     then raise exception 'FAIL k5: a need returned to its market was not re-linked'; end if;
-  insert into odi_needs (company_id, user_id, desired_outcome, journey_key, holder, status)
-    values ('00000000-0000-4000-8000-00000000d1a1', (select id from auth.users where email='bob2@fomomojodojo.com' limit 1), 'Company-held', null, 'company', 'active');
+  insert into odi_needs (company_id, user_id, desired_outcome, journey_key, holder, status, source_path)
+    values ('00000000-0000-4000-8000-00000000d1a1', (select id from auth.users where email='bob2@fomomojodojo.com' limit 1), 'Company-held', null, 'company', 'active', 'public_research');
   raise notice 'OK k5';
 end $$;
 do $$ begin
