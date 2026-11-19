@@ -23,7 +23,7 @@
 #       stays GREEN: the others still exclude a lead); bash scripts/plant.sh restore scripts/review-lane/counted-quotes.sql.
 #   r9. the company's own reply ("Please DM us…", "We apologize…") is never a customer quote — planted shape and live rows.
 #   r6. inside ONE rolled-back transaction: an about_entity_id of another company's entity is refused; a brand with no
-#       page is refused; authenticated cannot write review_lane_calls; the trigger function is not executable by clients.
+#       page is refused; a lane row with no quote saved unheld is refused (A2, signals_lane_quote_or_held), held it is saved; authenticated cannot write review_lane_calls; the trigger function is not executable by clients.
 #
 # Plant (run by hand):
 #   bash scripts/plant.sh save supabase/functions/_shared/reviewPages.ts
@@ -88,16 +88,28 @@ do $$ begin
     raise exception 'FAIL r6: a brand with no page was accepted';
   exception when check_violation then raise notice 'OK r6b';
   end;
+  -- A2: a live lane row with no quote cannot be saved unheld; held as a lead it can
+  begin
+    insert into signals (company_id, source_type, signal_band, evidence_type, claim_text, evidence_excerpt, voice_class, review_lane_call_id)
+    values ('00000000-0000-4000-8000-00000000d1a3', 'public_baseline_run', 'outside', 'market_signal', 'x', 'x', 'outside_voice_about_client', '00000000-0000-4000-8000-00000000d1c3');
+    raise exception 'FAIL r6: a quote-less lane row was saved unheld';
+  exception when check_violation then raise notice 'OK r6c';
+  end;
+  insert into signals (company_id, source_type, signal_band, evidence_type, claim_text, evidence_excerpt, voice_class, review_lane_call_id, held_at, held_reason)
+  values ('00000000-0000-4000-8000-00000000d1a3', 'public_baseline_run', 'outside', 'market_signal', 'x', 'x', 'outside_voice_about_client', '00000000-0000-4000-8000-00000000d1c3', now(), 'search summary, not checked against the page');
+  raise notice 'OK r6d';
 end $$;
 rollback;
 SQL
 )
 echo "$OUT" | grep -q "OK r6a" || fail r6 "$(echo "$OUT" | grep -E 'FAIL|ERROR' | head -2)"
 echo "$OUT" | grep -q "OK r6b" || fail r6 "$(echo "$OUT" | grep -E 'FAIL|ERROR' | head -2)"
+echo "$OUT" | grep -q "OK r6c" || fail r6 "a quote-less lane row was saved unheld: $(echo "$OUT" | grep -E 'FAIL|ERROR' | head -2)"
+echo "$OUT" | grep -q "OK r6d" || fail r6 "a quote-less lane row held as a lead was refused: $(echo "$OUT" | grep -E 'FAIL|ERROR' | head -2)"
 [ "$(psql "select has_table_privilege('authenticated','public.review_lane_calls','insert')::text || has_table_privilege('anon','public.review_lane_calls','insert')::text")" = "falsefalse" ] \
   || fail r6 "a client role can insert review_lane_calls"
 [ "$(psql "select has_function_privilege('authenticated','public.signals_about_entity_check()','execute')::text || has_function_privilege('anon','public.signals_about_entity_check()','execute')::text")" = "falsefalse" ] \
   || fail r6 "a client role can execute signals_about_entity_check()"
 [ "$(psql "select count(*) from companies where id='00000000-0000-4000-8000-00000000d1a3'")" = 0 ] || fail rollback "the guard's company persisted"
-echo "r6. another company's entity and a brand with no page are refused; clients cannot write the call ledger or run the trigger"
+echo "r6. another company's entity, a brand with no page, and a quote-less lane row saved unheld (A2) are refused; held as a lead it is saved; clients cannot write the call ledger or run the trigger"
 echo "GUARD OK"

@@ -20,6 +20,7 @@
 import { normalizeForHash } from "./contentIdentity.ts";
 import { WEBSEARCH_CITED_TEXT } from "./citedTextExcerpt.ts";
 import { pageForUrl, type CompanyReviewList, type ReviewTarget } from "./reviewPages.ts";
+import { LEAD_BASIS_LABEL } from "./searchLeads.ts";
 
 export const REVIEW_LANE_CALL_SITE = "public-baseline-review-lane" as const;
 export const REVIEW_LANE_VERSION = "review_host_lane v1" as const;
@@ -302,7 +303,7 @@ export type ReviewLaneStats = {
   text_blocks: number; cited_blocks: number; citations: number; fetched_pages: number;
   no_url: number; off_host: number; excluded: number; not_company: number; no_review_sentence: number; not_review_block: number; heading: number; company_reply: number; not_outside: number;
   duplicate_in_run: number; duplicate_existing: number; minted: number; branded: number; brand_not_recorded: number;
-  quote_expanded: number; dated: number;
+  quote_expanded: number; dated: number; held_as_lead: number;
 };
 
 /** The rows to insert for one stored lane call. `decide` is the one voice authority (decideVoiceClassBeforeJudge). */
@@ -310,11 +311,13 @@ export function buildReviewLaneRows(a: {
   list: CompanyReviewList; target: ReviewTarget; callId: string; response: unknown; fetchedAt: string;
   excludeHosts: readonly string[]; existingExcerpts: ReadonlySet<string>;
   decide: (url: string) => { ok?: boolean; voice_class?: string; authority?: string };
+  /** when a quote-less row is held (A2); defaults to now */
+  heldAt?: string;
 }): { rows: Array<Record<string, unknown>>; stats: ReviewLaneStats } {
   const docs = fetchedDocuments(a.response);
   const { citations, text_blocks, cited_blocks } = laneCitations(a.response);
   const stats: ReviewLaneStats = { text_blocks, cited_blocks, citations: citations.length, fetched_pages: docs.length, no_url: 0, off_host: 0, excluded: 0,
-    not_company: 0, no_review_sentence: 0, not_review_block: 0, heading: 0, company_reply: 0, not_outside: 0, duplicate_in_run: 0, duplicate_existing: 0, minted: 0, branded: 0, brand_not_recorded: 0, quote_expanded: 0, dated: 0 };
+    not_company: 0, no_review_sentence: 0, not_review_block: 0, heading: 0, company_reply: 0, not_outside: 0, duplicate_in_run: 0, duplicate_existing: 0, minted: 0, branded: 0, brand_not_recorded: 0, quote_expanded: 0, dated: 0, held_as_lead: 0 };
   const seen = new Set<string>();
   const rows: Array<Record<string, unknown>> = [];
   const listPages = new Map(docs.map((d) => [d.url, datedReviewBlocks(d.text)] as const));
@@ -360,6 +363,10 @@ export function buildReviewLaneRows(a: {
       evidence_excerpt: c.cited_text,
       quote: expanded?.quote ?? null,
       quote_source_text: expanded?.quote_source_text ?? null,
+      // A2 (ruling R1): words not quoted from a page this call fetched are saved HELD as a lead, never live and unheld
+      // (constraint signals_lane_quote_or_held is the floor; mintFromCall writes the hold's audit row)
+      held_at: expanded ? null : (a.heldAt ?? new Date().toISOString()),
+      held_reason: expanded ? null : LEAD_BASIS_LABEL,
       event_date: date?.date ?? null,
       event_date_precision: date?.precision ?? "day",
       topic: "customer_review",
@@ -392,7 +399,7 @@ export function buildReviewLaneRows(a: {
     rows.push(row);
     stats.minted++;
     if (page) stats.branded++; else stats.brand_not_recorded++;
-    if (expanded) stats.quote_expanded++;
+    if (expanded) stats.quote_expanded++; else stats.held_as_lead++;
     if (date) stats.dated++;
   }
   return { rows, stats };

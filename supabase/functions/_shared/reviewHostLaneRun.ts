@@ -65,10 +65,19 @@ async function mintFromCall(db: Db, list: CompanyReviewList, callId: string, rem
     },
   });
   if (rows.length > 0) {
-    const { error: insErr } = await db.from("signals").insert(rows);
+    const { data: inserted, error: insErr } = await db.from("signals").insert(rows).select("id, held_at, held_reason");
     if (insErr) {
       await db.from("review_lane_calls").update({ outcome: { status: "mint_failed", error: insErr.message.slice(0, 300), stats } }).eq("id", callId);
       return { status: "mint_failed", error: insErr.message, stats };
+    }
+    // A2: every row saved held as a lead gets its hold's audit row, as an operator hold through signal-holds.ts would
+    const held = ((inserted ?? []) as Array<{ id: string; held_at: string | null; held_reason: string | null }>).filter((r) => r.held_at);
+    if (held.length) {
+      const { error: auErr } = await db.from("signal_hold_audit").insert(held.map((r) => ({
+        signal_id: r.id, company_id: list.companyId, action: "hold", reason: String(r.held_reason), before: { held_at: null, held_reason: null },
+        after: { held_at: r.held_at, held_reason: r.held_reason }, actor: "review-lane (at save, ruling R1)", run_ref: `review_lane_mint:${callId}`,
+      })));
+      if (auErr) return { status: "mint_failed", error: `hold audit: ${auErr.message}`, stats };
     }
   }
   const outcome = { status: rows.length ? "minted" : "empty", stats, ...(remintReason ? { reminted: { reason: remintReason, superseded } } : {}) };
