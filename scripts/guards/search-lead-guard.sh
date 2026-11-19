@@ -12,6 +12,10 @@
 #   l4. no live signal's excerpt or quote is a lead's snippet, and no signal or proposal payload names a lead id
 #   l5. every stored lead's query is "site:<reddit|dslreports>.com <Spectrum|Cox> <fixed topic>" — no company text
 #   l6. searchLeads.test.ts passes
+#   l7. (A3, 2026-11-18) leads are shown only with reviewer names masked: leadText.test.ts passes, and the one lead export
+#       (scripts/review-lane/export-leads.ts, read only) over every company with leads leaves no reviewer-name shape
+#       ("Review from <Name> <I>", "author":"<name>", u/<name>, "said by <handle>:", "<handle> : online", a review
+#       header's date + handle). Plant: drop a rule from _shared/leadText.ts -> l7 RED.
 #
 # Plant (run by hand):
 #   bash scripts/plant.sh save src/lib/attributeVerdict.ts
@@ -34,10 +38,11 @@ N=$(psql "select count(*) from search_leads where basis <> 'search_summary_unche
 [ "$N" = 0 ] || fail l2 "$N lead(s) off the fixed basis"
 echo "l2. every lead ($(psql "select count(*) from search_leads")) carries the fixed basis and label"
 
-ALLOW='^(supabase/migrations/20261118140000_search_leads\.sql|supabase/functions/_shared/reviewHostLaneRun\.ts|supabase/functions/_shared/searchLeads(\.test)?\.ts|scripts/guards/search-lead-guard\.sh|src/integrations/supabase/types\.ts)$'
+# A3 (2026-11-18): scripts/review-lane/export-leads.ts is the one DISPLAY reader (read only, names masked) — not a verdict
+ALLOW='^(supabase/migrations/20261118140000_search_leads\.sql|supabase/functions/_shared/reviewHostLaneRun\.ts|supabase/functions/_shared/searchLeads(\.test)?\.ts|scripts/guards/search-lead-guard\.sh|src/integrations/supabase/types\.ts|scripts/review-lane/export-leads\.ts)$'
 HITS=$(git ls-files -co --exclude-standard -- src supabase scripts tests | xargs grep -l "search_leads" 2>/dev/null | grep -v -E "$ALLOW" || true)
 [ -z "$HITS" ] || fail l3 "search_leads is named outside its own files: $(echo $HITS)"
-echo "l3. search_leads is named only by its own migration, writer, module, tests, guard and types"
+echo "l3. search_leads is named only by its own migration, writer, module, tests, guard, types and the masked display export"
 
 N=$(psql "select count(*) from signals s where s.superseded_at is null and exists (select 1 from search_leads l where l.snippet = s.evidence_excerpt or l.snippet = s.quote)")
 [ "$N" = 0 ] || fail l4 "$N live signal(s) carry a lead's snippet as their words"
@@ -52,4 +57,23 @@ echo "l5. every lead's query is a brand word and a fixed topic"
 
 (cd supabase/functions && deno test --quiet --allow-read _shared/searchLeads.test.ts >/dev/null 2>&1) || fail l6 "searchLeads.test.ts failed"
 echo "l6. searchLeads.test.ts passes"
+
+(cd supabase/functions && deno test --quiet --allow-read _shared/leadText.test.ts >/dev/null 2>&1) || fail l7 "leadText.test.ts failed"
+L7=$(mktemp -d); trap 'rm -rf "$L7"' EXIT
+COS=$(psql "select string_agg(distinct company_id::text, ' ') from (select company_id from search_leads union select company_id from signals where held_reason='search summary, not checked against the page' and review_lane_call_id is not null) x")
+NAMES=0
+for co in $COS; do
+  deno run --allow-all scripts/review-lane/export-leads.ts --company=$co --out="$L7/$co.json" > "$L7/$co.out" || fail l7 "export-leads failed for $co: $(cat "$L7/$co.out")"
+  LEFT=$(python3 - "$L7/$co.json" <<'PY'
+import json, re, sys
+d = json.load(open(sys.argv[1]))
+texts = [h["text"] for h in d["held"]] + [f["title"] + " " + f["snippet"] for f in d["forum"]]
+pat = re.compile(r'(?m)Review from [A-Z][a-z]+ [A-Z]\b|"author"\s*:\s*"(?!\[reviewer\])[^"]+"|\bu/(?!\[)[A-Za-z0-9]|said by (?!\[)[^\s:]+:|(?<![\w\]])[A-Za-z][\w.-]* : online|^(?:[-*] )?(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}|\d{1,2}/\d{1,2}/\d{4}|\d{4}/\d{1,2}/\d{1,2}|\d{1,2}月\d{1,2}日) [A-Za-z]+\d+')
+print(sum(1 for t in texts if pat.search(t)))
+PY
+)
+  [ "$LEFT" = 0 ] || fail l7 "$LEFT lead text(s) of company $co still show a reviewer name after masking"
+  NAMES=$((NAMES + $(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['masked']['names'])" "$L7/$co.json")))
+done
+echo "l7. leads are exported with reviewer names masked ($NAMES masked across $(echo $COS | wc -w | tr -d ' ') compan(ies)); none left"
 echo "GUARD OK"
