@@ -12,6 +12,40 @@ export function normalizeForHash(value: string): string {
   return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+// ── SIGNAL CONTENT IDENTITY (SP-426, 2026-11-19) ────────────────────────────────────────────────
+//
+// A counter over `signals` must be able to ask "how many DISTINCT sentences", not "how many rows":
+// a document analysed twice stores the same sentence twice (SP-F49), and duplication also exists
+// within one analysis run. `signals.content_identity` is that identity, and it is stamped HERE so
+// the rule stays single-sourced — the SQL re-implementation was rejected above for a reason.
+//
+// The basis is `evidence_excerpt`, the field every duplicate census measured. `claim_text` is a
+// DIFFERENT field (the lane's sentence, not the quote), so it is deliberately not mixed in: two rows
+// whose claim_text matched but whose excerpts differed would otherwise fold into one.
+//
+// A blank excerpt yields NULL, not "". NULL means "no identity": a counter must count such a row
+// once, on its own id, and never fold it with another. That makes the fallback identical to the
+// pre-SP-426 row count, which is the only safe direction for a row we cannot identify.
+
+/** The stored identity of a signal's text. NULL when there is no excerpt to identify. */
+export function signalContentIdentity(
+  row: { evidence_excerpt?: unknown } | null | undefined,
+): string | null {
+  const raw = row && typeof row.evidence_excerpt === "string" ? row.evidence_excerpt : "";
+  const normalized = normalizeForHash(raw);
+  return normalized === "" ? null : normalized;
+}
+
+/** Stamp `content_identity` on every row of a signal insert batch, in place of each caller doing it.
+ *  An explicit value already on the row is left alone, so a caller can override deliberately. */
+export function withContentIdentity<T extends Record<string, unknown>>(rows: readonly T[]): T[] {
+  return rows.map((r) =>
+    "content_identity" in r && r.content_identity != null
+      ? ({ ...r } as T)
+      : ({ ...r, content_identity: signalContentIdentity(r as { evidence_excerpt?: unknown }) } as T)
+  );
+}
+
 export async function sha256Hex(text: string): Promise<string> {
   const data = new TextEncoder().encode(text);
   const digest = await crypto.subtle.digest("SHA-256", data);

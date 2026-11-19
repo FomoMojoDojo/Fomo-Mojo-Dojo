@@ -17,7 +17,7 @@
 //   * WRITE runs as before (R4 ledger, R3 review gate, E4+E2 admission, per-URL cap, wall clock).
 import { isPageSnapshot } from "./snapshotBasis.ts";
 import { gateRegenUrls, requireRunId } from "./outsideRecrawlReview.ts";
-import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
+import { contentIdentity, normalizeForHash, withContentIdentity } from "./contentIdentity.ts";
 import { admitOutsideEvidence, detectAttribution, isBareAttribution, snapshotReadDate } from "./outsideEvidenceRegen.ts";
 import { regenCallSite } from "./outsideRegenModel.ts";
 import type { AuthorshipLedger, SpeakerJudge, SpeakerLedger } from "./aggregatorAuthorship.ts";
@@ -563,7 +563,7 @@ export async function runOutsideRegen(rawBody: unknown, deps: RegenDeps): Promis
     }
 
     if (admittedRows.length) {
-      const { error: insErr } = await supabase.from("signals").insert(admittedRows);
+      const { error: insErr } = await supabase.from("signals").insert(withContentIdentity(admittedRows));
       if (insErr) throw new Error(`signal insert failed for ${url}: ${insErr.message}`);
     }
     admitted_total += admittedRows.length;

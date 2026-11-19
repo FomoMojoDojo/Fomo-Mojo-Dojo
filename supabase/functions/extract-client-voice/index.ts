@@ -16,7 +16,7 @@
 // Frozen company → 403.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { contentIdentity } from "../_shared/contentIdentity.ts";
+import { contentIdentity, withContentIdentity } from "../_shared/contentIdentity.ts";
 import { admitClientVoice } from "../_shared/clientVoiceGuard.ts";
 import { adminOnlyGate } from "../_shared/callerGate.ts";
 
@@ -193,7 +193,7 @@ Deno.serve(async (req) => {
       }
 
       if (admittedRows.length) {
-        const { error: insErr } = await supabase.from("signals").insert(admittedRows);
+        const { error: insErr } = await supabase.from("signals").insert(withContentIdentity(admittedRows));
         if (insErr) throw new Error(`signal insert failed for ${url}: ${insErr.message}`);
       }
       admitted_total += admittedRows.length;

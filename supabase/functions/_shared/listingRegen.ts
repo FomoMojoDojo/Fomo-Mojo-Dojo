@@ -10,7 +10,7 @@ import { FROZEN_COMPANY_IDS } from "./frozenCompanies.ts";
 import { gateRegenUrls, type ReviewRefusal } from "./outsideRecrawlReview.ts";
 import { buildAnchors } from "./outsideRecrawlAnchors.ts";
 import { detectListing, listingIdentityInput, type Listing, type ListingRefusal, type StructuredBlock } from "./listingDetect.ts";
-import { sha256Hex } from "./contentIdentity.ts";
+import { sha256Hex, withContentIdentity } from "./contentIdentity.ts";
 
 export type ListingRegenMode = "dry" | "apply";
 export type WouldMint = { source_url: string; host: string; listing: Listing; content_identity: string; verbatim_in_body: boolean; read_date: string | null };
@@ -95,7 +95,7 @@ export async function runListingRegen(args: { supabase: Store; companyId: string
   let minted = 0;
   if (args.mode === "apply" && wouldMint.length) {
     const rows = wouldMint.map((w) => listingSignalRow({ companyId: args.companyId, w, body: newest.get(w.source_url)!.clean_text, snapshotSha: newest.get(w.source_url)!.text_sha256, runId: args.runId, nowIso: args.nowIso }));
-    const { error: insErr } = await args.supabase.from("signals").insert(rows);
+    const { error: insErr } = await args.supabase.from("signals").insert(withContentIdentity(rows));
     if (insErr) return { ok: false, error: `signal insert failed: ${insErr.message}` };
     minted = rows.length;
   }

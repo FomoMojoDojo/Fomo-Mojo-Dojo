@@ -8,6 +8,7 @@ import { isPairAdmissible } from "@/lib/firstRead/relevanceActive";
 import { gapVerdictForDeltaType, GAP_VERDICT_ORDER, orderBeat2Signals, orderGapPairs, strengthForSignal } from "../../../../supabase/functions/_shared/previewOrder.ts";
 export { GAP_VERDICT_ORDER, orderBeat2Signals, orderGapPairs, strengthForSignal };
 import { isTerminalSupersession } from "@/lib/claimState/prunePolicy";
+import { normalizeForHash } from "../../../../supabase/functions/_shared/contentIdentity.ts";   // SP-426 (2026-11-19)
 
 // ── Derived contradiction "why" (2026-08-22, SIGNED softened wording) ────────────────────────────
 // A plain-language one-liner built ONLY from fields already on the pair/statement rows (both sides'
@@ -188,7 +189,13 @@ export type Beat2Sortable = { signal: FRSignal; readDate: string; host: string }
 export function foldIdenticalSignals(items: Beat2Sortable[]): Beat2Sortable[] {
   const byKey = new Map<string, Beat2Sortable>();
   for (const it of items) {
-    const key = `${it.host}||${it.signal.text}`; // identical statement + host, read-date agnostic
+    // SP-426 (2026-11-19): the TEXT half of the key is the STORED content identity rule, so a
+    // whitespace- or case-only variant of the same sentence folds too. normalizeForHash(signal.text)
+    // is byte-identical to signals.content_identity, because signal.text is the trimmed excerpt the
+    // identity is computed from — so this reads the same identity the column stores, without a
+    // second rule. The HOST stays in the key on purpose: "strong" means recurrence across
+    // INDEPENDENT sources (R4), so the same sentence on two hosts is two sightings, never one.
+    const key = `${it.host}||${normalizeForHash(it.signal.text)}`; // identical statement + host, read-date agnostic
     const prior = byKey.get(key);
     if (!prior) { byKey.set(key, { ...it, signal: { ...it.signal, mentionCount: 1 } }); continue; }
     // Representative = the freshest read (its label carries the newest read-date). Accumulate the

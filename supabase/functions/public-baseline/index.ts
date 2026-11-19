@@ -1,7 +1,7 @@
 // supabase/functions/public-baseline/index.ts
 import { loadConfirmedRelatedEntities, loadEntityExcludeHosts, publishedDayOf, seedHostOf, type OwnHostSet } from "../_shared/ownHosts.ts";
 import { capEvidenceLedger, citationEntries, isPlaceholderProfileSnippet, pageAgesByUrl, rawCitationSnapshot, type CitationStats } from "../_shared/citationRows.ts";
-import { normalizeForHash } from "../_shared/contentIdentity.ts";
+import { normalizeForHash, withContentIdentity } from "../_shared/contentIdentity.ts";
 import { countsAtEarlyAmbiguousCheck, crawlEntityFor, crawlHostFilter, discoveryHostsFor, domainPlanFallbackAdmits, entityQueryPasses, guessedProfileLinksOwnHost, isRelatedOwnHost, relatedCrawlSeeds, relatedDomainBonus, type DiscoveryHosts } from "../_shared/ownHostDiscovery.ts";
 import { promptShaOf, requireWebSearchLedger, ledgerOrRefuse, webSearchLedgerFor, type WebSearchLedger } from "../_shared/webSearchLedger.ts";
 import { assertSpendable, clampSpendCap, makeSpendCap, projectWebSearchUsd, SpendCapRefused, type SpendCap } from "../_shared/spendCap.ts";
@@ -1990,7 +1990,7 @@ async function executeSeedLane(a: {
       captureDay: new Date().toISOString().slice(0, 10),
     });
     if (rows.length > 0) {
-      const { error: laneInsErr } = await a.supabase.from("signals").insert(rows);
+      const { error: laneInsErr } = await a.supabase.from("signals").insert(withContentIdentity(rows));
       if (laneInsErr) throw new Error(`seed-lane insert failed: ${laneInsErr.message}`);
     }
     const out = { ran: true, ...stats };

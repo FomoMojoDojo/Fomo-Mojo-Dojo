@@ -8,7 +8,7 @@
 //   2. MINT (call id): the rows are built from the STORED response (buildReviewLaneRows) and inserted; the call's outcome
 //      and minted_at are set. A call that already minted is refused. No model, no spend.
 // A refused, failed or empty call writes no signal; its outcome says why.
-import { normalizeForHash } from "./contentIdentity.ts";
+import { normalizeForHash, withContentIdentity } from "./contentIdentity.ts";
 import { anthropicPriceFor, anthropicUsd } from "./modelPricing.ts";
 import { assertSpendable, makeSpendCap, SpendCapRefused } from "./spendCap.ts";
 import { ledgerOrRefuse, promptShaOf, requireWebSearchLedger, webSearchLedgerFor } from "./webSearchLedger.ts";
@@ -65,7 +65,7 @@ async function mintFromCall(db: Db, list: CompanyReviewList, callId: string, rem
     },
   });
   if (rows.length > 0) {
-    const { data: inserted, error: insErr } = await db.from("signals").insert(rows).select("id, held_at, held_reason");
+    const { data: inserted, error: insErr } = await db.from("signals").insert(withContentIdentity(rows)).select("id, held_at, held_reason");
     if (insErr) {
       await db.from("review_lane_calls").update({ outcome: { status: "mint_failed", error: insErr.message.slice(0, 300), stats } }).eq("id", callId);
       return { status: "mint_failed", error: insErr.message, stats };
