@@ -116,7 +116,8 @@
 #        in integrity_runs), must leave 0 outside rows with tokens, and ≥1 local generator row with tokens.
 #   (e3) PUBLIC CONTROL. Throwaway …-c009 holds a public_research market: the same call takes the web_search
 #        lane and reaches the Anthropic search (≥1 ledgered generate-normative-jobmap anthropic row; one paid
-#        web-search call on a synthetic, public industry query).
+#        web-search call on a synthetic, public industry query; since 2026-11-19 with search_budget 1, and the
+#        ledgered row must show <= 1 search — one search proves the lane, a full discovery cost up to $0.72).
 #   (e4) backfill-canonical-statements refuses c008's public need because its market is not public by source
 #        (skipped market_not_public_by_source:*), with 0 outside rows.
 #   (e5) SOURCE + UNIT: council-review and _shared/councilLocal.ts name no outside key or endpoint; normative
@@ -881,14 +882,16 @@ else
                        || bad "(e2) no local generator row with tokens for c008 ($G2) — $(echo "$N2" | head -c 160)"
 
   # (e3) public control: a public_research market still reaches the Anthropic search
-  N3=$(curl -s -m 400 -X POST "$FN_E/generate-normative-jobmap" -H "Authorization: Bearer $SRK_E" -H 'Content-Type: application/json' -d "{\"company_id\":\"$C9\",\"journey_key\":\"customer\"}")
+  N3=$(curl -s -m 400 -X POST "$FN_E/generate-normative-jobmap" -H "Authorization: Bearer $SRK_E" -H 'Content-Type: application/json' -d "{\"company_id\":\"$C9\",\"journey_key\":\"customer\",\"search_budget\":1}")
   L3=$(echo "$N3" | epick 'j.lane||("error:"+String(j.error||"").slice(0,80))')
   A3=$(eq "select count(*) from public.model_calls where company_id='$C9' and call_site='generate-normative-jobmap' and provider='anthropic'")
   L3I=$(eq "select excluded_by_rule->>'lane' from public.integrity_runs where company_id='$C9' and component='normative_jobmap_discovery' order by ran_at desc limit 1")
-  if [ "${A3:-0}" -ge 1 ] && { [ "$L3" = "web_search" ] || [ "$L3I" = "web_search" ]; }; then
-    ok "(e3) control: the public_research market takes the web_search lane and reaches the Anthropic search ($A3 ledgered row(s))"
+  # search_budget 1 (2026-11-19): the control needs ONE search, not a full discovery; the ledgered row must show <= 1
+  W3=$(eq "select coalesce(max(web_search_requests),-1) from public.model_calls where company_id='$C9' and call_site='generate-normative-jobmap' and provider='anthropic'")
+  if [ "${A3:-0}" -ge 1 ] && { [ "$L3" = "web_search" ] || [ "$L3I" = "web_search" ]; } && [ "${W3:-99}" -le 1 ]; then
+    ok "(e3) control: the public_research market takes the web_search lane and reaches the Anthropic search ($A3 ledgered row(s), $W3 search(es) under search_budget 1)"
   else
-    bad "(e3) control: the public market did not reach the search (lane=$L3 / $L3I, rows=$A3) — vacuous — $(echo "$N3" | head -c 160)"
+    bad "(e3) control: the public market did not reach the search, or ran more than search_budget 1 allows (lane=$L3 / $L3I, rows=$A3, searches=$W3) — $(echo "$N3" | head -c 160)"
   fi
 
   # (e1) council-review on c008, no-write, background — poll the run row to completion

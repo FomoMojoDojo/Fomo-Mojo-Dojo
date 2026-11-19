@@ -16,6 +16,7 @@
 // judges (ODI-shape + solution-agnostic) — no 70b generation. Discovery is web
 // search (external Anthropic) because nothing internal crosses the boundary.
 
+import { clampSearchBudget } from "../_shared/searchBudget.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { normalizeForHash, sha256Hex } from "../_shared/contentIdentity.ts";
 import { ledgerOrRefuse, promptShaOf, requireWebSearchLedger, webSearchLedgerFor } from "../_shared/webSearchLedger.ts";
@@ -297,7 +298,9 @@ Deno.serve(async (req) => {
     if (!anthropicKey) return json({ error: "Missing ANTHROPIC_API_KEY (discovery engine)" }, 500);
 
     // ── Discovery (claude_web_search) ───────────────────────────────────────────
-    const webSearchTool: Record<string, unknown> = { type: "web_search_20250305", name: "web_search", max_uses: 16 };
+    // search_budget (2026-11-19): optional; sets max_uses (1..16, default 16 — unchanged). outside-call-guard (e3) passes 1.
+    const searchBudget = clampSearchBudget((body as Record<string, unknown>)?.search_budget);
+    const webSearchTool: Record<string, unknown> = { type: "web_search_20250305", name: "web_search", max_uses: searchBudget };
     if (inputs.excludeDomains.length > 0) webSearchTool.blocked_domains = inputs.excludeDomains;
     // RULING 1 (2026-10-21): every web_search call writes one model_calls row before its answer is parsed; a call whose
     // row cannot be written is refused (its answer never used). The ledger is required — built before the request.
