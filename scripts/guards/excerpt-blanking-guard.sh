@@ -28,6 +28,9 @@
 # SQL trimmed spaces only — an excerpt ending in a blank line kept a trailing space the page did not have (9
 # review-lane rows) — and LIKE read a backslash in the excerpt as its escape character (the two 2026-10-22
 # rows of SP-F5). Both were rows the planner rightly left alone. The planner is unchanged.
+# A1 (2026-11-18, brief "measure need-to-quote matching"): a review-lane row's excerpt is also verified when it is on a
+# page its own stored call fetched (review_lane_calls.response web_fetch results) — the planner's
+# loadLaneFetchedPages, mirrored here.
 #
 # Plants (each injected live, in-place write, confirmed to move a measured value, RED, restored md5-identical):
 #   remove the no_plan / not_confirmed refusal (excerptBlanking.ts applyExcerptBlanking)   => e1 red
@@ -112,9 +115,12 @@ for r in d['rows']: print(r['signal_id'])
 EOF
 [ $? -eq 0 ] || fail e5 "fleet plan: an analysis row is not stamped_only, or a non-analysis row is"
 echo "e5. analysis rows: stamped (analysis_carve_out), excerpt kept in the sample; fleet plan actions match voice_class"
-psql "with live as (select s.id, s.company_id, s.source_url, btrim(lower(regexp_replace(s.evidence_excerpt,'\s+',' ','g'))) ex, s.quote_source_text from signals s join companies c on c.id=s.company_id where s.signal_band='outside' and s.superseded_at is null and s.held_at is null and nullif(trim(s.evidence_excerpt),'') is not null and nullif(trim(s.source_url),'') is not null and not c.frozen and c.id<>'58b2b15b-bada-4bcd-9c12-b7e66a37d0bc' and coalesce(s.raw_payload->'excerpt_guard'->>'backfill_run_ref','')=''),
+psql "with live as (select s.id, s.company_id, s.source_url, btrim(lower(regexp_replace(s.evidence_excerpt,'\s+',' ','g'))) ex, s.quote_source_text, s.review_lane_call_id from signals s join companies c on c.id=s.company_id where s.signal_band='outside' and s.superseded_at is null and s.held_at is null and nullif(trim(s.evidence_excerpt),'') is not null and nullif(trim(s.source_url),'') is not null and not c.frozen and c.id<>'58b2b15b-bada-4bcd-9c12-b7e66a37d0bc' and coalesce(s.raw_payload->'excerpt_guard'->>'backfill_run_ref','')=''),
  snap as (select company_id, source_url, string_agg(lower(regexp_replace(clean_text,'\s+',' ','g')),' ||| ') t from outside_page_snapshots where fetch_status='ok' and clean_text is not null group by 1,2)
- select l.id from live l join snap on snap.company_id=l.company_id and snap.source_url=l.source_url where strpos(snap.t, l.ex) = 0 and (l.quote_source_text is null or strpos(lower(regexp_replace(l.quote_source_text,'\s+',' ','g')), l.ex) = 0) order by 1" | sort > "$TMP/sql_ids.txt"
+ select l.id from live l join snap on snap.company_id=l.company_id and snap.source_url=l.source_url where strpos(snap.t, l.ex) = 0 and (l.quote_source_text is null or strpos(lower(regexp_replace(l.quote_source_text,'\s+',' ','g')), l.ex) = 0)
+   and not exists (select 1 from review_lane_calls c cross join lateral jsonb_array_elements(case when jsonb_typeof(c.response->'content')='array' then c.response->'content' else '[]'::jsonb end) b
+                    where c.id = l.review_lane_call_id and b->>'type'='web_fetch_tool_result' and b->'content'->>'type'='web_fetch_result'
+                      and strpos(lower(regexp_replace(coalesce(b->'content'->'content'->'source'->>'data',''),'\s+',' ','g')), l.ex) > 0) order by 1" | sort > "$TMP/sql_ids.txt"
 sort "$TMP/plan_ids.txt" > "$TMP/plan_ids_sorted.txt"
 if ! diff -q "$TMP/plan_ids_sorted.txt" "$TMP/sql_ids.txt" >/dev/null; then fail e6 "plan ids ≠ SQL set: only_in_plan=$(comm -23 "$TMP/plan_ids_sorted.txt" "$TMP/sql_ids.txt" | wc -l | tr -d ' ') only_in_sql=$(comm -13 "$TMP/plan_ids_sorted.txt" "$TMP/sql_ids.txt" | wc -l | tr -d ' ')"; fi
 echo "e6. plan = SQL set by id ($(wc -l < "$TMP/sql_ids.txt" | tr -d ' ') rows); no frozen company planned"

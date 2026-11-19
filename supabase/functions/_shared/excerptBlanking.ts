@@ -63,6 +63,8 @@ export type BlankingSignal = {
   evidence_excerpt: string | null;
   quote_source_text: string | null;
   raw_payload: Record<string, unknown> | null;
+  /** a review-lane row's stored call (review_lane_calls.id); its fetched pages are a verified basis (2026-11-18) */
+  review_lane_call_id?: string | null;
 };
 export type BlankingSnapshot = { company_id: string; source_url: string; clean_text: string; text_sha256: string; crawled_at: string | null };
 export type BlankingAuditRow = {
@@ -84,6 +86,9 @@ export type BlankingStore = {
   /** every ok snapshot (clean_text non-null) for these (company, url) pairs */
   loadSnapshots(pairs: Array<{ company_id: string; source_url: string }>): Promise<BlankingSnapshot[]>;
   loadSignalsById(ids: string[]): Promise<BlankingSignal[]>;
+  /** REVIEW LANE (2026-11-18): the page text each stored lane call fetched (web_fetch results, verbatim), by call id.
+   *  Optional so a store with no lane (the unit tests' older fakes) plans exactly as before. */
+  loadLaneFetchedPages?(callIds: string[]): Promise<Map<string, string[]>>;
   insertAudit(row: Omit<BlankingAuditRow, "id" | "reverted_at"> & { basis_kind: string; basis_sha: string; basis_at: string | null; source_url: string | null; voice_class: string | null }): Promise<string>;
   writeSignal(id: string, patch: { evidence_excerpt: string; raw_payload: Record<string, unknown> }): Promise<void>;
   loadAudit(runRef: string): Promise<BlankingAuditRow[]>;
@@ -112,11 +117,20 @@ export type BlankingPlan = {
   skipped_frozen: string[];
   verified_by_snapshot: number;
   verified_by_quote_source_text: number;
+  /** review-lane rows whose excerpt is verbatim on a page their own stored call fetched */
+  verified_by_lane_page: number;
   no_snapshot: number;
   /** rows already carrying a backfill stamp from an earlier run — this act's past, never re-planned */
   already_stamped: number;
   per_company: Array<{ company_id: string; company_name: string; blanked: number; stamped_only: number; urls: number }>;
 };
+
+/** The page text of every web_fetch result in a stored review-lane response, verbatim. */
+export function laneFetchedPageTexts(response: unknown): string[] {
+  const blocks = Array.isArray((response as { content?: unknown })?.content) ? (response as { content: Array<Record<string, any>> }).content : [];
+  return blocks.filter((b) => b?.type === "web_fetch_tool_result" && b?.content?.type === "web_fetch_result")
+    .map((b) => String(b?.content?.content?.source?.data ?? "")).filter(Boolean);
+}
 
 export function isFrozenCompany(co: BlankingCompany | undefined): boolean {
   return !!co && (co.frozen || FROZEN_COMPANY_IDS.has(co.id));
@@ -161,6 +175,11 @@ export async function planExcerptBlanking(
   const signals = await store.loadCandidateSignals(scope.map((c) => c.id));
   const pairs = [...new Map(signals.map((s) => [`${s.company_id}|${s.source_url}`, { company_id: s.company_id, source_url: String(s.source_url) }])).values()];
   const snaps = await store.loadSnapshots(pairs);
+  // REVIEW LANE (2026-11-18): a lane row's excerpt is the citation's cited_text, stored exactly; it often spans the
+  // rating line, title and body, so it never fits one quote_source_text paragraph, and the lane's urls carry only the
+  // 153-character snapshot previews. The page the row's own call fetched is the page it was cited from: a verified basis.
+  const laneCallIds = [...new Set(signals.map((s) => s.review_lane_call_id).filter((x): x is string => !!x))];
+  const lanePages = laneCallIds.length && store.loadLaneFetchedPages ? await store.loadLaneFetchedPages(laneCallIds) : new Map<string, string[]>();
   const snapsByPair = new Map<string, BlankingSnapshot[]>();
   for (const sn of snaps) {
     const k = `${sn.company_id}|${sn.source_url}`;
@@ -169,7 +188,7 @@ export async function planExcerptBlanking(
     snapsByPair.set(k, a);
   }
   const rows: BlankingPlanRow[] = [];
-  let verifiedSnap = 0, verifiedQst = 0, noSnap = 0, alreadyStamped = 0;
+  let verifiedSnap = 0, verifiedQst = 0, verifiedLane = 0, noSnap = 0, alreadyStamped = 0;
   for (const s of signals) {
     const co = byId.get(s.company_id);
     if (!co || isFrozenCompany(co)) continue; // belt-and-braces
@@ -185,6 +204,7 @@ export async function planExcerptBlanking(
     if (list.length === 0) { noSnap++; continue; }                       // b4's rows: crawl first
     if (list.some((sn) => verbatimOn(excerpt, sn.clean_text))) { verifiedSnap++; continue; }
     if (verbatimOn(excerpt, s.quote_source_text)) { verifiedQst++; continue; }
+    if (s.review_lane_call_id && (lanePages.get(s.review_lane_call_id) ?? []).some((t) => verbatimOn(excerpt, t))) { verifiedLane++; continue; }
     const newest = [...list].sort((a, b) => String(b.crawled_at ?? "").localeCompare(String(a.crawled_at ?? "")))[0];
     const action = s.voice_class === "analysis" ? "stamped_only" : "blanked";
     rows.push({
@@ -203,7 +223,7 @@ export async function planExcerptBlanking(
   }
   return {
     rows, scanned: signals.length, skipped_frozen: skippedFrozen,
-    verified_by_snapshot: verifiedSnap, verified_by_quote_source_text: verifiedQst, no_snapshot: noSnap, already_stamped: alreadyStamped,
+    verified_by_snapshot: verifiedSnap, verified_by_quote_source_text: verifiedQst, verified_by_lane_page: verifiedLane, no_snapshot: noSnap, already_stamped: alreadyStamped,
     per_company: [...per.values()].map((p) => ({ company_id: p.company_id, company_name: p.company_name, blanked: p.blanked, stamped_only: p.stamped_only, urls: p.urls.size }))
       .sort((a, b) => (b.blanked + b.stamped_only) - (a.blanked + a.stamped_only)),
   };
@@ -326,7 +346,7 @@ export async function revertExcerptBlanking(
 // ── supabase-backed store (the edge / PostgREST path) ────────────────────────────────────────────
 // deno-lint-ignore no-explicit-any
 type SupabaseLike = { from: (t: string) => any };
-const SIGNAL_COLS = "id, company_id, source_url, voice_class, claim_text, evidence_excerpt, quote_source_text, raw_payload";
+const SIGNAL_COLS = "id, company_id, source_url, voice_class, claim_text, evidence_excerpt, quote_source_text, raw_payload, review_lane_call_id";
 const PAGE = 1000;
 const ID_IN_CHUNK = 200;
 /** urls are long; an `.in()` of 200 of them overflows the GET query string (measured 2026-10-16). */
@@ -373,6 +393,15 @@ export function makeSupabaseBlankingStore(supabase: SupabaseLike): BlankingStore
           .select("company_id, source_url, clean_text, text_sha256, crawled_at").eq("fetch_status", "ok").not("clean_text", "is", null).in("source_url", slice);
         if (error) throw new Error(`snapshot read failed (${slice.length} urls): ${error.message}`);
         for (const r of ((data ?? []) as BlankingSnapshot[])) if (wanted.has(`${r.company_id}|${r.source_url}`)) out.push(r);
+      }
+      return out;
+    },
+    async loadLaneFetchedPages(callIds) {
+      const out = new Map<string, string[]>();
+      for (let i = 0; i < callIds.length; i += ID_IN_CHUNK) {
+        const { data, error } = await supabase.from("review_lane_calls").select("id, response").in("id", callIds.slice(i, i + ID_IN_CHUNK));
+        if (error) throw new Error(`review_lane_calls read failed: ${error.message}`);
+        for (const c of ((data ?? []) as Array<{ id: string; response: unknown }>)) out.set(c.id, laneFetchedPageTexts(c.response));
       }
       return out;
     },

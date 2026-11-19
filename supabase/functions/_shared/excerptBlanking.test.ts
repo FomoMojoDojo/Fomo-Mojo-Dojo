@@ -135,3 +135,26 @@ Deno.test("planDiff — same plan ⇒ empty; a struck row, an added row and a fl
   assertEquals(planDiff(a, a), { missing_in_fresh: [], new_in_fresh: [], action_changed: [] });
   assertEquals(planDiff(a, b), { missing_in_fresh: ["1"], new_in_fresh: ["3"], action_changed: ["2"] });
 });
+
+// A1 (2026-11-18): a review-lane row's excerpt (the citation's cited_text, spanning rating line, title and body) is
+// verified when it is on a page its OWN stored call fetched; on no fetched page — or only on another call's — it stays planned.
+Deno.test("plan — a review-lane excerpt on its own call's fetched page is verified; on no fetched page it stays planned", async () => {
+  const LANE_PAGE = "[Rated 1 out of 5 stars](https://cdn.test/stars-1.svg)\n\n## Hidden fees\n\nSpectrum hid fees and billed us for an extra month.";
+  const st = new (class extends FakeStore {
+    pages = new Map([["call-a", [LANE_PAGE]], ["call-b", ["a different page entirely"]]]);
+    loadLaneFetchedPages(ids: string[]) { return Promise.resolve(new Map(ids.filter((i) => this.pages.has(i)).map((i) => [i, this.pages.get(i)!] as const))); }
+  })();
+  st.snapshots = [{ company_id: CO, source_url: "https://reviews.test/p", clean_text: "Rated 1 out of 5 stars Hidden fees Spectrum hid f...", text_sha256: "sha-preview", crawled_at: "2026-11-12T00:00:00Z" }];
+  const ex = "[Rated 1 out of 5 stars](https://cdn.test/stars-1.svg)\n\n## Hidden fees\n\nSpectrum hid fees and billed us for an extra month.\n\n";
+  st.signals = [
+    sig({ id: "lane-on-page", source_url: "https://reviews.test/p", evidence_excerpt: ex, quote_source_text: "Spectrum hid fees and billed us for an extra month.", review_lane_call_id: "call-a" }),
+    sig({ id: "lane-other-call", source_url: "https://reviews.test/p", evidence_excerpt: ex, review_lane_call_id: "call-b" }),
+    sig({ id: "lane-no-call-page", source_url: "https://reviews.test/p", evidence_excerpt: ex, review_lane_call_id: "call-missing" }),
+  ];
+  const plan = await planExcerptBlanking(st, { companyId: CO });
+  assertEquals(plan.rows.map((r) => r.signal_id).sort(), ["lane-no-call-page", "lane-other-call"]);
+  assertEquals(plan.verified_by_lane_page, 1);
+  // a store without the lane method plans exactly as before: all three planned
+  const plain = new FakeStore(); plain.snapshots = st.snapshots; plain.signals = st.signals;
+  assertEquals((await planExcerptBlanking(plain, { companyId: CO })).rows.length, 3);
+});

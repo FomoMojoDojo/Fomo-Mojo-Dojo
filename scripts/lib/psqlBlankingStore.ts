@@ -93,7 +93,7 @@ export function makePsqlBlankingStore(s: PsqlSession): BlankingStore {
     },
     async loadCandidateSignals(companyIds) {
       if (companyIds.length === 0) return [];
-      return await s.query<BlankingSignal>(`select id, company_id, source_url, voice_class, claim_text, evidence_excerpt, quote_source_text, raw_payload from signals
+      return await s.query<BlankingSignal>(`select id, company_id, source_url, voice_class, claim_text, evidence_excerpt, quote_source_text, raw_payload, review_lane_call_id from signals
         where company_id in (${idList(companyIds)}) and signal_band='outside' and superseded_at is null and held_at is null
           and nullif(trim(evidence_excerpt),'') is not null and nullif(trim(source_url),'') is not null order by created_at, id`);
     },
@@ -103,6 +103,18 @@ export function makePsqlBlankingStore(s: PsqlSession): BlankingStore {
       return await s.query<BlankingSnapshot>(`select p.company_id, p.source_url, p.clean_text, p.text_sha256, p.crawled_at from outside_page_snapshots p
         join (values ${vals}) w(company_id, source_url) on w.company_id=p.company_id and w.source_url=p.source_url
         where p.fetch_status='ok' and p.clean_text is not null`);
+    },
+    async loadLaneFetchedPages(callIds) {
+      const out = new Map<string, string[]>();
+      if (callIds.length === 0) return out;
+      // the page text of each web_fetch result in the stored response, verbatim (laneFetchedPageTexts, in SQL)
+      // the column is NOT named t: query() aggregates its subquery as t, and a column t would be aggregated instead of the row
+      const rows = await s.query<{ id: string; page_text: string }>(`select c.id, b->'content'->'content'->'source'->>'data' page_text from review_lane_calls c
+        cross join lateral jsonb_array_elements(case when jsonb_typeof(c.response->'content')='array' then c.response->'content' else '[]'::jsonb end) b
+        where c.id in (${idList(callIds)}) and b->>'type'='web_fetch_tool_result' and b->'content'->>'type'='web_fetch_result'
+          and coalesce(b->'content'->'content'->'source'->>'data','') <> ''`);
+      for (const r of rows) { const a = out.get(r.id) ?? []; a.push(r.page_text); out.set(r.id, a); }
+      return out;
     },
     async loadSignalsById(ids) {
       if (ids.length === 0) return [];

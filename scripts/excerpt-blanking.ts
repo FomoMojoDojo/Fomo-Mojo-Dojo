@@ -32,7 +32,7 @@ const store = makePsqlBlankingStore(session);
 const FROZEN_CB1 = "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc";
 
 function planFile(plan: BlankingPlan): Record<string, unknown> {
-  return { generated_at: new Date().toISOString(), counts: { rows: plan.rows.length, blanked: plan.rows.filter((r) => r.action === "blanked").length, stamped_only: plan.rows.filter((r) => r.action === "stamped_only").length, urls: new Set(plan.rows.map((r) => r.source_url)).size, companies: plan.per_company.length, scanned: plan.scanned, verified_by_snapshot: plan.verified_by_snapshot, verified_by_quote_source_text: plan.verified_by_quote_source_text, no_snapshot: plan.no_snapshot, already_stamped: plan.already_stamped, skipped_frozen: plan.skipped_frozen }, per_company: plan.per_company, rows: plan.rows };
+  return { generated_at: new Date().toISOString(), counts: { rows: plan.rows.length, blanked: plan.rows.filter((r) => r.action === "blanked").length, stamped_only: plan.rows.filter((r) => r.action === "stamped_only").length, urls: new Set(plan.rows.map((r) => r.source_url)).size, companies: plan.per_company.length, scanned: plan.scanned, verified_by_snapshot: plan.verified_by_snapshot, verified_by_quote_source_text: plan.verified_by_quote_source_text, verified_by_lane_page: plan.verified_by_lane_page, no_snapshot: plan.no_snapshot, already_stamped: plan.already_stamped, skipped_frozen: plan.skipped_frozen }, per_company: plan.per_company, rows: plan.rows };
 }
 
 async function refusal(fn: () => Promise<unknown>): Promise<{ refused: boolean; code: string | null; message: string | null }> {
