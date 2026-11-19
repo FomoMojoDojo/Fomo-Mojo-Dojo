@@ -56,14 +56,21 @@ export const EXTERNAL_ADMISSIBLE_ON_ENUM = PROVENANCE_TYPE_ENUM.filter((p) =>
   EXTERNAL_ADMISSIBLE_PROVENANCE.has(p)
 ); // → ["public_research"]
 
-// The local lane admits the EXACT enum complement of the external-admissible set,
-// derived (not hand-listed) so the two can never silently diverge. NULL is admitted
-// to local separately (it fails closed on the external side; the local lane is its
-// home). Result: {framework_adjudicated, odi_survey, manual, internal_declared,
-// internal_hypothesis}.
-export const LOCAL_LANE_PROVENANCE = new Set(
-  PROVENANCE_TYPE_ENUM.filter((p) => !EXTERNAL_ADMISSIBLE_PROVENANCE.has(p)),
-);
+// THERE IS NO ENUMERATED LOCAL SET, AND ONE MUST NOT BE RE-CREATED (SP-432, 2026-11-19).
+//
+// `LOCAL_LANE_PROVENANCE` stood here: the enum complement of the external-admissible set. It was
+// deleted because it had NO READER anywhere in the tree — not one call site, not one test — and it
+// was already wrong: it was derived from PROVENANCE_TYPE_ENUM, which lists 6 of the DB enum's 9
+// values (`client_attested`, `market_interviewed` and `file_derived` were absent, and
+// `client_attested` is live on 6 odi_needs rows). A dead export whose only possible future use is as
+// an admission test is a trap: used that way it would have silently withheld every row carrying one
+// of the three missing values.
+//
+// The local lane needs no such set, because it is decided by LITERAL NEGATION:
+// `isSubjectLocalAdmissible` is `!isSubjectExternallyAdmissible(...)` and `isCascadeLocalAdmissible`
+// is `!isCascadeExternallyAdmissible(...)`. That is a stronger guarantee than an enumerated
+// complement — every row is admitted by exactly one lane BY CONSTRUCTION, including a NULL
+// provenance, an operator-edited row, and any enum value added after this comment was written.
 
 // ── A need is public only by its SOURCE (B1, operator ruling 2026-11-15) ──────
 //
