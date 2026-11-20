@@ -58,7 +58,7 @@ while IFS= read -r hit; do
   if echo "$CHAIN" | head -8 | grep -qE '\.(eq|in)\(\s*"id"'; then ACCOUNTED=$((ACCOUNTED+1)); continue; fi
   UNACCOUNTED="$UNACCOUNTED
         $f:$ln"
-done < <(grep -rn 'from("odi_needs")' --include="*.ts" --include="*.tsx" src supabase 2>/dev/null)
+done < <(grep -rn 'from("odi_needs")\|from("needs_in_market")' --include="*.ts" --include="*.tsx" src supabase 2>/dev/null)
 if [ -n "$UNACCOUNTED" ]; then
   bad "(p1) $(echo "$UNACCOUNTED" | grep -c .) read(s) of odi_needs neither exclude 'proposed' nor filter status nor read by id:"
   echo "$UNACCOUNTED"
@@ -66,8 +66,22 @@ else
   ok "(p1) all $TOTAL read(s) of odi_needs accounted for ($ACCOUNTED)"
 fi
 EXCL=$(grep -rn '\.neq("status", "proposed")' --include="*.ts" --include="*.tsx" src supabase 2>/dev/null | grep -c .)
-[ "$EXCL" -ge 20 ] || bad "(p1) only $EXCL SP-467 exclusions in the tree, expected at least 20 — one was removed"
-[ "$EXCL" -ge 20 ] && ok "(p1) $EXCL reader sites carry the exclusion"
+[ "$EXCL" -ge 22 ] || bad "(p1) only $EXCL SP-467 exclusions in the tree, expected at least 22 — one was removed"
+[ "$EXCL" -ge 22 ] && ok "(p1) $EXCL reader sites carry the exclusion"
+
+# (p1c) THE VIEW. `needs_in_market` is odi_needs joined to its market links, and it is what the LIVE
+# score reads (useOdiNeeds -> useLiveMojoScore). The first SP-467 census grepped `from("odi_needs")`
+# and so missed it entirely: the 5 materialised needs reached the view through need_markets rows a
+# trigger had already written, and the home's own score counted 20 needs where the snapshot counted
+# 15. Named here so that mistake cannot be made twice.
+VIEW_READS=$(grep -rn 'from("needs_in_market")' --include="*.ts" --include="*.tsx" src supabase 2>/dev/null | grep -vc "\.test\.")
+# -A 16, not -A 8: the chain plus the comment that explains why the exclusion is there runs past 8
+# lines, and a window too short to reach it reads as a missing exclusion (measured 2026-11-20).
+VIEW_EXCL=$(grep -rn -A 16 'from("needs_in_market")' --include="*.ts" --include="*.tsx" src supabase 2>/dev/null | grep -c '\.neq("status", "proposed")')
+echo "        needs_in_market reads: $VIEW_READS · carrying the exclusion: $VIEW_EXCL"
+[ "$VIEW_READS" -gt 0 ] || bad "(p1c) no reader of needs_in_market found — this check has gone vacuous"
+[ "$VIEW_EXCL" -ge "$VIEW_READS" ] && ok "(p1c) every read of the needs_in_market VIEW excludes 'proposed'" \
+  || bad "(p1c) $((VIEW_READS - VIEW_EXCL)) read(s) of needs_in_market do NOT exclude 'proposed' — the LIVE score would count them"
 grep -q 'in("status", \["active", "proposed"\])' src/hooks/useBriefNeeds.ts \
   || bad "(p1) the Brief no longer reads 'proposed' — then nothing shows a proposed need at all"
 grep -q 'in("status", \["active", "proposed"\])' src/hooks/useBriefNeeds.ts && ok "(p1) and the Brief reads both statuses"

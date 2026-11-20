@@ -157,6 +157,8 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: str
             .eq("company_id", companyId)
             .eq("journey_key", journeyKey)
             .neq("status", "retracted")
+            // SP-467: a materialised proposed need reaches the Brief only.
+            .neq("status", "proposed")
             .order("tier", { ascending: true })
             .order("sort_order", { ascending: true, nullsFirst: false })
             .order("opportunity_score", { ascending: false })
@@ -166,6 +168,11 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: str
             .eq("company_id", companyId)
             .not("journey_key", "is", null)
             .neq("status", "retracted")
+            // SP-467: a materialised proposed need reaches the Brief only. This is the LIVE score's
+            // own needs read (useLiveMojoScore takes them from here), and it is reached through the
+            // needs_in_market VIEW — which is why the first SP-467 census missed it: that census
+            // grepped `from("odi_needs")`, and a view is a different string for the same rows.
+            .neq("status", "proposed")
             .order("tier", { ascending: true })
             .order("sort_order", { ascending: true, nullsFirst: false })
             .order("opportunity_score", { ascending: false });
