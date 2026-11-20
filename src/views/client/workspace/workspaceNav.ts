@@ -39,6 +39,10 @@ export type WorkspacePage = {
   readonly tone?: WorkspaceTone;
   /** Kept class-b line: the launcher tile summary (S:7-15). */
   readonly summary?: string;
+  /** SP-442 (2026-11-19): the tile is rendered only with operator context. The ROUTE is already
+   *  closed to a non-admin by AdminModeRoute + InternalViewOnlyRoute (App.tsx), so this flag hides
+   *  the tile, it does not stand in for a route guard. */
+  readonly operatorOnly?: boolean;
 };
 
 export const WORKSPACE_STRINGS = {
@@ -241,6 +245,66 @@ export const WORKSPACE_STRINGS = {
   /** "N archived files" — the count is live, the noun is the tab's. */
   archivedFilesSingular: "archived file",
   archivedFilesPlural: "archived files",
+  // ── Proposed-needs review group on Inputs (SP-441 / SP-443; strings SP-446 B-10..B-14, 2026-11-19) ──
+  /** B-11 — the outside-voice group's label. */
+  proposedNeedsReview: "Proposed needs — review",
+  /** B-12 — that group's count. {n} = pending outside-voice cards, and ONLY those (SP-453). */
+  pendingOutsideVoice: "{n} pending · outside voice",
+  /** SP-453 (signed 2026-11-19) — the file-analysis need cards get their own group. */
+  proposedNeedsFromFiles: "Proposed needs — from file analyses",
+  /** SP-453's "own pending count", in B-12's shape. NEW STRING, reported for signature. */
+  pendingFromFileAnalyses: "{n} pending · from file analyses",
+  /** The card's kind and voice chips, as the signed mock prints them. These MIRROR the admin queue's
+   *  own vocabulary (src/components/admin/CandidateReviewQueue.tsx TYPE_LABEL / VOICE_LABEL, which is
+   *  not exported); workspaceStrings.parity.test.ts reads that file and fails if the two ever differ,
+   *  so there is one vocabulary without changing an /admin file (SP-440). */
+  cardKindNeed: "Need",
+  voiceCompany: "Company says",
+  voiceOutside: "Outside voices",
+  voiceMixed: "Both voices",
+  voiceUnlabeled: "Voice unlabeled",
+  /** B-10 — the count control that opens a card's or a need's quotes. Both surfaces. */
+  countedQuotesSites: "{counted} counted quotes · {sites} sites",
+  /** B-13 — a quote whose page showed no date. */
+  dateNotShown: "date not shown",
+  /** B-14 — the quote list's footer: the remainder, and that names were masked. */
+  moreMasked: "+ {n} more · reviewer names masked",
+  /** Existing by use (CandidateReviewQueue, ProposalReviewPanel). */
+  accept: "Accept",
+  /** Signed 2026-11-19 (SP-446). Reject marks the proposal rejected and KEEPS the row (SP-444). */
+  reject: "Reject",
+  // ── Brief (SP-442 tile + title, SP-424 the draft mark, SP-445 fixes, SP-446 B-1..B-9, SP-449) ──
+  /** SP-442 — the Tools tile label and the page's own name. */
+  briefLabel: "Brief",
+  /** SP-442 — the tile kicker, beside "Add evidence" and "Check the work". */
+  briefKicker: "Prepare the conversation",
+  /** SP-424 — until the sign step is built, the page says so. */
+  briefDraftMark: "draft, not signed",
+  /** B-1 — what the counts are, and what they are not. The one line on the page that carries meaning. */
+  briefNote: "Every count below is where customers reported a problem, in their own public words. A high count means the problem is well evidenced — it is not a satisfaction rate, and a low count is not approval. Counting follows the merger rule: an undated Cox review, and any Cox review from before 20 August 2026, is shown but not counted.",
+  /** B-2 */
+  bandHotspots: "Hotspots",
+  /** SP-449 (2026-11-19) — the needs whose counted quotes say the outcome IS being met. */
+  bandWhatWorks: "What works",
+  /** B-3 */
+  bandThinSpots: "Thin spots",
+  /** B-4, as SP-446 amended it. */
+  bandQuestions: "Open questions from the outside read",
+  /** B-5 — one colour on both surfaces (SP-445): the lime accent token. */
+  atTheBar: "At the bar",
+  /** B-6, as SP-446 amended it. */
+  belowTheBar: "Below the bar",
+  /** SP-445 — the visible key for the per-brand counts. */
+  polarityKey: "working / not working / mixed",
+  /** B-7 — which floor a thin spot missed. */
+  thinTooFewQuotes: "too few counted quotes",
+  thinTooFewSites: "too few sites",
+  thinTooFewBoth: "too few counted quotes and too few sites",
+  /** B-8 — what the merger rule withheld from this need, and so what would have changed it. */
+  withheldCox: "{undated} undated Cox and {pre} pre-merger Cox not counted",
+  withheldNone: "nothing withheld by the merger rule",
+  /** B-9 — the questions band's footer. */
+  questionsFoot: "{live} live questions · {superseded} superseded not shown",
   // ── Council (P:391-397) ──
   /** Existing (CouncilPanel). */
   strategicPressure: "Strategic pressure",
@@ -283,6 +347,7 @@ export const WORKSPACE_AREA_LABELS: Readonly<Record<string, string>> = {
 export const WORKSPACE_TOOL_EYEBROWS: Readonly<Record<string, string>> = {
   inputs: WORKSPACE_STRINGS.addEvidence,
   council: WORKSPACE_STRINGS.checkTheWork,
+  brief: WORKSPACE_STRINGS.briefKicker,
 };
 
 /** A page's signed label by key (page eyebrows carry the section name only, ruling 3). */
@@ -312,6 +377,48 @@ export function arrowNeighbour(page: WorkspacePage, dir: "prev" | "next"): Works
   if (i < 0) return null;
   const n = siblings.length;
   return siblings[(i + (dir === "next" ? 1 : n - 1)) % n];
+}
+
+/** SP-440: the page's document title. One shape for every workspace page. */
+export function workspaceDocumentTitle(label: string, companyName: string | null | undefined): string {
+  const company = String(companyName ?? "").trim();
+  return company ? `${label} — ${company}` : label;
+}
+
+/** B-10 — "{counted} counted quotes · {sites} sites". */
+export function countedQuotesSitesLine(counted: number, sites: number): string {
+  return WORKSPACE_STRINGS.countedQuotesSites.replace("{counted}", String(counted)).replace("{sites}", String(sites));
+}
+/** B-12 — "{n} pending · outside voice". */
+export function pendingOutsideVoiceLine(n: number): string {
+  return WORKSPACE_STRINGS.pendingOutsideVoice.replace("{n}", String(n));
+}
+/** SP-453 — "{n} pending · from file analyses". */
+export function pendingFromFilesLine(n: number): string {
+  return WORKSPACE_STRINGS.pendingFromFileAnalyses.replace("{n}", String(n));
+}
+/** The voice chip for a card's stored evidence_voice, in the admin queue's own words. */
+export function voiceLabel(voice: string | null | undefined): string {
+  switch (String(voice ?? "").trim()) {
+    case "company": return WORKSPACE_STRINGS.voiceCompany;
+    case "outside": return WORKSPACE_STRINGS.voiceOutside;
+    case "mixed": return WORKSPACE_STRINGS.voiceMixed;
+    default: return WORKSPACE_STRINGS.voiceUnlabeled;
+  }
+}
+/** B-14 — "+ {n} more · reviewer names masked". */
+export function moreMaskedLine(n: number): string {
+  return WORKSPACE_STRINGS.moreMasked.replace("{n}", String(n));
+}
+/** B-8 — what the merger rule withheld from this need. `undated` + `pre` both zero ⇒ the
+ *  "nothing withheld" line, so a thin spot never implies a withholding that did not happen. */
+export function withheldLine(undated: number, pre: number): string {
+  if (undated === 0 && pre === 0) return WORKSPACE_STRINGS.withheldNone;
+  return WORKSPACE_STRINGS.withheldCox.replace("{undated}", String(undated)).replace("{pre}", String(pre));
+}
+/** B-9 — "{live} live questions · {superseded} superseded not shown". */
+export function questionsFootLine(live: number, superseded: number): string {
+  return WORKSPACE_STRINGS.questionsFoot.replace("{live}", String(live)).replace("{superseded}", String(superseded));
 }
 
 /** The SRCH-1 lineage line for a run dated `iso` — the signed template with its date filled (en-US short date,

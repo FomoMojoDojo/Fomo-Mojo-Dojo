@@ -37,3 +37,66 @@ Deno.test("masking is idempotent: masked text masks nothing more", () => {
   const once = m("May 13 NewNew2021 Cox is bad. Review from Eric R Date: 08/13/2026. said by Osprey101: hi").text;
   assertEquals(m(once), { text: once, masked: 0 });
 });
+
+// ── SP-443 (2026-11-19): the EXCERPT byline shapes ───────────────────────────────────────────────────────────────────
+// Measured on Charter's 330 judged excerpts: none of the lead-text shapes above fires on that corpus, and 18 of them
+// carry a reviewer's name in one of these two. The review group and the Brief show those excerpts, so these cases are
+// what makes their masking real rather than nominal.
+Deno.test("ConsumerAffairs byline: the glued first name is masked, the place is kept", () => {
+  for (const [raw, want] of [
+    ["Report\n\nStewartMyrtle Beach, SC\n\n21- times Spectrum internet has been down", "Report\n\n[reviewer]Myrtle Beach, SC\n\n21- times Spectrum internet has been down"],
+    ["JessicaSaginaw, MI\n\nSpectrum internet keeps going out", "[reviewer]Saginaw, MI\n\nSpectrum internet keeps going out"],
+    ["MahmoudNew York, NY\n", "[reviewer]New York, NY\n"],
+    ["AfhrlksdjfSan Tan Valley, AZ\n", "[reviewer]San Tan Valley, AZ\n"],
+  ] as const) assertEquals(m(raw).text, want, raw);
+  assertEquals(m("RheaJohnson City, TN\n").masked, 1);
+});
+
+Deno.test("HighSpeedInternet byline: the name is masked, 'Verified User' is kept", () => {
+  assertEquals(m("– Heather R., Verified User\n\n(2/5)").text, "– [reviewer], Verified User\n\n(2/5)");
+});
+
+Deno.test("the byline shapes are anchored to a whole line — they never fire inside a sentence", () => {
+  for (const t of [
+    "I moved to Myrtle Beach, SC and the service was worse",
+    "we drove from Johnson City, TN to New York, NY that week",
+    "the tech said he was a Verified User of the same plan",
+    "Verified User\n\nOpaque pricing schemes attempting to extract as much as possible",
+  ]) assertEquals(m(t), { text: t, masked: 0 }, t);
+});
+
+Deno.test("the byline shapes are idempotent too", () => {
+  const once = m("Report\n\nStewartMyrtle Beach, SC\n\n– Heather R., Verified User").text;
+  assertEquals(m(once), { text: once, masked: 0 });
+});
+
+Deno.test("the App Store's STACKED header: the date on one line, the handle on the next", () => {
+  assertEquals(m("01/09/2025\n  Vinnydefo\n  Within 24 hours of signing up").text, "01/09/2025\n  [reviewer]\n  Within 24 hours of signing up");
+  assertEquals(m("  Jun 14\n  MDW32752\n  Spectrum frequently freezes").text, "  Jun 14\n  [reviewer]\n  Spectrum frequently freezes");
+  // a handle the [A-Za-z][\w.]* reader cannot hold, on a line of its own
+  assertEquals(m("Jun 24\n  J0n+3\n  the app is useless").text, "Jun 24\n  [reviewer]\n  the app is useless");
+  assertEquals(m("04/12/2024\n  Frustrated😤😤😤\n  billing again").text, "04/12/2024\n  [reviewer]\n  billing again");
+  // a display name of two or three words on the stacked line
+  assertEquals(m("  Oct 1\n  Grandma Overwatch\n  it keeps dropping").text, "  Oct 1\n  [reviewer]\n  it keeps dropping");
+  // KNOWN, AND DELIBERATE: a one-word line in this exact position is taken for the handle, so a one-word
+  // review TITLE there would be masked too. Masking a word that was not a name costs a word; leaving a
+  // name costs a person's name, and the stacked shape is a byline in every corpus measured.
+  assertEquals(m("Oct 1\n  Terrible\n  service").text, "Oct 1\n  [reviewer]\n  service");
+});
+
+Deno.test("a date line followed by a BLANK line and the review body is NOT a byline", () => {
+  for (const t of [
+    "Reviewed Sept. 30, 2026\n\nSpectrum internet keeps going out for long periods of time.",
+    "Reviewed Dec. 30, 2025\n\n21- times Spectrum internet has been down in 2- weeks.",
+  ]) assertEquals(m(t), { text: t, masked: 0 }, t);
+});
+
+Deno.test("Google Play byline: the line after the reviewer's avatar link is their display name", () => {
+  const raw = "[](https://play-lh.googleusercontent.com/a-/ALV-UjV=s32)\n\nRachael Tinsley\n\n*more_vert*\n\nApp constantly logs out";
+  const want = "[](https://play-lh.googleusercontent.com/a-/ALV-UjV=s32)\n\n[reviewer]\n\n*more_vert*\n\nApp constantly logs out";
+  assertEquals(m(raw).text, want);
+  assertEquals(m(want), { text: want, masked: 0 });   // idempotent
+  // an avatar link that is NOT a reviewer's (a different host) is left alone
+  const other = "[](https://cdn.trustpilot.net/brand-assets/4.1.0/stars/stars-1.svg)\n\nI have been a Charter customer\n";
+  assertEquals(m(other), { text: other, masked: 0 });
+});

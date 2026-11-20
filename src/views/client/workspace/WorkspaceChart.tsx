@@ -74,7 +74,9 @@ export function ToolsStrip({ activeKey, variant, adminOpen, onToggleAdmin, onNav
   activeKey: string | null; variant: ChartVariant; adminOpen: boolean; onToggleAdmin: () => void; onNavigate?: () => void;
 }) {
   const operator = useOperatorControls();
-  const tools = groupPages("tools").filter((p) => p.key !== "index");
+  // SP-442: an operatorOnly tile (Brief) is rendered only with operator context — the same
+  // `operator` value that gates the Admin disclosure below, so one mechanism hides both.
+  const tools = groupPages("tools").filter((p) => p.key !== "index" && (!p.operatorOnly || Boolean(operator)));
   return (
     <div className="fr-launcher-tools" {...variantAttr(variant)}>
       {tools.map((p) => (

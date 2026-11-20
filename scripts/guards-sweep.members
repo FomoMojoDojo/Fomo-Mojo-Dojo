@@ -1,4 +1,4 @@
-# THE SWEEP'S EXPECTED MEMBERS (operator ruling R2, 2026-11-18, amended SP-415/SP-426/SP-429 2026-11-19: 73 members).
+# THE SWEEP'S EXPECTED MEMBERS (operator ruling R2, 2026-11-18, amended SP-415/SP-426/SP-429 and SP-441 2026-11-19: 74 members).
 # One name per line; '#' lines and blank lines are ignored. scripts/guards-sweep.sh refuses to report a
 # result when the members it finds or runs differ from this list — a guard added, removed or excluded
 # moves this file in the same commit, or the sweep fails. The last line is the before/after pair the
@@ -62,6 +62,7 @@ related-entity-guard.sh
 remint-guard.sh
 retire-guard.sh
 retire-signals-guard.sh
+review-group-guard.sh
 review-lane-guard.sh
 search-health-guard.sh
 search-lead-guard.sh

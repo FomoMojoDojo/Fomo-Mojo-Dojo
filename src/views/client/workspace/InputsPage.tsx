@@ -64,6 +64,7 @@ import { useFirstReadMarks, anchorId, type LiveMark } from "@/lib/firstReadMarks
 import { orderMarks } from "@/lib/firstReadMarks/WhatWeHeard";
 import { HEARD_GROUP_ORDER, MARK_STRINGS, REACTION_CHOICES } from "@/lib/firstReadMarks/strings";
 import { clientRefineFirstReadMarkPath } from "@/lib/clientRefinePreview";
+import { ProposedNeedsReview } from "./reviewGroup";
 import { WorkspaceAbsent } from "./absent";
 import { WorkspaceHeroPage } from "./WorkspaceHeroPage";
 import { WORKSPACE_AREA_LABELS, WORKSPACE_STRINGS, pageLabel } from "./workspaceNav";
@@ -264,6 +265,12 @@ export default function InputsPage() {
               <FileUploadDialog open={openUpload} onOpenChange={(o) => { setOpenUpload(o); if (!o) void refetchAll(); }} companyId={companyId} companyName={activeCompany?.name} />
             </div>
           ) : null}
+
+          {/* SP-441: the proposed-needs review group. Operator-gated like every other control on
+              this page; Accept additionally gated by governance.proposal.apply (canApply), exactly
+              as it gates ProposalReviewPanel's accept below. It renders nothing when there is
+              nothing pending. */}
+          {gated && companyId ? <ProposedNeedsReview companyId={companyId} canApply={canApply} /> : null}
 
           <div className="fr-ws-tablewrap" data-fr-region="files">
             {gated && rows.length > 0 ? (

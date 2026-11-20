@@ -4415,6 +4415,54 @@ export type Database = {
           },
         ]
       }
+      need_evidence: {
+        Row: {
+          bears: boolean
+          brand: string
+          company_id: string
+          created_at: string
+          id: string
+          judged_at: string
+          judged_by: string
+          label_source: string
+          need_id: string
+          polarity: string | null
+          rubric_md5: string
+          rubric_version: string
+          signal_id: string
+        }
+        Insert: {
+          bears: boolean
+          brand: string
+          company_id: string
+          created_at?: string
+          id?: string
+          judged_at?: string
+          judged_by?: string
+          label_source: string
+          need_id: string
+          polarity?: string | null
+          rubric_md5: string
+          rubric_version: string
+          signal_id: string
+        }
+        Update: {
+          bears?: boolean
+          brand?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          judged_at?: string
+          judged_by?: string
+          label_source?: string
+          need_id?: string
+          polarity?: string | null
+          rubric_md5?: string
+          rubric_version?: string
+          signal_id?: string
+        }
+        Relationships: []
+      }
       need_markets: {
         Row: {
           canonical_statement: string | null

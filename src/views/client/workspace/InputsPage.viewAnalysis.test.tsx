@@ -28,6 +28,12 @@ vi.mock("@/hooks/useCapability", () => ({ useCapability: () => capability.value 
 vi.mock("@/hooks/useCompany", () => ({ useCompany: () => ({ activeCompany: { id: "c1", name: "Edgewood" } }) }));
 const FILE = { id: "file-1", input_id: "in-1", file_name: "Strategy Review.md", file_type: "text/markdown", file_path: "c1/review.md", tags: ["__area:jobmap", "__area:odi"], uploaded_at: "2026-06-01T00:00:00Z", archived_at: null, archive_reason: null, archive_source: null };
 vi.mock("@/hooks/useCompanyFiles", () => ({ useCompanyFiles: () => ({ data: [FILE], refetch: async () => {} }) }));
+// SP-441: the page also mounts the proposed-needs review group, which reads surface_proposals on
+// mount. This spec is about the View-analysis panel, so the queue is mocked EMPTY like every other
+// hook here — which keeps "touched no table" literally true of the interaction under test.
+vi.mock("@/hooks/useCandidateQueue", () => ({
+  useCandidateQueue: () => ({ cards: [], loading: false, error: null, reload: async () => {}, accept: async () => {}, reject: async () => {} }),
+}));
 vi.mock("@/hooks/useInputs", () => ({ useArchiveInputFile: () => ({ mutateAsync: async () => {} }), useRestoreInputFile: () => ({ mutateAsync: async () => {} }), useArchivedInputFiles: () => ({ data: [], refetch: async () => {} }), getFileSignedUrl: async () => "" }));
 vi.mock("@/hooks/useOdiNeeds", () => ({ useOdiNeeds: () => ({ needs: [] }) }));
 vi.mock("@/hooks/useRoutes", () => ({ useRoutes: () => ({ items: [] }) }));
