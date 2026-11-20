@@ -14,6 +14,11 @@
 // fragment is NOT a fallback: where no verified quote was stored the surface shows the quote's
 // source line and no text, because there is no verified text to show.
 //
+// THE BRAND WORDS ARE READ, NOT WRITTEN DOWN (SP-455c). `maskReviewerNames` refuses to call a brand a
+// reviewer; the words it refuses come from `brandWords`, built from the company's own name and the
+// brand values `need_evidence` recorded on the quotes being shown. No list of company names exists in
+// either module, which is why `leadText.ts` no longer needs an entry in noHardcodedCompany's ALLOWED.
+//
 // MASKING STAYS AS A SECOND LAYER (SP-452). `maskReviewerNames` runs on the quote even though a
 // verified quote holds no byline by construction — the guard proves the layer is still live against
 // the fragment corpus it was built for, and this call is what keeps a stray name off the screen if
@@ -67,9 +72,24 @@ export type DisplayQuote = {
   date: string | null;
 };
 
-export function displayQuote(row: QuoteRow): DisplayQuote {
+/** The sentinel `need_evidence` writes when the page named no brand — not a brand word. */
+const BRAND_NOT_RECORDED = "brand_not_recorded";
+
+/** The words the mask must not take for a reviewer's name, from stored values only (SP-455c): the
+ *  company's own name and the brands recorded on the quotes being shown. */
+export function brandWords(companyName: string | null | undefined, storedBrands?: Iterable<string> | null): string[] {
+  const out = new Set<string>();
+  const add = (v: string) => { for (const w of v.split(/[^A-Za-z]+/)) if (w.length > 2) out.add(w.toLowerCase()); };
+  add(String(companyName ?? ""));
+  // A missing list means no refused words, which only makes the mask MORE eager — never a leak — so
+  // a read that has not landed yet degrades safely rather than throwing on a live page.
+  for (const b of storedBrands ?? []) { const v = String(b ?? "").trim(); if (v && v !== BRAND_NOT_RECORDED) add(v); }
+  return [...out].sort();
+}
+
+export function displayQuote(row: QuoteRow, brands: Iterable<string> = []): DisplayQuote {
   const raw = typeof row.quote === "string" ? row.quote.trim() : "";
-  const masked = maskReviewerNames(raw);
+  const masked = maskReviewerNames(raw, brands);
   const full = masked.text.trim();
   const clipped = full.length > QUOTE_MAX_CHARS;
   return {
@@ -87,8 +107,9 @@ export function displayQuote(row: QuoteRow): DisplayQuote {
   };
 }
 
-export function displayQuotes(rows: readonly QuoteRow[]): DisplayQuote[] {
-  return rows.map(displayQuote);
+export function displayQuotes(rows: readonly QuoteRow[], brands: Iterable<string> = []): DisplayQuote[] {
+  const words = [...brands];
+  return rows.map((r) => displayQuote(r, words));
 }
 
 /** How many of a shown set carried a reviewer name the mask took. */

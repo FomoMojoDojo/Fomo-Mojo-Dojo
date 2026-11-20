@@ -21,6 +21,9 @@ const DATE_ONLY = /^(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[
 /** Google Play's reviewer avatar — the NEXT non-empty line is the display name. */
 const PLAY_AVATAR = /^\[\]\(https:\/\/play-lh\.googleusercontent\.com\//;
 
+// SP-455c: the brand words are the caller's. The guard passes the company's stored values after the
+// file path, exactly as the screens pass them, so this check exercises the same decision they make.
+const brands = Deno.args.slice(1).filter((a) => !a.startsWith("--"));
 const path = Deno.args[0];
 if (!path) { console.log("R4-FAIL no excerpt file given"); Deno.exit(0); }
 
@@ -30,7 +33,7 @@ for (const b64 of (await Deno.readTextFile(path)).split("\n")) {
   if (!b64.trim()) continue;
   const text = new TextDecoder().decode(Uint8Array.from(atob(b64.trim()), (c) => c.charCodeAt(0)));
   quotes++;
-  const r = maskReviewerNames(text);
+  const r = maskReviewerNames(text, brands);
   if (r.masked > 0) { withName++; masked += r.masked; }
   const out = r.text.split("\n");
   for (let i = 0; i < out.length; i++) {

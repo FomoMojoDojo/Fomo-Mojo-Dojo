@@ -3,7 +3,11 @@ import { execFileSync } from "node:child_process";
 import { COMPANY_ID } from "../../playwright.config";
 
 export const WS = "/preview/client-refine/workspace";
-export const WS_PAGES = ["", "inputs", "job-map", "positioning", "strategy", "market", "opportunities", "routes", "council"] as const;
+// SP-442 (2026-11-19): "brief" joins the list, so the three structural specs that read it — (e)
+// regions filled, (f) no operator node on the default render, (h) no text under the cluster — all
+// cover the Brief route. (f) is SP-442's negative case: a non-admin sees no tile and the page's own
+// default render is the absent state.
+export const WS_PAGES = ["", "inputs", "job-map", "positioning", "strategy", "market", "opportunities", "routes", "council", "brief"] as const;
 
 export function wsPath(segment: string): string {
   return segment ? `${WS}/${segment}` : WS;

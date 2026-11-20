@@ -18,6 +18,8 @@
 #       (`evidence_excerpt`) must still take names, so the layer cannot rot unnoticed
 #   r7  SP-452: the text shown IS the verified quote. The display path reads signals.quote and the page
 #       fragment is not a fallback anywhere in it
+#   r8  SP-455c: neither the mask nor the quote path holds a company name of its own — the brand words
+#       the mask refuses are read from stored values and passed in
 #   r5  SP-444: Reject marks and keeps. No delete against surface_proposals exists in src/, and
 #       fleet-wide every rejected candidate proposal still carries its proposed_state and a reviewer
 #   r6  the group is needs-only, operator-gated, and gates Accept on governance.proposal.apply
@@ -30,6 +32,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 DB=supabase_db_dzlgyxcvuwiulgifbmew
 RQ=src/lib/reviewQuote.ts
+LT=supabase/functions/_shared/leadText.ts
 LT=supabase/functions/_shared/leadText.ts
 QL=src/views/client/workspace/QuoteList.tsx
 RG=src/views/client/workspace/reviewGroup.tsx
@@ -87,7 +90,13 @@ CITED="with c as (select jsonb_array_elements_text(p.proposed_state->'evidence_s
      where p.status='pending' and p.proposed_state->>'origin'='outside_voice_read')"
 q "$CITED select replace(encode(convert_to(coalesce(s.quote,''),'UTF8'),'base64'), chr(10), '')
    from public.signals s join c on c.sid = s.id" > "$TMP/quotes.b64"
-R4=$(PATH="$HOME/.deno/bin:$PATH" deno run -A scripts/guards/helpers/reviewQuoteMasking.ts "$TMP/quotes.b64" 2>&1 || true)
+# the brand words the screens pass: the company's own name and the brands need_evidence recorded
+BRANDS=$(q "select string_agg(distinct w, ' ') from (
+  select c.name as w from public.companies c
+   where c.id in (select company_id from public.surface_proposals
+                   where status='pending' and proposed_state->>'origin'='outside_voice_read')
+  union select distinct e.brand from public.need_evidence e where e.brand <> 'brand_not_recorded') t;")
+R4=$(PATH="$HOME/.deno/bin:$PATH" deno run -A scripts/guards/helpers/reviewQuoteMasking.ts "$TMP/quotes.b64" $BRANDS 2>&1 || true)
 case "$R4" in
   R4-OK*) echo "r4. ${R4#R4-OK }" ;;
   *) fail r4 "${R4:-the masking helper did not run}" ;;
@@ -96,7 +105,7 @@ esac
 # r4b ── the mask is still live as the second layer, against the fragment corpus it was built for
 q "$CITED select replace(encode(convert_to(coalesce(s.evidence_excerpt,''),'UTF8'),'base64'), chr(10), '')
    from public.signals s join c on c.sid = s.id" > "$TMP/excerpts.b64"
-R4B=$(PATH="$HOME/.deno/bin:$PATH" deno run -A scripts/guards/helpers/reviewQuoteMasking.ts "$TMP/excerpts.b64" --expect-names 2>&1 || true)
+R4B=$(PATH="$HOME/.deno/bin:$PATH" deno run -A scripts/guards/helpers/reviewQuoteMasking.ts "$TMP/excerpts.b64" $BRANDS --expect-names 2>&1 || true)
 case "$R4B" in
   R4-OK*) echo "r4b. ${R4B#R4-OK }" ;;
   *) fail r4b "${R4B:-the masking helper did not run}" ;;
@@ -135,5 +144,17 @@ NOQ=$(q "select count(*) from public.signals s
          where s.id in (select distinct signal_id from public.need_evidence)
            and (s.quote is null or btrim(s.quote) = '')")
 echo "r7. every quote-path reader selects signals.quote, never the page fragment ($(echo "$READERS" | tr "\n" " ")); $NOQ of the judged signals fleet-wide carry no verified quote"
+
+# r8 ── SP-455c: no company name lives in the masking module or the quote path
+for f in "$LT" "$RQ"; do
+  CODE=$(grep -vE '^\s*(//|\*|/\*)' "$f" || true)
+  for name in Spectrum Comcast Xfinity Verizon Contour Panoramic; do
+    echo "$CODE" | grep -q "\"$name\"" && fail r8 "$f holds the company name \"$name\" as a literal — the brand words are read, not written down" || true
+  done
+done
+grep -q 'brands: Iterable<string>' "$LT" || fail r8 "$LT does not take the brand words from its caller"
+grep -q 'export function brandWords' "$RQ" || fail r8 "$RQ does not build the brand words from stored values"
+grep -q 'leadText.ts' src/lib/landing/noHardcodedCompany.test.ts && fail r8 "the ALLOWED exception for leadText.ts is still there, but the literal list is gone" || true
+echo "r8. the brand words are read from stored values and passed in; no company name is a literal in $LT or $RQ, and the ALLOWED exception is gone"
 
 echo "GUARD OK"

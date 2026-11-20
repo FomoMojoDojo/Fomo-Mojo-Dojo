@@ -33,15 +33,22 @@ const atBarQuotes = [
   quote(3, { sourceUrl: APP_URL, quote: LONG }),
 ];
 // Well past the bar: 5 counted from 3 sites, so the quote list has a remainder to state.
-const bigQuotes = [1, 2, 3, 4, 5].map((n) => quote(n + 10, { sourceUrl: n > 3 ? PLAY_URL : n > 1 ? APP_URL : CA_URL }));
+const bigQuotes = [1, 2, 3, 4, 5].map((n) => quote(n + 10, {
+  sourceUrl: n > 3 ? PLAY_URL : n > 1 ? APP_URL : CA_URL,
+  // the FIFTH quote — only visible once revealed — carries a byline, so the masking assertion above
+  // is about the revealed set and not only about the first four
+  ...(n === 5 ? { quote: "Report\n\nStewartMyrtle Beach, SC\n\nthe outage lasted three days." } : {}),
+}));
 
 const reject = vi.fn(async () => {});
 const accept = vi.fn(async () => {});
 
+vi.mock("@/hooks/useCompany", () => ({ useCompany: () => ({ activeCompany: { id: "co", name: "Charter Communications" } }) }));
 vi.mock("@/hooks/useCandidateQueue", () => ({
   useCandidateQueue: () => ({
     loading: false,
     error: null,
+    storedBrands: ["spectrum", "cox"],
     reload: async () => {},
     accept,
     reject,
@@ -73,7 +80,7 @@ describe("the review group (SP-441)", () => {
     expect([...outside.querySelectorAll(".fr-ws-review-headline")].map((h) => h.textContent))
       .toEqual(["A NEED EXACTLY AT THE BAR", "A NEED WELL PAST THE BAR"]);
     expect(files.querySelector('[data-testid="review-group-files-title"]')!.textContent).toBe(WORKSPACE_STRINGS.proposedNeedsFromFiles);
-    expect(files.querySelector('[data-testid="review-group-files-count"]')!.textContent).toBe("1 pending · from file analyses");
+    expect(files.querySelector('[data-testid="review-group-files-count"]')!.textContent).toBe("1 pending");
     expect([...files.querySelectorAll(".fr-ws-review-headline")].map((h) => h.textContent))
       .toEqual(["A NEED READ OUT OF AN UPLOADED FILE"]);
     // a route candidate is not a proposed NEED, so neither label covers it
@@ -173,9 +180,32 @@ describe("the quotes behind a count (SP-443)", () => {
     expect(clipped!.querySelector(".fr-ws-quote-text")!.textContent!.length).toBeLessThan(LONG.length);
   });
 
-  it("the footer states the remainder (B-14) and appears only when there is one", () => {
-    expect(open("WELL PAST THE BAR").querySelector('[data-testid="quote-foot"]')!.textContent)
-      .toBe("+ 1 more · reviewer names masked");
-    expect(open("EXACTLY AT THE BAR").querySelector('[data-testid="quote-foot"]')).toBeNull();
+  it("SP-455b: the remainder is a CONTROL that reveals every quote, in the First Read's own words", () => {
+    const card = open("WELL PAST THE BAR");
+    const list = card.querySelector('[data-testid="quote-list"]')!;
+    expect(list.getAttribute("data-fr-showing")).toBe("4");
+    const btn = card.querySelector('[data-testid="quote-show-all"]') as HTMLButtonElement;
+    expect(btn.textContent).toContain("Show all 5");
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(btn);
+    expect(list.getAttribute("data-fr-showing")).toBe("5");
+    expect(card.querySelectorAll('[data-testid="quote"]')).toHaveLength(5);
+    expect(btn.textContent).toContain("Show fewer");
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(btn);
+    expect(list.getAttribute("data-fr-showing")).toBe("4");
+  });
+
+  it("the masking and date rules apply to the REVEALED quotes too — one call, not a second path", () => {
+    const card = open("WELL PAST THE BAR");
+    fireEvent.click(card.querySelector('[data-testid="quote-show-all"]')!);
+    const metas = [...card.querySelectorAll(".fr-ws-quote-meta")].map((p) => p.textContent);
+    expect(metas).toHaveLength(5);
+    for (const m of metas) expect(m).toMatch(/· (September 30, 2026|date not shown)$/);
+    expect(card.textContent).not.toContain("Stewart");
+  });
+
+  it("a card with nothing hidden has no control at all", () => {
+    expect(open("EXACTLY AT THE BAR").querySelector('[data-testid="quote-show-all"]')).toBeNull();
   });
 });

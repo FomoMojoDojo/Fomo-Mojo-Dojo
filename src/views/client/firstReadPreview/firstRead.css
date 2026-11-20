@@ -2149,7 +2149,15 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
    column shrinks to the three capped tiles and stays centred (the panel is still full-viewport); the
    tools strip keeps its labels on one line so it never grows a second row when the nav narrows. */
 .fr-launcher-panel { --fr-tile: min(calc((100vw - 130px) / 3), calc((100vh - 404px) / 2)); }
-.fr-launcher-nav { max-width: min(96rem, calc(3 * var(--fr-tile) + 2px)); }
+/* SP-456: ONE width for the bars, the tile grid and the Tools row. The nav is border-box, so its
+   `max-width: 3*tile + 2` was the PADDED width — the content box came out 80px narrower (396px at
+   1280x720) while the grid's three fixed columns still measured 3*tile (474px), so the third column
+   (Routes, Market) hung outside the frame and both bars and the Tools row read narrower than the
+   tiles. Measured on 1b3bce8c as well: it predates this work. The cap now sits on the BLOCKS, which
+   are content-box children of the nav, so every one of them is exactly three tiles wide and the tiles
+   stay square under the fit-the-viewport rule. */
+.fr-launcher-nav { max-width: 96rem; }
+.fr-launcher-group, .fr-launcher-tools { width: 100%; max-width: calc(3 * var(--fr-tile) + 2px); margin-inline: auto; }
 .fr-launcher-grid { display: grid; }
 @media (min-width: 768px) { .fr-launcher-grid { grid-template-columns: repeat(3, var(--fr-tile)); } }
 .fr-launcher-tile {
@@ -2250,8 +2258,20 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-launcher-admin { position: relative; }
 .fr-launcher-admin .fr-launcher-tool { background: none; }
 .fr-launcher-admin .fr-launcher-tool:hover { background: hsl(var(--fr-paper) / 0.1); }
-.fr-launcher-tool-text { display: flex; flex-direction: column; }
+.fr-launcher-tool-text { display: flex; flex-direction: column; min-width: 0; }
 .fr-launcher-tool-eyebrow { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.55; }
+/* SP-442 / SP-456: a fourth Tools cell (Inputs · Council · Brief · Admin, operator only) narrows
+   every cell, and the strip's `white-space: nowrap; overflow: hidden` CUT the kickers.
+   Wrapping the STRIP to two rows was worse: the vertical budget above is calculated for ONE tools row
+   (81px), so a second row pushed the panel into overflow (746 > 672 at 1280x720, 926 > 852 at
+   1440x900) and the footer off screen. The strip stays one row. Instead the KICKER wraps on word
+   boundaries, and in the strip it drops the tracking and the ↗ so the longest word
+   ("CONVERSATION") fits a quarter-width cell. The tile grid keeps both. */
+.fr-launcher-tool-eyebrow { white-space: normal; }
+.fr-launcher-tool-title { white-space: nowrap; }
+.fr-launcher-tools .fr-launcher-tool-eyebrow { letter-spacing: 0.04em; }
+.fr-launcher-tools .fr-launcher-tool { padding-inline: 10px; }
+.fr-launcher-tools .fr-launcher-tool > svg:not(.fr-launcher-caret) { display: none; }
 .fr-launcher-tool-title { margin-top: 4px; font-size: 1.125rem; font-weight: 700; }
 .fr-launcher-tool .fr-launcher-arrow { opacity: 0.55; }
 .fr-launcher-caret { opacity: 0.55; transition: transform 160ms ease; }
@@ -3035,6 +3055,16 @@ span.fr-mark-target .fr-mark-box { display: flex; }
 .fr-ws-quote-text { margin: 0; max-width: 80ch; font-size: 0.9375rem; line-height: 1.55; color: hsl(var(--fr-ink)); }
 .fr-ws-quote-meta { margin: 0.3rem 0 0; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
 .fr-ws-quote-foot { margin: 0; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+/* SP-455b — the reveal control, the First Read's own shape (acts.tsx:854): a rotating chevron and
+   "Show all {n}" / "Show fewer", at the workspace's 10px mono floor. */
+.fr-ws-quote-more {
+  display: inline-flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none;
+  color: hsl(var(--fr-ink)); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; cursor: pointer;
+}
+.fr-ws-quote-more:hover { color: hsl(var(--fr-lime)); }
+.fr-ws-quote-more-caret { display: inline-block; transition: transform 200ms ease; }
+.fr-ws-quote-more-caret[data-open] { transform: rotate(90deg); }
+.fr-ws-read .fr-ws-quote-more { color: hsl(var(--fr-paper)); }
 
 /* ---- Brief (SP-442/SP-445/SP-446/SP-449) — the Read frame, so paper on slate ------------------- */
 .fr-ws-read .fr-ws-review-card { background: hsl(var(--fr-slate)); border-color: hsl(var(--fr-paper) / 0.15); }

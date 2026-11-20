@@ -32,7 +32,7 @@ vi.mock("@/hooks/useCompanyFiles", () => ({ useCompanyFiles: () => ({ data: [FIL
 // mount. This spec is about the View-analysis panel, so the queue is mocked EMPTY like every other
 // hook here — which keeps "touched no table" literally true of the interaction under test.
 vi.mock("@/hooks/useCandidateQueue", () => ({
-  useCandidateQueue: () => ({ cards: [], loading: false, error: null, reload: async () => {}, accept: async () => {}, reject: async () => {} }),
+  useCandidateQueue: () => ({ cards: [], loading: false, error: null, storedBrands: [], reload: async () => {}, accept: async () => {}, reject: async () => {} }),
 }));
 vi.mock("@/hooks/useInputs", () => ({ useArchiveInputFile: () => ({ mutateAsync: async () => {} }), useRestoreInputFile: () => ({ mutateAsync: async () => {} }), useArchivedInputFiles: () => ({ data: [], refetch: async () => {} }), getFileSignedUrl: async () => "" }));
 vi.mock("@/hooks/useOdiNeeds", () => ({ useOdiNeeds: () => ({ needs: [] }) }));

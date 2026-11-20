@@ -17,10 +17,16 @@
 #   e4  no label points at a superseded or held signal
 #   e5  every row's judged_by is one of the three; today's corpus is all 'cc_read_unchecked' (SP-429)
 #   e6  the counting module reproduces charter-needs-status-v2.md EXACTLY for N1–N15
+#   e7  SP-445: the BRIEF'S BANDS reproduce it too — every need the published table marks as meeting
+#       the bar is a hotspot and no other is, every need it marks as failing is a thin spot, and the
+#       "at the bar" mark lands on the same row. Computed with the page's own modules
+#       (src/lib/briefSections.ts), so the page cannot show a band the file disagrees with.
 #
 # Plants (injected live, RED, restored md5-identical, GREEN):
 #   P1  add 'neutral' to the polarity CHECK          => e1 FAILED
 #   P2  flip COX_MERGER_DATE in the counting module  => e6 FAILED
+#   P3  drop `meets` from isAtTheBar (briefSections) => e7 FAILED (N6 and N8, the 2-from-2 failures,
+#       are then marked as sitting at the bar)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.deno/bin:$PATH"
@@ -89,5 +95,15 @@ OUT=$(deno run -A scripts/verify-need-evidence-counting.ts 2>&1 || true)
 echo "$OUT" | grep -q "reproduce charter-needs-status-v2.md EXACTLY" \
   || fail e6 "the counting module no longer reproduces charter-needs-status-v2.md: $(echo "$OUT" | grep -E 'MISMATCH|mismatched' | head -2 | tr '\n' ' ')"
 echo "e6. the counting module reproduces charter-needs-status-v2.md exactly for N1-N15"
+
+# e7 ── the Brief's bands agree with the published table, row by row, including the at-the-bar mark
+BOUT=$(deno run -A scripts/verify-brief-sections.ts 2>&1 || true)
+echo "$BOUT" | grep -qE "^matched 15 of 15, mismatched 0$" \
+  || fail e7 "the Brief's bands disagree with charter-needs-status-v2.md: $(echo "$BOUT" | grep -E 'MISMATCH|mismatched|MISSING' | head -3 | tr '\n' ' ')"
+# AT-THE-BAR must land on exactly one need, and it must be one that MEETS the bar (the SP-445 term)
+BARS=$(echo "$BOUT" | grep -c "AT-THE-BAR" || true)
+[ "$BARS" = "1" ] || fail e7 "the at-the-bar mark lands on $BARS need(s), expected exactly 1 (N4)"
+echo "$BOUT" | grep "AT-THE-BAR" | grep -q "band HOTSPOT" || fail e7 "the at-the-bar mark landed on a need that does NOT meet the bar"
+echo "e7. $(echo "$BOUT" | grep '^bands:') — and the at-the-bar mark lands on the one need that meets the bar and sits on a floor"
 
 echo "GUARD OK"

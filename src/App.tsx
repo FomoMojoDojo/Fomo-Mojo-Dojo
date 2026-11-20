@@ -65,6 +65,7 @@ import WorkspaceMarketPage from "./views/client/workspace/MarketPage";
 import WorkspaceOpportunitiesPage from "./views/client/workspace/OpportunitiesPage";
 import WorkspaceRoutesPage from "./views/client/workspace/RoutesPage";
 import WorkspaceCouncilPage from "./views/client/workspace/CouncilPage";
+import WorkspaceBriefPage from "./views/client/workspace/BriefPage";
 import { DiagnoseFlowView } from "./views/client/diagnoseFlow/DiagnoseFlowView";
 import type { ClientSystemPhase } from "./hooks/useClientMapInteractionState";
 import { dispatchClientPhaseChange, writeStoredClientPhase } from "./hooks/useClientMapInteractionState";
@@ -455,6 +456,10 @@ const App = () => (
                   <Route path="opportunities" element={<WorkspaceOpportunitiesPage />} />
                   <Route path="routes" element={<WorkspaceRoutesPage />} />
                   <Route path="council" element={<WorkspaceCouncilPage />} />
+                  {/* SP-442 (2026-11-19): the Brief. No extra route guard — the workspace parent is
+                      already AdminModeRoute → InternalViewOnlyRoute, so a non-admin cannot open it;
+                      the page's own default render (no operator context) is the absent state. */}
+                  <Route path="brief" element={<WorkspaceBriefPage />} />
                 </Route>
                 {/* Surface B — Legacy prototype (frozen, not maintained) */}
                 <Route path="/legacy/map" element={<InternalViewOnlyRoute><MapView /></InternalViewOnlyRoute>} />

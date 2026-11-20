@@ -22,7 +22,8 @@ for (const seg of WS_PAGES) {
     const root = page.getByTestId("workspace-root");
     await expect(root).toHaveClass(/\bfirst-read\b/);
     await expect(root.locator("header.fr-shell-header")).toHaveCount(1);
-    await expect(root.locator(".fr-shell-title")).toHaveText("MojoMap");
+    // SP-445 (2026-11-19): the workspace header carries the trademark mark.
+    await expect(root.locator(".fr-shell-title")).toHaveText("MojoMap\u2122");
     await expect(page.getByTestId("workspace-identity")).toContainText("DAY");
     await page.waitForTimeout(600);
     const regions = await page.locator("[data-fr-region]").evaluateAll((els) =>

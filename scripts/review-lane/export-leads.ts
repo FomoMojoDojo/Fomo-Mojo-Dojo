@@ -21,10 +21,17 @@ const held = await s.query<{ id: string; url: string; text: string; brand: strin
 const forum = await s.query<{ id: string; url: string; title: string; snippet: string; published_date: string | null; forum: string | null; brand: string | null }>(`select l.id, l.url,
   l.title, l.snippet, l.published_date, l.forum, ${BRAND.replace("%s", "l.about_entity_id")} brand from search_leads l
   where l.company_id=${lit(company)}::uuid and l.retired_at is null order by l.id`);
+const companyName = (await s.query<{ name: string }>(`select coalesce(name,'') name from companies where id=${lit(company)}::uuid`))[0]?.name ?? "";
 await s.exec("rollback;");
 await s.close();
+// SP-455c: the brand words the mask must not take for a reviewer come from STORED values — this
+// company's own name and the brands its rows carry — not from a list in the module.
+const brandWords = new Set<string>();
+for (const v of [companyName, ...held.map((h) => h.brand ?? ""), ...forum.map((f) => f.brand ?? "")]) {
+  for (const w of String(v ?? "").split(/[^A-Za-z]+/)) if (w.length > 2) brandWords.add(w.toLowerCase());
+}
 let names = 0, rowsMasked = 0;
-const mk = (t: string) => { const r = maskReviewerNames(t); names += r.masked; return r; };
+const mk = (t: string) => { const r = maskReviewerNames(t, brandWords); names += r.masked; return r; };
 const heldOut = held.map((h) => { const r = mk(h.text ?? ""); if (r.masked) rowsMasked++; return { ...h, text: r.text, masked: r.masked }; });
 const forumOut = forum.map((f) => { const a = mk(f.title ?? ""), b = mk(f.snippet ?? ""); if (a.masked + b.masked) rowsMasked++; return { ...f, title: a.text, snippet: b.text, masked: a.masked + b.masked }; });
 const out = { company, label: LEAD_BASIS_LABEL, held: heldOut, forum: forumOut, masked: { names, leads: rowsMasked } };

@@ -3,8 +3,8 @@
 // here so a drift in workspaceNav.ts fails the run and names the string.
 import { describe, expect, it } from "vitest";
 import {
-  WORKSPACE_STRINGS, countedQuotesSitesLine, moreMaskedLine, pendingFromFilesLine, pendingOutsideVoiceLine,
-  questionsFootLine, voiceLabel, withheldLine, workspaceDocumentTitle,
+  WORKSPACE_STRINGS, brandLabel, countedQuotesSitesLine, moreMaskedLine, pendingFromFilesLine, pendingOutsideVoiceLine,
+  questionsFootLine, showAllLine, voiceLabel, withheldLine, workspaceDocumentTitle,
 } from "./workspaceNav";
 
 describe("Job Map register — Tier 1 (signed by use, 2026-09-11)", () => {
@@ -88,12 +88,17 @@ describe("Review group + Brief register (signed 2026-11-19: SP-442, SP-424, SP-4
   it("the review group's strings, byte-identical (SP-446 B-10..B-14)", () => {
     expect(WORKSPACE_STRINGS.proposedNeedsReview).toBe("Proposed needs — review");
     expect(WORKSPACE_STRINGS.proposedNeedsFromFiles).toBe("Proposed needs — from file analyses");
-    expect(WORKSPACE_STRINGS.pendingFromFileAnalyses).toBe("{n} pending · from file analyses");
-    expect(pendingFromFilesLine(5)).toBe("5 pending · from file analyses");
+    // SP-455a (2026-11-19): the bare number pending, not the group's name repeated
+    expect(WORKSPACE_STRINGS.pendingFromFileAnalyses).toBe("{n} pending");
+    expect(pendingFromFilesLine(5)).toBe("5 pending");
     expect(WORKSPACE_STRINGS.pendingOutsideVoice).toBe("{n} pending · outside voice");
     expect(WORKSPACE_STRINGS.countedQuotesSites).toBe("{counted} counted quotes · {sites} sites");
     expect(WORKSPACE_STRINGS.dateNotShown).toBe("date not shown");
     expect(WORKSPACE_STRINGS.moreMasked).toBe("+ {n} more · reviewer names masked");
+    // SP-455b: the reveal control reuses the First Read's own pair, byte-exact
+    expect(WORKSPACE_STRINGS.showAll).toBe("Show all {n}");
+    expect(WORKSPACE_STRINGS.showFewer).toBe("Show fewer");
+    expect(showAllLine(43)).toBe("Show all 43");
     expect(WORKSPACE_STRINGS.accept).toBe("Accept");
     expect(WORKSPACE_STRINGS.reject).toBe("Reject");
   });
@@ -135,6 +140,11 @@ describe("Review group + Brief register (signed 2026-11-19: SP-442, SP-424, SP-4
 
   it("every template placeholder is filled by its own helper — no {token} survives a render", () => {
     expect(countedQuotesSitesLine(3, 2)).toBe("3 counted quotes · 2 sites");
+    // SP-456: the singular forms, both halves independently
+    expect(countedQuotesSitesLine(1, 1)).toBe("1 counted quote · 1 site");
+    expect(countedQuotesSitesLine(1, 2)).toBe("1 counted quote · 2 sites");
+    expect(countedQuotesSitesLine(2, 1)).toBe("2 counted quotes · 1 site");
+    expect(countedQuotesSitesLine(0, 0)).toBe("0 counted quotes · 0 sites");
     expect(pendingOutsideVoiceLine(5)).toBe("5 pending · outside voice");
     expect(moreMaskedLine(7)).toBe("+ 7 more · reviewer names masked");
     expect(questionsFootLine(52, 13)).toBe("52 live questions · 13 superseded not shown");
@@ -146,6 +156,9 @@ describe("Review group + Brief register (signed 2026-11-19: SP-442, SP-424, SP-4
     }
   });
 
+  it("SP-445 — the workspace header carries the trademark mark", () => {
+    expect(WORKSPACE_STRINGS.title).toBe("MojoMap™");
+  });
 });
 
 describe("the card chips mirror the admin queue's vocabulary (SP-452 item 4)", () => {
@@ -174,5 +187,32 @@ describe("the card chips mirror the admin queue's vocabulary (SP-452 item 4)", (
     expect(voiceLabel("unlabeled")).toBe("Voice unlabeled");
     expect(voiceLabel(null)).toBe("Voice unlabeled");
     expect(voiceLabel("something new")).toBe("Voice unlabeled");
+  });
+});
+
+describe("SP-455b — the reveal control is the First Read's, not a second spelling", () => {
+  it("the register's pair is byte-identical to what acts.tsx renders", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const acts = readFileSync(join(__dirname, "../firstReadPreview/acts.tsx"), "utf8");
+    expect(acts).toContain('"Show fewer"');
+    expect(acts).toContain("`Show all ${total}`");
+    expect(WORKSPACE_STRINGS.showFewer).toBe("Show fewer");
+    expect(WORKSPACE_STRINGS.showAll.replace("{n}", "7")).toBe("Show all 7");
+  });
+});
+
+describe("SP-456 — a brand reaches the screen as a label, never as a stored enum", () => {
+  it("the sentinel gets its signed label", () => {
+    expect(WORKSPACE_STRINGS.brandNotRecorded).toBe("Brand not recorded");
+    expect(brandLabel("brand_not_recorded")).toBe("Brand not recorded");
+    expect(brandLabel("  brand_not_recorded  ")).toBe("Brand not recorded");
+  });
+  it("a brand name passes through, and nothing it returns is underscore-cased", () => {
+    expect(brandLabel("spectrum")).toBe("spectrum");
+    expect(brandLabel(null)).toBe("");
+    for (const v of ["brand_not_recorded", "spectrum", "cox", "", null]) {
+      expect(brandLabel(v)).not.toMatch(/[a-z]_[a-z]/);
+    }
   });
 });

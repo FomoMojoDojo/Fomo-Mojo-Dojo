@@ -47,8 +47,9 @@ export type WorkspacePage = {
 
 export const WORKSPACE_STRINGS = {
   // ── header ──
-  /** Existing (the home's Header title). */
-  title: "MojoMap",
+  /** Existing (the home's Header title), with the trademark mark as SP-445 signed (2026-11-19).
+   *  The workspace shell is the only reader; the home carries its own literal. */
+  title: "MojoMap™",
   /** Existing operator string (the home's Header right slot) — operator context only. */
   scanAllSurfaces: "Scan all surfaces",
   /** Existing fallbacks and the DAY word from the home identity line. */
@@ -252,8 +253,8 @@ export const WORKSPACE_STRINGS = {
   pendingOutsideVoice: "{n} pending · outside voice",
   /** SP-453 (signed 2026-11-19) — the file-analysis need cards get their own group. */
   proposedNeedsFromFiles: "Proposed needs — from file analyses",
-  /** SP-453's "own pending count", in B-12's shape. NEW STRING, reported for signature. */
-  pendingFromFileAnalyses: "{n} pending · from file analyses",
+  /** SP-455a (signed 2026-11-19): the file-analysis group's count is the bare number pending. */
+  pendingFromFileAnalyses: "{n} pending",
   /** The card's kind and voice chips, as the signed mock prints them. These MIRROR the admin queue's
    *  own vocabulary (src/components/admin/CandidateReviewQueue.tsx TYPE_LABEL / VOICE_LABEL, which is
    *  not exported); workspaceStrings.parity.test.ts reads that file and fails if the two ever differ,
@@ -263,12 +264,26 @@ export const WORKSPACE_STRINGS = {
   voiceOutside: "Outside voices",
   voiceMixed: "Both voices",
   voiceUnlabeled: "Voice unlabeled",
-  /** B-10 — the count control that opens a card's or a need's quotes. Both surfaces. */
+  /** B-10 — the count control that opens a card's or a need's quotes. Both surfaces.
+   *  SP-456 (signed 2026-11-19): the singular forms for n = 1. */
   countedQuotesSites: "{counted} counted quotes · {sites} sites",
+  countedQuoteSingular: "{counted} counted quote",
+  countedQuotesPlural: "{counted} counted quotes",
+  siteSingular: "{sites} site",
+  sitesPlural: "{sites} sites",
   /** B-13 — a quote whose page showed no date. */
   dateNotShown: "date not shown",
-  /** B-14 — the quote list's footer: the remainder, and that names were masked. */
+  /** SP-456 (signed 2026-11-19) — need_evidence's sentinel for a page that named no brand. The stored
+   *  value is `brand_not_recorded`; no raw enum reaches a screen. */
+  brandNotRecorded: "Brand not recorded",
+  /** B-14, SUPERSEDED as a render by SP-455b: the remainder is now a CONTROL that reveals every
+   *  remaining quote, using the First Read's own pair below. Kept in the register because it was
+   *  signed; nothing renders it. Retire it when you are ready. */
   moreMasked: "+ {n} more · reviewer names masked",
+  /** SP-455b — the First Read's existing reveal pair, byte-exact (firstReadPreview/acts.tsx:854).
+   *  {n} is the TOTAL, as it is there. */
+  showAll: "Show all {n}",
+  showFewer: "Show fewer",
   /** Existing by use (CandidateReviewQueue, ProposalReviewPanel). */
   accept: "Accept",
   /** Signed 2026-11-19 (SP-446). Reject marks the proposal rejected and KEEPS the row (SP-444). */
@@ -327,6 +342,9 @@ export const WORKSPACE_PAGES: ReadonlyArray<WorkspacePage> = [
   { key: "routes",        segment: "routes",        label: "Routes",        group: "outputs", index: "06", tone: "electric-sol", summary: "Turn choices into action" },
   { key: "inputs",        segment: "inputs",        label: "Inputs",        group: "tools" },
   { key: "council",       segment: "council",       label: "Council",       group: "tools" },
+  // SP-442: the third Tools tile, operators only. Tools pages have no arrow siblings
+  // (arrowNeighbour returns null for the group), so prev/next is unchanged by it.
+  { key: "brief",         segment: "brief",         label: WORKSPACE_STRINGS.briefLabel, group: "tools", operatorOnly: true },
 ] as const;
 
 /** The Admin disclosure: existing routes, existing labels (WorkshopSidebar). Operator-gated. */
@@ -385,15 +403,28 @@ export function workspaceDocumentTitle(label: string, companyName: string | null
   return company ? `${label} — ${company}` : label;
 }
 
-/** B-10 — "{counted} counted quotes · {sites} sites". */
+/** B-10, with SP-456's singular forms: "1 counted quote · 1 site", "3 counted quotes · 2 sites". */
 export function countedQuotesSitesLine(counted: number, sites: number): string {
-  return WORKSPACE_STRINGS.countedQuotesSites.replace("{counted}", String(counted)).replace("{sites}", String(sites));
+  const q = (counted === 1 ? WORKSPACE_STRINGS.countedQuoteSingular : WORKSPACE_STRINGS.countedQuotesPlural)
+    .replace("{counted}", String(counted));
+  const s = (sites === 1 ? WORKSPACE_STRINGS.siteSingular : WORKSPACE_STRINGS.sitesPlural)
+    .replace("{sites}", String(sites));
+  return `${q} \u00b7 ${s}`;
+}
+
+/** SP-456 — the brand as a screen reads it. A stored sentinel gets its signed label; a brand name is
+ *  the stored value, which is the company's own word for it and is never an underscore-cased enum.
+ *  This is the ONE place a brand becomes text, so no raw enum can reach a screen by another route. */
+export function brandLabel(stored: string | null | undefined): string {
+  const v = String(stored ?? "").trim();
+  if (v === "brand_not_recorded") return WORKSPACE_STRINGS.brandNotRecorded;
+  return v;
 }
 /** B-12 — "{n} pending · outside voice". */
 export function pendingOutsideVoiceLine(n: number): string {
   return WORKSPACE_STRINGS.pendingOutsideVoice.replace("{n}", String(n));
 }
-/** SP-453 — "{n} pending · from file analyses". */
+/** SP-455a — "{n} pending". */
 export function pendingFromFilesLine(n: number): string {
   return WORKSPACE_STRINGS.pendingFromFileAnalyses.replace("{n}", String(n));
 }
@@ -406,9 +437,14 @@ export function voiceLabel(voice: string | null | undefined): string {
     default: return WORKSPACE_STRINGS.voiceUnlabeled;
   }
 }
-/** B-14 — "+ {n} more · reviewer names masked". */
+/** B-14 — "+ {n} more · reviewer names masked". Kept with the string it fills; nothing renders it
+ *  since SP-455b. */
 export function moreMaskedLine(n: number): string {
   return WORKSPACE_STRINGS.moreMasked.replace("{n}", String(n));
+}
+/** SP-455b — "Show all {n}", the First Read's own string with the total filled. */
+export function showAllLine(total: number): string {
+  return WORKSPACE_STRINGS.showAll.replace("{n}", String(total));
 }
 /** B-8 — what the merger rule withheld from this need. `undated` + `pre` both zero ⇒ the
  *  "nothing withheld" line, so a thin spot never implies a withholding that did not happen. */

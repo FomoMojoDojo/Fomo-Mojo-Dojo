@@ -70,19 +70,6 @@ const ALLOWED = [
       "is `company.name.trim().toLowerCase() === PREFERRED_COMPANY_NAME`. Moving it to data is filed " +
       "with U6-47.",
   },
-  {
-    file: "supabase/functions/_shared/leadText.ts",
-    constant: "BRAND",
-    literal: "Spectrum",
-    why:
-      "A REFUSAL list, not content, and it entered this graph with SP-443 (2026-11-19) when the review " +
-      "screens began masking reviewer names. maskReviewerNames masks the name that follows a review's " +
-      "date; BRAND is the set it checks so that it does NOT mask a company's name when one stands " +
-      "there instead (\"May 13 Cox Communications raised my bill again\" is left alone). Nothing in it " +
-      "is rendered: every use is `BRAND.has(word)` inside the masking decision, and the one string " +
-      "this module can emit is MASK, \"[reviewer]\". Removing a name from it would make the mask " +
-      "MORE eager, never leak one.",
-  },
 ] as const;
 
 // ── the module graph ────────────────────────────────────────────────────────────────────────────

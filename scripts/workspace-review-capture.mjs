@@ -19,6 +19,8 @@ const CHARTER = "dd40ce2f-ff67-4111-bd3c-67943dde6717";
 const THROWAWAY = process.env.FR_THROWAWAY || "72df7061-93d0-4358-883c-f04fd3850d2f";
 await fs.mkdir(OUT, { recursive: true });
 
+const ONLY = process.env.FR_ONLY || "";
+const want = (k) => !ONLY || ONLY.split(",").includes(k);
 const browser = await chromium.launch({ headless: true });
 
 async function session(companyId, { width = 1440, height = 1000 } = {}) {
@@ -51,7 +53,7 @@ const shot = async (page, name, full = true) => {
 };
 
 // ── 1. the review group on Charter: closed, then one card open ───────────────────────────────────
-{
+if (want("r")) {
   const { context, page } = await session(CHARTER);
   await openWorkspace(page, "inputs");
   const group = page.getByTestId("inputs-review-group");
@@ -84,12 +86,22 @@ const shot = async (page, name, full = true) => {
     await biggest.evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 140));
     await page.waitForTimeout(400);
     await shot(page, "r5-inputs-most-quotes-open.png");
+    // SP-455b: reveal EVERY remaining quote through the First Read's control
+    const more = biggest.locator('[data-testid="quote-show-all"]');
+    console.log(`reveal control reads: ${JSON.stringify((await more.textContent())?.trim())}`);
+    await more.click();
+    await page.waitForTimeout(900);
+    const shownAll = await biggest.locator('[data-testid="quote"]').count();
+    console.log(`P1 expanded: ${shownAll} quote(s) on screen`);
+    await biggest.evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 140));
+    await page.waitForTimeout(400);
+    await shot(page, "r6-inputs-most-quotes-expanded.png");
   }
   await context.close();
 }
 
 // ── 2. Reject, on a THROWAWAY company only ───────────────────────────────────────────────────────
-{
+if (want("reject")) {
   const { context, page } = await session(THROWAWAY);
   await openWorkspace(page, "inputs");
   const group = page.getByTestId("inputs-review-group");
@@ -111,6 +123,71 @@ const shot = async (page, name, full = true) => {
     await fs.writeFile(path.join(OUT, "r4-reject-note.txt"), `before=${before}\nafter=${after}\nheadline=${headline}\n`);
   }
   await context.close();
+}
+
+// ── 3. the Brief and the launcher: both supported sizes x both views (SP-456 item 6) ─────────────
+const SIZES = [[1440, 900], [1280, 720]];
+for (const [w, h] of (want("b") ? SIZES : [])) {
+  for (const operator of [true, false]) {
+    const view = operator ? "operator" : "non-admin";
+    const { context, page } = await session(CHARTER, { width: w, height: h });
+    await openWorkspace(page, "brief", { operator });
+    if (operator) {
+      await page.locator('[data-fr-region="hotspots"] [data-testid="brief-need"]').first().waitFor({ timeout: 90_000 });
+      await page.waitForTimeout(1200);
+    } else {
+      await page.waitForTimeout(2000);
+    }
+    console.log(`brief ${w}x${h} ${view}: <title>=${JSON.stringify(await page.title())} regions=${JSON.stringify(await page.locator("[data-fr-region]").evaluateAll((e) => e.map((x) => x.getAttribute("data-fr-region"))))} operatorNodes=${await page.locator("[data-fr-operator]").count()} absent=${await page.locator("[data-fr-absent]").count()}`);
+    await shot(page, `b-brief-${w}x${h}-${view}.png`);
+
+    if (operator) {
+      const row = page.locator('[data-fr-region="hotspots"] [data-testid="brief-need"]').first();
+      await row.locator('[data-testid="review-card-open"]').click();
+      await page.waitForTimeout(700);
+      await row.evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 120));
+      await page.waitForTimeout(400);
+      await shot(page, `b-brief-count-open-${w}x${h}.png`);
+      // and every live question revealed
+      const qbtn = page.locator('[data-testid="brief-questions-show-all"]');
+      if (await qbtn.count()) {
+        await qbtn.scrollIntoViewIfNeeded();
+        await qbtn.click();
+        await page.waitForTimeout(600);
+        console.log(`  questions revealed: ${await page.locator('[data-testid="brief-question"]').count()}`);
+        await shot(page, `b-brief-questions-open-${w}x${h}.png`);
+      }
+      await page.goto(`${BASE}/preview/client-refine/workspace/brief`, { waitUntil: "domcontentloaded" });
+      await page.getByTestId("workspace-root").waitFor({ timeout: 60_000 });
+      const sw2 = page.locator("[data-fr-operator-switch]");
+      await sw2.waitFor();
+      if ((await sw2.getAttribute("data-fr-operator-switch")) === "off") await sw2.click();
+      await page.waitForTimeout(1500);
+    }
+
+    // the launcher, measured on the settled layout
+    await page.getByTestId("workspace-square").click();
+    await page.waitForTimeout(2500);
+    const m = await page.evaluate(() => {
+      const r = (e) => e.getBoundingClientRect();
+      const panel = document.querySelector(".fr-launcher-panel"), foot = document.querySelector(".fr-launcher-foot");
+      const blocks = [...document.querySelectorAll(".fr-launcher-group, .fr-launcher-tools")];
+      const tiles = [...document.querySelectorAll(".fr-launcher-tile")];
+      const tools = [...document.querySelectorAll(".fr-launcher-tool")];
+      return {
+        tools: tools.length,
+        blockRights: [...new Set(blocks.map((e) => Math.round(r(e).right)))],
+        tileOverflow: Math.max(...tiles.map((e) => Math.round(r(e).right))) - Math.max(...blocks.map((e) => Math.round(r(e).right))),
+        square: tiles.every((e) => Math.abs(r(e).width - r(e).height) <= 2),
+        panelOverflows: panel.scrollHeight > panel.clientHeight + 1,
+        footVisible: r(foot).bottom <= window.innerHeight + 1,
+        clipped: tools.filter((t) => t.scrollWidth > t.clientWidth + 1 || t.scrollHeight > t.clientHeight + 1).map((t) => t.textContent.trim().slice(0, 24)),
+      };
+    });
+    console.log(`launcher ${w}x${h} ${view}:`, JSON.stringify(m));
+    await shot(page, `b-launcher-${w}x${h}-${view}.png`, false);
+    await context.close();
+  }
 }
 
 await browser.close();

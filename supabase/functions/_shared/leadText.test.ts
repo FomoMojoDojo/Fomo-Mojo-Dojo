@@ -2,7 +2,11 @@
 // domains, staff names and brands are not.
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { maskReviewerNames } from "./leadText.ts";
-const m = (t: string) => maskReviewerNames(t);
+// SP-455c: the brand words are the caller's, read from stored values. These are Charter's — its own
+// name and the brands its need_evidence rows carry — so every case below reads as it did when the
+// list lived in the module.
+const CHARTER_BRANDS = ["Charter Communications", "spectrum", "cox"];
+const m = (t: string) => maskReviewerNames(t, CHARTER_BRANDS);
 
 Deno.test("a review header's name or handle after its date is masked", () => {
   assertEquals(m("May 13 NewNew2021 Cox is entirely too expensive").text, "May 13 [reviewer] Cox is entirely too expensive");
@@ -99,4 +103,28 @@ Deno.test("Google Play byline: the line after the reviewer's avatar link is thei
   // an avatar link that is NOT a reviewer's (a different host) is left alone
   const other = "[](https://cdn.trustpilot.net/brand-assets/4.1.0/stars/stars-1.svg)\n\nI have been a Charter customer\n";
   assertEquals(m(other), { text: other, masked: 0 });
+});
+
+// ── SP-455c (2026-11-19): the brand refusal list is the CALLER'S ─────────────────────────────────────────────────────
+Deno.test("a brand standing where a reviewer's name would is left alone — when the caller names it", () => {
+  const t = "May 13 Cox Communications raised my bill again";
+  assertEquals(maskReviewerNames(t, ["cox", "Charter Communications"]), { text: t, masked: 0 });
+  assertEquals(maskReviewerNames(t, ["COX", "charter communications"]), { text: t, masked: 0 }, "case-insensitive");
+});
+
+Deno.test("passing no brands only makes the mask MORE eager — it can never leak a name", () => {
+  const t = "May 13 Cox Communications raised my bill again";
+  const none = maskReviewerNames(t);
+  assertEquals(none.masked, 1);
+  assertEquals(none.text, "May 13 [reviewer] raised my bill again");
+  // and a real reviewer is still masked either way
+  assertEquals(maskReviewerNames("May 13 NewNew2021 Cox is bad", ["cox"]).masked, 1);
+});
+
+Deno.test("the module holds no company name of its own", async () => {
+  const src = await Deno.readTextFile(new URL("./leadText.ts", import.meta.url));
+  const code = src.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  for (const name of ["Spectrum", "Comcast", "Xfinity", "Verizon", "Contour", "Panoramic"]) {
+    assertEquals(code.includes(`"${name}"`), false, name);
+  }
 });

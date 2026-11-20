@@ -7,8 +7,10 @@
 //     "2025/11/12 Austin Dee H.", "Oct 1 D.Architekt");
 //   - "Review from Daniel M" (BBB); a page-JSON "author":"Rebecca M.";
 //   - Reddit "u/<name>"; DSLReports "said by <handle>:", "<handle> ... said by" and its "<handle> : online" list.
-// NOT masked: a company's own account (@ask_spectrum, cox.help@cox.com), an email domain (@cox.net), and the names
-// of the company's staff inside a review ("Supervisor Shawn") — they are not the reviewer.
+// NOT masked: a company's own account (@ask_spectrum, cox.help@cox.com), an email domain (@cox.net), the names
+// of the company's staff inside a review ("Supervisor Shawn") — they are not the reviewer — and a BRAND standing where
+// a reviewer's name would. The brand words are the caller's, read from stored rows (see `brands` below); this module
+// holds no list of company names.
 //
 // ── SP-443 (2026-11-19): THE EXCERPT SHAPES ──────────────────────────────────────────────────────────────────────────
 // The shapes above were measured in Charter's 777 LEAD texts (a search tool's summary of a page). The review group and
@@ -25,12 +27,21 @@
 // Each is anchored to a whole line or to a host-specific link, so none can fire inside a sentence; a date
 // followed by a BLANK line and then the review body is never a byline and is left alone.
 export const MASK = "[reviewer]";
-const BRAND = new Set(["Cox", "Spectrum", "Charter", "Communications", "Comcast", "Xfinity", "Verizon", "Contour", "Panoramic", "Google", "Apple"]);
 const DATE = String.raw`(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.? \d{1,2}(?:, \d{4})?|\d{1,2}/\d{1,2}/\d{4}|\d{4}/\d{1,2}/\d{1,2}|\d{1,2}月\d{1,2}日)`;
 const HANDLE = String.raw`[A-Za-z][\w.]*`;
 const isHandle = (t: string) => /\d/.test(t) || /\w\.\w/.test(t) || /[a-z][A-Z]/.test(t) || /^[a-z]{3,}$/.test(t);
 
-export function maskReviewerNames(text: string): { text: string; masked: number } {
+/**
+ * SP-455c (2026-11-19): the brand words are PASSED IN, read from the company's stored values, and no
+ * list of company names lives in this module. `brands` is the set this function refuses to call a
+ * reviewer: a review header whose name position holds one of them is left alone ("May 13 Cox
+ * Communications raised my bill again"). Passing none only makes the mask more eager — it can never
+ * leak a name — and the words are compared case-insensitively, because the stored values are
+ * lower-case ('cox', 'spectrum') while a page prints them capitalised.
+ */
+export function maskReviewerNames(text: string, brands: Iterable<string> = []): { text: string; masked: number } {
+  const BRAND = new Set<string>();
+  for (const b of brands) for (const w of String(b ?? "").split(/[^A-Za-z]+/)) if (w) BRAND.add(w.toLowerCase());
   let n = 0;
   const hit = () => { n++; return MASK; };
   let s = String(text ?? "");
@@ -49,7 +60,7 @@ export function maskReviewerNames(text: string): { text: string; masked: number 
         return `${lead}${indent}${dash ?? ""}${date}${sep}${hit()}`;
       }
       const words = [first, ...(rest ? rest.split(" ") : [])];
-      const person = /^[A-Z][a-z]+$/.test(first) && words.length >= 2 && !words.some((w) => BRAND.has(w.replace(/\.$/, "")));
+      const person = /^[A-Z][a-z]+$/.test(first) && words.length >= 2 && !words.some((w) => BRAND.has(w.replace(/\.$/, "").toLowerCase()));
       return person ? `${lead}${indent}${dash ?? ""}${date}${sep}${hit()}` : all;
     });
   s = s.replace(/\bReview from [A-Z][\w'-]+(?: [A-Z]\.?)?(?=[\s*]|$)/g, () => `Review from ${hit()}`);

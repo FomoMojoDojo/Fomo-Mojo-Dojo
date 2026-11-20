@@ -1,6 +1,6 @@
 // SP-452 (2026-11-19): the quote path shows the VERIFIED quote, written out, masked, uncut.
 import { describe, expect, it } from "vitest";
-import { QUOTE_MAX_CHARS, displayQuote, formatQuoteDate } from "./reviewQuote";
+import { QUOTE_MAX_CHARS, brandWords, displayQuote, formatQuoteDate } from "./reviewQuote";
 
 const row = (over: Partial<Parameters<typeof displayQuote>[0]> = {}) => ({
   signalId: "s1",
@@ -56,5 +56,26 @@ describe("the text", () => {
     const edge = displayQuote(row({ quote: "y".repeat(QUOTE_MAX_CHARS) }));
     expect(edge.clipped).toBe(false);
     expect(edge.text!.endsWith("…")).toBe(false);
+  });
+});
+
+describe("the brand words are read, not written down (SP-455c)", () => {
+  it("come from the company's own name and the brands its rows recorded", () => {
+    expect(brandWords("Charter Communications", ["spectrum", "cox"]))
+      .toEqual(["charter", "communications", "cox", "spectrum"]);
+  });
+  it("the sentinel need_evidence writes for an unnamed brand is not a brand word", () => {
+    expect(brandWords("Charter Communications", ["brand_not_recorded"]))
+      .toEqual(["charter", "communications"]);
+  });
+  it("tolerate an empty company and empty values", () => {
+    expect(brandWords(null, [])).toEqual([]);
+    expect(brandWords("", ["", "  "])).toEqual([]);
+  });
+  it("a brand standing where a reviewer's name would is left alone", () => {
+    const quote = "May 13 Cox Communications raised my bill again";
+    expect(displayQuote(row({ quote }), brandWords("Charter Communications", ["cox"])).masked).toBe(0);
+    // and without the words, the mask is only MORE eager — it never leaks
+    expect(displayQuote(row({ quote }), []).masked).toBe(1);
   });
 });

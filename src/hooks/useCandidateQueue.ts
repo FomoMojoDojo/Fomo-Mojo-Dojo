@@ -48,6 +48,8 @@ const asIds = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is s
 
 export function useCandidateQueue(companyId?: string | null) {
   const [cards, setCards] = useState<CandidateCard[]>([]);
+  /** The brand values need_evidence recorded on the cited quotes (SP-455c). */
+  const [storedBrands, setStoredBrands] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,8 +85,10 @@ export function useCandidateQueue(companyId?: string | null) {
         });
       }
       for (const r of ((ev ?? []) as Array<{ signal_id: string; brand: string }>)) brandBySignal.set(r.signal_id, r.brand);
+      setStoredBrands([...new Set(brandBySignal.values())]);
     } else {
       setError(null);
+      setStoredBrands([]);
     }
 
     setCards(rows.map((r) => {
@@ -140,5 +144,5 @@ export function useCandidateQueue(companyId?: string | null) {
     await load();
   }, [load]);
 
-  return { cards, loading, error, reload: load, accept, reject };
+  return { cards, loading, error, storedBrands, reload: load, accept, reject };
 }

@@ -22,8 +22,10 @@
 // REJECT (SP-444) marks the proposal rejected and KEEPS the row — nothing is deleted. The card
 // leaves its group because both groups read status='pending'.
 import { useState } from "react";
+import { useCompany } from "@/hooks/useCompany";
 import { useCandidateQueue, type CandidateCard } from "@/hooks/useCandidateQueue";
 import { isAtTheBar } from "@/lib/briefSections";
+import { brandWords } from "@/lib/reviewQuote";
 import { OUTSIDE_VOICE_MARK } from "@/lib/outsideVoiceMark";
 import { OPERATOR_MARK } from "@/views/client/firstReadPreview/operatorStrings";
 import { QuoteList } from "./QuoteList";
@@ -39,11 +41,14 @@ export function splitCards(cards: readonly CandidateCard[]): { outside: Candidat
 }
 
 export function ProposedNeedsReview({ companyId, canApply }: { companyId: string; canApply: boolean }) {
-  const { cards, loading, error, accept, reject } = useCandidateQueue(companyId);
+  const { activeCompany } = useCompany();
+  const { cards, loading, error, storedBrands, accept, reject } = useCandidateQueue(companyId);
   const [openId, setOpenId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // SP-455c: the words the mask must not take for a reviewer, from stored values only.
+  const brands = brandWords(activeCompany?.name, storedBrands);
   const { outside, files } = splitCards(cards);
   if (loading || (outside.length === 0 && files.length === 0)) return null;
 
@@ -70,7 +75,7 @@ export function ProposedNeedsReview({ companyId, canApply }: { companyId: string
       onAccept={() => { void run(c.id, accept); }}
       onReject={() => { void run(c.id, reject); }}
     >
-      <QuoteList quotes={c.quotes} />
+      <QuoteList quotes={c.quotes} brands={brands} />
     </ReviewCard>
   );
 

@@ -1,10 +1,11 @@
-# THE SWEEP'S EXPECTED MEMBERS (operator ruling R2, 2026-11-18, amended SP-415/SP-426/SP-429 and SP-441 2026-11-19: 74 members).
+# THE SWEEP'S EXPECTED MEMBERS (operator ruling R2, 2026-11-18, amended SP-415/SP-426/SP-429 and SP-441/SP-442 2026-11-19: 75 members).
 # One name per line; '#' lines and blank lines are ignored. scripts/guards-sweep.sh refuses to report a
 # result when the members it finds or runs differ from this list — a guard added, removed or excluded
 # moves this file in the same commit, or the sweep fails. The last line is the before/after pair the
 # sweep runs itself (scripts/edgewood-unchanged.sh), which lives outside scripts/guards/.
 analysis-remint-guard.sh
 b3-review-path-guard.sh
+brief-page-guard.sh
 caller-authz-guard.sh
 candidate-queue-guard.sh
 client-portal-audit-guard.sh
