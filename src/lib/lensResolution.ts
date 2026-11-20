@@ -93,7 +93,8 @@ export async function fetchLensChildren(companyId: string, journeyKey: string) {
   const [lensRefs, steps, needs, opps, marketDef, outcomes] = await Promise.all([
     fetchLensRouteRefs(companyId, journeyKey),
     supabase.from("job_steps").select("*").eq("company_id", companyId).eq("journey_key", journeyKey),
-    supabase.from("odi_needs").select("*").eq("company_id", companyId).eq("journey_key", journeyKey),
+    // SP-467: a materialised proposed need reaches the Brief only.
+    supabase.from("odi_needs").select("*").eq("company_id", companyId).eq("journey_key", journeyKey).neq("status", "proposed"),
     supabase.from("opportunities").select("*").eq("company_id", companyId).eq("journey_key", journeyKey),
     supabase.from("odi_market_definitions").select("*").eq("company_id", companyId).eq("journey_key", journeyKey).maybeSingle(),
     supabase.from("managed_outcomes").select("*").eq("company_id", companyId).eq("journey_key", journeyKey),

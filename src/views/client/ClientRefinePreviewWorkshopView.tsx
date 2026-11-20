@@ -1564,6 +1564,8 @@ export default function ClientRefinePreviewWorkshopView() {
       const { data: rows } = await supabase
         .from("odi_needs")
         .select("id, desired_outcome, odi_canonical_statement, confidence")
+        // SP-467: a materialised proposed need reaches the Brief only.
+        .neq("status", "proposed")
         .eq("company_id", companyId)
         .eq("journey_key", viewedSetKey)
         .eq("provenance_type", "internal_declared")

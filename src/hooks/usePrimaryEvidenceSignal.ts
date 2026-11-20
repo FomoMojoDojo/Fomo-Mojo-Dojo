@@ -81,6 +81,8 @@ export function usePrimaryEvidenceSignal(companyId?: string) {
         supabase
           .from("odi_needs")
           .select("source_path")
+          // SP-467: a materialised proposed need reaches the Brief only.
+          .neq("status", "proposed")
           .eq("company_id", companyId),
         // MPD-0: constrained to the spine journey — an unfiltered maybeSingle()
         // throws PostgREST multiple-rows on any company with >1 market def

@@ -81,6 +81,8 @@ export function useStrategicChangeSummary(
         supabase
           .from("odi_needs")
           .select("id, desired_outcome, dependency_state, stale_reason, updated_at")
+          // SP-467: a materialised proposed need reaches the Brief only.
+          .neq("status", "proposed")
           .abortSignal(signal)
           .eq("company_id", companyId)
           .eq("stale_since_event_id", eventId)

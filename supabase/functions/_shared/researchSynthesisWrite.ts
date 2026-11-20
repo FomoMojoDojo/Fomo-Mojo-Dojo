@@ -290,6 +290,8 @@ export async function writeReconciledNeeds(args: {
       // is not a public-research row in any case. Excluded at the read so it can never be a
       // reconcile candidate.
       .select("id, desired_outcome, odi_canonical_statement, content_identity, journey_key, step_number")
+      // SP-467: a materialised proposed need reaches the Brief only.
+      .neq("status", "proposed")
       .eq("company_id", company_id)
       .not("journey_key", "is", null)
       .eq("provenance_type", "public_research")

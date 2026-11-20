@@ -46,6 +46,28 @@ type ProposalRow = {
 
 const asIds = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
+/** SP-458 / SP-467: take the materialised need out of the Brief when its card is rejected.
+ *
+ *  The builder is narrowed to this shape on purpose. `odi_needs` has 47 columns, and inside this file
+ *  the inferred Update union pushed tsc to TS2589 ("type instantiation is excessively deep") — the
+ *  same error ClientRefinePreviewWorkshopView already carries twice on this table. The column names
+ *  are therefore checked by the DATABASE and by proposed-need-isolation-guard (p3), not by tsc, and
+ *  the narrowing is confined to this one statement rather than loosening the client anywhere else. */
+type NeedUpdate = {
+  update: (patch: Record<string, unknown>) => {
+    eq: (col: string, val: unknown) => {
+      eq: (col: string, val: unknown) => Promise<{ error: { message: string } | null }>;
+    };
+  };
+};
+async function retractProposedNeed(proposalId: string): Promise<string | null> {
+  const { error } = await (supabase.from("odi_needs") as unknown as NeedUpdate)
+    .update({ status: "retracted", superseded_reason: "proposal_rejected", updated_at: new Date().toISOString() })
+    .eq("source_proposal_id", proposalId)
+    .eq("status", "proposed");
+  return error ? error.message : null;
+}
+
 export function useCandidateQueue(companyId?: string | null) {
   const [cards, setCards] = useState<CandidateCard[]>([]);
   /** The brand values need_evidence recorded on the cited quotes (SP-455c). */
@@ -132,7 +154,15 @@ export function useCandidateQueue(companyId?: string | null) {
   }, [load]);
 
   /** SP-444: Reject MARKS the proposal rejected and keeps the row. Nothing is deleted; the card
-   *  leaves the pending group because the group reads status='pending'. */
+   *  leaves the pending group because the group reads status='pending'.
+   *
+   *  SP-458 / SP-467 (2026-11-20): when the card's evidence met the bar, the standing loader rule has
+   *  already materialised an odi_needs row for it, and that row is what the Brief counts. Rejecting
+   *  the card must therefore take the need out of the Brief as well — otherwise the only surface that
+   *  shows it is the one surface a Reject cannot reach. The row is RETRACTED, not deleted: SP-444's
+   *  rule is that the record of what was proposed survives the decision, and `superseded_reason`
+   *  names the decision that moved it. Only a 'proposed' row is touched, so an ACCEPTED need (already
+   *  promoted to 'active') can never be retracted by a later click on its old card. */
   const reject = useCallback(async (id: string) => {
     const { data: auth } = await supabase.auth.getUser();
     const { error: e } = await supabase
@@ -141,6 +171,8 @@ export function useCandidateQueue(companyId?: string | null) {
       .eq("id", id)
       .eq("status", "pending");
     if (e) throw new Error(e.message);
+    const ne = await retractProposedNeed(id);
+    if (ne) throw new Error(ne);
     await load();
   }, [load]);
 

@@ -1032,6 +1032,8 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
       .select("id")
       .eq("company_id", companyId)
       .eq("journey_key", "customer")
+      // SP-467: a materialised proposed need reaches the Brief only.
+      .neq("status", "proposed")
       .limit(1);
     if (existingNeedsError) {
       throw new Error(existingNeedsError.message || "Could not check existing Strategic Decision System needs.");

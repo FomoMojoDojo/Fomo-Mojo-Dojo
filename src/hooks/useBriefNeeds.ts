@@ -21,6 +21,8 @@ export type BriefNeed = {
   id: string;
   statement: string;
   sourcePath: string | null;
+  /** SP-458 / SP-467: materialised from a card nobody has ruled on yet. Only this page reads it. */
+  proposed: boolean;
   tally: NeedTally;
   /** The COUNTED bearing quotes, most recent date first, undated last. What the opener shows. */
   quotes: QuoteRow[];
@@ -32,6 +34,7 @@ export type BriefNeed = {
 const SIGNAL_ID_CHUNK = 60;
 
 type EvRow = { need_id: string; signal_id: string; bears: boolean; polarity: string | null; brand: string };
+type NeedRow = { id: string; desired_outcome: string | null; source_path: string | null; status: string };
 type SigRow = { id: string; quote: string | null; source_url: string | null; event_date: string | null };
 
 export function useBriefNeeds(companyId?: string | null) {
@@ -46,14 +49,19 @@ export function useBriefNeeds(companyId?: string | null) {
     (async () => {
       if (!companyId) { setNeeds([]); setLoading(false); return; }
       setLoading(true); setError(null);
-      let nRows: Array<{ id: string; desired_outcome: string | null; source_path: string | null }>;
+      let nRows: NeedRow[];
       let ev: EvRow[];
       let sigs: SigRow[] = [];
       try {
         [nRows, ev] = await Promise.all([
-          fetchAllRows<{ id: string; desired_outcome: string | null; source_path: string | null }>((from, to) =>
-            supabase.from("odi_needs").select("id, desired_outcome, source_path")
-              .eq("company_id", companyId).eq("status", "active").order("id").range(from, to)),
+          // SP-458 / SP-467 (2026-11-20): the Brief is the ONE reader that sees a materialised
+          // proposed need — a card whose evidence already meets the bar, standing in the brief and in
+          // its counts before anyone has clicked Accept, so the conversation is prepared from
+          // everything the reviews actually support. Every other reader excludes 'proposed'
+          // (20 sites, each marked SP-467), which is why the Mojo Score does not move.
+          fetchAllRows<NeedRow>((from, to) =>
+            supabase.from("odi_needs").select("id, desired_outcome, source_path, status")
+              .eq("company_id", companyId).in("status", ["active", "proposed"]).order("id").range(from, to)),
           fetchAllRows<EvRow>((from, to) =>
             supabase.from("need_evidence").select("need_id, signal_id, bears, polarity, brand")
               .eq("company_id", companyId).order("id").range(from, to)),
@@ -104,6 +112,7 @@ export function useBriefNeeds(companyId?: string | null) {
           id: n.id,
           statement: String(n.desired_outcome ?? "").trim(),
           sourcePath: n.source_path,
+          proposed: n.status === "proposed",
           tally,
           quotes: counted.map(quoteOf).sort(byDate),
           workingQuotes: counted.filter((r) => r.polarity === "working").map(quoteOf).sort(byDate),

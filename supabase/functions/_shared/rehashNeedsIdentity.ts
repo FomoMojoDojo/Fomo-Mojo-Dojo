@@ -23,7 +23,9 @@ export async function rehashNeedsIdentity(opts: {
   const exclude = new Set((opts.excludeCompanyIds ?? []).map(String));
   const { data, error } = await opts.supabase
     .from("odi_needs")
-    .select("id, company_id, desired_outcome, content_identity");
+    .select("id, company_id, desired_outcome, content_identity")
+    // SP-467: a materialised proposed need reaches the Brief only.
+    .neq("status", "proposed");
   if (error) throw new Error(`rehash select failed: ${error.message}`);
   const rows = (data ?? []) as Array<Record<string, string | null>>;
 

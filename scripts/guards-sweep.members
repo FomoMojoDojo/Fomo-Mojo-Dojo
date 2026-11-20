@@ -1,8 +1,9 @@
-# THE SWEEP'S EXPECTED MEMBERS (operator ruling R2, 2026-11-18, amended SP-415/SP-426/SP-429 and SP-441/SP-442 2026-11-19: 75 members).
+# THE SWEEP'S EXPECTED MEMBERS (operator ruling R2, 2026-11-18, amended SP-415/SP-426/SP-429, SP-441/SP-442 2026-11-19 and SP-460/SP-465/SP-467 2026-11-20: 78 members).
 # One name per line; '#' lines and blank lines are ignored. scripts/guards-sweep.sh refuses to report a
 # result when the members it finds or runs differ from this list — a guard added, removed or excluded
-# moves this file in the same commit, or the sweep fails. The last line is the before/after pair the
-# sweep runs itself (scripts/edgewood-unchanged.sh), which lives outside scripts/guards/.
+# moves this file in the same commit, or the sweep fails. The list is compared as a SORTED SET, so the
+# order here carries no meaning. One member is not a file in scripts/guards/: `edgewood-unchanged`, the
+# before/after pair the sweep runs itself (scripts/edgewood-unchanged.sh).
 analysis-remint-guard.sh
 b3-review-path-guard.sh
 brief-page-guard.sh
@@ -18,6 +19,7 @@ dify-workflow-guard.sh
 discovery-e3-guard.sh
 doc-read-guard.sh
 edgewood-reference-guard.sh
+edgewood-unchanged
 excerpt-blanking-guard.sh
 excerpt-verification-guard.sh
 file-analysis-v2-guard.sh
@@ -52,8 +54,11 @@ odi-needs-holder-guard.sh
 outside-call-guard.sh
 outside-regen-ledger-guard.sh
 outside-regen-mode-guard.sh
+pattern-citation-guard.sh
+pattern-lane-guard.sh
 pptx-read-guard.sh
 predecessor-sourcing-guard.sh
+proposed-need-isolation-guard.sh
 r5-sourcing-guard.sh
 r52-sweep-guard.sh
 read-level-guard.sh
@@ -77,4 +82,3 @@ subjects-guard.sh
 unreadable-codes-guard.sh
 voice-after-sidecar-guard.sh
 xlsx-read-guard.sh
-edgewood-unchanged

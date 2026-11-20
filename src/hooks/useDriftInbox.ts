@@ -298,7 +298,9 @@ export function useDriftInboxCount(companyId: string | null | undefined) {
           .from("odi_needs")
           .select("id")
           .eq("company_id", companyId)
-          .in("dependency_state", AFFECTED_NEED_STATES),
+          .in("dependency_state", AFFECTED_NEED_STATES)
+          // SP-467: a materialised proposed need reaches the Brief only.
+          .neq("status", "proposed"),
       ]);
 
       const driftRows = driftResult.data ?? [];

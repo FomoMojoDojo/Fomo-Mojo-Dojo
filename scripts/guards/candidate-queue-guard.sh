@@ -263,12 +263,34 @@ case "$Q3F" in
 esac
 
 echo "── (q4) SP-327, fleet-wide: no map row rests on a proposal that is not accepted ──"
-ORPHANS=$(psqlq "select count(*) from (
-  select source_proposal_id from public.odi_needs where source_proposal_id is not null
-  union all select source_proposal_id from public.job_steps where source_proposal_id is not null
-  union all select source_proposal_id from public.desired_outcomes where source_proposal_id is not null) m
-  join public.surface_proposals p on p.id = m.source_proposal_id where p.status <> 'accepted';")
+# AMENDED BY SP-458 / SP-467 (2026-11-20). SP-458 materialises a PENDING need card whose evidence
+# already meets the bar, so an odi_needs row CAN now rest on a proposal nobody has ruled on. That is
+# not a hole in q4: such a row carries status 'proposed', which SP-467 confines to the Brief and
+# excludes from every other reader, so it is not a MAP row. The invariant therefore sharpens rather
+# than relaxes — a row resting on an unaccepted proposal must be 'proposed' AND NOTHING ELSE, and
+# (q4b) below pins the other direction so 'proposed' cannot become a parking space for anything else.
+# job_steps and desired_outcomes carry no status column and SP-458 materialises NEEDS only, so their
+# arm of the rule is untouched; only the odi_needs arm admits a 'proposed' row.
+ORPHANS=$(psqlq "select
+  (select count(*) from public.odi_needs n join public.surface_proposals p on p.id = n.source_proposal_id
+     where n.source_proposal_id is not null and p.status <> 'accepted' and n.status <> 'proposed')
++ (select count(*) from public.job_steps j join public.surface_proposals p on p.id = j.source_proposal_id
+     where j.source_proposal_id is not null and p.status <> 'accepted')
++ (select count(*) from public.desired_outcomes d join public.surface_proposals p on p.id = d.source_proposal_id
+     where d.source_proposal_id is not null and p.status <> 'accepted');")
 [ "${ORPHANS:-x}" = "0" ] && ok "(q4) 0 map rows rest on a pending, rejected or superseded proposal" || bad "(q4) $ORPHANS map row(s) rest on a proposal that is not accepted"
+
+# (q4b) SP-467, the other direction: a 'proposed' need exists ONLY as the materialisation of a
+# still-pending card. One whose card has been accepted should have been promoted to 'active' by
+# accept_candidate_proposal; one whose card was rejected should have been retracted. Either is a
+# need standing in the Brief that no decision reaches.
+STRANDED=$(psqlq "select count(*) from public.odi_needs n
+  where n.status = 'proposed'
+    and (n.source_proposal_id is null
+         or not exists (select 1 from public.surface_proposals p
+                         where p.id = n.source_proposal_id and p.status = 'pending'));")
+[ "${STRANDED:-x}" = "0" ] && ok "(q4b) every 'proposed' need is the materialisation of a still-pending card" \
+  || bad "(q4b) $STRANDED need(s) carry status 'proposed' without a pending card behind them"
 UNLINKED=$(psqlq "select (select count(*) from public.odi_needs where provenance_type='file_derived' and source_proposal_id is null)
   + (select count(*) from public.job_steps where provenance_type='file_derived' and source_proposal_id is null)
   + (select count(*) from public.desired_outcomes where provenance_type='file_derived' and source_proposal_id is null);")

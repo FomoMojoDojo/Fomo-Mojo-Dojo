@@ -4463,6 +4463,108 @@ export type Database = {
         }
         Relationships: []
       }
+      need_pattern_quotes: {
+        Row: {
+          bears: boolean
+          company_id: string
+          created_at: string
+          id: string
+          judge_reason: string | null
+          pattern_id: string
+          signal_id: string
+        }
+        Insert: {
+          bears: boolean
+          company_id: string
+          created_at?: string
+          id?: string
+          judge_reason?: string | null
+          pattern_id: string
+          signal_id: string
+        }
+        Update: {
+          bears?: boolean
+          company_id?: string
+          created_at?: string
+          id?: string
+          judge_reason?: string | null
+          pattern_id?: string
+          signal_id?: string
+        }
+        Relationships: []
+      }
+      need_patterns: {
+        Row: {
+          company_id: string
+          generated_at: string
+          id: string
+          judge_model: string | null
+          judge_provider: string | null
+          judge_reason: string | null
+          judged_at: string | null
+          model_name: string
+          model_provider: string
+          name: string
+          need_id: string
+          pattern_identity: string
+          representative_signal_id: string | null
+          rubric_md5: string
+          rubric_version: string
+          run_ref: string | null
+          signed_at: string | null
+          signed_by: string | null
+          strength: string
+          superseded_at: string | null
+          superseded_by_id: string | null
+        }
+        Insert: {
+          company_id: string
+          generated_at?: string
+          id?: string
+          judge_model?: string | null
+          judge_provider?: string | null
+          judge_reason?: string | null
+          judged_at?: string | null
+          model_name: string
+          model_provider: string
+          name: string
+          need_id: string
+          pattern_identity: string
+          representative_signal_id?: string | null
+          rubric_md5: string
+          rubric_version: string
+          run_ref?: string | null
+          signed_at?: string | null
+          signed_by?: string | null
+          strength: string
+          superseded_at?: string | null
+          superseded_by_id?: string | null
+        }
+        Update: {
+          company_id?: string
+          generated_at?: string
+          id?: string
+          judge_model?: string | null
+          judge_provider?: string | null
+          judge_reason?: string | null
+          judged_at?: string | null
+          model_name?: string
+          model_provider?: string
+          name?: string
+          need_id?: string
+          pattern_identity?: string
+          representative_signal_id?: string | null
+          rubric_md5?: string
+          rubric_version?: string
+          run_ref?: string | null
+          signed_at?: string | null
+          signed_by?: string | null
+          strength?: string
+          superseded_at?: string | null
+          superseded_by_id?: string | null
+        }
+        Relationships: []
+      }
       need_markets: {
         Row: {
           canonical_statement: string | null

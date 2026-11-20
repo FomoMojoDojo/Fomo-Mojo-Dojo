@@ -16,7 +16,9 @@
 export {
   resolveModel, isPublicProvenance, signalProvenance, modelStamp,
   PUBLIC_PROVENANCES, EXTERNAL_MODEL, EXTERNAL_GENERATOR, EXTERNAL_JUDGE, LOCAL_GENERATOR, LOCAL_JUDGE,
-  type ModelRole, type ModelProvider, type ModelChoice,
+  // SP-460 / SP-468 (2026-11-20): the lineage rule, for the pattern layer only.
+  lineageAllowsExternal, patternRouteProvenance, LINEAGE_PUBLIC_NEED_SOURCE_PATHS,
+  type ModelRole, type ModelProvider, type ModelChoice, type CallLineage,
 } from "../../../src/lib/modelRouter/resolveModel.ts";
 
 import { resolveModel as _resolveModel, type ModelProvider as _MP, type ModelRole as _MR } from "../../../src/lib/modelRouter/resolveModel.ts";

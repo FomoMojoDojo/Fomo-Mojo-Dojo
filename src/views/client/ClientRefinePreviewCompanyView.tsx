@@ -78,6 +78,8 @@ function useCompanyProvenance(companyId: string | undefined, refreshKey = 0): Pr
         .maybeSingle(),
       supabase.from("odi_needs")
         .select("created_at, odi_canonical_statement")
+        // SP-467: a materialised proposed need reaches the Brief only.
+        .neq("status", "proposed")
         .eq("company_id", companyId)
         .order("created_at", { ascending: false }),
       supabase.from("research_artifact_runs")

@@ -142,6 +142,33 @@ for (const [w, h] of (want("b") ? SIZES : [])) {
     await shot(page, `b-brief-${w}x${h}-${view}.png`);
 
     if (operator) {
+      // SP-465 / SP-458: the pattern band, and the proposed-need mark. Reported as counts first, so
+      // the screenshot is never the only evidence that the band is there.
+      const bands = await page.locator('[data-testid="pattern-band"]').count();
+      const rows = await page.locator('[data-testid="pattern-row"]').count();
+      const proposed = await page.locator('[data-testid="review-card-proposed"]').count();
+      const drafts = await page.locator('[data-testid="pattern-draft"]').count();
+      const strengths = await page.locator('[data-testid="pattern-strength"]').evaluateAll((e) => [...new Set(e.map((x) => x.textContent.trim()))]);
+      console.log(`  patterns: ${bands} band(s), ${rows} row(s), ${drafts} draft mark(s), strengths=${JSON.stringify(strengths)} · proposed-need marks: ${proposed}`);
+      const band = page.locator('[data-testid="pattern-band"]').first();
+      if (bands) {
+        const card = page.locator('[data-testid="brief-need"]').filter({ has: page.locator('[data-testid="pattern-band"]') }).first();
+        await card.evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 80));
+        await page.waitForTimeout(400);
+        await shot(page, `b-brief-patterns-${w}x${h}.png`, false);
+        await band.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(300);
+      }
+      // the PROPOSED need, with its own band, in view
+      const pcard = page.locator('[data-testid="brief-need"]').filter({ has: page.locator('[data-testid="review-card-proposed"]') }).first();
+      if (await pcard.count()) {
+        await pcard.evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 80));
+        await page.waitForTimeout(400);
+        await shot(page, `b-brief-proposed-${w}x${h}.png`, false);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.waitForTimeout(300);
+      }
+
       const row = page.locator('[data-fr-region="hotspots"] [data-testid="brief-need"]').first();
       await row.locator('[data-testid="review-card-open"]').click();
       await page.waitForTimeout(700);

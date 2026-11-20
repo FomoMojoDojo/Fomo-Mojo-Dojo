@@ -87,6 +87,8 @@ export default function WhatsChangedPanel({
         supabase
           .from("odi_needs")
           .select("id, desired_outcome, updated_at")
+          // SP-467: a materialised proposed need reaches the Brief only.
+          .neq("status", "proposed")
           .eq("company_id", companyId)
           .gt("updated_at", since)
           .order("updated_at", { ascending: false })

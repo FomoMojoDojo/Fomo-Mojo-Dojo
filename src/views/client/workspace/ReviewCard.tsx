@@ -35,7 +35,7 @@ function Actions({ canAccept, busy, onAccept, onReject }: {
 }
 
 export function ReviewCard({
-  testId, chips, mark, barMark, headline, sites, openLabel, open, onToggle,
+  testId, chips, mark, proposedMark, barMark, headline, sites, openLabel, open, onToggle,
   canAccept, busy, onAccept, onReject, children, facts,
 }: {
   testId?: string;
@@ -43,6 +43,10 @@ export function ReviewCard({
   chips: ReadonlyArray<string>;
   /** The green tag, e.g. "Only the outside shows it". */
   mark?: string | null;
+  /** SP-458: a SECOND tag beside `mark`, in its own colour — "Proposed — not yet accepted". A
+   *  proposed need is outside-voice sourced too, so both tags are true of the same card and one
+   *  must not displace the other. */
+  proposedMark?: string | null;
   /** The one-colour bar mark (SP-445) — "At the bar", the SAME class and token on both surfaces. */
   barMark?: string | null;
   headline: string;
@@ -66,11 +70,12 @@ export function ReviewCard({
     <li className="fr-ws-review-card" data-testid={testId} data-fr-open={open ? "true" : undefined}>
       <div className="fr-ws-review-top">
         <div className="fr-ws-review-main">
-          {chips.length || mark ? (
+          {chips.length || mark || proposedMark ? (
             <p className="fr-ws-review-meta fr-mono">
               {chips.join(" · ")}
               {/* the mark is a TAG, so no "·" in front of it — the mock sets it off by the tag itself */}
               {mark ? <span className="fr-ws-review-tag" data-testid="review-card-mark">{mark}</span> : null}
+              {proposedMark ? <span className="fr-ws-review-tag fr-ws-review-tag--proposed" data-testid="review-card-proposed">{proposedMark}</span> : null}
             </p>
           ) : null}
           <p className="fr-ws-review-headline">{headline}</p>

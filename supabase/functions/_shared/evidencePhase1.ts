@@ -469,6 +469,8 @@ async function rebuildFoundationDependenciesForCompany(supabase: SupabaseClient,
     supabase
       .from("odi_needs")
       .select("id, journey_key, step_number, desired_outcome")
+      // SP-467: a materialised proposed need reaches the Brief only.
+      .neq("status", "proposed")
       .eq("company_id", companyId)
       .not("journey_key", "is", null)
       .limit(1000),

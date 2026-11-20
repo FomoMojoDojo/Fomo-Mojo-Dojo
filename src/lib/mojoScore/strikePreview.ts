@@ -45,6 +45,8 @@ export async function previewStrikeScoreDelta(
     // (journey_key NULL) are outside every market and outside the score.
     db.from("odi_needs")
       .select("id, desired_outcome, importance, satisfaction, opportunity_score, service_state, updated_at")
+      // SP-467: a materialised proposed need reaches the Brief only.
+      .neq("status", "proposed")
       .eq("company_id", companyId)
       .not("journey_key", "is", null),
   ]);

@@ -23,6 +23,7 @@
 import { useEffect, useState } from "react";
 import { useCompany } from "@/hooks/useCompany";
 import { useBriefNeeds, type BriefNeed } from "@/hooks/useBriefNeeds";
+import { useNeedPatterns, type NeedPattern } from "@/hooks/useNeedPatterns";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { useSupersededQuestionCount } from "@/hooks/useSupersededQuestionCount";
 import { hotspots, isAtTheBar, thinSpots, whatWorks } from "@/lib/briefSections";
@@ -32,6 +33,7 @@ import { brandWords, type QuoteRow } from "@/lib/reviewQuote";
 import { useOperatorControls } from "@/views/client/firstReadPreview/operatorControls";
 import { OPERATOR_MARK } from "@/views/client/firstReadPreview/operatorStrings";
 import { WorkspaceAbsent } from "./absent";
+import { PatternBand } from "./PatternBand";
 import { QuoteList } from "./QuoteList";
 import { ReviewCard } from "./ReviewCard";
 import { WorkspaceReadPage, ReadBand } from "./WorkspaceReadPage";
@@ -89,10 +91,12 @@ function tallyOf(quotes: readonly QuoteRow[], polarity: string | null) {
   return tallyNeed(rows);
 }
 
-function NeedRow({ need, quotes, brands, counted, sites, barMark, facts, openKey, openId, setOpenId }: {
+function NeedRow({ need, quotes, brands, counted, sites, barMark, facts, patterns, openKey, openId, setOpenId }: {
   need: BriefNeed;
   quotes: readonly QuoteRow[];
   brands: readonly string[];
+  /** SP-465: the patterns under THIS need. Empty on every band but Hotspots. */
+  patterns?: readonly NeedPattern[];
   counted: number;
   sites: number;
   barMark: string | null;
@@ -106,9 +110,11 @@ function NeedRow({ need, quotes, brands, counted, sites, barMark, facts, openKey
       testId="brief-need"
       chips={[]}
       mark={isOutsideVoiceSourced(need.sourcePath) ? OUTSIDE_VOICE_MARK : null}
+      // SP-458: the need is in the Brief and in its counts; the tag says it is still proposed.
+      proposedMark={need.proposed ? WORKSPACE_STRINGS.proposedNeedMark : null}
       barMark={barMark}
       headline={need.statement}
-      facts={facts}
+      facts={<>{facts}{patterns && patterns.length ? <PatternBand patterns={patterns} brands={brands} /> : null}</>}
       openLabel={quotes.length > 0 ? countedQuotesSitesLine(counted, sites) : null}
       open={openId === openKey}
       onToggle={quotes.length > 0 ? () => setOpenId(openId === openKey ? null : openKey) : undefined}
@@ -124,6 +130,7 @@ export default function BriefPage() {
   const operator = useOperatorControls();
   const companyId = operator ? activeCompany?.id : undefined;
   const { needs, storedBrands, loading } = useBriefNeeds(companyId ?? null);
+  const { patterns } = useNeedPatterns(companyId ?? null);
   const { rows: questions, loading: questionsLoading } = useFirstReadOpenQuestions(companyId);
   const superseded = useSupersededQuestionCount(companyId ?? null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -149,6 +156,8 @@ export default function BriefPage() {
   const brands = brandWords(activeCompany?.name, storedBrands);
   const rows = needs.map((need) => ({ need, tally: need.tally }));
   const hot = hotspots(rows);
+  const patternsByNeed = new Map<string, NeedPattern[]>();
+  for (const p of patterns) (patternsByNeed.get(p.needId) ?? patternsByNeed.set(p.needId, []).get(p.needId)!).push(p);
   const works = whatWorks(rows);
   const thin = thinSpots(rows);
 
@@ -174,6 +183,7 @@ export default function BriefPage() {
                       sites={need.tally.sites.length}
                       barMark={isAtTheBar(need.tally) ? WORKSPACE_STRINGS.atTheBar : null}
                       facts={<p className="fr-ws-brief-facts fr-mono" data-testid="brief-brand-counts">{brandPolarityLines(need.tally).join(" · ")}</p>}
+                      patterns={patternsByNeed.get(need.id) ?? []}
                       openKey={`hot:${need.id}`}
                       openId={openId}
                       setOpenId={setOpenId}

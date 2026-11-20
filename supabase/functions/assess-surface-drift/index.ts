@@ -614,6 +614,8 @@ async function assessOpportunities(
   const query = supabase
     .from("odi_needs")
     .select("id, desired_outcome, odi_canonical_statement, evidence_baseline_signal_ids, evidence_baseline_captured_at, provenance_type, operator_edited_at, step_label, source_path, frameworks_used, interview_record_id, source_proposal_id")
+    // SP-467: a materialised proposed need reaches the Brief only.
+    .neq("status", "proposed")
     .eq("company_id", companyId);
 
   if (filterSurfaceId) query.eq("id", filterSurfaceId);

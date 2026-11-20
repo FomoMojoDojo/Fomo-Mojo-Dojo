@@ -3097,3 +3097,32 @@ span.fr-mark-target .fr-mark-box { display: flex; }
 .fr-ws-brief-reason { margin: 0.25rem 0 0; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-electric-sol)); }
 .fr-ws-brief-question { margin: 0; max-width: 72ch; font-size: 0.9375rem; line-height: 1.55; color: hsl(var(--fr-paper) / 0.9); }
 .fr-ws-brief-foot { margin: 1rem 0 0; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-paper) / 0.5); }
+
+/* SP-458 (2026-11-20): the proposed-need tag. A second tag beside the outside-voice one, in the
+   amber "not settled yet" register rather than the green of a finding that is settled — the card is
+   in the Brief and in its counts, and the colour is the one thing saying nobody has ruled on it. */
+.fr-ws-review-tag--proposed {
+  background: rgba(255, 176, 32, 0.14);
+  border-color: rgba(255, 176, 32, 0.42);
+  color: #ffc766;
+}
+
+/* ── The pattern band under a hotspot (SP-465, 2026-11-20) ────────────────────────────────────────
+   Set in from the need statement, because a pattern is subordinate to the need: it is the particular
+   thing that keeps happening under it, not a sibling finding. The left rule carries the eye down the
+   list, so several patterns under one need read as one group rather than four loose rows. */
+.fr-ws-patterns { margin: 10px 0 4px; padding-left: 12px; border-left: 2px solid rgba(255, 255, 255, 0.1); }
+.fr-ws-patterns-label { margin: 0 0 6px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; }
+.fr-ws-pattern-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.fr-ws-pattern-row { margin: 0; }
+.fr-ws-pattern-meta { margin: 0 0 2px; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 10px; }
+.fr-ws-pattern-strength { color: var(--fr-electric, #b6ff3a); letter-spacing: 0.04em; text-transform: uppercase; }
+.fr-ws-pattern-support { opacity: 0.6; }
+.fr-ws-pattern-draft { opacity: 0.45; font-style: italic; }
+.fr-ws-pattern-name { margin: 0; font-size: 14px; line-height: 1.35; }
+/* The representative quote is a customer's own words, so it reads as a quotation and not as our prose. */
+.fr-ws-pattern-quote {
+  margin: 4px 0 0; padding: 0 0 0 10px; border-left: 2px solid rgba(255, 255, 255, 0.14);
+  font-size: 12px; line-height: 1.45; opacity: 0.72;
+}
+.fr-ws-pattern-clip { opacity: 0.6; }

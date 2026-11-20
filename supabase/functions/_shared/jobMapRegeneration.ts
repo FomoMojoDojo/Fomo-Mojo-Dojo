@@ -389,6 +389,8 @@ export async function regenerateJobMapJourney(args: {
     const { data: needRows, error: needRowsError } = await supabase
       .from("odi_needs")
       .select("id, desired_outcome, journey_key, step_number")
+      // SP-467: a materialised proposed need reaches the Brief only.
+      .neq("status", "proposed")
       .eq("company_id", companyId)
       .eq("journey_key", normalizedKey);
     if (needRowsError) throw new Error(needRowsError.message || "Failed to load ODI needs for dependency rebuild.");

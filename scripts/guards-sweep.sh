@@ -21,7 +21,11 @@
 #   source backups/fr-login.env && source backups/fr-nonadmin.env && source backups/fr-member.env \
 #     && bash scripts/guards-sweep.sh
 #
-# BASELINE (operator ruling R2, 2026-11-18): 66 GREEN / 4 RED of 70, members listed in
+# BASELINE (2026-11-20, after SP-460/SP-465/SP-467 added pattern-lane-guard, pattern-citation-guard and
+# proposed-need-isolation-guard): 75 GREEN / 3 RED of 78. The THREE standing REDs are network-guard (n4,
+# wants the read-only pf sudo entry), diagnose-data-guard (i) and source-class-guard (c1) —
+# excerpt-blanking-guard has been GREEN since 2026-11-19 and is no longer one of them.
+# Earlier (operator ruling R2, 2026-11-18): 66 GREEN / 4 RED of 70, members listed in
 # scripts/guards-sweep.members. Earlier (2026-11-13, after I-1 added ingest-queue-guard): 46 GREEN / 4 RED of 50.
 # Part B's ingest-partial-honesty-guard made it 45 / 4 of 49. The four standing REDs are
 # network-guard (n4, wants the read-only pf sudo entry),

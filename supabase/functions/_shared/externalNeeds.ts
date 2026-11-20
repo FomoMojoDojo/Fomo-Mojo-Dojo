@@ -19,6 +19,8 @@ export async function collectExternalNeeds(
   const { data: opportunityRows } = await db
     .from("odi_needs")
     .select("desired_outcome as outcome, journey_key, step_number, step_label, importance, satisfaction, opportunity_score, tier as priority_tier, provenance_type, operator_edited_at, source_path, frameworks_used, interview_record_id, source_proposal_id")
+    // SP-467: a materialised proposed need reaches the Brief only.
+    .neq("status", "proposed")
     .eq("company_id", companyId)
     .not("journey_key", "is", null)
     .neq("strategy_alignment", "off_strategy")

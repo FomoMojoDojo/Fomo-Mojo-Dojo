@@ -77,6 +77,66 @@ export function signalProvenance(
   return voiceClass && PUBLIC_SIGNAL_VOICES.has(voiceClass) ? "public_observed" : null; // analysis/NULL → local
 }
 
+// ── SP-460 / SP-468 (2026-11-20): THE LANE IS DECIDED BY LINEAGE, NOT BY A LABEL ────────────────
+//
+// `isPublicProvenance` tests a STRING. That is right for a row that carries a provenance column, and
+// wrong for the pattern layer, whose inputs are a need and the review quotes under it: a need read
+// out of customers' own public reviews carries source_path 'outside_voice_read', which is deliberately
+// NOT on PUBLIC_PROVENANCES (it is refused by isSubjectExternallyAdmissible, and accept_candidate_
+// proposal's comment says so), so by label the whole call would go local even for a company that has
+// handed us nothing. SP-460: judge the LINEAGE instead — the company's client-provided material, and
+// every input row's own SOURCE.
+//
+// TWO CONDITIONS, BOTH REQUIRED, FAIL CLOSED ON EVERYTHING ELSE:
+//   1. companyHasClientProvidedMaterial(...).has === false. Not falsy — FALSE. That predicate already
+//      counts a lookup error as `has: true` (clientMaterial.ts:68), so an error arrives here as true
+//      and closes the lane; `null`/`undefined` mean nobody looked, which closes it too.
+//   2. every signal's source_type is public by isPublicSignalSourceType (the W1 allowlist), and every
+//      need's source_path is on LINEAGE_PUBLIC_NEED_SOURCE_PATHS. An empty signal set is closed —
+//      never send an unqualified call to a paid external API.
+//
+// SP-468 scopes this to the pattern layer: `patternRouteProvenance` is its one consumer. The six
+// generator call sites named above keep the label test unchanged.
+//
+// MEASURED 2026-11-20: Charter (dd40ce2f) has client-provided material in 4 of the 7 kinds —
+// 235 upload signals, 2 uploaded files, 15 file proposals, 2 internal_declared claims — so condition 1
+// is false and Charter's pattern layer runs LOCAL, even though all 330 of its judged review signals
+// are public by source. The lane is the company's, not the corpus's.
+
+/** SP-460: the need source_paths whose LINEAGE is the public record, though the string itself is not a
+ *  public provenance. 'public_research' is a need read out of public research; 'outside_voice_read' is
+ *  one read out of customers' own public reviews — the case SP-460 names. Fail closed: anything else
+ *  (a file_proposal path, an interview, an intake, '', NULL) is not public by lineage. */
+export const LINEAGE_PUBLIC_NEED_SOURCE_PATHS: ReadonlySet<string> = new Set([
+  "public_research", "outside_voice_read",
+]);
+
+export type CallLineage = {
+  /** companyHasClientProvidedMaterial(sb, companyId).has — FALSE only when the lookup proved none. */
+  hasClientMaterial: boolean | null | undefined;
+  /** signals.source_type for EVERY signal the call will read. Empty ⇒ closed. */
+  signalSourceTypes: ReadonlyArray<string | null | undefined>;
+  /** odi_needs.source_path for EVERY need the call will read. Empty is allowed (a call over quotes alone). */
+  needSourcePaths: ReadonlyArray<string | null | undefined>;
+};
+
+/** SP-460. True only when the company has proven no client-provided material AND every input row is
+ *  public by its own source. Anything else — a row of material, an unknown source, an empty signal
+ *  set, a lookup nobody ran — is false. */
+export function lineageAllowsExternal(l: CallLineage): boolean {
+  if (l.hasClientMaterial !== false) return false;
+  if (!Array.isArray(l.signalSourceTypes) || l.signalSourceTypes.length === 0) return false;
+  if (!l.signalSourceTypes.every((t) => isPublicSignalSourceType(t))) return false;
+  if (!Array.isArray(l.needSourcePaths)) return false;
+  return l.needSourcePaths.every((p) => typeof p === "string" && LINEAGE_PUBLIC_NEED_SOURCE_PATHS.has(p));
+}
+
+/** The provenance the PATTERN LAYER hands `resolveModel`, from its call's lineage (SP-468: this is the
+ *  rule's one consumer). `null` is a non-public input, which `resolveModel` already routes local. */
+export function patternRouteProvenance(l: CallLineage): string | null {
+  return lineageAllowsExternal(l) ? "public_observed" : null;
+}
+
 /** ALL inputs public → external; ANY non-public/unknown/NULL → local. An EMPTY input set is
  *  fail-closed to local (never send an unqualified call to an external API). */
 export function resolveModel(opts: {

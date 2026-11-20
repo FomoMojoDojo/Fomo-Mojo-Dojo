@@ -307,6 +307,23 @@ export const WORKSPACE_STRINGS = {
   bandQuestions: "Open questions from the outside read",
   /** B-5 — one colour on both surfaces (SP-445): the lime accent token. */
   atTheBar: "At the bar",
+  /** SP-458 (2026-11-20) — a need materialised from a card nobody has ruled on yet. It is in the
+   *  Brief and in its counts; the mark says the need itself is still proposed. NEW STRING, for
+   *  operator signature. */
+  proposedNeedMark: "Proposed — not yet accepted",
+  // ── The pattern layer (SP-465 / SP-428 / SP-459, 2026-11-20). NEW STRINGS, for signature. ──
+  /** The group label inside a hotspot card, over the patterns the judge kept. */
+  patternsLabel: "What keeps happening",
+  /** SP-428's four strengths, as a screen reads them. The stored values ARE these four words in
+   *  lower case (need_patterns_strength_check), and this map is the ONE place a strength becomes
+   *  text — so no stored value can reach the screen by another route, the SP-456 rule. */
+  strengthConfirmedRule: "Confirmed rule",
+  strengthLikelyRule: "Likely rule",
+  strengthPossibleFailure: "Possible failure",
+  strengthTooThin: "Too thin",
+  /** What a pattern rests on, singular-aware as SP-456 requires of every such line. */
+  supportingQuoteSingular: "{n} supporting quote",
+  supportingQuotesPlural: "{n} supporting quotes",
   /** B-6, as SP-446 amended it. */
   belowTheBar: "Below the bar",
   /** SP-445 — the visible key for the per-brand counts. */
@@ -407,6 +424,27 @@ export function workspaceDocumentTitle(label: string, companyName: string | null
 export function countedQuotesSitesLine(counted: number, sites: number): string {
   const q = (counted === 1 ? WORKSPACE_STRINGS.countedQuoteSingular : WORKSPACE_STRINGS.countedQuotesPlural)
     .replace("{counted}", String(counted));
+  const s = (sites === 1 ? WORKSPACE_STRINGS.siteSingular : WORKSPACE_STRINGS.sitesPlural)
+    .replace("{sites}", String(sites));
+  return `${q} \u00b7 ${s}`;
+}
+
+/** SP-428's strength, as a screen reads it. An unrecognised stored value is returned unchanged
+ *  rather than blanked — a value the check constraint should have refused must be VISIBLE, not
+ *  hidden behind a label map. */
+export function strengthLabel(stored: string | null | undefined): string {
+  const v = String(stored ?? "").trim();
+  if (v === "confirmed rule") return WORKSPACE_STRINGS.strengthConfirmedRule;
+  if (v === "likely rule") return WORKSPACE_STRINGS.strengthLikelyRule;
+  if (v === "possible failure") return WORKSPACE_STRINGS.strengthPossibleFailure;
+  if (v === "too thin") return WORKSPACE_STRINGS.strengthTooThin;
+  return v;
+}
+
+/** What a pattern rests on: "1 supporting quote · 1 site", "7 supporting quotes · 3 sites". */
+export function patternSupportLine(supporting: number, sites: number): string {
+  const q = (supporting === 1 ? WORKSPACE_STRINGS.supportingQuoteSingular : WORKSPACE_STRINGS.supportingQuotesPlural)
+    .replace("{n}", String(supporting));
   const s = (sites === 1 ? WORKSPACE_STRINGS.siteSingular : WORKSPACE_STRINGS.sitesPlural)
     .replace("{sites}", String(sites));
   return `${q} \u00b7 ${s}`;

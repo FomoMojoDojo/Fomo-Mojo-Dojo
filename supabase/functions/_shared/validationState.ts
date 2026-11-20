@@ -45,7 +45,8 @@ export async function recomputeValidationState(
   const [routesRes, testsRes, needsRes, claimsRes, refsRes, outcomesRes] = await Promise.all([
     supabase.from("routes").select("id, level, parent_id, what_would_have_to_be_true, validation_state").eq("company_id", companyId),
     supabase.from("tests").select("id, action_id, result, outcome, no_test_needed").eq("company_id", companyId),
-    supabase.from("odi_needs").select("id, provenance_type, validation_state").eq("company_id", companyId),
+    // SP-467: a materialised proposed need reaches the Brief only.
+    supabase.from("odi_needs").select("id, provenance_type, validation_state").eq("company_id", companyId).neq("status", "proposed"),
     supabase.from("claims").select("id, triangulation_state").eq("company_id", companyId),
     supabase.from("claim_signal_refs").select("claim_id, relationship").eq("company_id", companyId),
     supabase.from("check_outcomes").select("id, company_id, subject_identity, check_kind, check_version, verdict, recorded_at, superseded_by").eq("company_id", companyId),

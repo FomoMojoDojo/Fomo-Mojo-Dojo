@@ -204,6 +204,8 @@ async function createClaimsFromOdiNeeds(
   const { data: rows, error } = await db
     .from("odi_needs")
     .select("id,desired_outcome,source_path,importance,satisfaction")
+    // SP-467: a materialised proposed need reaches the Brief only.
+    .neq("status", "proposed")
     .eq("company_id", companyId);
 
   if (error || !rows) {

@@ -816,6 +816,8 @@ Deno.serve(async (req) => {
           // 4f-6 (F9): alignment is judged against the markets; a company-held need (journey_key
           // NULL) belongs to none of them and never enters this context.
           .select("id,desired_outcome,importance,satisfaction,opportunity_score,journey_key,step_label,source_path,created_at")
+          // SP-467: a materialised proposed need reaches the Brief only.
+          .neq("status", "proposed")
           .eq("company_id", companyId)
           .not("journey_key", "is", null)
           .order("opportunity_score", { ascending: false })

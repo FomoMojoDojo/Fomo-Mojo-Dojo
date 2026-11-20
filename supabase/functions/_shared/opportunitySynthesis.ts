@@ -580,6 +580,8 @@ export async function setHasOpportunities(
     .eq("company_id", companyId)
     .eq("journey_key", journeyKey)
     .eq("provenance_type", "internal_declared")
+    // SP-467: a materialised proposed need reaches the Brief only.
+    .neq("status", "proposed")
     .limit(1);
   return ((data ?? []) as unknown[]).length > 0;
 }
