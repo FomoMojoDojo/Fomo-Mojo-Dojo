@@ -91,12 +91,14 @@ function tallyOf(quotes: readonly QuoteRow[], polarity: string | null) {
   return tallyNeed(rows);
 }
 
-function NeedRow({ need, quotes, brands, counted, sites, barMark, facts, patterns, openKey, openId, setOpenId }: {
+function NeedRow({ need, quotes, brands, counted, sites, barMark, facts, patterns, patternsAssigned, openKey, openId, setOpenId }: {
   need: BriefNeed;
   quotes: readonly QuoteRow[];
   brands: readonly string[];
   /** SP-465: the patterns under THIS need. Empty on every band but Hotspots. */
   patterns?: readonly NeedPattern[];
+  /** SP-476: how many of this need's counted quotes a surviving pattern covers. */
+  patternsAssigned?: number;
   counted: number;
   sites: number;
   barMark: string | null;
@@ -114,7 +116,9 @@ function NeedRow({ need, quotes, brands, counted, sites, barMark, facts, pattern
       proposedMark={need.proposed ? WORKSPACE_STRINGS.proposedNeedMark : null}
       barMark={barMark}
       headline={need.statement}
-      facts={<>{facts}{patterns && patterns.length ? <PatternBand patterns={patterns} brands={brands} /> : null}</>}
+      facts={<>{facts}{patterns && patterns.length
+        ? <PatternBand patterns={patterns} brands={brands} counted={counted} assigned={patternsAssigned ?? 0} />
+        : null}</>}
       openLabel={quotes.length > 0 ? countedQuotesSitesLine(counted, sites) : null}
       open={openId === openKey}
       onToggle={quotes.length > 0 ? () => setOpenId(openId === openKey ? null : openKey) : undefined}
@@ -130,7 +134,7 @@ export default function BriefPage() {
   const operator = useOperatorControls();
   const companyId = operator ? activeCompany?.id : undefined;
   const { needs, storedBrands, loading } = useBriefNeeds(companyId ?? null);
-  const { patterns } = useNeedPatterns(companyId ?? null);
+  const { patterns, assignedByNeed } = useNeedPatterns(companyId ?? null);
   const { rows: questions, loading: questionsLoading } = useFirstReadOpenQuestions(companyId);
   const superseded = useSupersededQuestionCount(companyId ?? null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -184,6 +188,7 @@ export default function BriefPage() {
                       barMark={isAtTheBar(need.tally) ? WORKSPACE_STRINGS.atTheBar : null}
                       facts={<p className="fr-ws-brief-facts fr-mono" data-testid="brief-brand-counts">{brandPolarityLines(need.tally).join(" · ")}</p>}
                       patterns={patternsByNeed.get(need.id) ?? []}
+                      patternsAssigned={assignedByNeed[need.id] ?? 0}
                       openKey={`hot:${need.id}`}
                       openId={openId}
                       setOpenId={setOpenId}

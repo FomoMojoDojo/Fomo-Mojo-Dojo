@@ -33,14 +33,16 @@ const thin = {
 };
 
 const patterns = [
-  { id: "pat1", needId: "accepted", name: "Agents give a different answer each time", strength: "confirmed rule", draft: true, supporting: 9, sites: 4, representative: q("a1", CA) },
-  { id: "pat2", needId: "proposed", name: "The outage is denied after the fact", strength: "likely rule", draft: true, supporting: 5, sites: 2, representative: q("p1", CA) },
+  { id: "pat1", needId: "accepted", name: "Agents give a different answer each time", strength: "confirmed rule", polarity: "not working", draft: true, ceilingHit: false, supporting: 9, sites: 4, representative: q("a1", CA) },
+  { id: "pat2", needId: "proposed", name: "The outage is denied after the fact", strength: "likely rule", polarity: "working", draft: true, ceilingHit: false, supporting: 5, sites: 2, representative: q("p1", CA) },
 ];
 
 vi.mock("@/views/client/firstReadPreview/operatorControls", () => ({ useOperatorControls: () => ({ on: true }) }));
 vi.mock("@/hooks/useCompany", () => ({ useCompany: () => ({ activeCompany: { id: "co", name: "Charter Communications" } }) }));
 vi.mock("@/hooks/useBriefNeeds", () => ({ useBriefNeeds: () => ({ needs: [accepted, proposed, thin], storedBrands: ["spectrum"], loading: false, error: null }) }));
-vi.mock("@/hooks/useNeedPatterns", () => ({ useNeedPatterns: () => ({ patterns, loading: false, error: null }) }));
+vi.mock("@/hooks/useNeedPatterns", () => ({
+  useNeedPatterns: () => ({ patterns, assignedByNeed: { accepted: 9, proposed: 5 }, loading: false, error: null }),
+}));
 vi.mock("@/hooks/useFirstReadOpenQuestions", () => ({ useFirstReadOpenQuestions: () => ({ loading: false, error: null, rows: [], questions: [] }) }));
 vi.mock("@/hooks/useSupersededQuestionCount", () => ({ useSupersededQuestionCount: () => 0 }));
 
@@ -103,6 +105,20 @@ describe("SP-465: the pattern band under a hotspot", () => {
     const drafts = [...container.querySelectorAll('[data-testid="pattern-draft"]')];
     expect(drafts).toHaveLength(2);
     expect(drafts.every((d) => d.textContent === WORKSPACE_STRINGS.briefDraftMark)).toBe(true);
+  });
+
+  it("SP-470: each pattern shows its own polarity", () => {
+    const { container } = draw();
+    const pol = [...container.querySelectorAll('[data-testid="pattern-polarity"]')].map((n) => n.textContent);
+    expect(pol).toEqual(["not working", "working"]);
+  });
+
+  it("SP-476: each hotspot's band carries the coverage line, from the hook's derived numbers", () => {
+    const { container } = draw();
+    const lines = [...container.querySelectorAll('[data-testid="pattern-coverage"]')].map((n) => n.textContent);
+    // accepted: 4 counted, 9 assigned is impossible in life but proves the numbers come from the
+    // hook and the tally rather than from the pattern rows
+    expect(lines).toEqual(["9 of 4 counted quotes under a pattern", "5 of 3 counted quotes under a pattern"]);
   });
 
   it("SP-463: the counts shown are the ones the hook derived", () => {

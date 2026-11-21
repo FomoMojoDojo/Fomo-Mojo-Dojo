@@ -60,6 +60,13 @@ export const MODEL_CALL_SITES: readonly ModelCallSite[] = [
   // R52 (2026-10-20): the voice sweep runner (scripts/r52) — call_site r52-voice-sweep:<band|speaker|authorship>, one row per
   // call before parse, ollama only (local transports, usd null), run_id null; the run is named by integrity_runs.run_ref.
   { site: "r52-voice-sweep", provider: "ollama", role: "R52 voice sweep judges (band / speaker / authorship; call_site r52-voice-sweep:<role>)", captured: true },
+  // SP-475(e) (2026-11-20): the pattern layer. TWO sites, because the roles take DIFFERENT models and
+  // a single entry would hide that — call_site is `need-patterns:generator` / `need-patterns:judge`.
+  // Captured: one model_calls row per call, before parse, on both the local and the external branch.
+  // usd is 0 on the local branch rather than NULL, deliberately: a local call costs no money and the
+  // 0 is the record of that, where NULL would read as "nobody looked".
+  { site: "need-patterns:generator", provider: "ollama", role: "pattern generator (fewest patterns covering the most quotes, per need)", captured: true },
+  { site: "need-patterns:judge", provider: "ollama", role: "pattern judge — ONE quote per call (SP-475d)", captured: true },
 ] as const;
 
 export type CostCoverage = { captured: number; total: number; uncaptured: string[]; complete: boolean };

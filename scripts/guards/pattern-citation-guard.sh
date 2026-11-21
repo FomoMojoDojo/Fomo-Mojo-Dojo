@@ -93,10 +93,85 @@ N=$(q "select count(*) from public.need_patterns p where p.superseded_at is null
 [ "$N" = "0" ] && ok "(c5b) every representative quote is a supporting quote of its own pattern" \
   || bad "(c5b) $N live pattern(s) show a representative quote that is not one of their supporting quotes"
 
+echo "— (c5c) SP-470: every live pattern carries ONE polarity, and its quotes carry the same one"
+N=$(q "select count(*) from public.need_patterns where superseded_at is null
+       and rubric_version = 'need-pattern-rubric-v2' and polarity is null")
+[ "$N" = "0" ] && ok "(c5c) every live v2 pattern names its polarity" || bad "(c5c) $N live v2 pattern(s) carry no polarity"
+# and the quotes under it agree. A pattern is "the thing that keeps happening" — one that mixes a
+# complaint and a compliment is not one thing, which is why SP-470 gives each polarity its own pass.
+N=$(q "select count(*) from public.need_pattern_quotes pq
+       join public.need_patterns p on p.id = pq.pattern_id
+       join public.need_evidence e on e.company_id = p.company_id and e.need_id = p.need_id
+            and e.signal_id = pq.signal_id and e.bears
+       where p.superseded_at is null and p.polarity is not null
+         and e.polarity is not null and e.polarity <> p.polarity")
+[ "$N" = "0" ] && ok "(c5c) no quote sits under a pattern of a different polarity" \
+  || bad "(c5c) $N quote row(s) sit under a pattern whose polarity they do not carry"
+
+echo "— (c5d) SP-475(c): no quote is the representative of two patterns in one need"
+N=$(q "select coalesce(sum(c - 1), 0) from (
+         select count(*) c from public.need_patterns
+          where superseded_at is null and representative_signal_id is not null
+          group by company_id, need_id, representative_signal_id having count(*) > 1) d")
+[ "$N" = "0" ] && ok "(c5d) every representative is unique within its need" \
+  || bad "(c5d) $N duplicate representative(s) — the unique index should have made this impossible"
+# NON-VACUITY: the index must exist, or (c5d) is checking a rule nothing enforces.
+IDX=$(q "select count(*) from pg_indexes where schemaname='public' and indexname='need_patterns_one_representative'")
+[ "$IDX" = "1" ] && ok "(c5d) and the unique index that forbids it is in place" \
+  || bad "(c5d) need_patterns_one_representative is MISSING — (c5d) would pass on luck"
+
 echo "— (c6) SP-428: the strength is one of the four"
 N=$(q "select count(*) from public.need_patterns where superseded_at is null
        and strength not in ('confirmed rule','likely rule','possible failure','too thin')")
 [ "$N" = "0" ] && ok "(c6) no strength outside SP-428's four" || bad "(c6) $N live pattern(s) carry a strength outside SP-428's four"
+
+echo "— (c9) SP-494: every supporting quote's span is VERBATIM and its not-stated list is empty"
+# NON-VACUITY FIRST. Every check below is scoped to rubric v2.1, so before any v2.1 row exists they
+# all pass on an empty set — the failure mode this guard family keeps being written against. So:
+# count the rows, print the count, and fail if there are v2.1 PATTERNS but no v2.1 supporting quotes.
+V21P=$(q "select count(*) from public.need_patterns where superseded_at is null and rubric_version='need-pattern-rubric-v2.2'")
+V21Q=$(q "select count(*) from public.need_pattern_quotes pq join public.need_patterns p on p.id=pq.pattern_id
+          where p.superseded_at is null and p.rubric_version='need-pattern-rubric-v2.2' and pq.bears")
+echo "        rubric v2.1: $V21P live pattern(s), $V21Q supporting quote row(s)"
+if [ "$V21P" = "0" ]; then
+  echo "     -- (c9) SKIPPED: no rubric v2.1 pattern is live yet, so these checks would pass on an empty set"
+elif [ "$V21Q" = "0" ]; then
+  bad "(c9) $V21P live v2.1 pattern(s) but ZERO supporting quote rows — the checks below would be vacuous"
+fi
+# The TypeScript gate (parseJudgeOne -> excerptBlanking.verbatimOn) is what enforces this at write
+# time. The guard checks the STORED rows, so a row written by some other path — a backfill, a hand
+# insert, a future function that forgets the gate — cannot slip past it.
+N=$(q "select count(*) from public.need_pattern_quotes pq
+       join public.need_patterns p on p.id = pq.pattern_id
+       where p.superseded_at is null and p.rubric_version = 'need-pattern-rubric-v2.2'
+         and pq.bears and coalesce(pq.states_span, '') = ''")
+[ "$N" = "0" ] && ok "(c9) every supporting quote carries a stored span" || bad "(c9) $N supporting quote(s) carry no span"
+# the span must be a substring of the quote, ignoring case and whitespace runs — the same forgiveness
+# normalizeForHash gives. Postgres cannot call the TS predicate, so this is the SQL equivalent, and a
+# disagreement between the two IS the finding.
+N=$(q "select count(*) from public.need_pattern_quotes pq
+       join public.need_patterns p on p.id = pq.pattern_id
+       join public.signals s on s.id = pq.signal_id
+       where p.superseded_at is null and p.rubric_version = 'need-pattern-rubric-v2.2'
+         and pq.bears and coalesce(pq.states_span,'') <> ''
+         and position(lower(regexp_replace(btrim(pq.states_span), '\s+', ' ', 'g'))
+                      in lower(regexp_replace(coalesce(s.quote,''), '\s+', ' ', 'g'))) = 0")
+[ "$N" = "0" ] && ok "(c9) every stored span is verbatim in its own quote" || bad "(c9) $N span(s) are NOT verbatim in the quote they claim to come from"
+N=$(q "select count(*) from public.need_pattern_quotes pq
+       join public.need_patterns p on p.id = pq.pattern_id
+       where p.superseded_at is null and p.rubric_version = 'need-pattern-rubric-v2.2'
+         and pq.bears and coalesce(jsonb_array_length(pq.not_stated), 0) <> 0")
+[ "$N" = "0" ] && ok "(c9) no supporting quote carries a non-empty not-stated list" \
+  || bad "(c9) $N supporting quote(s) were kept although the judge named a part they do not state"
+# SP-504: the keyword flag was removed. It fired on about two thirds of calls over two full runs and
+# never vetoed anything. The COLUMN is left in place, unused, because dropping it is a destructive act
+# nobody ruled — so this asserts nothing new is written to it rather than reading it as a signal.
+NEWFLAGS=$(q "select count(*) from public.need_pattern_quotes pq
+       join public.need_patterns p on p.id = pq.pattern_id
+       where p.superseded_at is null and p.rubric_version like 'need-pattern-rubric-v2.2%'
+         and pq.keyword_flag is not null")
+[ "$NEWFLAGS" = "0" ] && ok "(c9) SP-504: no v2.2 row writes the retired keyword_flag column" \
+  || bad "(c9) $NEWFLAGS v2.2 row(s) still write keyword_flag, which SP-504 removed"
 
 echo "— (c8) the rubric is recorded on every live pattern"
 N=$(q "select count(*) from public.need_patterns where superseded_at is null

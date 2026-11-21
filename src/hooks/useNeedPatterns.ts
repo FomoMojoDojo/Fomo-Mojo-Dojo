@@ -23,8 +23,13 @@ export type NeedPattern = {
   needId: string;
   name: string;
   strength: string;
+  /** SP-470: the one polarity this pattern carries. null on a rubric-v1 row. */
+  polarity: string | null;
   /** SP-459: no signature yet, so the pattern shows with the draft mark. */
   draft: boolean;
+  /** SP-469: the generator hit the ceiling on this need's run, so there may be patterns it could not
+   *  return. A fact of the run, not derivable from the rows. */
+  ceilingHit: boolean;
   /** Derived, never stored: the quotes the judge kept. */
   supporting: number;
   /** Derived, never stored: the distinct sites those quotes sat on. */
@@ -34,8 +39,8 @@ export type NeedPattern = {
 };
 
 type PatternRow = {
-  id: string; need_id: string; name: string; strength: string;
-  signed_at: string | null; representative_signal_id: string | null;
+  id: string; need_id: string; name: string; strength: string; polarity: string | null;
+  signed_at: string | null; representative_signal_id: string | null; run_ceiling_hit: boolean | null;
 };
 type PQRow = { pattern_id: string; signal_id: string; bears: boolean };
 
@@ -44,6 +49,10 @@ const SIGNAL_ID_CHUNK = 60;
 
 export function useNeedPatterns(companyId?: string | null) {
   const [patterns, setPatterns] = useState<NeedPattern[]>([]);
+  /** SP-469 / SP-476: how many DISTINCT counted quotes sit under a surviving pattern, per need.
+   *  Derived here from need_pattern_quotes — never a stored column (SP-463). The Brief shows it
+   *  against the need's own counted total, so a band that reads a third of the evidence says so. */
+  const [assignedByNeed, setAssignedByNeed] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,10 +64,10 @@ export function useNeedPatterns(companyId?: string | null) {
       try {
         const rows = await fetchAllRows<PatternRow>((from, to) =>
           supabase.from("need_patterns")
-            .select("id, need_id, name, strength, signed_at, representative_signal_id")
+            .select("id, need_id, name, strength, polarity, signed_at, representative_signal_id, run_ceiling_hit")
             .eq("company_id", companyId).is("superseded_at", null).order("id").range(from, to));
         if (cancelled) return;
-        if (rows.length === 0) { setPatterns([]); setLoading(false); return; }
+        if (rows.length === 0) { setPatterns([]); setAssignedByNeed({}); setLoading(false); return; }
 
         const pq = await fetchAllRows<PQRow>((from, to) =>
           supabase.from("need_pattern_quotes").select("pattern_id, signal_id, bears")
@@ -80,13 +89,27 @@ export function useNeedPatterns(companyId?: string | null) {
         const byPattern = new Map<string, PQRow[]>();
         for (const r of pq) (byPattern.get(r.pattern_id) ?? byPattern.set(r.pattern_id, []).get(r.pattern_id)!).push(r);
 
+        // one need may hold several patterns and one quote may support more than one of them, so the
+        // covered set is a UNION per need, not a sum of the per-pattern counts.
+        const needOfPattern = new Map(rows.map((p) => [p.id, p.need_id]));
+        const coveredByNeed = new Map<string, Set<string>>();
+        for (const r of pq) {
+          if (!r.bears) continue;
+          const nid = needOfPattern.get(r.pattern_id);
+          if (!nid) continue;
+          (coveredByNeed.get(nid) ?? coveredByNeed.set(nid, new Set()).get(nid)!).add(r.signal_id);
+        }
+        setAssignedByNeed(Object.fromEntries([...coveredByNeed].map(([nid, set]) => [nid, set.size])));
+
         setPatterns(rows.map((p) => {
           const kept = (byPattern.get(p.id) ?? []).filter((r) => r.bears);
           const sites = new Set(kept.map((r) => siteOf(sigById.get(r.signal_id)?.source_url))).size;
           const rep = p.representative_signal_id ? sigById.get(p.representative_signal_id) : undefined;
           return {
             id: p.id, needId: p.need_id, name: p.name, strength: p.strength,
+            polarity: p.polarity,
             draft: p.signed_at == null,
+            ceilingHit: p.run_ceiling_hit === true,
             supporting: kept.length,
             sites,
             representative: rep
@@ -101,11 +124,11 @@ export function useNeedPatterns(companyId?: string | null) {
         setLoading(false);
       } catch (e) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e)); setPatterns([]); setLoading(false);
+        setError(e instanceof Error ? e.message : String(e)); setPatterns([]); setAssignedByNeed({}); setLoading(false);
       }
     })();
     return () => { cancelled = true; };
   }, [companyId]);
 
-  return { patterns, loading, error };
+  return { patterns, assignedByNeed, loading, error };
 }

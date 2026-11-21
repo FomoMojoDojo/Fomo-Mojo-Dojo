@@ -307,10 +307,9 @@ export const WORKSPACE_STRINGS = {
   bandQuestions: "Open questions from the outside read",
   /** B-5 — one colour on both surfaces (SP-445): the lime accent token. */
   atTheBar: "At the bar",
-  /** SP-458 (2026-11-20) — a need materialised from a card nobody has ruled on yet. It is in the
-   *  Brief and in its counts; the mark says the need itself is still proposed. NEW STRING, for
-   *  operator signature. */
-  proposedNeedMark: "Proposed — not yet accepted",
+  /** SP-458, shortened by SP-476 (signed 2026-11-20): a need materialised from a card nobody has
+   *  ruled on yet. It is in the Brief and in its counts; the tag says the need is still proposed. */
+  proposedNeedMark: "Proposed",
   // ── The pattern layer (SP-465 / SP-428 / SP-459, 2026-11-20). NEW STRINGS, for signature. ──
   /** The group label inside a hotspot card, over the patterns the judge kept. */
   patternsLabel: "What keeps happening",
@@ -324,6 +323,11 @@ export const WORKSPACE_STRINGS = {
   /** What a pattern rests on, singular-aware as SP-456 requires of every such line. */
   supportingQuoteSingular: "{n} supporting quote",
   supportingQuotesPlural: "{n} supporting quotes",
+  /** SP-476 (signed 2026-11-20) — the coverage line, under each hotspot's pattern band, operator
+   *  view. It exists because the band is a reading of PART of the evidence and the page used to give
+   *  no sign of that: on N13 the first run put 16 of 44 counted quotes under a pattern and said so
+   *  nowhere. Both numbers are derived at render (SP-463). */
+  patternCoverage: "{n} of {m} counted quotes under a pattern",
   /** B-6, as SP-446 amended it. */
   belowTheBar: "Below the bar",
   /** SP-445 — the visible key for the per-brand counts. */
@@ -427,6 +431,12 @@ export function countedQuotesSitesLine(counted: number, sites: number): string {
   const s = (sites === 1 ? WORKSPACE_STRINGS.siteSingular : WORKSPACE_STRINGS.sitesPlural)
     .replace("{sites}", String(sites));
   return `${q} \u00b7 ${s}`;
+}
+
+/** SP-476 — the coverage line. Not singular-aware: "1 of 44" and "16 of 44" read the same way, and
+ *  the noun is pluralised by {m}, which is never 1 for a need that meets the bar (the bar is 3). */
+export function patternCoverageLine(assigned: number, counted: number): string {
+  return WORKSPACE_STRINGS.patternCoverage.replace("{n}", String(assigned)).replace("{m}", String(counted));
 }
 
 /** SP-428's strength, as a screen reads it. An unrecognised stored value is returned unchanged

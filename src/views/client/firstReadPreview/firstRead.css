@@ -3126,3 +3126,13 @@ span.fr-mark-target .fr-mark-box { display: flex; }
   font-size: 12px; line-height: 1.45; opacity: 0.72;
 }
 .fr-ws-pattern-clip { opacity: 0.6; }
+
+/* SP-470 / SP-476 (2026-11-20): a pattern's polarity, and the coverage line under the band.
+   The polarity is the one thing that tells a reader whether a row is a complaint or a compliment, so
+   it is coloured rather than merely written: the lime accent for what is working, the ordinary dim
+   for what is not (the band is mostly complaints, and colouring those would colour everything). */
+.fr-ws-pattern-polarity { opacity: 0.55; letter-spacing: 0.03em; }
+.fr-ws-pattern-polarity[data-fr-polarity="working"] { color: var(--fr-electric, #b6ff3a); opacity: 0.9; }
+.fr-ws-pattern-polarity[data-fr-polarity="mixed"] { color: #ffc766; opacity: 0.85; }
+/* The coverage line is deliberately plain and last: it is a caveat on the band above it, not a finding. */
+.fr-ws-pattern-coverage { margin: 8px 0 0; font-size: 10px; opacity: 0.5; }

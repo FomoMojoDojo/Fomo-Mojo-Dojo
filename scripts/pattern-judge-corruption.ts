@@ -1,20 +1,28 @@
-// ── DOES THE JUDGE EARN ITS PLACE? (SP-461, one-time accuracy test, 2026-11-20) ──────────────────
+// ── DOES THE JUDGE EARN ITS PLACE? (SP-461 / SP-491, 2026-11-20) ─────────────────────────────────
 //
 // A judge that approves whatever it is handed is worse than no judge: it costs time and it launders
 // the generator's mistakes into a verdict. So it is fed answers that are WRONG BY CONSTRUCTION and
 // counted on how many quotes it keeps.
 //
 //   HONEST    a real stored pattern with its own real quotes. The judge should keep most of them —
-//             this is the control, and without it a judge that says "no" to everything would pass.
-//   SWAPPED   the same pattern name, with the quotes of a DIFFERENT need substituted. Nothing in
-//             those quotes states this pattern, so the judge should keep ~none.
-//   INVENTED  this need's real quotes under a pattern name no quote supports. Same expectation.
+//             the control, without which a judge that says "no" to everything would pass.
+//   SWAPPED   the same pattern name, with the quotes of a DIFFERENT need's pattern substituted.
+//   INVENTED  this pattern's real quotes under a name no quote supports.
 //
-// SP-461: a one-time accuracy test, not a recurring operator step. It WRITES NOTHING — it reads
-// stored patterns and quotes and calls the local judge, and its output is the number for the report.
+// SP-475(d): the judge rules on ONE quote per call, so each case is a run of single-quote calls.
 //
-//   deno run -A scripts/pattern-judge-corruption.ts [--company=<uuid>]
-import { JUDGE_SYSTEM, buildJudgeUser, parseJudged, quoteLabels, type PatternQuote } from "../supabase/functions/_shared/needPatterns.ts";
+// SP-491: EVERY KEPT QUOTE IS RECORDED — its signal id, its text, and whether `need_evidence` says it
+// bears on the swapped-in pattern's OWN need. That last column is the one that settles the first
+// swap result: the 2026-11-20 run kept 18 of 63, and 6 of the 31 quotes on each side genuinely bear
+// on both needs, so a "swapped" quote is not necessarily foreign to the pattern it lands under.
+// The rows go to `--out` as JSON; a tsx step masks them through the REAL displayQuote for the report
+// (deno cannot import src/lib/reviewQuote.ts — it has an extensionless import).
+//
+// It WRITES NOTHING to the database.
+//
+//   deno run -A scripts/pattern-judge-corruption.ts --out=<file>                       # top two, as before
+//   deno run -A scripts/pattern-judge-corruption.ts --a="<name>" --b="<name>" --out=…  # a named pair
+import { JUDGE_NUM_PREDICT, JUDGE_SYSTEM, buildJudgeUser, parseJudgeOne, type PatternQuote } from "../supabase/functions/_shared/needPatterns.ts";
 import { callOllamaJson } from "../supabase/functions/_shared/claimDeltaSynthesis.ts";
 import { LOCAL_JUDGE } from "../src/lib/modelRouter/resolveModel.ts";
 
@@ -22,6 +30,10 @@ const arg = (n: string, d = "") => Deno.args.find((a) => a.startsWith(`--${n}=`)
 const COMPANY = arg("company", "dd40ce2f-ff67-4111-bd3c-67943dde6717");
 const DB = Deno.env.get("MOJO_DB_CONTAINER") ?? "supabase_db_dzlgyxcvuwiulgifbmew";
 const OLLAMA = Deno.env.get("OLLAMA_BASE_URL") ?? "http://127.0.0.1:11434/v1";
+const OUT = arg("out");
+const WANT_A = arg("a");
+const WANT_B = arg("b");
+const LABEL = arg("label", "top-two");
 /** A name nothing in a Charter complaint corpus can support: the opposite register, and a place that
  *  appears in no quote. If the judge keeps a quote under THIS, it is not reading the quotes. */
 const INVENTED = "Customers praise the fibre rollout and the price in rural Idaho";
@@ -45,51 +57,115 @@ const rows = await psqlJson<Row>(`select p.id as pattern_id, p.need_id, p.name, 
   join public.odi_needs n on n.id = p.need_id
   join public.signals s on s.id = pq.signal_id
   where p.company_id = ${q(COMPANY)} and p.superseded_at is null and s.quote is not null`);
+if (rows.length === 0) { console.error("REFUSED: no stored patterns with supporting quotes"); Deno.exit(1); }
 
-if (rows.length === 0) { console.error("REFUSED: no stored patterns with supporting quotes — run the pattern layer first"); Deno.exit(1); }
-
-const byPattern = new Map<string, { needId: string; name: string; outcome: string; quotes: PatternQuote[] }>();
+type Pat = { needId: string; name: string; outcome: string; quotes: PatternQuote[] };
+const byPattern = new Map<string, Pat>();
 for (const r of rows) {
   const e = byPattern.get(r.pattern_id) ?? byPattern.set(r.pattern_id, { needId: r.need_id, name: r.name, outcome: r.outcome, quotes: [] }).get(r.pattern_id)!;
-  e.quotes.push({ signalId: r.signal_id, quote: r.quote, site: "", eventDate: r.date, brand: "" });
+  e.quotes.push({ signalId: r.signal_id, quote: r.quote, site: "", eventDate: r.date, brand: "", polarity: null });
 }
-// the two most-evidenced patterns, from two DIFFERENT needs, so the swap is a real swap
-const ordered = [...byPattern.entries()].sort((a, b) => b[1].quotes.length - a[1].quotes.length);
-const a = ordered[0];
-const b = ordered.find(([, v]) => v.needId !== a[1].needId);
-if (!b) { console.error("REFUSED: every stored pattern belongs to one need — a swap would not be a swap"); Deno.exit(1); }
+const ordered = [...byPattern.values()].sort((x, y) => y.quotes.length - x.quotes.length);
+const pick = (want: string, fallback: (p: Pat) => boolean): Pat => {
+  const hit = want ? ordered.find((p) => p.name === want) : ordered.find(fallback);
+  if (!hit) { console.error(`REFUSED: no live pattern named ${JSON.stringify(want)}`); Deno.exit(1); }
+  return hit;
+};
+const A = pick(WANT_A, () => true);
+const B = pick(WANT_B, (p) => p.needId !== A.needId);
+if (A.needId === B.needId) { console.error("REFUSED: both patterns belong to one need — a swap would not be a swap"); Deno.exit(1); }
 
-let calls = 0, seconds = 0;
-async function judge(label: string, name: string, outcome: string, quotes: PatternQuote[]) {
-  const labels = quoteLabels(quotes);
+// THE OVERLAP, from need_evidence — the frozen corpus, judged long before any of this.
+const overlap = (await psqlJson<{ shared: number; a_on_b: number; b_on_a: number }>(`select
+   (select count(*) from public.need_pattern_quotes x
+      where x.signal_id in (${A.quotes.map((x) => q(x.signalId)).join(",")})
+        and x.pattern_id in (select id from public.need_patterns where company_id=${q(COMPANY)} and superseded_at is null and name=${q(B.name)})
+        and x.bears) as shared,
+   (select count(*) from public.need_evidence e where e.company_id=${q(COMPANY)} and e.bears and e.need_id=${q(B.needId)}
+        and e.signal_id in (${A.quotes.map((x) => q(x.signalId)).join(",")})) as a_on_b,
+   (select count(*) from public.need_evidence e where e.company_id=${q(COMPANY)} and e.bears and e.need_id=${q(A.needId)}
+        and e.signal_id in (${B.quotes.map((x) => q(x.signalId)).join(",")})) as b_on_a`))[0];
+
+// which of the swapped-in quotes DO bear on the host pattern's own need
+const bearsOnNeed = async (needId: string, quotes: PatternQuote[]) =>
+  new Set((await psqlJson<{ signal_id: string }>(`select e.signal_id from public.need_evidence e
+    where e.company_id=${q(COMPANY)} and e.bears and e.need_id=${q(needId)}
+      and e.signal_id in (${quotes.map((x) => q(x.signalId)).join(",")})`)).map((r) => r.signal_id));
+
+console.log(`judge: ${LOCAL_JUDGE} (temperature 0, seed 42), ONE quote per call (SP-475d) — writes nothing`);
+console.log(`label: ${LABEL}\n`);
+console.log(`A = "${A.name}"  (${A.quotes.length} supporting quotes)`);
+console.log(`B = "${B.name}"  (${B.quotes.length} supporting quotes, a DIFFERENT need)`);
+console.log(`OVERLAP in need_evidence — shared supporting quotes: ${overlap.shared} · A's quotes bearing on B's need: ${overlap.a_on_b} · B's quotes bearing on A's need: ${overlap.b_on_a}\n`);
+
+let calls = 0, seconds = 0, spanRejects = 0;
+type Kept = { case: string; pattern: string; signalId: string; quote: string; bearsOnHostNeed: boolean;
+  reason: string; states: string; notStated: string[] };
+/** SP-498: EVERY honest rejection, so each one can be classified (a) judge too strict or
+ *  (b) pattern overclaims. The honest set came from the earlier, lenient judge, so it is not a
+ *  neutral control and its rejections have to be read one by one rather than counted. */
+type Rejected = { case: string; pattern: string; signalId: string; quote: string;
+  reason: string; states: string; notStated: string[]; rejected: string };
+const kept: Kept[] = [];
+const rejectedHonest: Rejected[] = [];
+
+async function judge(caseLabel: string, host: Pat, quotes: PatternQuote[], patternName: string, hostBears: Set<string>) {
+  let n = 0;
+  const refusals: string[] = [];
   const t0 = performance.now();
-  const content = await callOllamaJson(OLLAMA, LOCAL_JUDGE, JUDGE_SYSTEM, buildJudgeUser(outcome, name, quotes), 600_000, { temperature: 0, seed: 42 });
+  for (const qt of quotes) {
+    const content = await callOllamaJson(OLLAMA, LOCAL_JUDGE, JUDGE_SYSTEM, buildJudgeUser(host.outcome, patternName, qt), 600_000,
+      { temperature: 0, seed: 42, num_predict: JUDGE_NUM_PREDICT } as never);
+    const v = parseJudgeOne(content, qt.quote);
+    calls++;
+    if (v.rejected) spanRejects++;
+    if (v.supports) {
+      n++;
+      kept.push({ case: caseLabel, pattern: patternName, signalId: qt.signalId, quote: qt.quote,
+                  bearsOnHostNeed: hostBears.has(qt.signalId), reason: v.reason,
+                  states: v.states, notStated: v.notStated });
+    } else {
+      if (caseLabel.startsWith("HONEST")) {
+        rejectedHonest.push({ case: caseLabel, pattern: patternName, signalId: qt.signalId, quote: qt.quote,
+          reason: v.reason, states: v.states, notStated: v.notStated, rejected: v.rejected });
+      }
+      if (refusals.length < 2 && (v.notStated[0] || v.reason)) refusals.push(v.notStated[0] || v.reason);
+    }
+  }
   const s = (performance.now() - t0) / 1000;
-  calls++; seconds += s;
-  const v = parseJudged(content, labels);
-  console.log(`${label.padEnd(24)} kept ${String(v.supporting.length).padStart(2)} of ${String(quotes.length).padStart(2)}   ${s.toFixed(1)}s   "${v.reason.slice(0, 72)}"`);
-  return { kept: v.supporting.length, of: quotes.length };
+  seconds += s;
+  console.log(`${caseLabel.padEnd(24)} kept ${String(n).padStart(2)} of ${String(quotes.length).padStart(2)}   ${s.toFixed(1)}s   refusals: "${refusals.join(" | ").slice(0, 70)}"`);
+  return { kept: n, of: quotes.length };
 }
 
-console.log(`judge: ${LOCAL_JUDGE} (temperature 0, seed 42) — writes nothing\n`);
-console.log(`A = "${a[1].name}"  (${a[1].quotes.length} supporting quotes)`);
-console.log(`B = "${b[1].name}"  (${b[1].quotes.length} supporting quotes, a DIFFERENT need)\n`);
+const none = new Set<string>();
+const hA = await judge("HONEST A", A, A.quotes, A.name, none);
+const hB = await judge("HONEST B", B, B.quotes, B.name, none);
+// SP-491: for a swap, the host is the PATTERN's need and the quotes are the other one's, so the
+// bearing column asks "does this swapped-in quote bear on the host pattern's own need?"
+const sA = await judge("SWAPPED A<-B quotes", A, B.quotes, A.name, await bearsOnNeed(A.needId, B.quotes));
+const sB = await judge("SWAPPED B<-A quotes", B, A.quotes, B.name, await bearsOnNeed(B.needId, A.quotes));
+const iA = await judge("INVENTED name, A quotes", A, A.quotes, INVENTED, none);
+const iB = await judge("INVENTED name, B quotes", B, B.quotes, INVENTED, none);
 
-const honestA = await judge("HONEST A", a[1].name, a[1].outcome, a[1].quotes);
-const honestB = await judge("HONEST B", b[1].name, b[1].outcome, b[1].quotes);
-const swapA = await judge("SWAPPED A<-B quotes", a[1].name, a[1].outcome, b[1].quotes);
-const swapB = await judge("SWAPPED B<-A quotes", b[1].name, b[1].outcome, a[1].quotes);
-const invA = await judge("INVENTED name, A quotes", INVENTED, a[1].outcome, a[1].quotes);
-const invB = await judge("INVENTED name, B quotes", INVENTED, b[1].outcome, b[1].quotes);
-
-const honest = honestA.kept + honestB.kept, honestOf = honestA.of + honestB.of;
-const swapped = swapA.kept + swapB.kept, swappedOf = swapA.of + swapB.of;
-const invented = invA.kept + invB.kept, inventedOf = invA.of + invB.of;
-console.log(`\n── RESULT ─────────────────────────────────────────────`);
+const honest = hA.kept + hB.kept, honestOf = hA.of + hB.of;
+const swapped = sA.kept + sB.kept, swappedOf = sA.of + sB.of;
+const invented = iA.kept + iB.kept, inventedOf = iA.of + iB.of;
+console.log(`\n── RESULT (${LABEL}) ─────────────────────────────────────`);
 console.log(`HONEST    kept ${honest} of ${honestOf}`);
 console.log(`SWAPPED   kept ${swapped} of ${swappedOf}`);
 console.log(`INVENTED  kept ${invented} of ${inventedOf}`);
 console.log(`${calls} judge call(s), ${seconds.toFixed(1)}s total`);
-if (honest === 0) console.log("VERDICT: the judge kept NOTHING even on the honest control — it is refusing everything, which is not discrimination.");
-else if (swapped === 0 && invented === 0) console.log("VERDICT: the judge rejected every corrupted pattern and kept the honest ones. It earns its place.");
-else console.log(`VERDICT: the judge KEPT corrupted evidence (${swapped} swapped, ${invented} invented). Report this; do not drop the judge (SP-461 / acceptance).`);
+console.log(`SP-494: ${spanRejects} verdict(s) rejected for an unverifiable span`);
+const sw = kept.filter((k) => k.case.startsWith("SWAPPED"));
+console.log(`of the ${sw.length} kept swap quote(s), ${sw.filter((k) => k.bearsOnHostNeed).length} DO bear on the host pattern's own need per need_evidence`);
+console.log(`honest rejections recorded for classification (SP-498): ${rejectedHonest.length}`);
+
+if (OUT) {
+  await Deno.writeTextFile(OUT, JSON.stringify({
+    label: LABEL, a: A.name, b: B.name, overlap,
+    totals: { honest, honestOf, swapped, swappedOf, invented, inventedOf, calls, seconds: Number(seconds.toFixed(1)), spanRejects },
+    kept, rejectedHonest,
+  }, null, 2));
+  console.log(`rows written to ${OUT}`);
+}

@@ -4470,8 +4470,11 @@ export type Database = {
           created_at: string
           id: string
           judge_reason: string | null
+          keyword_flag: boolean | null
+          not_stated: Json | null
           pattern_id: string
           signal_id: string
+          states_span: string | null
         }
         Insert: {
           bears: boolean
@@ -4479,8 +4482,11 @@ export type Database = {
           created_at?: string
           id?: string
           judge_reason?: string | null
+          keyword_flag?: boolean | null
+          not_stated?: Json | null
           pattern_id: string
           signal_id: string
+          states_span?: string | null
         }
         Update: {
           bears?: boolean
@@ -4488,8 +4494,11 @@ export type Database = {
           created_at?: string
           id?: string
           judge_reason?: string | null
+          keyword_flag?: boolean | null
+          not_stated?: Json | null
           pattern_id?: string
           signal_id?: string
+          states_span?: string | null
         }
         Relationships: []
       }
@@ -4507,15 +4516,19 @@ export type Database = {
           name: string
           need_id: string
           pattern_identity: string
+          polarity: string | null
           representative_signal_id: string | null
           rubric_md5: string
           rubric_version: string
+          run_ceiling_hit: boolean
+          run_proposed_count: number | null
           run_ref: string | null
           signed_at: string | null
           signed_by: string | null
           strength: string
           superseded_at: string | null
           superseded_by_id: string | null
+          superseded_reason: string | null
         }
         Insert: {
           company_id: string
@@ -4530,15 +4543,19 @@ export type Database = {
           name: string
           need_id: string
           pattern_identity: string
+          polarity?: string | null
           representative_signal_id?: string | null
           rubric_md5: string
           rubric_version: string
+          run_ceiling_hit?: boolean
+          run_proposed_count?: number | null
           run_ref?: string | null
           signed_at?: string | null
           signed_by?: string | null
           strength: string
           superseded_at?: string | null
           superseded_by_id?: string | null
+          superseded_reason?: string | null
         }
         Update: {
           company_id?: string
@@ -4553,15 +4570,19 @@ export type Database = {
           name?: string
           need_id?: string
           pattern_identity?: string
+          polarity?: string | null
           representative_signal_id?: string | null
           rubric_md5?: string
           rubric_version?: string
+          run_ceiling_hit?: boolean
+          run_proposed_count?: number | null
           run_ref?: string | null
           signed_at?: string | null
           signed_by?: string | null
           strength?: string
           superseded_at?: string | null
           superseded_by_id?: string | null
+          superseded_reason?: string | null
         }
         Relationships: []
       }

@@ -29,7 +29,11 @@ describe("useOdiNeeds — keyed read (gate 3)", () => {
     expect(calls.needs).toHaveLength(1);
     const q = calls.needs[0];
     expect(q.select).toBe("*, interview_records(id, speaker_role, person_name, interviewed_at, verbatim, retracted_at)");
-    expect(q.filters).toEqual(["eq company_id=co", "eq journey_key=customer", "neq status=retracted"]);
+    // SP-480 (2026-11-20): 'proposed' joins the exclusions. This read is the LIVE Mojo Score's own
+    // needs read (useLiveMojoScore takes them from here), and it reaches odi_needs through the
+    // needs_in_market VIEW — which is why the first SP-467 census missed it and the home counted 20
+    // needs where the snapshot counted 15.
+    expect(q.filters).toEqual(["eq company_id=co", "eq journey_key=customer", "neq status=retracted", "neq status=proposed"]);
   });
   it("the no-key path keeps select('*'), excludes status=retracted (gate 3 delta, ruling 1) AND the empty market (4f-6)", async () => {
     calls.needs.length = 0;
@@ -40,6 +44,6 @@ describe("useOdiNeeds — keyed read (gate 3)", () => {
     expect(q.select).toBe("*");
     // 4f-6 (F9): the no-key path is still a MARKET surface, so a company-held need (journey_key
     // NULL) is excluded server-side. Without this the home, the shell and the score would count it.
-    expect(q.filters).toEqual(["eq company_id=co", "not journey_key is null", "neq status=retracted"]);
+    expect(q.filters).toEqual(["eq company_id=co", "not journey_key is null", "neq status=retracted", "neq status=proposed"]);
   });
 });

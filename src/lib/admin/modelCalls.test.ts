@@ -126,16 +126,22 @@ describe("an accounting failure NEVER fails the call it measures", () => {
 describe("coverage is COMPUTED from the registry, not a maintained label", () => {
   it("the seven sites wired in this gate are captured (+ infer-interview-market, 2b; + extract-outside-evidence, R4; + the two authorship sites, R53; + the R52 sweep runner; + the four Claude web_search sites, ruling 1 2026-10-21; + ingest-window-extract, SP-235); the rest are not", () => {
     const cov = costCoverage();
-    expect(cov.captured).toBe(17);
+    // SP-475(e) (2026-11-20): the pattern layer's two sites joined the registry, so coverage moved
+    // 17 → 19. The count is pinned on purpose — "a site added as captured without a row actually
+    // landing would otherwise raise coverage silently" — so the evidence for raising it: a measured
+    // 469 model_calls rows under call_site 'need-patterns:generator' (28) and ':judge' (441) on
+    // Charter, usd 0.000000, 0 external. Rows land on every call, before parse, on both branches.
+    expect(cov.captured).toBe(19);
     expect(cov.complete).toBe(false);
     expect(cov.uncaptured).toContain("ollama-local-judges");
+    for (const site of ["need-patterns:generator", "need-patterns:judge"]) expect(cov.uncaptured).not.toContain(site);
     expect(cov.uncaptured).not.toContain("extract-outside-evidence");
     for (const site of ["public-baseline-search", "competitor-discovery", "generate-normative-jobmap", "public-baseline-seed-lane"]) expect(cov.uncaptured).not.toContain(site);
     // SP-235: the per-window document extraction ledgers, so coverage moved 16 → 17. The count is
     // pinned on purpose — a site added as `captured` without a row actually landing would otherwise
     // raise coverage silently.
     expect(cov.uncaptured).not.toContain("ingest-window-extract");
-    expect(coverageLabel(cov)).toBe(`partial (17 of ${cov.total} sites)`);
+    expect(coverageLabel(cov)).toBe(`partial (19 of ${cov.total} sites)`);
   });
 
   it("VACUOUS PROOF — flipping one captured site to false changes coverage", () => {
