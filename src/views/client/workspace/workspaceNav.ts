@@ -320,6 +320,18 @@ export const WORKSPACE_STRINGS = {
   strengthLikelyRule: "Likely rule",
   strengthPossibleFailure: "Possible failure",
   strengthTooThin: "Too thin",
+  /** SP-508 + SP-512 (signed 2026-11-20): the strength is POLARITY-AWARE where its wording carries a
+   *  polarity. "Possible failure" is the right words for a 'not working' pattern and the wrong words
+   *  for the other two — a positive pattern resting on two quotes is not a failure of anything, and
+   *  calling it one is the kind of quiet mislabelling SP-470 exists to prevent. 'confirmed rule' and
+   *  'likely rule' need no variant: they name how well evidenced a pattern is, not what it says. */
+  strengthPossibleStrength: "Possible strength",
+  strengthPossibleTension: "Possible tension",
+  /** SP-488 + SP-512: a pattern resting on ONE quote. `patternStrength` calls that 'too thin', which
+   *  is accurate about the evidence and silent about what the reader is looking at; these are grouped
+   *  under this label instead of listed as rows, so one mention cannot read like a rule. */
+  strengthMentionedOnce: "Mentioned once",
+  mentionedOnceCount: "{n} mentioned once",
   /** What a pattern rests on, singular-aware as SP-456 requires of every such line. */
   supportingQuoteSingular: "{n} supporting quote",
   supportingQuotesPlural: "{n} supporting quotes",
@@ -439,16 +451,34 @@ export function patternCoverageLine(assigned: number, counted: number): string {
   return WORKSPACE_STRINGS.patternCoverage.replace("{n}", String(assigned)).replace("{m}", String(counted));
 }
 
-/** SP-428's strength, as a screen reads it. An unrecognised stored value is returned unchanged
- *  rather than blanked — a value the check constraint should have refused must be VISIBLE, not
- *  hidden behind a label map. */
-export function strengthLabel(stored: string | null | undefined): string {
+/** SP-428's strength, as a screen reads it, and SP-508: polarity-aware where the wording carries a
+ *  polarity. An unrecognised stored value is returned unchanged rather than blanked — a value the
+ *  check constraint should have refused must be VISIBLE, not hidden behind a label map.
+ *
+ *  The polarity argument is OPTIONAL and an absent or unrecognised one reads as the negative wording,
+ *  because that is what every pre-SP-470 row is: a v1 pattern carries no polarity and every one of
+ *  them was a complaint. */
+export function strengthLabel(stored: string | null | undefined, polarity?: string | null): string {
   const v = String(stored ?? "").trim();
+  const pol = String(polarity ?? "").trim().toLowerCase();
   if (v === "confirmed rule") return WORKSPACE_STRINGS.strengthConfirmedRule;
   if (v === "likely rule") return WORKSPACE_STRINGS.strengthLikelyRule;
-  if (v === "possible failure") return WORKSPACE_STRINGS.strengthPossibleFailure;
-  if (v === "too thin") return WORKSPACE_STRINGS.strengthTooThin;
+  if (v === "possible failure") {
+    if (pol === "working") return WORKSPACE_STRINGS.strengthPossibleStrength;
+    if (pol === "mixed") return WORKSPACE_STRINGS.strengthPossibleTension;
+    return WORKSPACE_STRINGS.strengthPossibleFailure;
+  }
+  // SP-488: one quote is a MENTION, whatever its polarity. The evidence word ('too thin') stays in the
+  // table and in patternStrength; this is what a reader sees.
+  if (v === "too thin") return WORKSPACE_STRINGS.strengthMentionedOnce;
   return v;
+}
+
+/** SP-488 — the group footer: how many patterns under this need rest on a single quote. Not
+ *  singular-aware by design: the string says "mentioned once", so "1 mentioned once" is the sentence,
+ *  and a plural noun would have to invent a noun the signed string does not contain. */
+export function mentionedOnceLine(n: number): string {
+  return WORKSPACE_STRINGS.mentionedOnceCount.replace("{n}", String(n));
 }
 
 /** What a pattern rests on: "1 supporting quote · 1 site", "7 supporting quotes · 3 sites". */

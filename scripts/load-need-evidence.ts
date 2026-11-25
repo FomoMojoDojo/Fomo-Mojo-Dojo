@@ -3,9 +3,15 @@
 // The corpus is a FROZEN file. The loader refuses to run unless its md5 matches the value compiled
 // in below, so a changed corpus cannot be loaded silently under the same provenance.
 //
-// It loads EVERY need key that resolves to exactly one odi_needs row of the company — N1–N15 today,
-// and a P need the moment the operator accepts its card (SP-433). A key with no row is reported as
-// DEFERRED, with its label count, never skipped silently: the composite FK could not be satisfied.
+// It loads EVERY need key that the key file (scripts/charter-need-keys.json) links to an odi_needs row
+// of the company — N1–N15 and five P needs today. A key with no link is reported as DEFERRED, with its
+// label count, never skipped silently: the composite FK could not be satisfied. A P need loads once
+// its card is accepted (SP-433) AND its row id is added to the key file.
+//
+// SP-565: the link is by ID. Until 2026-11-23 a key was matched to its row by SENTENCE, so editing a
+// need's wording in place (SP-591, N13) silently turned its 330 labels into "not yet a row".
+//
+// SP-565: a row that is no longer the loader's own is NEVER overwritten (scripts/needEvidenceUpsert.ts).
 //
 // The corpus and its md5 are parameters so the mechanism can be proved on a throwaway company
 // without touching Charter, but the GATE IS UNCHANGED: whatever corpus is named must match the md5
@@ -15,6 +21,9 @@
 //
 //   deno run -A scripts/load-need-evidence.ts            # dry run, writes nothing
 //   deno run -A scripts/load-need-evidence.ts --apply    # writes
+import { DEFAULT_NEED_KEYS, loadNeedKeys } from "./needKeys.ts";
+import { protectedRowsSql, upsertSql } from "./needEvidenceUpsert.ts";
+
 const arg = (name: string, dflt: string) => {
   const hit = Deno.args.find((a) => a.startsWith(`--${name}=`));
   return hit ? hit.slice(name.length + 3) : dflt;
@@ -24,6 +33,7 @@ const CORPUS_MD5 = arg("md5", "01c0997695d538d0c6d1613310ebbbbe");   // frozen 2
 const RUBRIC_VERSION = "need-match-rubric-v4";
 const RUBRIC_MD5 = "7736a27727323339ac1cb55ca74c5eab";   // from the corpus's own `rubric` field
 const COMPANY = arg("company", "dd40ce2f-ff67-4111-bd3c-67943dde6717");  // Charter Communications
+const KEYS = arg("keys", DEFAULT_NEED_KEYS);   // the key → row id link; a throwaway company names its own
 const DB = "supabase_db_dzlgyxcvuwiulgifbmew";
 const APPLY = Deno.args.includes("--apply");
 
@@ -52,27 +62,25 @@ const needs: Record<string, string> = corpus.needs;
 const quotes: Record<string, { brand: string | null; text: string }> = corpus.quotes;
 const labels: Array<{ signal_id: string; need: string; bears: boolean; polarity: string | null; label_source: string }> = corpus.labels;
 
-// ── GATE 2: map N1–N15 to odi_needs ids, by desired_outcome, exactly one each ────────────────────
-const dbNeeds = await psql(`select id, desired_outcome from public.odi_needs where company_id = ${q(COMPANY)}`);
-const byOutcome = new Map<string, string[]>();
-for (const [id, outcome] of dbNeeds) {
-  const k = outcome.trim().toLowerCase();
-  byOutcome.set(k, [...(byOutcome.get(k) ?? []), id]);
+// ── GATE 2: map each corpus key to its odi_needs id THROUGH THE KEY FILE, never by sentence ───────
+// The key file refuses two keys on one row when it is read; here it must also name only rows of this
+// company, or a label could be aimed at another company's need (the composite FK would refuse it at
+// write time, but a dry run would have printed a mapping that cannot load).
+const dbNeeds = await psql(`select id from public.odi_needs where company_id = ${q(COMPANY)}`);
+let needKeys;
+try {
+  needKeys = await loadNeedKeys(COMPANY, KEYS);
+  needKeys.assertRowsOf(COMPANY, dbNeeds.map(([id]) => id));
+} catch (e) {
+  console.error(`REFUSED: ${(e as Error).message}`);
+  Deno.exit(1);
 }
 const needIdByKey = new Map<string, string>();
-const unresolved: string[] = [];
 const absent: string[] = [];
-for (const [key, outcome] of Object.entries(needs)) {
-  const hits = byOutcome.get(outcome.trim().toLowerCase()) ?? [];
-  if (hits.length === 1) needIdByKey.set(key, hits[0]);
-  else if (hits.length === 0) absent.push(key);          // no row yet — deferred, reported below
-  else unresolved.push(`${key} → ${hits.length} matches ("${outcome.slice(0, 60)}…")`);
-}
-// AMBIGUITY still refuses: two rows with the same outcome means the loader cannot know which to label.
-if (unresolved.length) {
-  console.error("REFUSED: these needs matched more than one odi_needs row:");
-  for (const u of unresolved) console.error("  " + u);
-  Deno.exit(1);
+for (const key of Object.keys(needs)) {
+  const id = needKeys.idOf(key);
+  if (id) needIdByKey.set(key, id);
+  else absent.push(key);                                 // no row yet — deferred, reported below
 }
 console.log(`mapped ${needIdByKey.size} need(s) to odi_needs rows: ${[...needIdByKey.keys()].sort().join(", ")}`);
 if (absent.length) console.log(`not yet a row (deferred): ${absent.sort().join(", ")}`);
@@ -111,6 +119,14 @@ console.log(`  polarity: ${["working", "not working", "mixed"].map((p) => `${p}=
 console.log(`  brands: ${[...new Set(rows.map((r) => r.brand))].sort().join(", ")}`);
 console.log(`DEFERRED (no odi_needs row yet; a P need loads here once its card is accepted — SP-433): ${defTotal} labels over ${Object.keys(deferred).length} need(s) — ${Object.keys(deferred).sort().join(", ")}`);
 
+// ── SP-565: rows that are no longer the loader's own are reported, and never overwritten ─────────
+const protectedRows = needIdByKey.size === 0 ? [] : await psql(protectedRowsSql(q(COMPANY), [...needIdByKey.values()].map(q), q(RUBRIC_MD5)));
+if (protectedRows.length) {
+  const total = protectedRows.reduce((a, [, n]) => a + Number(n), 0);
+  const keyOfId = new Map([...needIdByKey].map(([k, id]) => [id, k]));
+  console.log(`PROTECTED (SP-565): ${total} stored row(s) are no longer the loader's own (re-judged or corrected since) and will NOT be overwritten — ${protectedRows.map(([id, n]) => `${keyOfId.get(id)} ${n}`).join(", ")}`);
+}
+
 if (!APPLY) { console.log("\nDRY RUN — nothing written. Re-run with --apply."); Deno.exit(0); }
 
 let done = 0;
@@ -119,14 +135,8 @@ for (let i = 0; i < rows.length; i += 400) {
   const values = batch.map((r) =>
     `(${q(COMPANY)}::uuid, ${q(r.need_id)}::uuid, ${q(r.signal_id)}::uuid, ${r.bears}, ${r.polarity === null ? "null" : q(r.polarity)},` +
     ` ${q(r.brand)}, 'cc_read_unchecked', ${q(RUBRIC_VERSION)}, ${q(RUBRIC_MD5)}, ${q(r.label_source)})`).join(",");
-  await psql(`insert into public.need_evidence
-    (company_id, need_id, signal_id, bears, polarity, brand, judged_by, rubric_version, rubric_md5, label_source)
-    values ${values}
-    on conflict (need_id, signal_id) do update set
-      bears = excluded.bears, polarity = excluded.polarity, brand = excluded.brand,
-      rubric_version = excluded.rubric_version, rubric_md5 = excluded.rubric_md5,
-      label_source = excluded.label_source`);
+  await psql(upsertSql(values));
   done += batch.length;
   console.log(`  wrote ${done}/${rows.length}`);
 }
-console.log(`\nAPPLIED: ${done} labels loaded.`);
+console.log(`\nAPPLIED: ${done} labels sent${protectedRows.length ? " — protected rows were left as they are (see above)" : " and loaded"}.`);

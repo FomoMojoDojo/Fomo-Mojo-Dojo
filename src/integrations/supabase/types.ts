@@ -4463,6 +4463,66 @@ export type Database = {
         }
         Relationships: []
       }
+      need_pattern_parts: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          ordinal: number
+          pattern_id: string
+          predicate: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          ordinal: number
+          pattern_id: string
+          predicate: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          ordinal?: number
+          pattern_id?: string
+          predicate?: string
+        }
+        Relationships: []
+      }
+      need_pattern_quote_parts: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          part_id: string
+          quote_row_id: string
+          reason: string | null
+          states: boolean
+          states_span: string | null
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          part_id: string
+          quote_row_id: string
+          reason?: string | null
+          states: boolean
+          states_span?: string | null
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          part_id?: string
+          quote_row_id?: string
+          reason?: string | null
+          states?: boolean
+          states_span?: string | null
+        }
+        Relationships: []
+      }
       need_pattern_quotes: {
         Row: {
           bears: boolean
@@ -4470,7 +4530,6 @@ export type Database = {
           created_at: string
           id: string
           judge_reason: string | null
-          keyword_flag: boolean | null
           not_stated: Json | null
           pattern_id: string
           signal_id: string
@@ -4482,7 +4541,6 @@ export type Database = {
           created_at?: string
           id?: string
           judge_reason?: string | null
-          keyword_flag?: boolean | null
           not_stated?: Json | null
           pattern_id: string
           signal_id: string
@@ -4494,7 +4552,6 @@ export type Database = {
           created_at?: string
           id?: string
           judge_reason?: string | null
-          keyword_flag?: boolean | null
           not_stated?: Json | null
           pattern_id?: string
           signal_id?: string
@@ -4515,6 +4572,7 @@ export type Database = {
           model_provider: string
           name: string
           need_id: string
+          belongs_to_need: boolean | null
           pattern_identity: string
           polarity: string | null
           representative_signal_id: string | null
@@ -4542,6 +4600,7 @@ export type Database = {
           model_provider: string
           name: string
           need_id: string
+          belongs_to_need?: boolean | null
           pattern_identity: string
           polarity?: string | null
           representative_signal_id?: string | null
@@ -4569,6 +4628,7 @@ export type Database = {
           model_provider?: string
           name?: string
           need_id?: string
+          belongs_to_need?: boolean | null
           pattern_identity?: string
           polarity?: string | null
           representative_signal_id?: string | null

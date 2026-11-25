@@ -1,0 +1,27 @@
+{
+  "what": "The stored link from a need's LABEL (the key the frozen label corpus uses, N1-N15 and P1-P8) to its odi_needs row id. Written once on 2026-11-23 (SP-565) by the sentence lookup the scripts used until then, so it records exactly the mapping in force before N13's wording changed (SP-591). A need is found through this file, never by its sentence. A P need with no row yet is absent; add its id here when its card is accepted (SP-433).",
+  "company": "dd40ce2f-ff67-4111-bd3c-67943dde6717",
+  "source_corpus_md5": "01c0997695d538d0c6d1613310ebbbbe",
+  "keys": {
+    "N1": "a1a4b38a-e05a-4dca-bfa8-d3afd7d0f58a",
+    "N2": "bfdaacd9-752c-436e-94e4-c605fdabad04",
+    "N3": "2c24c4c4-c967-4596-987e-efe7b09e6020",
+    "N4": "d1ea396b-41a2-4e96-8d05-54ecdb29374b",
+    "N5": "6ce36b2e-c716-4712-8602-9039399cfd8f",
+    "N6": "49fd326c-f533-4623-82ea-fd37ac1b0bd4",
+    "N7": "7c07ef86-7843-45b5-9e8c-f926fcfbb84a",
+    "N8": "989d4ffb-e273-4953-881b-903c8baa1b60",
+    "N9": "745ef806-1377-49cd-9d7b-dfc225500623",
+    "N10": "83f1494c-da3f-46de-af9a-52e8688da664",
+    "N11": "c8013bad-e27f-4280-b5f7-625b7bdb921d",
+    "N12": "0ed8afe7-d14c-42a7-a7fa-728cd4221720",
+    "N13": "ee245737-38e2-4573-a815-191b04a7ceae",
+    "N14": "bb603d70-cdbf-4853-9db8-e0512ab5ea3e",
+    "N15": "fbb764d2-690d-483f-a8bf-4d246bd32795",
+    "P1": "4c062d5c-4309-4330-a025-a8113d6bc20f",
+    "P2": "3ab32718-8c07-4581-9b30-670e12f42cf7",
+    "P3": "a6cbb68f-a14f-4cd2-aefa-e4fdaf745118",
+    "P6": "18e12708-6a84-454d-ac2d-bbbf58502b86",
+    "P8": "91ab26bf-e165-4f16-adc5-77605d1e480e"
+  }
+}

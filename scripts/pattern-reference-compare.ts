@@ -8,6 +8,7 @@
 //
 //   deno run -A scripts/pattern-reference-compare.ts
 import { siteOf } from "../src/lib/needEvidenceCounting.ts";
+import { loadNeedKeys } from "./needKeys.ts";
 
 const DB = Deno.env.get("MOJO_DB_CONTAINER") ?? "supabase_db_dzlgyxcvuwiulgifbmew";
 const COMPANY = "dd40ce2f-ff67-4111-bd3c-67943dde6717";
@@ -25,10 +26,13 @@ const REFERENCE: Record<string, string[]> = {
     "several not told before choosing a cancel date",
   ],
   N13: [
-    "(a) long holds and dropped calls",
-    "(b) different answers from each agent, no record of earlier calls or visits",
-    "(c) store and phone send customers to each other",
-    "(d) automated assistant does not hand off to a person",
+    // SP-645 (2026-11-24): the four entries the operator signed from the SP-640 run, replacing the
+    // hand-written (a) to (d). Each carries the quotes the reference judge confirmed for it
+    // (sp614-proposal.json, brief 18), by the first 8 characters of the signal id.
+    "(a) long hold times on phone calls [237f471a 576f8971 c9084dff df1a2042]",
+    "(b) receiving inconsistent information from different reps [2caafa55 7dee5010 d86d6e4c]",
+    "(c) AI chatbot giving incorrect advice or failing to connect [7527c432 d1be91ad]",
+    "(d) being forced to visit a store after failed remote support [c9084dff d3866c50]",
     "positives: polite, helpful agents",
     "mixed: courteous but problem stayed",
   ],
@@ -55,8 +59,9 @@ async function psqlJson<T>(sql: string): Promise<T[]> {
   return JSON.parse(new TextDecoder().decode(stdout));
 }
 
-const corpus = JSON.parse(await Deno.readTextFile("/Users/fomomojodojo/dev/_diagnose-shots/2026-11-18/charter-need-labels-full.json")) as { needs: Record<string, string> };
-const keyByOutcome = new Map(Object.entries(corpus.needs).map(([k, v]) => [v.trim().toLowerCase(), k]));
+// SP-565: a stored pattern is filed under its need's KEY by the need's row id (the key file), never by
+// matching the need's sentence — an edited wording would file its patterns under "—".
+const needKeys = await loadNeedKeys(COMPANY);
 
 // The SITE count comes from `siteOf`, the one host→site map, NOT from `count(distinct source_url)`.
 // The first version of this script counted distinct urls and reported P1's top pattern as 15/8 where
@@ -86,7 +91,7 @@ const stored: Stored[] = [...acc.values()].map((e) => ({ ...e, sites: e.siteSet.
 
 const byKey = new Map<string, typeof stored>();
 for (const r of stored) {
-  const k = keyByOutcome.get(r.outcome.trim().toLowerCase()) ?? "—";
+  const k = needKeys.label(r.need_id);
   (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(r);
 }
 

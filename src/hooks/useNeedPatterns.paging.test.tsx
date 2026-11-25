@@ -17,6 +17,21 @@ vi.mock("@/integrations/supabase/client", () => {
         ? [{ id: "pat1", need_id: "n1", name: "A PATTERN", strength: "confirmed rule", signed_at: null, representative_signal_id: "s0" }]
         : [];
     }
+    // SP-502: the parts read is a FOURTH paged read. Until this branch existed it fell through to the
+    // signals catch-all and returned nothing, so every assertion about parts would have passed on an
+    // empty list — the same vacuous-pass shape that let pattern-lane-guard (l2) sit green while red.
+    if (table === "need_pattern_parts") {
+      // 1,200 rows: one full page then a short one. pat1's three parts arrive OUT of ordinal order,
+      // because the read is ordered by id for a stable page boundary and sorted in the hook.
+      const total = 1200;
+      const all = [
+        { pattern_id: "pat1", ordinal: 3, predicate: "third predicate" },
+        { pattern_id: "pat1", ordinal: 1, predicate: "first predicate" },
+        { pattern_id: "pat1", ordinal: 2, predicate: "second predicate" },
+        ...Array.from({ length: total - 3 }, (_, i) => ({ pattern_id: `other${i}`, ordinal: 1, predicate: `p${i}` })),
+      ];
+      return all.slice(from, Math.min(to + 1, total));
+    }
     if (table === "need_pattern_quotes") {
       // 2,100 quote rows under the one pattern — two full pages then a short one
       const total = 2100;
@@ -61,6 +76,17 @@ describe("the pattern layer's reads", () => {
     expect(pq[1]).toMatchObject({ from: PAGE, to: 2 * PAGE - 1 });
     expect(result.current.patterns).toHaveLength(1);
     expect(result.current.patterns[0].supporting).toBe(2100);
+  });
+
+  it("SP-502: the PARTS read is paged too, and the parts come back in ordinal order", async () => {
+    const { result } = renderHook(() => useNeedPatterns("co-parts"));
+    await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 10_000 });
+    const pp = calls.filter((c) => c.table === "need_pattern_parts");
+    expect(pp.length).toBeGreaterThanOrEqual(2);
+    expect(pp[0]).toMatchObject({ from: 0, to: PAGE - 1 });
+    expect(pp[1]).toMatchObject({ from: PAGE, to: 2 * PAGE - 1 });
+    // the mock serves them 3,1,2 — a claim's predicates must never render in page order
+    expect(result.current.patterns[0].parts).toEqual(["first predicate", "second predicate", "third predicate"]);
   });
 
   it("ask for the signals in chunks small enough to be a URL", async () => {

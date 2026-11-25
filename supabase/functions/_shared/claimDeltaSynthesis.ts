@@ -389,15 +389,45 @@ export function sharedTokenCount(a: string, b: string): number {
 // The proposer stays at its default sampling (this is opt-in per call).
 export const JUDGE_DETERMINISM = { temperature: 0, seed: 42 } as const;
 
+/** SP-549: the model ollama says answered. `/api/chat` echoes it as a top-level `model`, and the echo
+ *  is not always the string sent — ollama resolves a tag (`llama3:70b` may come back as the resolved
+ *  name) and a request with no tag comes back tagged. The REQUESTED model is the fallback, so a
+ *  response that omits the field degrades to the old behaviour rather than ledgering an empty name. */
+export function servedModelFromOllama(data: unknown, requested: string): string {
+  const m = (data as { model?: unknown })?.model;
+  return typeof m === "string" && m.trim() !== "" ? m.trim() : requested;
+}
+
 export async function callOllamaJson(
   ollamaUrl: string,
   model: string,
   system: string,
   user: string,
   timeoutMs: number,
-  optionOverrides?: { temperature?: number; seed?: number },
+  // The type used to name only temperature and seed, so every caller passing num_predict/num_ctx cast
+  // it away with `as never` — a type that lied about what the function takes. Widened to what callers
+  // actually pass, plus `think` (SP-517).
+  // `keep_alive` (2026-11-22) is, like `think`, a TOP-LEVEL field of /api/chat, not a model option.
+  // It exists because the dev Mac has 64 GB and llama3:70b (39 GB) plus qwen3.6:35b (22 GB) is 61 of
+  // them: passing keep_alive 0 on a generator call unloads the generator the moment it answers, so
+  // the judge never shares memory with it. Co-residency pages, and paging doubled the judge's
+  // measured per-call time in brief 4 (17% free, 1,020,020 pageouts).
+  optionOverrides?: { temperature?: number; seed?: number; num_predict?: number; num_ctx?: number; think?: boolean; keep_alive?: number | string },
+  /** SP-549 (2026-11-22): THE MODEL THAT ANSWERED, reported from the response.
+   *
+   *  Every ledger row used to carry the model the CALLER asked for. Those are the same string almost
+   *  always, and when they are not the ledger is wrong in the one case that matters: brief 5 ran 31
+   *  generator calls on qwen3.6:35b and ledgered all 31 as `qwen2.5:14b-instruct`, because the name
+   *  came from the router's lane while an override chose the model inside the local caller. The row
+   *  then reads as a model that did not run, and ollama's own load log was the only way to tell.
+   *
+   *  A callback rather than a widened return type, so no existing caller of this function changes
+   *  shape. It fires before the content check, so even an empty answer names its model. */
+  onServed?: (model: string) => void,
 ): Promise<string> {
   const nativeBase = ollamaUrl.replace(/\/v1\/?$/, "");
+  // `think` is hoisted to the body; everything else is a model option.
+  const { think: _think, keep_alive: _keepAlive, ...optionOverridesWithoutThink } = optionOverrides ?? {};
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -408,7 +438,19 @@ export async function callOllamaJson(
         model,
         format: "json",
         stream: false,
-        options: { num_ctx: 8192, temperature: 0.2, ...optionOverrides },
+        // SP-517: `think` is a TOP-LEVEL field in ollama's /api/chat, not an option. Passing it inside
+        // `options` is silently ignored, which is how a thinking model looks like a broken one.
+        //
+        // WHY IT IS NEEDED. qwen3.6:35b is a thinking model: it puts reasoning in `message.thinking`
+        // and the answer in `message.content`. With a judge-sized budget the reasoning consumes the
+        // whole allowance and `content` comes back EMPTY — measured 2026-11-20: at num_predict 200 it
+        // returned nothing, and at 1,400 it still returned nothing (5,556 chars of unfinished thinking,
+        // done_reason "length"). With think:false it answers correctly in 4.3s. A model that does not
+        // support thinking accepts the field and ignores it (verified on llama3:70b and
+        // qwen2.5:14b-instruct), so it is safe to pass unconditionally.
+        ...(optionOverrides?.think !== undefined ? { think: optionOverrides.think } : {}),
+        ...(optionOverrides?.keep_alive !== undefined ? { keep_alive: optionOverrides.keep_alive } : {}),
+        options: { num_ctx: 8192, temperature: 0.2, ...optionOverridesWithoutThink },
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -419,6 +461,8 @@ export async function callOllamaJson(
     // require_model: any transport failure is a LOUD abort, never a fallback.
     if (!resp.ok) throw new Error(`claim-delta model call failed: HTTP ${resp.status} (${model})`);
     const data = await resp.json().catch(() => ({}));
+    // SP-549: the served model, from the response, before anything can throw.
+    onServed?.(servedModelFromOllama(data, model));
     const content = String((data as { message?: { content?: unknown } })?.message?.content ?? "");
     if (!content) throw new Error(`claim-delta model call returned empty content (${model})`);
     return content;

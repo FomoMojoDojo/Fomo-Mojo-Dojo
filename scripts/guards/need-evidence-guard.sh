@@ -11,12 +11,16 @@
 # answer still equals the signed one.
 #
 #   e1  polarity admits EXACTLY working / not working / mixed — 'neutral' is refused (SP-405 was
-#       withdrawn by SP-416 and the corpus holds none), and judged_by admits exactly its three values
+#       withdrawn by SP-416 and the corpus holds none), and judged_by admits exactly its FOUR values
+#       (SP-600 added 'fit_judge_cc_read_unchecked'): the fourth is ADMITTED and a fifth is REFUSED
 #   e2  the composite FKs make a cross-company label unrepresentable, refused ON THE FK
 #   e3  RLS is on, anon has no grant, writes are admin-only, members read their own company
 #   e4  no label points at a superseded or held signal
-#   e5  every row's judged_by is one of the three; today's corpus is all 'cc_read_unchecked' (SP-429)
-#   e6  the counting module reproduces charter-needs-status-v2.md EXACTLY for N1–N15
+#   e5  every row's judged_by is one of the four, and a 'fit_judge_cc_read_unchecked' row always names
+#       its judge in rubric_version (SP-600) — never the corpus rubric it was not read under
+#   e6  the counting module reproduces charter-needs-status-v3.md EXACTLY for N1–N15
+#       (v3, 2026-11-23: v2 with N13 rebuilt from stored rows after SP-591 and SP-602; needs are
+#       matched to the table on their N-key through scripts/charter-need-keys.json, never by sentence)
 #   e7  SP-445: the BRIEF'S BANDS reproduce it too — every need the published table marks as meeting
 #       the bar is a hotspot and no other is, every need it marks as failing is a thin spot, and the
 #       "at the bar" mark lands on the same row. Computed with the page's own modules
@@ -54,7 +58,13 @@ E=$(probe false "'not working'" "'cc_read_unchecked'")
 echo "$E" | grep -q 'need_evidence_polarity_check' || fail e1 "a non-bearing row with a polarity was not refused"
 E=$(probe true "'working'" "'guessed'")
 echo "$E" | grep -q 'need_evidence_judged_by_check' || fail e1 "judged_by 'guessed' was not refused"
-echo "e1. polarity admits only working / not working / mixed ('neutral' refused); judged_by admits only its three"
+# SP-600: the fourth value is admitted (the probe rolls back, so an empty error means it was accepted),
+# and a near-miss of it is a fifth value and refused.
+E=$(probe true "'working'" "'fit_judge_cc_read_unchecked'")
+[ -z "$E" ] || fail e1 "judged_by 'fit_judge_cc_read_unchecked' (SP-600) was refused: ${E:0:120}"
+E=$(probe true "'working'" "'fit_judge_unchecked'")
+echo "$E" | grep -q 'need_evidence_judged_by_check' || fail e1 "a fifth judged_by value ('fit_judge_unchecked') was not refused"
+echo "e1. polarity admits only working / not working / mixed ('neutral' refused); judged_by admits only its four (a fifth refused)"
 
 # e2 ── a cross-company label is unrepresentable
 OTHER=$(q "select id from public.companies where id <> '$CO' and frozen is not true limit 1")
@@ -84,22 +94,27 @@ BAD=$(q "select count(*) from public.need_evidence e join public.signals s on s.
 echo "e4. no label points at a superseded or held signal"
 
 # e5 ── who judged
-OFF=$(q "select count(*) from public.need_evidence where judged_by not in ('cc_read_unchecked','operator','operator_confirmed_cc')")
+OFF=$(q "select count(*) from public.need_evidence where judged_by not in ('cc_read_unchecked','operator','operator_confirmed_cc','fit_judge_cc_read_unchecked')")
 [ "$OFF" = "0" ] || fail e5 "$OFF row(s) carry an unknown judged_by"
 CC=$(q "select count(*) from public.need_evidence where judged_by='cc_read_unchecked'")
+FJ=$(q "select count(*) from public.need_evidence where judged_by='fit_judge_cc_read_unchecked'")
+# SP-600: a fit-judge row names its judge. One still carrying the corpus rubric would read as a label
+# the corpus made.
+FJBAD=$(q "select count(*) from public.need_evidence where judged_by='fit_judge_cc_read_unchecked' and rubric_version not like 'need-fit-judge:%'")
+[ "$FJBAD" = "0" ] || fail e5 "$FJBAD 'fit_judge_cc_read_unchecked' row(s) do not name a fit judge in rubric_version"
 TOT=$(q "select count(*) from public.need_evidence")
-echo "e5. judged_by is always one of the three — $CC of $TOT are 'cc_read_unchecked' (SP-429)"
+echo "e5. judged_by is always one of the four — $CC of $TOT are 'cc_read_unchecked' (SP-429), $FJ are 'fit_judge_cc_read_unchecked' (SP-600)"
 
 # e6 ── the computed answer still equals the signed one
 OUT=$(deno run -A scripts/verify-need-evidence-counting.ts 2>&1 || true)
-echo "$OUT" | grep -q "reproduce charter-needs-status-v2.md EXACTLY" \
-  || fail e6 "the counting module no longer reproduces charter-needs-status-v2.md: $(echo "$OUT" | grep -E 'MISMATCH|mismatched' | head -2 | tr '\n' ' ')"
-echo "e6. the counting module reproduces charter-needs-status-v2.md exactly for N1-N15"
+echo "$OUT" | grep -q "reproduce charter-needs-status-v3.md EXACTLY" \
+  || fail e6 "the counting module no longer reproduces charter-needs-status-v3.md: $(echo "$OUT" | grep -E 'MISMATCH|mismatched' | head -2 | tr '\n' ' ')"
+echo "e6. the counting module reproduces charter-needs-status-v3.md exactly for N1-N15"
 
 # e7 ── the Brief's bands agree with the published table, row by row, including the at-the-bar mark
 BOUT=$(deno run -A scripts/verify-brief-sections.ts 2>&1 || true)
 echo "$BOUT" | grep -qE "^matched 15 of 15, mismatched 0$" \
-  || fail e7 "the Brief's bands disagree with charter-needs-status-v2.md: $(echo "$BOUT" | grep -E 'MISMATCH|mismatched|MISSING' | head -3 | tr '\n' ' ')"
+  || fail e7 "the Brief's bands disagree with charter-needs-status-v3.md: $(echo "$BOUT" | grep -E 'MISMATCH|mismatched|MISSING' | head -3 | tr '\n' ' ')"
 # AT-THE-BAR must land on exactly one need, and it must be one that MEETS the bar (the SP-445 term)
 BARS=$(echo "$BOUT" | grep -c "AT-THE-BAR" || true)
 [ "$BARS" = "1" ] || fail e7 "the at-the-bar mark lands on $BARS need(s), expected exactly 1 (N4)"

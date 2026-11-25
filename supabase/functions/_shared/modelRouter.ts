@@ -33,13 +33,15 @@ export type RoutedJudge = (args: {
   provenances: Array<string | null | undefined>;
   system: string;
   user: string;
-}) => Promise<{ content: string; provider: _MP; model: string }>;
+  /** SP-549: the model the response named; equal to `model` unless the local caller overrode it. */
+}) => Promise<{ content: string; provider: _MP; model: string; servedModel: string }>;
 
 /** Build a routed judge. `callLocal` is the function's EXISTING local Ollama judge (kept byte-identical,
  *  incl. its "Local-only policy violation" defense). All-public inputs → external OpenAI; anything
  *  non-public/unknown/NULL → callLocal. `onUsage` accumulates external token usage for cost logging. */
 export function makeRoutedJudge(opts: {
-  callLocal: (model: string, system: string, user: string) => Promise<string>;
+  /** SP-549: the string alone, as before, or `{ content, servedModel }`. */
+  callLocal: (model: string, system: string, user: string) => Promise<string | { content: string; servedModel?: string }>;
   openaiKey?: string;
   /** Ruling 2 (2026-10-22): the model is passed too, so a caller can price each model at its own signed rate. */
   onUsage?: (u: OpenAIUsage, model?: string) => void;
@@ -49,10 +51,12 @@ export function makeRoutedJudge(opts: {
     if (choice.provider === "external_openai") {
       const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, apiKey: opts.openaiKey }));
       opts.onUsage?.(r.usage, choice.model);
-      return { content: r.content, provider: choice.provider, model: choice.model };
+      return { content: r.content, provider: choice.provider, model: choice.model, servedModel: r.servedModel };
     }
-    const content = await opts.callLocal(choice.model, system, user);
-    return { content, provider: choice.provider, model: choice.model };
+    const out = await opts.callLocal(choice.model, system, user);
+    return typeof out === "string"
+      ? { content: out, provider: choice.provider, model: choice.model, servedModel: choice.model }
+      : { content: out.content, provider: choice.provider, model: choice.model, servedModel: out.servedModel ?? choice.model };
   };
 }
 
@@ -63,14 +67,19 @@ export type RoutedModel = (args: {
   provenances: Array<string | null | undefined>;
   system: string;
   user: string;
-}) => Promise<{ content: string; provider: _MP; model: string }>;
+  /** SP-549: the model the RESPONSE named. Equal to `model` unless a caller overrode the lane's
+   *  model inside its local caller, which is exactly the case that put 31 wrong names in the ledger. */
+}) => Promise<{ content: string; provider: _MP; model: string; servedModel: string }>;
 
 /** Build a role-aware routed caller. `callLocalGenerator` / `callLocalJudge` are the function's
  *  EXISTING local Ollama calls (kept byte-identical, incl. timeouts/determinism). All-public inputs
  *  → external OpenAI; anything non-public/unknown/NULL → the matching local caller. */
 export function makeRoutedModel(opts: {
-  callLocalGenerator: (model: string, system: string, user: string) => Promise<string>;
-  callLocalJudge: (model: string, system: string, user: string) => Promise<string>;
+  /** SP-549: a local caller may return the string alone, as every caller did, or `{ content,
+   *  servedModel }` — the model the RESPONSE named. The union keeps every existing caller compiling
+   *  and lets the one that cares report what answered. */
+  callLocalGenerator: (model: string, system: string, user: string) => Promise<string | { content: string; servedModel?: string }>;
+  callLocalJudge: (model: string, system: string, user: string) => Promise<string | { content: string; servedModel?: string }>;
   openaiKey?: string;
   /** Ruling 2 (2026-10-22): the model is passed too, so a caller can price each model at its own signed rate. */
   onUsage?: (u: OpenAIUsage, model?: string) => void;
@@ -92,10 +101,16 @@ export function makeRoutedModel(opts: {
       if (opts.beforeExternal) await opts.beforeExternal({ model: choice.model, system, user });
       const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, apiKey: opts.openaiKey, temperature: opts.externalTemperature, seed: opts.externalSeed, maxTokens: opts.externalMaxTokens }));
       opts.onUsage?.(r.usage, choice.model);
-      return { content: r.content, provider: choice.provider, model: choice.model };
+      // SP-549: OpenAI echoes the model it served, which for an alias is the dated snapshot.
+      return { content: r.content, provider: choice.provider, model: choice.model, servedModel: r.servedModel };
     }
     const callLocal = role === "judge" ? opts.callLocalJudge : opts.callLocalGenerator;
-    return { content: await callLocal(choice.model, system, user), provider: choice.provider, model: choice.model };
+    const out = await callLocal(choice.model, system, user);
+    // SP-549: `model` stays the lane's decision (it is what the ROUTER chose, and the stamp means
+    // that); `servedModel` is what answered. A caller that ledgers writes the second.
+    return typeof out === "string"
+      ? { content: out, provider: choice.provider, model: choice.model, servedModel: choice.model }
+      : { content: out.content, provider: choice.provider, model: choice.model, servedModel: out.servedModel ?? choice.model };
   };
 }
 
@@ -111,7 +126,7 @@ export async function callOpenAIJson(opts: {
   seed?: number;
   /** optional output bound (max_tokens); absent ⇒ none sent, as before */
   maxTokens?: number;
-}): Promise<{ content: string; usage: OpenAIUsage }> {
+}): Promise<{ content: string; usage: OpenAIUsage; servedModel: string }> {
   const apiKey = opts.apiKey ?? Deno.env.get("OPENAI_API_KEY") ?? "";
   if (!apiKey) throw new Error("model router: external chosen but OPENAI_API_KEY is missing");
   const ctrl = new AbortController();
@@ -146,7 +161,9 @@ export async function callOpenAIJson(opts: {
     const content = String(data?.choices?.[0]?.message?.content ?? "");
     if (!content) throw new Error(`openai ${opts.model} returned empty content`);
     const u = data?.usage ?? {};
-    return { content, usage: { prompt_tokens: Number(u.prompt_tokens ?? 0), completion_tokens: Number(u.completion_tokens ?? 0) } };
+    // SP-549: `data.model` is the snapshot that actually answered (an alias resolves to a dated one).
+    const served = typeof data?.model === "string" && data.model.trim() !== "" ? String(data.model).trim() : opts.model;
+    return { content, usage: { prompt_tokens: Number(u.prompt_tokens ?? 0), completion_tokens: Number(u.completion_tokens ?? 0) }, servedModel: served };
   } finally {
     clearTimeout(t);
   }

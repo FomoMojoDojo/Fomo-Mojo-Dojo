@@ -21,7 +21,11 @@ import type { QuoteRow } from "@/lib/reviewQuote";
 export type NeedPattern = {
   id: string;
   needId: string;
+  /** SP-502: the CLAIM — one sentence. Stored as need_patterns.name. */
   name: string;
+  /** SP-502: the 1–3 predicates the claim asserts, in the generator's own order. Empty on a pre-v3
+   *  row, and the band then shows the claim alone rather than an empty list. */
+  parts: string[];
   strength: string;
   /** SP-470: the one polarity this pattern carries. null on a rubric-v1 row. */
   polarity: string | null;
@@ -43,6 +47,7 @@ type PatternRow = {
   signed_at: string | null; representative_signal_id: string | null; run_ceiling_hit: boolean | null;
 };
 type PQRow = { pattern_id: string; signal_id: string; bears: boolean };
+type PartRow = { pattern_id: string; ordinal: number; predicate: string };
 
 /** How many signal ids one `id=in.(…)` request may name — useBriefNeeds' own bound, same reason. */
 const SIGNAL_ID_CHUNK = 60;
@@ -73,6 +78,16 @@ export function useNeedPatterns(companyId?: string | null) {
           supabase.from("need_pattern_quotes").select("pattern_id, signal_id, bears")
             .eq("company_id", companyId).order("id").range(from, to));
         if (cancelled) return;
+
+        // SP-502: the parts, paged for the same reason as everything else here. Ordered by id for a
+        // stable page boundary and sorted by ordinal below — a page break must not reorder a claim's
+        // predicates, which is what ordering by `ordinal` alone across pages would risk.
+        const partRows = await fetchAllRows<PartRow>((from, to) =>
+          supabase.from("need_pattern_parts").select("pattern_id, ordinal, predicate")
+            .eq("company_id", companyId).order("id").range(from, to));
+        if (cancelled) return;
+        const partsByPattern = new Map<string, PartRow[]>();
+        for (const r of partRows) (partsByPattern.get(r.pattern_id) ?? partsByPattern.set(r.pattern_id, []).get(r.pattern_id)!).push(r);
 
         const sigIds = [...new Set([
           ...pq.map((r) => r.signal_id),
@@ -106,7 +121,9 @@ export function useNeedPatterns(companyId?: string | null) {
           const sites = new Set(kept.map((r) => siteOf(sigById.get(r.signal_id)?.source_url))).size;
           const rep = p.representative_signal_id ? sigById.get(p.representative_signal_id) : undefined;
           return {
-            id: p.id, needId: p.need_id, name: p.name, strength: p.strength,
+            id: p.id, needId: p.need_id, name: p.name,
+            parts: (partsByPattern.get(p.id) ?? []).slice().sort((a, b) => a.ordinal - b.ordinal).map((r) => r.predicate),
+            strength: p.strength,
             polarity: p.polarity,
             draft: p.signed_at == null,
             ceilingHit: p.run_ceiling_hit === true,

@@ -3136,3 +3136,23 @@ span.fr-mark-target .fr-mark-box { display: flex; }
 .fr-ws-pattern-polarity[data-fr-polarity="mixed"] { color: #ffc766; opacity: 0.85; }
 /* The coverage line is deliberately plain and last: it is a caveat on the band above it, not a finding. */
 .fr-ws-pattern-coverage { margin: 8px 0 0; font-size: 10px; opacity: 0.5; }
+
+/* ── v3: the PARTS and the "Mentioned once" group (SP-502 / SP-488, 2026-11-20) ──────────────────
+   THE PARTS are what the judge actually ruled on, so they are visible — but they are the claim's
+   working-out, not findings of their own, so they sit under it at the quote's size and not at the
+   claim's. The leading marker is a middle dot rather than a bullet: a bulleted list of three
+   predicates reads as three separate findings, which is the misreading v2 produced in prose. */
+.fr-ws-pattern-parts { list-style: none; margin: 3px 0 0; padding: 0; display: grid; gap: 1px; }
+.fr-ws-pattern-part { font-size: 11px; line-height: 1.4; opacity: 0.6; padding-left: 10px; position: relative; }
+.fr-ws-pattern-part::before { content: "\00b7"; position: absolute; left: 2px; opacity: 0.7; }
+
+/* SP-488: a pattern resting on ONE quote. Grouped at the foot of the band, below the coverage line's
+   register and above nothing — the last thing in the band, because it is the weakest thing in it.
+   No strength, no quote, no accent colour: a single mention must not be able to look like a rule. */
+.fr-ws-pattern-once { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.fr-ws-pattern-once-label {
+  margin: 0 0 4px; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+  font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.45;
+}
+.fr-ws-pattern-once-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.fr-ws-pattern-once-row { font-size: 12px; line-height: 1.4; opacity: 0.62; }

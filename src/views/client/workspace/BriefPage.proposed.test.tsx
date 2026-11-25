@@ -33,8 +33,8 @@ const thin = {
 };
 
 const patterns = [
-  { id: "pat1", needId: "accepted", name: "Agents give a different answer each time", strength: "confirmed rule", polarity: "not working", draft: true, ceilingHit: false, supporting: 9, sites: 4, representative: q("a1", CA) },
-  { id: "pat2", needId: "proposed", name: "The outage is denied after the fact", strength: "likely rule", polarity: "working", draft: true, ceilingHit: false, supporting: 5, sites: 2, representative: q("p1", CA) },
+  { id: "pat1", needId: "accepted", name: "Agents give a different answer each time", parts: ["the answer changes between agents"], strength: "confirmed rule", polarity: "not working", draft: true, ceilingHit: false, supporting: 9, sites: 4, representative: q("a1", CA) },
+  { id: "pat2", needId: "proposed", name: "The outage is denied after the fact", parts: ["the outage is denied afterwards", "no credit is given"], strength: "likely rule", polarity: "working", draft: true, ceilingHit: false, supporting: 5, sites: 2, representative: q("p1", CA) },
 ];
 
 vi.mock("@/views/client/firstReadPreview/operatorControls", () => ({ useOperatorControls: () => ({ on: true }) }));

@@ -53,6 +53,41 @@ export const EXTERNAL_JUDGE = "gpt-4.1-mini";
 export const EXTERNAL_MODEL = EXTERNAL_JUDGE;
 export const LOCAL_GENERATOR = "qwen2.5:14b-instruct";
 export const LOCAL_JUDGE = "llama3:70b";
+/** SP-544 (2026-11-22): THE PATTERN GENERATOR IS `qwen3.6:35b`, AND ONLY THE PATTERN GENERATOR.
+ *
+ *  The ruling names the pattern generator, so this is a SECOND local generator default rather than a
+ *  new value for `LOCAL_GENERATOR`. Re-pointing `LOCAL_GENERATOR` would move every other generator
+ *  consumer with it — `findingBeats.ts:153`, `frontierFinding.ts:77` and every `role: "generator"`
+ *  call through `makeRoutedModel` — and none of them passes `think: false`. SP-517 measured what that
+ *  costs: qwen3.6:35b is a thinking model, and with thinking ON the whole `num_predict` budget goes to
+ *  `message.thinking` and `content` comes back EMPTY. So a fleet-wide re-point would have read as
+ *  several working functions breaking at once, for a ruling that named one generator. That wider act
+ *  is left to the operator.
+ *
+ *  WHY IT IS HERE and not in the runner: this module is the single authority for which model a role
+ *  gets, and a model id chosen in a script would be a second authority (the comment above EXTERNAL_*
+ *  says the same thing about the external branch). The pattern layer's one consumer (SP-468) reads
+ *  this constant; `--gen-model` still overrides it for an arm. */
+export const LOCAL_PATTERN_GENERATOR = "qwen3.6:35b";
+/** SP-555 (2026-11-22): THE PATTERN JUDGE OF RECORD IS `qwen3.6:35b` WITH THINKING ON, AND ONLY THE
+ *  PATTERN JUDGE. Amends SP-519; an exception to the different-model parity order for this layer.
+ *
+ *  WHY IT IS A SECOND CONSTANT and not a new value for `LOCAL_JUDGE`: `LOCAL_JUDGE` is read by every
+ *  other judge consumer in the fleet (`role: "judge"` through `makeRoutedModel`, the claim-delta and
+ *  recurrence judges among them), and none of them passes `think`. SP-517 measured what a thinking
+ *  model does with thinking left on at a small budget: the whole `num_predict` goes to
+ *  `message.thinking` and `content` comes back EMPTY. A fleet-wide re-point would therefore have read
+ *  as several working judges breaking at once, for a ruling that names one judge.
+ *
+ *  WHAT IT COSTS, measured in run 6 (brief 7 §8c, 148 calls): 46.1 s per call against llama3:70b's
+ *  21.2 s, and an empty answer on 8 of 146 groups at `num_predict` 4000 — which is why SP-556's retry
+ *  exists. WHAT IT BUYS: the SP-550 not-stated rate on the same pairs fell from 8.8% to 2.6%, it
+ *  rejected the contradicted keep llama3 had kept as proof of its own negation, and SP-500 / SP-516
+ *  both passed under it.
+ *
+ *  `--judge-model` still overrides it for an arm, and the LANE is still this module's decision: a
+ *  non-local company's judge lane refuses the override rather than opening an external model. */
+export const LOCAL_PATTERN_JUDGE = "qwen3.6:35b";
 
 /** A signal has no provenance column — derive it from SOURCE + band + voice. Only an outside-band
  *  PUBLIC-web voice on a PUBLIC source_type is public; our own analysis, unknown/NULL voices,
