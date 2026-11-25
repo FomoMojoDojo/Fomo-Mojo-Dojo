@@ -16,18 +16,48 @@
 // shown, because a reader asked to trust "every part states" has to be able to see what the parts
 // were. SP-488: a pattern resting on ONE quote is a mention, not a rule, so those are grouped at the
 // foot of the band instead of sitting in the list looking like the rest.
-import { displayQuote, type QuoteRow } from "@/lib/reviewQuote";
+//
+// SP-665 (2026-11-24): the band shows the EVIDENCE. The quote is the sentence of the representative
+// quote that holds the judge's stored span, with the span's words marked — the First Read's own
+// treatment for a matched phrase sitting inside a text (`JobWithProduct`, `.fr-unstated-product`).
+// Shown patterns are in strength order; a one-part pattern shows no part line, because its one part
+// restates its claim; the "Mentioned once" group has one header with its count and each item carries
+// its polarity in the tag the shown patterns use.
+import { QUOTE_ELLIPSIS, displayQuote, type QuoteRow } from "@/lib/reviewQuote";
+import { spanExcerpt } from "@/lib/quoteSpan";
 import type { NeedPattern } from "@/hooks/useNeedPatterns";
-import { WORKSPACE_STRINGS, mentionedOnceLine, patternCoverageLine, patternSupportLine, strengthLabel } from "./workspaceNav";
+import {
+  WORKSPACE_STRINGS, claimForDisplay, mentionedOnceHeader, orderMentionedOnce, orderShownPatterns,
+  patternCoverageLine, patternSupportLine, strengthLabel,
+} from "./workspaceNav";
 
-function RepresentativeQuote({ quote, brands }: { quote: QuoteRow; brands: readonly string[] }) {
+function RepresentativeQuote({ quote, span, brands }: { quote: QuoteRow; span: string | null; brands: readonly string[] }) {
   // displayQuote CLIPS and appends the visible ellipsis itself (SP-452: a quote shows in full or
    // with a visible ellipsis), so the view must not add a second one.
   const d = displayQuote(quote, brands);
   if (!d.text) return null;
+  // SP-665: the excerpt is cut from the MASKED text — the same text every other quote on the page
+  // shows — so a mask can never be undone by the excerpt. Every character below is a slice of it.
+  const ex = span ? spanExcerpt(d.text, span) : null;
+  if (!ex) {
+    // No stored span (a pre-v3 row), or a span that is not in its quote. pattern-citation-guard (c9)
+    // says the second cannot happen; if it does, the quote shows as it did before and says so here.
+    if (span) console.warn(`[pattern-band] the stored span is not in its quote — showing the quote unmarked (signal ${quote.signalId})`);
+    return (
+      <blockquote className="fr-ws-pattern-quote" data-testid="pattern-quote" data-fr-clipped={d.clipped ? "true" : undefined}>
+        {d.text}
+      </blockquote>
+    );
+  }
   return (
-    <blockquote className="fr-ws-pattern-quote" data-testid="pattern-quote" data-fr-clipped={d.clipped ? "true" : undefined}>
-      {d.text}
+    <blockquote className="fr-ws-pattern-quote" data-testid="pattern-quote" data-fr-span="marked"
+      data-fr-clipped={ex.cutStart || ex.cutEnd ? "true" : undefined}>
+      {ex.cutStart ? `${QUOTE_ELLIPSIS} ` : null}
+      {ex.before}
+      <span className="fr-unstated-product" data-testid="pattern-quote-span">{ex.marked}</span>
+      {ex.after}
+      {/* where the quote's own words already end in an ellipsis, a second one is not added */}
+      {ex.cutEnd && !/(\.\.\.|\u2026)$/.test(`${ex.marked}${ex.after}`) ? ` ${QUOTE_ELLIPSIS}` : null}
     </blockquote>
   );
 }
@@ -45,8 +75,9 @@ export function PatternBand({ patterns, brands, counted, assigned }: {
   // SP-488: 'too thin' is exactly one supporting quote — patternStrength returns it for n < 2 and a
   // kept pattern always has at least one. The split is on the STORED strength, not on the derived
   // count, so the group and the label can never disagree about which patterns are in it.
-  const rows = patterns.filter((p) => p.strength !== "too thin");
-  const once = patterns.filter((p) => p.strength === "too thin");
+  // SP-665: shown patterns in strength order; the mentions by polarity.
+  const rows = orderShownPatterns(patterns.filter((p) => p.strength !== "too thin"));
+  const once = orderMentionedOnce(patterns.filter((p) => p.strength === "too thin"));
   return (
     <div className="fr-ws-patterns" data-testid="pattern-band">
       <p className="fr-ws-patterns-label fr-mono">{WORKSPACE_STRINGS.patternsLabel}</p>
@@ -67,17 +98,18 @@ export function PatternBand({ patterns, brands, counted, assigned }: {
                 <span className="fr-ws-pattern-draft" data-testid="pattern-draft">{WORKSPACE_STRINGS.briefDraftMark}</span>
               ) : null}
             </p>
-            <p className="fr-ws-pattern-name" data-testid="pattern-name">{p.name}</p>
+            <p className="fr-ws-pattern-name" data-testid="pattern-name">{claimForDisplay(p.name)}</p>
             {/* SP-502: the parts the judge ruled on, one by one. A pre-v3 row has none and shows the
-                claim alone — an empty list is not rendered as an empty list. */}
-            {(p.parts ?? []).length > 0 ? (
+                claim alone — an empty list is not rendered as an empty list. SP-665: a pattern with
+                exactly ONE part shows no part line either: its one part restates its claim. */}
+            {(p.parts ?? []).length > 1 ? (
               <ul className="fr-ws-pattern-parts" data-testid="pattern-parts">
                 {(p.parts ?? []).map((part, i) => (
                   <li key={`${p.id}-${i}`} className="fr-ws-pattern-part" data-testid="pattern-part">{part}</li>
                 ))}
               </ul>
             ) : null}
-            {p.representative ? <RepresentativeQuote quote={p.representative} brands={brands} /> : null}
+            {p.representative ? <RepresentativeQuote quote={p.representative} span={p.representativeSpan ?? null} brands={brands} /> : null}
           </li>
         ))}
       </ul>
@@ -86,12 +118,16 @@ export function PatternBand({ patterns, brands, counted, assigned }: {
       {once.length > 0 ? (
         <div className="fr-ws-pattern-once" data-testid="pattern-mentioned-once">
           <p className="fr-ws-pattern-once-label fr-mono">
-            <span data-testid="pattern-once-label">{WORKSPACE_STRINGS.strengthMentionedOnce}</span>
-            <span data-testid="pattern-once-count">{mentionedOnceLine(once.length)}</span>
+            <span data-testid="pattern-once-label" data-fr-count={once.length}>{mentionedOnceHeader(once.length)}</span>
           </p>
           <ul className="fr-ws-pattern-once-rows">
             {once.map((p) => (
-              <li key={p.id} className="fr-ws-pattern-once-row" data-testid="pattern-once-row">{p.name}</li>
+              <li key={p.id} className="fr-ws-pattern-once-row" data-testid="pattern-once-row">
+                {p.polarity ? (
+                  <span className="fr-ws-pattern-polarity fr-mono" data-testid="pattern-once-polarity" data-fr-polarity={p.polarity}>{p.polarity}</span>
+                ) : null}
+                <span data-testid="pattern-once-name">{claimForDisplay(p.name)}</span>
+              </li>
             ))}
           </ul>
         </div>

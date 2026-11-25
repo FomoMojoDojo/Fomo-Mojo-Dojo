@@ -331,7 +331,10 @@ export const WORKSPACE_STRINGS = {
    *  is accurate about the evidence and silent about what the reader is looking at; these are grouped
    *  under this label instead of listed as rows, so one mention cannot read like a rule. */
   strengthMentionedOnce: "Mentioned once",
-  mentionedOnceCount: "{n} mentioned once",
+  /** SP-665: the group header — one label with its count, "label · n", the form the page already
+   *  uses for a label beside a number ("17 counted quotes · 6 sites"). It replaces the old
+   *  "{n} mentioned once", which sat beside the label and said its words twice. */
+  mentionedOnceHeader: "Mentioned once \u00b7 {n}",
   /** What a pattern rests on, singular-aware as SP-456 requires of every such line. */
   supportingQuoteSingular: "{n} supporting quote",
   supportingQuotesPlural: "{n} supporting quotes",
@@ -474,11 +477,32 @@ export function strengthLabel(stored: string | null | undefined, polarity?: stri
   return v;
 }
 
-/** SP-488 — the group footer: how many patterns under this need rest on a single quote. Not
- *  singular-aware by design: the string says "mentioned once", so "1 mentioned once" is the sentence,
- *  and a plural noun would have to invent a noun the signed string does not contain. */
-export function mentionedOnceLine(n: number): string {
-  return WORKSPACE_STRINGS.mentionedOnceCount.replace("{n}", String(n));
+/** SP-665 — the "Mentioned once" group's header: the label and how many patterns rest on one quote. */
+export function mentionedOnceHeader(n: number): string {
+  return WORKSPACE_STRINGS.mentionedOnceHeader.replace("{n}", String(n));
+}
+
+/** SP-665 — the order shown patterns are read in: by strength, then by supporting quotes (most first),
+ *  then by claim and id so the order never depends on row ids alone. The rank map follows the First
+ *  Read's own (`NEG_STRENGTH_RANK`, firstReadPreview/mapping.ts): a stored word, a rank, unknown last. */
+export const PATTERN_STRENGTH_RANK: Record<string, number> = { "confirmed rule": 0, "likely rule": 1, "possible failure": 2, "too thin": 3 };
+/** SP-665 — the order of the "Mentioned once" group: what is not working, then mixed, then working. */
+export const PATTERN_POLARITY_RANK: Record<string, number> = { "not working": 0, mixed: 1, working: 2 };
+type Orderable = { id: string; name: string; strength: string; polarity: string | null; supporting: number };
+const byText = (a: Orderable, b: Orderable) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+export function orderShownPatterns<T extends Orderable>(patterns: readonly T[]): T[] {
+  return [...patterns].sort((a, b) =>
+    (PATTERN_STRENGTH_RANK[a.strength] ?? 9) - (PATTERN_STRENGTH_RANK[b.strength] ?? 9) || b.supporting - a.supporting || byText(a, b));
+}
+export function orderMentionedOnce<T extends Orderable>(patterns: readonly T[]): T[] {
+  return [...patterns].sort((a, b) =>
+    (PATTERN_POLARITY_RANK[a.polarity ?? ""] ?? 9) - (PATTERN_POLARITY_RANK[b.polarity ?? ""] ?? 9) || byText(a, b));
+}
+
+/** SP-665 — a claim as the band shows it: one trailing period trimmed at render. The stored text is
+ *  not changed; an ellipsis is left alone. */
+export function claimForDisplay(name: string): string {
+  return String(name ?? "").replace(/(?<!\.)\.\s*$/, "");
 }
 
 /** What a pattern rests on: "1 supporting quote · 1 site", "7 supporting quotes · 3 sites". */

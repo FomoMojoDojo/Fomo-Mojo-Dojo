@@ -40,13 +40,16 @@ export type NeedPattern = {
   sites: number;
   /** The one representative quote, read through displayQuote by the view. */
   representative: QuoteRow | null;
+  /** SP-665: the words of the representative quote the judge found — need_pattern_quotes.states_span
+   *  of this pattern's own row for that quote. null on a pre-v3 row, which stored no span. */
+  representativeSpan: string | null;
 };
 
 type PatternRow = {
   id: string; need_id: string; name: string; strength: string; polarity: string | null;
   signed_at: string | null; representative_signal_id: string | null; run_ceiling_hit: boolean | null;
 };
-type PQRow = { pattern_id: string; signal_id: string; bears: boolean };
+type PQRow = { pattern_id: string; signal_id: string; bears: boolean; states_span?: string | null };
 type PartRow = { pattern_id: string; ordinal: number; predicate: string };
 
 /** How many signal ids one `id=in.(…)` request may name — useBriefNeeds' own bound, same reason. */
@@ -75,7 +78,7 @@ export function useNeedPatterns(companyId?: string | null) {
         if (rows.length === 0) { setPatterns([]); setAssignedByNeed({}); setLoading(false); return; }
 
         const pq = await fetchAllRows<PQRow>((from, to) =>
-          supabase.from("need_pattern_quotes").select("pattern_id, signal_id, bears")
+          supabase.from("need_pattern_quotes").select("pattern_id, signal_id, bears, states_span")
             .eq("company_id", companyId).order("id").range(from, to));
         if (cancelled) return;
 
@@ -135,6 +138,9 @@ export function useNeedPatterns(companyId?: string | null) {
                   sourceUrl: rep.source_url,
                   eventDate: rep.event_date ? String(rep.event_date).slice(0, 10) : null,
                 }
+              : null,
+            representativeSpan: rep
+              ? ((byPattern.get(p.id) ?? []).find((r) => r.signal_id === rep.id)?.states_span ?? null)
               : null,
           };
         }));

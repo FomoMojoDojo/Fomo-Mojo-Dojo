@@ -37,6 +37,8 @@ vi.mock("@/integrations/supabase/client", () => {
       const total = 2100;
       return Array.from({ length: Math.max(0, Math.min(to, total - 1) - from + 1) }, (_, i) => ({
         pattern_id: "pat1", signal_id: `s${from + i}`, bears: true,
+        // SP-665: each quote row carries its own stored span
+        states_span: `span of s${from + i}`,
       }));
     }
     return (ids ?? []).map((id) => ({ id, quote: `quote ${id}`, source_url: `https://www.bbb.org/${id}`, event_date: "2026-09-30" }));
@@ -102,6 +104,14 @@ describe("the pattern layer's reads", () => {
     await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 10_000 });
     // every mocked signal is a bbb.org url, so 2,100 quotes sit on exactly ONE site
     expect(result.current.patterns[0].sites).toBe(1);
+  });
+
+  it("SP-665: the representative quote's stored span comes from THIS pattern's own row for that quote", async () => {
+    const { result } = renderHook(() => useNeedPatterns("co-span"));
+    await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 10_000 });
+    // pat1's representative is s0; the span is the one stored on (pat1, s0), not another row's
+    expect(result.current.patterns[0].representative?.signalId).toBe("s0");
+    expect(result.current.patterns[0].representativeSpan).toBe("span of s0");
   });
 
   it("makes no read at all without a company", async () => {
