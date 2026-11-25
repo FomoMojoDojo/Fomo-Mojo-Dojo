@@ -345,7 +345,8 @@ export const WORKSPACE_STRINGS = {
   patternCoverage: "{n} of {m} counted quotes under a pattern",
   /** B-6, as SP-446 amended it. */
   belowTheBar: "Below the bar",
-  /** SP-445 — the visible key for the per-brand counts. */
+  /** SP-445 — the visible key for the per-brand counts. No longer rendered: SP-674 ruling 1 dropped the
+   *  per-brand triple and its key (the brand split replaces it). Kept in the register as signed. */
   polarityKey: "working / not working / mixed",
   /** B-7 — which floor a thin spot missed. */
   thinTooFewQuotes: "too few counted quotes",
@@ -356,6 +357,43 @@ export const WORKSPACE_STRINGS = {
   withheldNone: "nothing withheld by the merger rule",
   /** B-9 — the questions band's footer. */
   questionsFoot: "{live} live questions · {superseded} superseded not shown",
+  // ── Brief, board BR4 with the BR1b panel (SP-674; strings signed SP-676, 2026-11-25) ──
+  /** The header's second number: hotspots that carry at least one live pattern. */
+  briefStatWithPatterns: "With patterns",
+  /** The short label for the questions — the number, the section link and the column head. The band's
+   *  long label (bandQuestions) stays in the register as signed. */
+  briefOpenQuestionsShort: "Open questions",
+  /** The line beside the section links: what the brief will hold and does not yet. ONE string, so the
+   *  register never holds a bare "Questions to ask" (retired by SP-446). */
+  briefNotBuiltYet: "Not built yet",
+  briefNotBuiltSections: "So what \u00b7 Says versus customers \u00b7 Practices \u00b7 Merger signals \u00b7 Questions to ask",
+  /** Under the Hotspots head. */
+  briefHotspotsLede: "Every need at or above the evidence bar, most counted quotes first.",
+  /** The tag on an overview row whose need has patterns below. */
+  patternsTag: "Patterns",
+  /** The label under a hotspot's large count. The site count beside it is siteSingular / sitesPlural. */
+  countedQuotesLabel: "Counted quotes",
+  /** The pattern band's head with how many patterns it shows — "label · n", as mentionedOnceHeader. */
+  patternsHeader: "What keeps happening \u00b7 {n}",
+  /** The toggle on a pattern row, over the quote the judge picked. */
+  quoteShow: "Quote",
+  quoteHide: "Hide quote",
+  /** The toggle on the "Mentioned once" row. */
+  show: "Show",
+  hide: "Hide",
+  /** The opener for every counted quote of a hotspot, and for every supporting quote of a pattern. */
+  allQuotes: "All {n} quotes",
+  /** The evidence panel (BR1b). "The judge" stands on this operator-only page (SP-674 ruling 5); the
+   *  word "span" is never shown. */
+  panelPosition: "Pattern \u00b7 {i} of {n}",
+  panelSupportingQuotes: "Supporting quotes",
+  panelSites: "Sites",
+  panelQuoteLabel: "The quote the judge picked",
+  panelNote: "Marked words are the exact words the judge matched.",
+  /** Accessible names — never visible text. */
+  panelAria: "Pattern evidence",
+  close: "Close",
+  briefSectionsAria: "Sections",
   // ── Council (P:391-397) ──
   /** Existing (CouncilPanel). */
   strategicPressure: "Strategic pressure",
@@ -547,6 +585,36 @@ export function moreMaskedLine(n: number): string {
 /** SP-455b — "Show all {n}", the First Read's own string with the total filled. */
 export function showAllLine(total: number): string {
   return WORKSPACE_STRINGS.showAll.replace("{n}", String(total));
+}
+/** SP-674 — the pattern band's head, "What keeps happening · {n}". */
+export function patternsHeader(n: number): string {
+  return WORKSPACE_STRINGS.patternsHeader.replace("{n}", String(n));
+}
+/** SP-674 — "All {n} quotes". */
+export function allQuotesLine(n: number): string {
+  return WORKSPACE_STRINGS.allQuotes.replace("{n}", String(n));
+}
+/** SP-674 — "7 sites" / "1 site", alone. The same two strings patternSupportLine fills. */
+export function sitesLine(sites: number): string {
+  return (sites === 1 ? WORKSPACE_STRINGS.siteSingular : WORKSPACE_STRINGS.sitesPlural).replace("{sites}", String(sites));
+}
+/** SP-674 — "Pattern · 1 of 5". */
+export function panelPositionLine(i: number, n: number): string {
+  return WORKSPACE_STRINGS.panelPosition.replace("{i}", String(i)).replace("{n}", String(n));
+}
+/** SP-674 — how many of the three strength bars are filled: confirmed 3, likely 2, the possible group 1.
+ *  Read off PATTERN_STRENGTH_RANK, so the bars and the order can never disagree. */
+export function strengthLevel(stored: string | null | undefined): number {
+  const rank = PATTERN_STRENGTH_RANK[String(stored ?? "")];
+  return rank === undefined ? 0 : Math.max(0, 3 - rank);
+}
+/** SP-674 — the polarity words in the order every list on the Brief reads them. The stored values ARE
+ *  the signed words (SP-470), so they are shown as stored. */
+export const POLARITY_ORDER = ["not working", "mixed", "working"] as const;
+/** SP-674 — how many patterns carry each polarity, in POLARITY_ORDER, zero counts left out. */
+export function polaritySplit(patterns: ReadonlyArray<{ polarity: string | null }>): Array<{ polarity: string; n: number }> {
+  return POLARITY_ORDER.map((polarity) => ({ polarity, n: patterns.filter((p) => p.polarity === polarity).length }))
+    .filter((x) => x.n > 0);
 }
 /** B-8 — what the merger rule withheld from this need. `undated` + `pre` both zero ⇒ the
  *  "nothing withheld" line, so a thin spot never implies a withholding that did not happen. */

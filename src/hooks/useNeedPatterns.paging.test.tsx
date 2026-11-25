@@ -114,6 +114,18 @@ describe("the pattern layer's reads", () => {
     expect(result.current.patterns[0].representativeSpan).toBe("span of s0");
   });
 
+  it("SP-674: each pattern hands out its supporting quotes — the rows `supporting` counts — from the reads it already makes", async () => {
+    const { result } = renderHook(() => useNeedPatterns("co-quotes"));
+    await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 10_000 });
+    const pat = result.current.patterns[0];
+    expect(pat.quotes).toHaveLength(pat.supporting);
+    expect(pat.quotes).toHaveLength(2100);
+    // the verified quote, the page it came from and its date; no brand, because signals carries none
+    expect(pat.quotes!.find((x) => x.signalId === "s7")).toEqual({ signalId: "s7", quote: "quote s7", brand: "", sourceUrl: "https://www.bbb.org/s7", eventDate: "2026-09-30" });
+    // no read was added for it: the same four tables as before
+    expect([...new Set(calls.map((c) => c.table))].sort()).toEqual(["need_pattern_parts", "need_pattern_quotes", "need_patterns", "signals"]);
+  });
+
   it("makes no read at all without a company", async () => {
     const { result } = renderHook(() => useNeedPatterns(null));
     await waitFor(() => expect(result.current.loading).toBe(false));

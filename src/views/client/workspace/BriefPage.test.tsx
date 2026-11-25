@@ -97,60 +97,132 @@ describe("the Brief for an operator", () => {
       .toEqual(["hotspots", "what-works", "thin-spots", "questions"]);
   });
 
-  it("hotspots are ranked, carry the brand polarity triple and its visible key (SP-445)", () => {
+  it("SP-674: the header carries the four numbers, each from the page's own derivations", () => {
     const { container } = draw();
-    const band = container.querySelector('[data-fr-region="hotspots"]')!;
-    expect(band.querySelector('[data-testid="brief-polarity-key"]')!.textContent).toBe(WORKSPACE_STRINGS.polarityKey);
-    const rows = [...band.querySelectorAll('[data-testid="brief-need"]')];
-    expect(rows.map((r) => r.querySelector(".fr-ws-review-headline")!.textContent))
-      .toEqual(["A NEED WELL PAST THE BAR", "A NEED EXACTLY AT THE BAR"]);
-    expect(rows[0].querySelector('[data-testid="brief-brand-counts"]')!.textContent).toBe("Brand not recorded 0/1/0 · cox 0/1/1 · spectrum 1/2/0");
+    const stats = [...container.querySelectorAll('[data-testid="brief-stat"]')].map((n) => [n.getAttribute("data-fr-stat"), n.querySelector("dt")!.textContent, n.querySelector("dd")!.textContent]);
+    expect(stats).toEqual([
+      ["hotspots", "Hotspots", "2"], ["with-patterns", "With patterns", "0"], ["thin-spots", "Thin spots", "1"], ["questions", "Open questions", "7"],
+    ]);
   });
 
-  it("'At the bar' marks only the need that sits on a floor, and it is one colour on this page", () => {
+  it("SP-674: the section links name each section with its count, mark the current one, and say what is not built yet", () => {
+    const { container } = draw();
+    const nav = container.querySelector('[data-testid="brief-tabs"]')!;
+    expect(nav.tagName).toBe("NAV");
+    expect(nav.getAttribute("aria-label")).toBe("Sections");
+    const tabs = [...nav.querySelectorAll('[data-testid="brief-tab"]')] as HTMLAnchorElement[];
+    expect(tabs.map((t) => t.textContent)).toEqual(["Hotspots2", "What works1", "Thin spots1", "Open questions7"]);
+    // links to sections that exist on the page — not ARIA tabs, because every section stays on it
+    expect(tabs.map((t) => t.getAttribute("role"))).toEqual([null, null, null, null]);
+    for (const t of tabs) expect(container.querySelector(t.getAttribute("href")!)).not.toBeNull();
+    expect(tabs.map((t) => t.getAttribute("aria-current"))).toEqual(["true", null, null, null]);
+    fireEvent.click(tabs[2]);
+    expect(tabs.map((t) => t.getAttribute("aria-current"))).toEqual([null, null, "true", null]);
+    expect(document.activeElement).toBe(container.querySelector("#brief-thin-spots"));
+    expect(container.querySelector('[data-testid="brief-not-built"]')!.textContent)
+      .toBe("Not built yet \u00b7 So what \u00b7 Says versus customers \u00b7 Practices \u00b7 Merger signals \u00b7 Questions to ask");
+  });
+
+  it("the overview has one row per hotspot, ranked, each with one bar of its counted quotes by polarity (SP-445 → SP-674)", () => {
+    const { container } = draw();
+    const band = container.querySelector('[data-fr-region="hotspots"]')!;
+    const rows = [...band.querySelectorAll('[data-testid="brief-overview-row"]')];
+    expect(rows.map((r) => r.querySelector('[data-testid="brief-overview-name"]')!.textContent))
+      .toEqual(["A NEED WELL PAST THE BAR", "A NEED EXACTLY AT THE BAR"]);
+    expect(rows.map((r) => r.querySelector('[data-testid="brief-overview-count"]')!.textContent)).toEqual(["6", "3"]);
+    // the bar: a segment per polarity, grown by its count, in the order not working, mixed, working
+    const bar = rows[0].querySelector('[data-testid="brief-bar"]')!;
+    expect([...bar.children].map((seg) => [seg.getAttribute("data-fr-polarity"), seg.getAttribute("data-fr-n")]))
+      .toEqual([["not working", "4"], ["mixed", "1"], ["working", "1"]]);
+    expect(bar.getAttribute("role")).toBe("img");
+    expect(bar.getAttribute("aria-label")).toBe("4 not working \u00b7 1 mixed \u00b7 1 working");
+    // the widest bar is the most-evidenced need; the others are in proportion
+    expect((bar as HTMLElement).style.width).toBe("100%");
+    expect((rows[1].querySelector('[data-testid="brief-bar"]') as HTMLElement).style.width).toBe("50%");
+    // the legend shows the three stored polarity words, and the lede is the signed line
+    expect([...band.querySelectorAll('[data-testid="brief-legend"] .fr-ws-pol-word')].map((n) => n.textContent)).toEqual(["not working", "mixed", "working"]);
+    expect(band.querySelector('[data-testid="brief-hotspots-lede"]')!.textContent).toBe(WORKSPACE_STRINGS.briefHotspotsLede);
+    // ruling 1: the per-brand polarity triple and its key are gone
+    expect(container.querySelector('[data-testid="brief-polarity-key"]')).toBeNull();
+    expect(container.querySelector('[data-testid="brief-brand-counts"]')).toBeNull();
+    expect(container.textContent).not.toContain(WORKSPACE_STRINGS.polarityKey);
+  });
+
+  it("'At the bar' is a tag on the overview row of the need that sits on a floor, and only there", () => {
     const { container } = draw();
     const bars = [...container.querySelectorAll('[data-fr-region="hotspots"] [data-testid="review-card-bar"]')];
     expect(bars).toHaveLength(1);
     expect(bars[0].textContent).toContain(WORKSPACE_STRINGS.atTheBar);
     // SP-452 item 6: the SAME class, and so the same token, as the review group uses
     expect(bars[0].className).toBe("fr-ws-bar-mark fr-mono");
-    expect(bars[0].closest('[data-testid="brief-need"]')!.textContent).toContain("EXACTLY AT THE BAR");
+    expect(bars[0].closest('[data-testid="brief-overview-row"]')!.textContent).toContain("EXACTLY AT THE BAR");
   });
 
-  it("an outside-voice-sourced need carries the mark; a public_research one does not", () => {
+  it("a hotspot with no patterns opens its quotes from its own overview row, in place — brand · site · date, the reviewer's name MASKED", () => {
     const { container } = draw();
-    const rows = [...container.querySelectorAll('[data-fr-region="hotspots"] [data-testid="brief-need"]')];
-    expect(rows[1].querySelector('[data-testid="review-card-mark"]')!.textContent).toContain(OUTSIDE_VOICE_MARK);
-    expect(rows[0].querySelector('[data-testid="review-card-mark"]')).toBeNull();
-  });
-
-  it("What works counts the WORKING quotes and their sites, not the need's whole evidence (SP-449)", () => {
-    const { container } = draw();
-    const band = container.querySelector('[data-fr-region="what-works"]')!;
-    const rows = [...band.querySelectorAll('[data-testid="brief-need"]')];
-    expect(rows).toHaveLength(1);
-    expect(rows[0].querySelector(".fr-ws-review-headline")!.textContent).toBe("A NEED WELL PAST THE BAR");
-    // The need has 5 counted quotes from 3 sites, but only ONE working quote, from one site.
-    expect(rows[0].querySelector('[data-testid="review-card-open"]')!.textContent).toBe("1 counted quote · 1 site \u2193");
-  });
-
-  it("a thin spot says which floor it missed and what the merger rule withheld (B-6, B-7, B-8)", () => {
-    const { container } = draw();
-    const row = container.querySelector('[data-fr-region="thin-spots"] [data-testid="brief-need"]')!;
-    expect(row.querySelector('[data-testid="review-card-bar"]')!.textContent).toContain(WORKSPACE_STRINGS.belowTheBar);
-    expect(row.querySelector('[data-testid="brief-thin-reason"]')!.textContent)
-      .toBe("too few counted quotes · 3 undated Cox and 1 pre-merger Cox not counted");
-  });
-
-  it("each count opens its quotes, with brand · site · date and the reviewer's name MASKED", () => {
-    const { container } = draw();
-    const row = container.querySelector('[data-fr-region="hotspots"] [data-testid="brief-need"]')!;
-    fireEvent.click(row.querySelector('[data-testid="review-card-open"]')!);
-    expect(row.querySelector(".fr-ws-quote-meta")!.textContent).toBe("spectrum · ConsumerAffairs · September 30, 2026");
-    const text = row.querySelector(".fr-ws-quote-text")!.textContent ?? "";
+    const rows = [...container.querySelectorAll('[data-testid="brief-overview-row"]')];
+    const opener = rows[0].querySelector('[data-testid="brief-overview-open"]') as HTMLButtonElement;
+    expect(opener.tagName).toBe("BUTTON");
+    // the control is named by the signed counted-quotes line (B-10)
+    expect(opener.getAttribute("aria-label")).toBe("6 counted quotes \u00b7 3 sites");
+    expect(opener.getAttribute("aria-expanded")).toBe("false");
+    expect(rows[0].querySelector('[data-testid="quote-list"]')).toBeNull();
+    fireEvent.click(opener);
+    expect(opener.getAttribute("aria-expanded")).toBe("true");
+    expect(rows[0].querySelector(".fr-ws-quote-meta")!.textContent).toBe("spectrum \u00b7 ConsumerAffairs \u00b7 September 30, 2026");
+    const text = rows[0].querySelector(".fr-ws-quote-text")!.textContent ?? "";
     expect(text).not.toContain("Jessica");
     expect(text).toContain("[reviewer]");
     expect(text).toContain("Saginaw, MI");
+    fireEvent.click(opener);
+    expect(rows[0].querySelector('[data-testid="quote-list"]')).toBeNull();
+  });
+
+  it("an outside-voice-sourced need carries the mark where its quotes open; a public_research one does not", () => {
+    const { container } = draw();
+    const rows = [...container.querySelectorAll('[data-testid="brief-overview-row"]')];
+    fireEvent.click(rows[1].querySelector('[data-testid="brief-overview-open"]')!);
+    expect(rows[1].querySelector('[data-testid="review-card-mark"]')!.textContent).toContain(OUTSIDE_VOICE_MARK);
+    fireEvent.click(rows[0].querySelector('[data-testid="brief-overview-open"]')!);
+    expect(rows[0].querySelector('[data-testid="quote-list"]')).not.toBeNull();
+    expect(rows[0].querySelector('[data-testid="review-card-mark"]')).toBeNull();
+  });
+
+  it("What works counts the WORKING quotes and their sites, not the need's whole evidence (SP-449), and opens them in place", () => {
+    const { container } = draw();
+    const band = container.querySelector('[data-fr-region="what-works"]')!;
+    const rows = [...band.querySelectorAll('[data-testid="brief-works-row"]')];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].querySelector('[data-testid="brief-row-name"]')!.textContent).toBe("A NEED WELL PAST THE BAR");
+    // The need has 6 counted quotes from 3 sites, but only ONE working quote, from one site.
+    expect(rows[0].querySelector('[data-testid="brief-row-count"]')!.textContent).toBe("1");
+    const opener = rows[0].querySelector('[data-testid="brief-row-open"]') as HTMLButtonElement;
+    expect(opener.getAttribute("aria-label")).toBe("A NEED WELL PAST THE BAR \u00b7 1 counted quote \u00b7 1 site");
+    fireEvent.click(opener);
+    expect(rows[0].querySelectorAll('[data-testid="quote"]')).toHaveLength(1);
+  });
+
+  it("a thin spot says which floor it missed and what the merger rule withheld (B-6, B-7, B-8), and opens its quotes in place", () => {
+    const { container } = draw();
+    const row = container.querySelector('[data-fr-region="thin-spots"] [data-testid="brief-thin-row"]')!;
+    expect(row.querySelector('[data-testid="review-card-bar"]')!.textContent).toContain(WORKSPACE_STRINGS.belowTheBar);
+    expect(row.querySelector('[data-testid="brief-thin-why"]')!.textContent)
+      .toBe("too few counted quotes \u00b7 3 undated Cox and 1 pre-merger Cox not counted");
+    expect(row.querySelector('[data-testid="brief-row-count"]')!.textContent).toBe("2");
+    fireEvent.click(row.querySelector('[data-testid="brief-row-open"]')!);
+    expect(row.querySelectorAll('[data-testid="quote"]')).toHaveLength(2);
+  });
+
+  it("SP-674 ruling 2: EVERY need row on the page has a control that opens its quotes", () => {
+    const { container } = draw();
+    const needRows = [...container.querySelectorAll('[data-testid="brief-overview-row"], [data-testid="brief-works-row"], [data-testid="brief-thin-row"]')];
+    expect(needRows).toHaveLength(4);
+    for (const row of needRows) {
+      const opener = row.querySelector('button[aria-expanded]') as HTMLButtonElement | null;
+      expect(opener, `no opener on: ${row.textContent?.slice(0, 40)}`).not.toBeNull();
+      fireEvent.click(opener!);
+      expect(row.querySelector('[data-testid="quote-list"]'), `no quotes behind: ${row.textContent?.slice(0, 40)}`).not.toBeNull();
+    }
   });
 
   it("the questions band shows the newest five and states what is not shown (B-9)", () => {
@@ -160,6 +232,8 @@ describe("the Brief for an operator", () => {
       .toEqual(["QUESTION 7", "QUESTION 6", "QUESTION 5", "QUESTION 4", "QUESTION 3"]);
     expect(band.querySelector('[data-testid="brief-questions-foot"]')!.textContent)
       .toBe("7 live questions · 13 superseded not shown");
+    // SP-674: the column head is the short label with the live count
+    expect(band.querySelector("h2")!.textContent).toBe("Open questions7");
   });
 
   it("SP-456: every live question can be read, and the footer count stays", () => {
@@ -184,6 +258,8 @@ describe("the Brief for an operator", () => {
     const offenders = all.filter((t) => /\b[a-z0-9]+_[a-z0-9_]+\b/.test(t));
     expect(offenders, `underscore-cased value(s) on screen: ${JSON.stringify(offenders.slice(0, 3))}`).toEqual([]);
     // and the sentinel IS present, as its signed label — so this check is not vacuous
+    fireEvent.click(container.querySelector('[data-testid="brief-overview-open"]')!);
+    fireEvent.click(container.querySelector('[data-testid="quote-show-all"]')!);
     expect(container.textContent).toContain("Brand not recorded");
     expect(container.textContent).not.toContain("brand_not_recorded");
   });

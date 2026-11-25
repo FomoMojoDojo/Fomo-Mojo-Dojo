@@ -3035,8 +3035,9 @@ span.fr-mark-target .fr-mark-box { display: flex; }
   font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; cursor: pointer;
 }
 .fr-ws-review-open:hover { border-bottom-color: hsl(var(--fr-ink)); }
-/* "At the bar" — ONE declaration, ONE token, both surfaces (SP-445 / SP-452 item 6). */
-.fr-ws-bar-mark { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-electric)); }
+/* "At the bar" — ONE declaration, ONE token, both surfaces (SP-445 / SP-452 item 6). Grey since
+   SP-674 ruling 6: magenta is the marked words in a quote and nothing else. */
+.fr-ws-bar-mark { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
 .fr-ws-review-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 .fr-ws-review-card .fr-ws-review-body + .fr-ws-review-actions { margin-top: 1.5rem; }
 .fr-ws-btn {
@@ -3086,78 +3087,230 @@ span.fr-mark-target .fr-mark-box { display: flex; }
 .fr-ws-read .fr-ws-control:hover:not([disabled]) { background: hsl(var(--fr-paper) / 0.1); }
 .fr-ws-read .fr-ws-control[disabled] { color: hsl(var(--fr-paper) / 0.4); }
 /* The draft mark (SP-424) and the counts note (B-1) sit under the title, before the first band. */
-.fr-ws-brief-draft { margin: 1.25rem 0 0; font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: hsl(var(--fr-electric-sol)); }
+.fr-ws-brief-draft { margin: 1.25rem 0 0; font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
 .fr-ws-brief-note { margin: 1rem 0 0; max-width: 72ch; font-size: 0.875rem; line-height: 1.65; color: hsl(var(--fr-paper) / 0.8); }
-.fr-ws-brief-key { margin: 0 0 1rem; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-paper) / 0.5); }
-.fr-ws-brief-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; background: hsl(var(--fr-paper) / 0.15); }
-.fr-ws-brief-row { padding: 18px 0 18px 16px; background: hsl(var(--fr-slate)); }
-.fr-ws-brief-row-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
-.fr-ws-brief-statement { margin: 0; max-width: 72ch; font-size: 0.9375rem; font-weight: 500; line-height: 1.5; color: hsl(var(--fr-paper)); }
-.fr-ws-brief-facts { margin: 0.375rem 0 0; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-paper) / 0.5); }
-.fr-ws-brief-reason { margin: 0.25rem 0 0; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-electric-sol)); }
+.fr-ws-brief-reason { margin: 0.25rem 0 0; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
 .fr-ws-brief-question { margin: 0; max-width: 72ch; font-size: 0.9375rem; line-height: 1.55; color: hsl(var(--fr-paper) / 0.9); }
 .fr-ws-brief-foot { margin: 1rem 0 0; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-paper) / 0.5); }
 
-/* SP-458 (2026-11-20): the proposed-need tag. A second tag beside the outside-voice one, in the
-   amber "not settled yet" register rather than the green of a finding that is settled — the card is
-   in the Brief and in its counts, and the colour is the one thing saying nobody has ruled on it. */
-.fr-ws-review-tag--proposed {
-  background: rgba(255, 176, 32, 0.14);
-  border-color: rgba(255, 176, 32, 0.42);
-  color: #ffc766;
+/* SP-458 (2026-11-20): the proposed-need tag — a SECOND tag beside the outside-voice one. SP-674
+   ruling 6 (2026-11-25): it takes the same green as that tag on every surface, the review group
+   included; amber now means "not working" and nothing else. The modifier class stays on the element
+   as the tag's hook and carries no rule of its own. */
+
+/* ── The Brief, board BR4 with the BR1b panel (SP-674, 2026-11-25) ────────────────────────────────
+   Layout and hierarchy follow the signed boards; every color is an fr token.
+
+   THE THREE POLARITY COLORS LIVE HERE AND NOWHERE ELSE (SP-675): amber for not working, grey for
+   mixed, green for working. Every dot, bar segment and quote tick carries `.fr-ws-pattern-polarity`
+   with `data-fr-polarity` and paints itself in `currentColor`. Magenta (--fr-electric) is the marked
+   words in a quote and nothing else on this page. */
+.fr-ws-pattern-polarity { color: hsl(var(--fr-electric-sol)); }
+.fr-ws-pattern-polarity[data-fr-polarity="mixed"] { color: hsl(var(--fr-faint)); }
+.fr-ws-pattern-polarity[data-fr-polarity="working"] { color: hsl(var(--fr-lime)); }
+.fr-ws-dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 999px; background: currentColor; }
+.fr-ws-pol-count { display: inline-flex; align-items: center; gap: 6px; }
+.fr-ws-pol-word { display: inline-block; }
+.fr-ws-pol-word::first-letter { text-transform: uppercase; }
+/* One bar of up to three segments; each segment grows by its count. */
+.fr-ws-brief-bar { display: flex; height: 10px; min-width: 2px; }
+.fr-ws-brief-bar > i { display: block; height: 100%; min-width: 2px; background: currentColor; }
+
+/* The page: the content and, when a pattern is open, the panel BESIDE it. The panel takes its width
+   out of the row, so the page narrows and nothing is ever covered. */
+.fr-ws-brief { display: flex; align-items: flex-start; }
+.fr-ws-brief-main { flex: 1 1 0; min-width: 0; max-width: 1180px; }
+.fr-ws-brief-section, .fr-ws-hot { scroll-margin-top: calc(var(--fr-shell-h) + 16px); }
+.fr-ws-brief-section:focus, .fr-ws-hot:focus { outline: none; }
+
+/* Header: the draft mark and the note on the left, the four numbers on the right. The numbers reuse
+   the score strip's value-over-label pair (.fr-ws-scorecell-*), on hairlines instead of tints. */
+.fr-ws-brief-head { display: grid; gap: 2rem; }
+@media (min-width: 1024px) { .fr-ws-brief-head { grid-template-columns: minmax(0, 1fr) 22rem; column-gap: 4rem; align-items: end; } }
+.fr-ws-brief-stats { display: grid; grid-template-columns: 1fr 1fr; margin: 0; border-top: 1px solid hsl(var(--fr-paper) / 0.2); }
+.fr-ws-brief-stat { display: flex; flex-direction: column; gap: 6px; padding: 18px 0; border-bottom: 1px solid hsl(var(--fr-paper) / 0.2); }
+.fr-ws-brief-stat:nth-child(even) { padding-left: 20px; border-left: 1px solid hsl(var(--fr-paper) / 0.2); }
+.fr-ws-brief-stat .fr-ws-scorecell-label { color: hsl(var(--fr-faint)); }
+.fr-ws-brief-stat .fr-ws-scorecell-value { margin: 0; font-size: 2.25rem; line-height: 1; }
+
+/* Section links: the outlined control on slate, filled for the section in view. */
+.fr-ws-brief-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2.5rem 0 3.5rem; }
+.fr-ws-brief-tab { padding: 10px 14px; font-size: 11px; letter-spacing: 0.14em; }
+.fr-ws-read .fr-ws-brief-tab[aria-current] { border-color: hsl(var(--fr-paper)); background: hsl(var(--fr-paper)); color: hsl(var(--fr-ink)); font-weight: 700; }
+.fr-ws-brief-tab-n { margin-left: 8px; }
+.fr-ws-brief-notbuilt { margin: 0 0 0 14px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: hsl(var(--fr-paper) / 0.4); }
+
+/* Hotspots: the head, the legend, and one row per need — name, bar, count, sites. */
+.fr-ws-brief-sectionhead { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
+.fr-ws-brief-h2 { margin: 0; font-size: 2rem; font-weight: 700; line-height: 1.1; letter-spacing: -0.02em; }
+.fr-ws-brief-lede { margin: 0.5rem 0 0; font-size: 0.875rem; color: hsl(var(--fr-paper) / 0.7); }
+.fr-ws-brief-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 0; font-size: 12px; color: hsl(var(--fr-paper) / 0.7); }
+.fr-ws-brief-chart { list-style: none; margin: 0; padding: 0; }
+.fr-ws-brief-chart-line { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) 2.5rem 4.5rem; column-gap: 20px; align-items: center; padding: 7px 0; }
+.fr-ws-brief-chart-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: hsl(var(--fr-paper) / 0.75); }
+.fr-ws-brief-chart-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; text-decoration: none; }
+.fr-ws-brief-chart-row[data-fr-patterns] .fr-ws-brief-chart-text { font-weight: 700; color: hsl(var(--fr-paper)); }
+a.fr-ws-brief-chart-text:hover { text-decoration: underline; }
+.fr-ws-brief-chart-name .fr-ws-review-tag, .fr-ws-brief-chart-name .fr-ws-bar-mark,
+.fr-ws-brief-endrow-tags .fr-ws-review-tag { flex: none; padding: 2px 6px; font-size: 8px; text-transform: uppercase; white-space: nowrap; }
+.fr-ws-brief-chart-name .fr-ws-bar-mark { padding: 0; }
+.fr-ws-brief-chart-count { font-size: 14px; font-weight: 700; text-align: right; color: hsl(var(--fr-paper)); }
+.fr-ws-brief-chart-sites { font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: hsl(var(--fr-faint)); white-space: nowrap; }
+/* A need with no patterns opens its quotes from its own row: the count and the sites are the control. */
+.fr-ws-brief-chart-open { grid-column: 3 / 5; display: grid; grid-template-columns: 2.5rem 4.5rem; column-gap: 20px; align-items: center; cursor: pointer; }
+.fr-ws-brief-chart-open .fr-ws-brief-chart-count { text-decoration: underline; text-decoration-color: hsl(var(--fr-paper) / 0.35); text-underline-offset: 4px; }
+.fr-ws-brief-chart-open:hover .fr-ws-brief-chart-count { text-decoration-color: hsl(var(--fr-paper)); }
+.fr-ws-brief-chart-open:focus-visible, .fr-ws-brief-endrow:focus-visible, .fr-ws-pattern-name:focus-visible,
+.fr-ws-brief-panel-close:focus-visible, .fr-ws-brief-tab:focus-visible, .fr-ws-read .fr-ws-quote-more:focus-visible,
+.fr-ws-read .fr-ws-review-open:focus-visible { outline: 2px solid hsl(var(--fr-lime)); outline-offset: 2px; }
+.fr-ws-brief-inplace { margin: 10px 0 18px; }
+.fr-ws-brief-inplace-tags { margin: 0 0 10px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
+@media (max-width: 767px) {
+  .fr-ws-brief-chart-line { grid-template-columns: minmax(0, 1fr) 2.5rem 4.5rem; row-gap: 4px; }
+  .fr-ws-brief-chart-name { grid-column: 1 / -1; }
+  .fr-ws-brief-chart-open { grid-column: 2 / 4; }
 }
 
-/* ── The pattern band under a hotspot (SP-465, 2026-11-20) ────────────────────────────────────────
-   Set in from the need statement, because a pattern is subordinate to the need: it is the particular
-   thing that keeps happening under it, not a sibling finding. The left rule carries the eye down the
-   list, so several patterns under one need read as one group rather than four loose rows. */
-.fr-ws-patterns { margin: 10px 0 4px; padding-left: 12px; border-left: 2px solid rgba(255, 255, 255, 0.1); }
-.fr-ws-patterns-label { margin: 0 0 6px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; }
-.fr-ws-pattern-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.fr-ws-pattern-row { margin: 0; }
-.fr-ws-pattern-meta { margin: 0 0 2px; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 10px; }
-.fr-ws-pattern-strength { color: var(--fr-electric, #b6ff3a); letter-spacing: 0.04em; text-transform: uppercase; }
-.fr-ws-pattern-support { opacity: 0.6; }
-.fr-ws-pattern-draft { opacity: 0.45; font-style: italic; }
-.fr-ws-pattern-name { margin: 0; font-size: 14px; line-height: 1.35; }
-/* The representative quote is a customer's own words, so it reads as a quotation and not as our prose. */
-.fr-ws-pattern-quote {
-  margin: 4px 0 0; padding: 0 0 0 10px; border-left: 2px solid rgba(255, 255, 255, 0.14);
-  font-size: 12px; line-height: 1.45; opacity: 0.72;
+/* One hotspot with patterns: the large count on the left; title, one status bar, the patterns. */
+.fr-ws-hot { display: grid; gap: 1.25rem; margin-top: 3.5rem; padding-top: 2.5rem; border-top: 2px solid hsl(var(--fr-paper)); }
+@media (min-width: 768px) { .fr-ws-hot { grid-template-columns: 9rem minmax(0, 1fr); column-gap: 2rem; } }
+.fr-ws-hot-count { display: flex; flex-direction: column; gap: 2px; }
+.fr-ws-hot-num { font-size: 4.25rem; }
+.fr-ws-hot-count .fr-mono { font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: hsl(var(--fr-paper) / 0.55); }
+.fr-ws-hot-body { min-width: 0; }
+.fr-ws-hot-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 0.75rem; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
+.fr-ws-hot-title { margin: 0; max-width: 34ch; font-size: 1.625rem; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; color: hsl(var(--fr-paper)); }
+.fr-ws-hot-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0.9rem 0 0; font-size: 13px; color: hsl(var(--fr-paper) / 0.85); }
+.fr-ws-hot-status .fr-ws-brief-bar { flex: none; max-width: 100%; }
+.fr-ws-hot-brands { color: hsl(var(--fr-faint)); }
+.fr-ws-hot-brand { display: inline-block; }
+.fr-ws-hot-brand::first-letter { text-transform: uppercase; }
+.fr-ws-hot-all { margin: 1.25rem 0 0; }
+
+/* ── The pattern band under a hotspot (SP-465; rebuilt to BR4 under SP-674) ───────────────────────
+   One row per pattern: how strong (three bars and the word), what it says about the outcome (a dot
+   in the polarity color; the word is kept for a screen reader), the claim, one tick per supporting
+   quote, the sites, and the toggle over the quote the judge picked. The claim is a button: it opens
+   the evidence panel. */
+.fr-ws-patterns { margin: 1.5rem 0 0; }
+.fr-ws-patterns-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 1rem; margin-bottom: 4px; }
+.fr-ws-patterns-label { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: hsl(var(--fr-paper)); }
+/* The coverage line is a caveat on the band, not a finding: plain, beside the head. */
+.fr-ws-pattern-coverage { margin: 0; font-size: 12px; color: hsl(var(--fr-faint)); }
+.fr-ws-pattern-rows { list-style: none; margin: 0; padding: 0; }
+.fr-ws-pattern-row {
+  display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px 64px 118px; column-gap: 20px; row-gap: 8px;
+  align-items: center; margin: 0; padding: 12px 0; border-top: 1px solid hsl(var(--fr-paper) / 0.15);
 }
-.fr-ws-pattern-clip { opacity: 0.6; }
-
-/* SP-470 / SP-476 (2026-11-20): a pattern's polarity, and the coverage line under the band.
-   The polarity is the one thing that tells a reader whether a row is a complaint or a compliment, so
-   it is coloured rather than merely written: the lime accent for what is working, the ordinary dim
-   for what is not (the band is mostly complaints, and colouring those would colour everything). */
-.fr-ws-pattern-polarity { opacity: 0.55; letter-spacing: 0.03em; }
-/* SP-670: --fr-electric holds bare HSL numbers, so it is a color only inside hsl(). */
-.fr-ws-pattern-polarity[data-fr-polarity="working"] { color: hsl(var(--fr-electric)); opacity: 0.9; }
-.fr-ws-pattern-polarity[data-fr-polarity="mixed"] { color: #ffc766; opacity: 0.85; }
-/* The coverage line is deliberately plain and last: it is a caveat on the band above it, not a finding. */
-.fr-ws-pattern-coverage { margin: 8px 0 0; font-size: 10px; opacity: 0.5; }
-
-/* ── v3: the PARTS and the "Mentioned once" group (SP-502 / SP-488, 2026-11-20) ──────────────────
-   THE PARTS are what the judge actually ruled on, so they are visible — but they are the claim's
-   working-out, not findings of their own, so they sit under it at the quote's size and not at the
-   claim's. The leading marker is a middle dot rather than a bullet: a bulleted list of three
-   predicates reads as three separate findings, which is the misreading v2 produced in prose. */
-.fr-ws-pattern-parts { list-style: none; margin: 3px 0 0; padding: 0; display: grid; gap: 1px; }
-.fr-ws-pattern-part { font-size: 11px; line-height: 1.4; opacity: 0.6; padding-left: 10px; position: relative; }
-.fr-ws-pattern-part::before { content: "\00b7"; position: absolute; left: 2px; opacity: 0.7; }
-
-/* SP-488: a pattern resting on ONE quote. Grouped at the foot of the band, below the coverage line's
-   register and above nothing — the last thing in the band, because it is the weakest thing in it.
-   No strength, no quote, no accent colour: a single mention must not be able to look like a rule. */
-.fr-ws-pattern-once { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
-.fr-ws-pattern-once-label {
-  margin: 0 0 4px; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
-  font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.45;
+.fr-ws-pattern-row[data-fr-selected] { background: hsl(var(--fr-paper) / 0.06); box-shadow: inset 3px 0 0 hsl(var(--fr-paper)); padding-left: 14px; padding-right: 14px; }
+.fr-ws-pattern-strengthcell { display: flex; align-items: center; gap: 10px; }
+.fr-ws-pattern-bars { display: inline-flex; align-items: flex-end; gap: 3px; height: 16px; flex: none; }
+.fr-ws-pattern-bars > i { display: block; box-sizing: border-box; width: 5px; border: 1.5px solid hsl(var(--fr-paper) / 0.35); }
+.fr-ws-pattern-bars > i:nth-child(1) { height: 8px; }
+.fr-ws-pattern-bars > i:nth-child(2) { height: 12px; }
+.fr-ws-pattern-bars > i:nth-child(3) { height: 16px; }
+.fr-ws-pattern-bars[data-fr-level="1"] > i:nth-child(-n+1),
+.fr-ws-pattern-bars[data-fr-level="2"] > i:nth-child(-n+2),
+.fr-ws-pattern-bars[data-fr-level="3"] > i:nth-child(-n+3) { background: hsl(var(--fr-paper)); border-color: hsl(var(--fr-paper)); }
+/* SP-675: the strength word is grey. (It asked for electric through a bare var() and got nothing.) */
+.fr-ws-pattern-strength { font-size: 9px; line-height: 1.3; letter-spacing: 0.14em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+.fr-ws-pattern-claim { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.fr-ws-pattern-dot { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 999px; background: currentColor; }
+.fr-ws-pattern-name { margin: 0; padding: 0; border: 0; background: none; text-align: left; font-family: inherit; font-size: 17px; font-weight: 600; line-height: 1.3; color: hsl(var(--fr-paper)); cursor: pointer; }
+.fr-ws-pattern-name:hover { text-decoration: underline; text-underline-offset: 4px; }
+.fr-ws-pattern-support { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
+.fr-ws-pattern-ticks { display: flex; flex-wrap: wrap; gap: 2px; }
+.fr-ws-pattern-ticks > i { display: block; width: 6px; height: 12px; background: currentColor; }
+.fr-ws-pattern-count { font-size: 13px; color: hsl(var(--fr-paper) / 0.85); }
+.fr-ws-pattern-sites { font-size: 13px; text-align: right; color: hsl(var(--fr-faint)); white-space: nowrap; }
+.fr-ws-pattern-toggle { justify-self: end; white-space: nowrap; }
+/* The quote is a customer's own words, set off on a darker ground. The marked words are
+   .fr-unstated-product, the First Read's matched-phrase treatment — the one magenta on the page. */
+.fr-ws-pattern-quote { grid-column: 2 / -1; margin: 2px 0 6px; padding: 12px 18px; background: hsl(var(--fr-ink) / 0.25); font-size: 15px; line-height: 1.55; color: hsl(var(--fr-paper) / 0.85); }
+/* While the panel is open beside the page, a row keeps its strength, claim and ticks (BR1b). */
+.fr-ws-brief[data-fr-panel="open"] .fr-ws-pattern-row { grid-template-columns: 120px minmax(0, 1fr) auto; }
+.fr-ws-brief[data-fr-panel="open"] .fr-ws-pattern-sites,
+.fr-ws-brief[data-fr-panel="open"] .fr-ws-pattern-toggle,
+.fr-ws-brief[data-fr-panel="open"] .fr-ws-pattern-rows .fr-ws-pattern-quote { display: none; }
+.fr-ws-brief[data-fr-panel="open"] .fr-ws-pattern-support { justify-content: flex-end; }
+/* Below 1440px the narrowed page has no room for the strength beside the claim: the strength sits on
+   its own line above it. Below 1280px the hotspot's count sits above its title too. */
+@media (max-width: 1439px) {
+  .fr-ws-brief[data-fr-panel="open"] .fr-ws-pattern-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .fr-ws-brief[data-fr-panel="open"] .fr-ws-pattern-strengthcell { grid-column: 1 / -1; }
 }
-.fr-ws-pattern-once-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
-.fr-ws-pattern-once-row { font-size: 12px; line-height: 1.4; opacity: 0.62; }
-/* SP-665: each mention carries its polarity, in the shown patterns' own tag. Layout only — the tag's
-   look is `.fr-ws-pattern-polarity` above; it sits before the claim at the meta line's size. */
-.fr-ws-pattern-once-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
-.fr-ws-pattern-once-row .fr-ws-pattern-polarity { font-size: 10px; }
+@media (max-width: 1279px) {
+  .fr-ws-brief[data-fr-panel="open"] .fr-ws-hot { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 899px) {
+  .fr-ws-pattern-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .fr-ws-pattern-strengthcell, .fr-ws-pattern-claim { grid-column: 1 / -1; }
+  .fr-ws-pattern-quote { grid-column: 1 / -1; }
+  .fr-ws-pattern-sites { text-align: left; }
+}
+
+/* SP-488: a pattern resting on ONE quote is a mention, not a rule. One summary row — the count and
+   how the mentions divide — and the list behind "Show". No strength, no quote. */
+.fr-ws-pattern-once { padding: 12px 0; border-top: 1px solid hsl(var(--fr-paper) / 0.15); }
+.fr-ws-pattern-once-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.fr-ws-pattern-once-label { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+.fr-ws-pattern-once-split { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--fr-font-display); font-size: 13px; letter-spacing: 0; text-transform: none; color: hsl(var(--fr-paper) / 0.85); }
+.fr-ws-pattern-once-rows { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.fr-ws-pattern-once-row { display: flex; align-items: center; gap: 10px; font-size: 14px; line-height: 1.4; color: hsl(var(--fr-paper) / 0.8); }
+.fr-ws-pattern-once-row .fr-ws-pattern-dot { width: 8px; height: 8px; }
+/* The parts the judge ruled on — shown in the panel, for a pattern with two or three (SP-502). */
+.fr-ws-pattern-parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.fr-ws-pattern-part { position: relative; padding-left: 12px; font-size: 13px; line-height: 1.45; color: hsl(var(--fr-paper) / 0.7); }
+.fr-ws-pattern-part::before { content: "\00b7"; position: absolute; left: 2px; }
+
+/* The ending: three columns. Every row opens its quotes in place. */
+.fr-ws-brief-ending { display: grid; gap: 3rem; margin-top: 4rem; padding-top: 2.5rem; border-top: 2px solid hsl(var(--fr-paper)); }
+@media (min-width: 768px) { .fr-ws-brief-ending { grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 2.5rem; } }
+.fr-ws-brief[data-fr-panel="open"] .fr-ws-brief-ending { grid-template-columns: minmax(0, 1fr); }
+.fr-ws-brief-colhead { margin: 0 0 1rem; font-size: 1.25rem; font-weight: 700; line-height: 1.2; }
+.fr-ws-brief-colhead-n { margin-left: 6px; font-weight: 400; color: hsl(var(--fr-faint)); }
+.fr-ws-brief-endrows { list-style: none; margin: 0 0 1rem; padding: 0; }
+.fr-ws-brief-endrow-li { padding: 10px 0; border-top: 1px solid hsl(var(--fr-paper) / 0.15); }
+.fr-ws-brief-endrow { display: flex; width: 100%; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 0; border: 0; background: none; text-align: left; font-family: inherit; font-size: 13px; line-height: 1.45; color: hsl(var(--fr-paper) / 0.85); cursor: pointer; }
+.fr-ws-brief-endrow:hover { color: hsl(var(--fr-paper)); }
+.fr-ws-brief-endrow-n { display: inline-flex; flex: none; align-items: center; gap: 6px; font-weight: 700; color: hsl(var(--fr-paper)); }
+.fr-ws-brief-endrow-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 0; }
+.fr-ws-brief-endrow-li .fr-ws-brief-reason { margin: 6px 0 0; line-height: 1.6; }
+.fr-ws-brief-question-li { padding: 10px 0; border-top: 1px solid hsl(var(--fr-paper) / 0.15); }
+.fr-ws-brief-ending .fr-ws-brief-question { font-size: 13px; line-height: 1.5; }
+
+/* The evidence panel (BR1b). Beside the page from 1024px — 400px wide, 500px from 1280px — sticky
+   under the shell header and ending above the 92px the page reserves for the bottom cluster, so it
+   never meets the cluster. Below 1024px it sits in the flow, under the row it belongs to. */
+.fr-ws-brief-panel {
+  box-sizing: border-box; display: flex; flex-direction: column; gap: 20px; padding: 28px 24px;
+  background: hsl(var(--fr-ink) / 0.45); border: 1px solid hsl(var(--fr-paper) / 0.2); color: hsl(var(--fr-paper));
+}
+.fr-ws-brief-panel[data-fr-inflow] { grid-column: 1 / -1; margin-top: 6px; }
+@media (min-width: 1024px) {
+  .fr-ws-brief-panel:not([data-fr-inflow]) {
+    flex: 0 0 400px; width: 400px; margin-left: 2.5rem; margin-right: -64px; padding: 32px 36px;
+    position: sticky; top: var(--fr-shell-h); height: calc(100vh - var(--fr-shell-h) - 92px); overflow-y: auto;
+    border-width: 0 0 0 1px;
+  }
+}
+@media (min-width: 1280px) { .fr-ws-brief-panel:not([data-fr-inflow]) { flex-basis: 500px; width: 500px; } }
+.fr-ws-brief-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.fr-ws-brief-panel-pos { margin: 0; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+.fr-ws-brief-panel-close { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid hsl(var(--fr-paper) / 0.3); background: none; color: hsl(var(--fr-paper)); cursor: pointer; }
+.fr-ws-brief-panel-close:hover { background: hsl(var(--fr-paper) / 0.1); }
+.fr-ws-brief-panel-meta { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.fr-ws-brief-panel-meta .fr-ws-pattern-strength { font-size: 11px; font-weight: 700; color: hsl(var(--fr-paper)); }
+.fr-ws-brief-panel-polarity { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: hsl(var(--fr-paper) / 0.85); }
+.fr-ws-brief-panel-title { margin: 0; font-size: 1.75rem; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; }
+.fr-ws-brief-panel-title:focus { outline: none; }
+.fr-ws-brief-panel-facts { display: grid; grid-template-columns: 1fr 1fr; margin: 0; border-top: 1px solid hsl(var(--fr-paper) / 0.2); border-bottom: 1px solid hsl(var(--fr-paper) / 0.2); }
+.fr-ws-brief-panel-fact { display: flex; flex-direction: column-reverse; gap: 6px; padding: 16px 0; }
+.fr-ws-brief-panel-fact + .fr-ws-brief-panel-fact { padding-left: 18px; border-left: 1px solid hsl(var(--fr-paper) / 0.2); }
+.fr-ws-brief-panel-fact dt { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+.fr-ws-brief-panel-fact dd { margin: 0; font-size: 1.875rem; font-weight: 700; line-height: 1; }
+.fr-ws-brief-panel-label { margin: 0; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: hsl(var(--fr-faint)); }
+.fr-ws-brief-panel .fr-ws-pattern-quote { margin: 0; padding: 0 0 0 18px; background: none; border-left: 3px solid hsl(var(--fr-paper) / 0.3); font-size: 1.125rem; line-height: 1.5; color: hsl(var(--fr-paper) / 0.9); }
+.fr-ws-brief-panel-note { margin: 0; font-size: 13px; line-height: 1.5; color: hsl(var(--fr-faint)); }
+.fr-ws-brief-panel-foot { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 1rem; margin-top: auto; padding-top: 20px; border-top: 1px solid hsl(var(--fr-paper) / 0.2); }
+.fr-ws-brief-panel-foot .fr-ws-brief-draft { margin: 0; }

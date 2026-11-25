@@ -2,7 +2,7 @@
 // caught: "at the bar" WITHOUT the `meets` term marked N6 and N8 — both 2 counted from 2 sites, i.e.
 // failures of the quote floor — as sitting at the bar, when they are thin spots.
 import { describe, expect, it } from "vitest";
-import { hotspots, isAtTheBar, polarityTotals, thinFloors, thinSpots, whatWorks, type NeedWithTally } from "./briefSections";
+import { brandTotals, hotspots, isAtTheBar, polarityTotals, thinFloors, thinSpots, whatWorks, type NeedWithTally } from "./briefSections";
 import { tallyNeed, type EvidenceRow } from "./needEvidenceCounting";
 
 const CA = "https://www.consumeraffairs.com/internet/spectrum.html";
@@ -79,6 +79,12 @@ describe("which floor a thin spot missed, and the polarity totals", () => {
     expect(thinFloors(t([row(CA)]))).toEqual({ fewQuotes: true, fewSites: true });
     expect(thinFloors(t([row(CA), row(CA), row(CA)]))).toEqual({ fewQuotes: false, fewSites: true });
     expect(thinFloors(t([row(CA), row(APP)]))).toEqual({ fewQuotes: true, fewSites: false });
+  });
+  it("SP-674: brand totals are each brand's counted quotes, most first, and add up to the need's count", () => {
+    const tally = t([row(CA, "working"), row(APP, "not working"), row(PLAY, "mixed"), row(CA, "not working", "cox"), row(APP, "not working", "brand_not_recorded")]);
+    expect(brandTotals(tally)).toEqual([{ brand: "spectrum", counted: 3 }, { brand: "brand_not_recorded", counted: 1 }, { brand: "cox", counted: 1 }]);
+    expect(brandTotals(tally).reduce((n, b) => n + b.counted, 0)).toBe(tally.counted);
+    expect(brandTotals(t([]))).toEqual([]);
   });
   it("polarity totals sum across brands", () => {
     expect(polarityTotals(t([row(CA, "working"), row(APP, "not working", "cox"), row(PLAY, "mixed")])))

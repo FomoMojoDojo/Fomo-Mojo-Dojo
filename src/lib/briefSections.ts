@@ -30,6 +30,15 @@ export function polarityTotals(t: NeedTally): { working: number; notWorking: num
   return { working, notWorking, mixed };
 }
 
+/** SP-674: how many counted quotes each brand carries, most first — the brand split that replaced
+ *  the per-brand polarity triple. Stored brand values; the view maps them to labels. */
+export function brandTotals(t: NeedTally): Array<{ brand: string; counted: number }> {
+  return Object.keys(t.byBrandPolarity).map((brand) => {
+    const by = t.byBrandPolarity[brand];
+    return { brand, counted: (by.working ?? 0) + (by["not working"] ?? 0) + (by.mixed ?? 0) };
+  }).filter((b) => b.counted > 0).sort((a, b) => b.counted - a.counted || a.brand.localeCompare(b.brand));
+}
+
 /** HOTSPOTS (B-2): the needs that clear the bar, most-evidenced first. */
 export function hotspots<T>(rows: readonly NeedWithTally<T>[]): NeedWithTally<T>[] {
   return rows.filter((r) => r.tally.meets)

@@ -43,6 +43,11 @@ export type NeedPattern = {
   /** SP-665: the words of the representative quote the judge found — need_pattern_quotes.states_span
    *  of this pattern's own row for that quote. null on a pre-v3 row, which stored no span. */
   representativeSpan: string | null;
+  /** SP-674: the quotes the judge kept under this pattern — the rows `supporting` counts — most
+   *  recent first, undated last. From reads this hook already makes; `brand` is empty because
+   *  signals carries none, and the view fills it from the need's own counted quotes. Optional so a
+   *  caller that builds a pattern by hand (a test) need not supply it. */
+  quotes?: QuoteRow[];
 };
 
 type PatternRow = {
@@ -139,6 +144,12 @@ export function useNeedPatterns(companyId?: string | null) {
                   eventDate: rep.event_date ? String(rep.event_date).slice(0, 10) : null,
                 }
               : null,
+            quotes: kept.map((r) => sigById.get(r.signal_id)).filter((x): x is NonNullable<typeof x> => Boolean(x))
+              .map((sg) => ({
+                signalId: sg.id, quote: sg.quote, brand: "", sourceUrl: sg.source_url,
+                eventDate: sg.event_date ? String(sg.event_date).slice(0, 10) : null,
+              }))
+              .sort((a, b) => (b.eventDate ?? "").localeCompare(a.eventDate ?? "") || a.signalId.localeCompare(b.signalId)),
             representativeSpan: rep
               ? ((byPattern.get(p.id) ?? []).find((r) => r.signal_id === rep.id)?.states_span ?? null)
               : null,

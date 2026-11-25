@@ -1,12 +1,13 @@
 // ── SP-465 / SP-463 / SP-459 / SP-458: the pattern band, and the proposed-need mark ──────────────
 import { describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PatternBand } from "./PatternBand";
+import { BriefPanel } from "./BriefPanel";
 import {
-  WORKSPACE_STRINGS, claimForDisplay, mentionedOnceHeader, orderMentionedOnce, orderShownPatterns,
-  patternCoverageLine, patternSupportLine, strengthLabel,
+  WORKSPACE_STRINGS, allQuotesLine, claimForDisplay, mentionedOnceHeader, orderMentionedOnce, orderShownPatterns,
+  panelPositionLine, patternCoverageLine, patternSupportLine, patternsHeader, polaritySplit, sitesLine, strengthLabel, strengthLevel,
 } from "./workspaceNav";
 import { SPAN_QUOTE_SHORT_CHARS, spanExcerpt } from "@/lib/quoteSpan";
 import type { NeedPattern } from "@/hooks/useNeedPatterns";
@@ -40,20 +41,32 @@ describe("the pattern band", () => {
     expect(getByTestId("pattern-band").textContent).toContain(WORKSPACE_STRINGS.patternsLabel);
     expect(getByTestId("pattern-name").textContent).toBe("The app logs you out and asks for a sign-in each time");
     expect(getByTestId("pattern-strength").textContent).toBe("Likely rule");
-    expect(getByTestId("pattern-support").textContent).toBe("7 supporting quotes · 3 sites");
+    // SP-674: the support reads across — one tick per supporting quote, the number, the sites — and
+    // the group's name is still the signed support line
+    expect(getByTestId("pattern-support").getAttribute("aria-label")).toBe("7 supporting quotes · 3 sites");
+    expect(getByTestId("pattern-ticks").children.length).toBe(7);
+    expect(getByTestId("pattern-supporting").textContent).toBe("7");
+    expect(getByTestId("pattern-sites").textContent).toBe("3 sites");
+    expect(getByTestId("pattern-band-label").textContent).toBe("What keeps happening \u00b7 1");
   });
 
   it("SP-456's singular forms hold here too", () => {
     // a 2-quote pattern from ONE site: 'possible failure' stays a row, so the singular site form shows
     const { getByTestId } = render(<PatternBand patterns={[p({ supporting: 2, sites: 1, strength: "possible failure" })]} brands={[]} />);
-    expect(getByTestId("pattern-support").textContent).toBe("2 supporting quotes · 1 site");
+    expect(getByTestId("pattern-support").getAttribute("aria-label")).toBe("2 supporting quotes · 1 site");
+    expect(getByTestId("pattern-sites").textContent).toBe("1 site");
     expect(getByTestId("pattern-strength").textContent).toBe("Possible failure");
   });
 
-  it("SP-459: an unsigned pattern carries the draft mark, and a signed one does not", () => {
-    const draft = render(<PatternBand patterns={[p()]} brands={[]} />);
+  const panelOf = (pat: NeedPattern, quotes: NeedPattern["quotes"] = []) =>
+    render(<BriefPanel pattern={pat} index={1} total={3} quotes={quotes ?? []} brands={["Spectrum"]} onClose={() => {}} />);
+
+  it("SP-459 / SP-674: the draft mark is in the PANEL — an unsigned pattern carries it, a signed one does not — and no row carries it", () => {
+    const row = render(<PatternBand patterns={[p()]} brands={[]} />);
+    expect(row.container.querySelector('[data-testid="pattern-draft"]')).toBeNull();
+    const draft = panelOf(p());
     expect(draft.getByTestId("pattern-draft").textContent).toBe(WORKSPACE_STRINGS.briefDraftMark);
-    const signed = render(<PatternBand patterns={[p({ id: "p2", draft: false })]} brands={[]} />);
+    const signed = panelOf(p({ id: "p2", draft: false }));
     expect(signed.container.querySelector('[data-testid="pattern-draft"]')).toBeNull();
   });
 
@@ -94,12 +107,14 @@ describe("the pattern band", () => {
   });
 
   // ── v3: the parts, the polarity-aware strength and the SP-488 group ───────────────────────────
-  it("SP-502: the parts the judge ruled on are shown, in order", () => {
-    const { container, getByTestId } = render(
-      <PatternBand patterns={[p({ parts: ["the final month is billed in full", "no proration is applied"] })]} brands={[]} />);
+  it("SP-502 / SP-674: the parts the judge ruled on are shown in the panel, in order; the row shows the claim alone", () => {
+    const pat = p({ parts: ["the final month is billed in full", "no proration is applied"] });
+    const row = render(<PatternBand patterns={[pat]} brands={[]} />);
+    expect(row.container.querySelector('[data-testid="pattern-part"]')).toBeNull();
+    expect(row.getByTestId("pattern-name").textContent).toBe("The app logs you out and asks for a sign-in each time");
+    const { container } = panelOf(pat);
     const parts = [...container.querySelectorAll('[data-testid="pattern-part"]')].map((n) => n.textContent);
     expect(parts).toEqual(["the final month is billed in full", "no proration is applied"]);
-    expect(getByTestId("pattern-name").textContent).toBe("The app logs you out and asks for a sign-in each time");
   });
 
   it("a pre-v3 row has no parts and shows the claim alone — not an empty list", () => {
@@ -136,6 +151,12 @@ describe("the pattern band", () => {
       ]} />);
     // only the real rule is a row
     expect(container.querySelectorAll('[data-testid="pattern-row"]').length).toBe(1);
+    // SP-674: the mentions start behind "Show" — the summary row is what stands on the page
+    expect(container.querySelectorAll('[data-testid="pattern-once-row"]').length).toBe(0);
+    expect(getByTestId("pattern-once-toggle").textContent).toContain(WORKSPACE_STRINGS.show);
+    fireEvent.click(getByTestId("pattern-once-toggle"));
+    expect(getByTestId("pattern-once-toggle").textContent).toContain(WORKSPACE_STRINGS.hide);
+    expect(getByTestId("pattern-once-toggle").getAttribute("aria-expanded")).toBe("true");
     // the mentions are NAMED — grouped, never hidden
     const once = [...container.querySelectorAll('[data-testid="pattern-once-row"]')].map((n) => n.textContent);
     const onceNames = [...container.querySelectorAll('[data-testid="pattern-once-name"]')].map((n) => n.textContent);
@@ -270,14 +291,31 @@ describe("the pattern band", () => {
     expect(shown).not.toContain("When asked");
   });
 
-  it("SP-670: the 'working' tag resolves to a color — --fr-electric is bare HSL numbers, read inside hsl()", () => {
+  it("SP-675: the three polarity colors are the three tokens — amber, grey, green — and magenta is only the mark", () => {
     const css = readFileSync(join(__dirname, "..", "firstReadPreview/firstRead.css"), "utf8");
-    const rule = css.match(/\.fr-ws-pattern-polarity\[data-fr-polarity="working"\]\s*\{([^}]*)\}/)![1];
-    const color = rule.match(/color:\s*([^;]+);/)![1].trim();
-    expect(color).toBe("hsl(var(--fr-electric))");
-    const electric = css.match(/--fr-electric:\s*([^;]+);/)![1].trim();
-    // what the browser computes: the variable's value inside hsl() must be a color
-    expect(color.replace("var(--fr-electric)", electric)).toMatch(/^hsl\(\d{1,3} \d{1,3}% \d{1,3}%\)$/);
+    const colorOf = (selector: string) => {
+      const at = css.indexOf(`${selector} {`);
+      expect(at, `no rule for ${selector}`).toBeGreaterThan(-1);
+      return css.slice(at, css.indexOf("}", at)).match(/color:\s*([^;]+);/)![1].trim();
+    };
+    expect(colorOf(".fr-ws-pattern-polarity")).toBe("hsl(var(--fr-electric-sol))");
+    expect(colorOf('.fr-ws-pattern-polarity[data-fr-polarity="mixed"]')).toBe("hsl(var(--fr-faint))");
+    expect(colorOf('.fr-ws-pattern-polarity[data-fr-polarity="working"]')).toBe("hsl(var(--fr-lime))");
+    // each token holds bare HSL numbers, so each rule is a color only because it sits inside hsl()
+    for (const token of ["--fr-electric-sol", "--fr-faint", "--fr-lime", "--fr-electric"]) {
+      const value = css.match(new RegExp(`${token}:\\s*([^;]+);`))![1].trim();
+      expect(`hsl(${value})`).toMatch(/^hsl\(\d{1,3} \d{1,3}% \d{1,3}%\)$/);
+    }
+    // SP-673: no bare var(--fr-electric) is left anywhere in the sheet
+    expect(css.match(/(?<!hsl\()var\(--fr-electric[,)]/g)).toBeNull();
+    // the strength word, the bar mark, the thin-spot reason and the draft mark are grey
+    for (const sel of [".fr-ws-pattern-strength", ".fr-ws-bar-mark", ".fr-ws-brief-reason", ".fr-ws-brief-draft"]) expect(colorOf(sel)).toBe("hsl(var(--fr-faint))");
+    // magenta: the mark, and — in the Brief's own rules — nothing else
+    expect(colorOf(".fr-unstated-product")).toBe("hsl(var(--fr-electric))");
+    const brief = css.split("\n").filter((l) => /\.fr-ws-(brief|pattern|hot|pol|dot|bar-mark)/.test(l)).join("\n");
+    expect(brief).not.toMatch(/--fr-electric\)/);
+    // SP-674 ruling 6: the proposed tag carries no color of its own — it is the green tag
+    expect(css).not.toMatch(/\.fr-ws-review-tag--proposed\s*\{/);
   });
 
   it("SP-665 (a): where the reviewer's own words end in an ellipsis, a second one is not added", () => {
@@ -335,6 +373,9 @@ describe("the pattern band", () => {
       p({ id: "n1", strength: "too thin", polarity: "not working", name: "Equipment provided is defective", supporting: 1, sites: 1 }),
     ];
     const { container, getByTestId } = render(<PatternBand patterns={list} brands={[]} />);
+    // SP-674: the summary row divides the mentions by polarity, in the same order, before any is shown
+    expect([...container.querySelectorAll('[data-testid="pattern-once-split"]')].map((n) => n.textContent)).toEqual(["2 not working", "1 mixed", "1 working"]);
+    fireEvent.click(getByTestId("pattern-once-toggle"));
     const rows = [...container.querySelectorAll('[data-testid="pattern-once-row"]')];
     expect(rows.map((r) => r.querySelector('[data-testid="pattern-once-name"]')!.textContent)).toEqual(
       ["Equipment provided is defective", "Third-party work is left unmanaged", "Support staff deny outage reports", "Agents diagnose issues quickly"]);
@@ -346,13 +387,13 @@ describe("the pattern band", () => {
     expect(orderMentionedOnce(list).map((x) => x.id)).toEqual(["n1", "n2", "m", "w"]);
   });
 
-  it("SP-665 (e): a pattern with exactly one part shows no part line; two or three parts render as before", () => {
-    const one = render(<PatternBand patterns={[p({ parts: ["outages are not fixed promptly"] })]} brands={[]} />);
+  it("SP-665 (e) / SP-674: a pattern with exactly one part shows no part line anywhere; two or three show in the panel", () => {
+    const one = panelOf(p({ parts: ["outages are not fixed promptly"] }));
     expect(one.container.querySelector('[data-testid="pattern-parts"]')).toBeNull();
     expect(one.container.querySelector('[data-testid="pattern-part"]')).toBeNull();
-    const two = render(<PatternBand patterns={[p({ id: "p2", parts: ["the final month is billed in full", "no proration is applied"] })]} brands={[]} />);
+    const two = panelOf(p({ id: "p2", parts: ["the final month is billed in full", "no proration is applied"] }));
     expect([...two.container.querySelectorAll('[data-testid="pattern-part"]')].map((n) => n.textContent)).toEqual(["the final month is billed in full", "no proration is applied"]);
-    const three = render(<PatternBand patterns={[p({ id: "p3", parts: ["a", "b", "c"] })]} brands={[]} />);
+    const three = panelOf(p({ id: "p3", parts: ["a", "b", "c"] }));
     expect(three.container.querySelectorAll('[data-testid="pattern-part"]').length).toBe(3);
   });
 
@@ -361,11 +402,150 @@ describe("the pattern band", () => {
     expect(claimForDisplay("No period here")).toBe("No period here");
     expect(claimForDisplay("Trailing space. ")).toBe("Trailing space");
     expect(claimForDisplay("An ellipsis stays...")).toBe("An ellipsis stays...");
-    const { container } = render(<PatternBand brands={[]} patterns={[
+    const { container, getByTestId } = render(<PatternBand brands={[]} patterns={[
       p({ id: "s", name: "The provider fails to honor the promotional rate." }),
       p({ id: "o", name: "A single mention.", strength: "too thin", supporting: 1, sites: 1 }),
     ]} />);
+    fireEvent.click(getByTestId("pattern-once-toggle"));
     expect(container.querySelector('[data-testid="pattern-name"]')!.textContent).toBe("The provider fails to honor the promotional rate");
     expect(container.querySelector('[data-testid="pattern-once-name"]')!.textContent).toBe("A single mention");
+  });
+
+  // ── SP-674 (2026-11-25): board BR4 — the row read across, and the BR1b panel ────────────────────
+  it("SP-674: three strength bars, filled by the strength, named by the strength's own label", () => {
+    expect([strengthLevel("confirmed rule"), strengthLevel("likely rule"), strengthLevel("possible failure"), strengthLevel("too thin"), strengthLevel("nonsense"), strengthLevel(null)])
+      .toEqual([3, 2, 1, 0, 0, 0]);
+    const { container } = render(<PatternBand brands={[]} patterns={[
+      p({ id: "a", strength: "confirmed rule" }), p({ id: "b", strength: "likely rule" }),
+      p({ id: "c", strength: "possible failure", polarity: "working" }),
+    ]} />);
+    const bars = [...container.querySelectorAll(".fr-ws-pattern-bars")];
+    expect(bars.map((b) => b.getAttribute("data-fr-level"))).toEqual(["3", "2", "1"]);
+    expect(bars.map((b) => b.getAttribute("aria-label"))).toEqual(["Confirmed rule", "Likely rule", "Possible strength"]);
+    expect(bars.every((b) => b.getAttribute("role") === "img" && b.children.length === 3)).toBe(true);
+  });
+
+  it("SP-674: the polarity is a dot in the polarity's color, and the word is still there for a reader who cannot see color", () => {
+    const { getByTestId } = render(<PatternBand patterns={[p({ polarity: "mixed" })]} brands={[]} />);
+    const dot = getByTestId("pattern-polarity");
+    expect(dot.className).toContain("fr-ws-pattern-polarity");
+    expect(dot.getAttribute("data-fr-polarity")).toBe("mixed");
+    expect(dot.textContent).toBe("mixed");
+    expect(dot.getAttribute("title")).toBe("mixed");
+    // the ticks carry the same polarity, so they take the same color from the same rule
+    expect(getByTestId("pattern-ticks").getAttribute("data-fr-polarity")).toBe("mixed");
+  });
+
+  it("SP-674: the first pattern's quote starts open; each toggle is a button that says its state and names what it controls", () => {
+    const { container } = render(<PatternBand brands={[]} patterns={[
+      p({ id: "a", strength: "confirmed rule", representative: rep("First quote."), representativeSpan: "First" }),
+      p({ id: "b", strength: "likely rule", representative: rep("Second quote."), representativeSpan: "Second" }),
+    ]} />);
+    const toggles = [...container.querySelectorAll('[data-testid="pattern-quote-toggle"]')] as HTMLButtonElement[];
+    expect(toggles.map((t) => t.tagName)).toEqual(["BUTTON", "BUTTON"]);
+    expect(toggles.map((t) => t.getAttribute("aria-expanded"))).toEqual(["true", "false"]);
+    expect(toggles[0].textContent).toContain(WORKSPACE_STRINGS.quoteHide);
+    expect(toggles[1].textContent).toContain(WORKSPACE_STRINGS.quoteShow);
+    expect([...container.querySelectorAll('[data-testid="pattern-quote"]')].map((n) => n.textContent)).toEqual(["First quote."]);
+    // the open toggle's aria-controls is the quote's own id
+    expect(container.querySelector('[data-testid="pattern-quote"]')!.id).toBe(toggles[0].getAttribute("aria-controls"));
+    fireEvent.click(toggles[1]);
+    expect(toggles[1].getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelectorAll('[data-testid="pattern-quote"]').length).toBe(2);
+    fireEvent.click(toggles[0]);
+    expect([...container.querySelectorAll('[data-testid="pattern-quote"]')].map((n) => n.textContent)).toEqual(["Second quote."]);
+    // a pattern with no representative quote has no toggle to press
+    const none = render(<PatternBand brands={[]} patterns={[p({ id: "z", representative: null })]} />);
+    expect(none.container.querySelector('[data-testid="pattern-quote-toggle"]')).toBeNull();
+  });
+
+  it("SP-674: the claim is a button that opens the panel for ITS pattern, and the open row is marked", () => {
+    const picked: string[] = [];
+    const list = [p({ id: "a", strength: "confirmed rule", name: "First claim" }), p({ id: "b", strength: "likely rule", name: "Second claim" })];
+    const { container, rerender } = render(<PatternBand brands={[]} patterns={list} selectedId={null} onSelect={(id) => picked.push(id)} />);
+    const names = [...container.querySelectorAll('[data-testid="pattern-name"]')] as HTMLButtonElement[];
+    expect(names.map((n) => [n.tagName, n.getAttribute("aria-expanded")])).toEqual([["BUTTON", "false"], ["BUTTON", "false"]]);
+    fireEvent.click(names[1]);
+    expect(picked).toEqual(["b"]);
+    rerender(<PatternBand brands={[]} patterns={list} selectedId="b" onSelect={(id) => picked.push(id)} panelSlot={<div data-testid="slot" />} />);
+    const rows = [...container.querySelectorAll('[data-testid="pattern-row"]')];
+    expect(rows.map((r) => r.getAttribute("data-fr-selected"))).toEqual([null, "true"]);
+    expect(names[1].getAttribute("aria-expanded")).toBe("true");
+    // below 1024px the panel sits in the flow, inside the row it belongs to and no other
+    expect(rows[1].querySelector('[data-testid="slot"]')).not.toBeNull();
+    expect(rows[0].querySelector('[data-testid="slot"]')).toBeNull();
+  });
+
+  it("SP-674: the signed strings of the board, byte for byte (SP-676)", () => {
+    expect(WORKSPACE_STRINGS.briefStatWithPatterns).toBe("With patterns");
+    expect(WORKSPACE_STRINGS.briefOpenQuestionsShort).toBe("Open questions");
+    expect(WORKSPACE_STRINGS.briefNotBuiltYet).toBe("Not built yet");
+    expect(WORKSPACE_STRINGS.briefNotBuiltSections).toBe("So what \u00b7 Says versus customers \u00b7 Practices \u00b7 Merger signals \u00b7 Questions to ask");
+    expect(WORKSPACE_STRINGS.briefHotspotsLede).toBe("Every need at or above the evidence bar, most counted quotes first.");
+    expect(WORKSPACE_STRINGS.patternsTag).toBe("Patterns");
+    expect(WORKSPACE_STRINGS.countedQuotesLabel).toBe("Counted quotes");
+    expect([WORKSPACE_STRINGS.quoteShow, WORKSPACE_STRINGS.quoteHide, WORKSPACE_STRINGS.show, WORKSPACE_STRINGS.hide]).toEqual(["Quote", "Hide quote", "Show", "Hide"]);
+    expect(WORKSPACE_STRINGS.panelSupportingQuotes).toBe("Supporting quotes");
+    expect(WORKSPACE_STRINGS.panelSites).toBe("Sites");
+    expect(WORKSPACE_STRINGS.panelQuoteLabel).toBe("The quote the judge picked");
+    expect(WORKSPACE_STRINGS.panelNote).toBe("Marked words are the exact words the judge matched.");
+    expect([WORKSPACE_STRINGS.panelAria, WORKSPACE_STRINGS.close, WORKSPACE_STRINGS.briefSectionsAria]).toEqual(["Pattern evidence", "Close", "Sections"]);
+    expect([patternsHeader(8), allQuotesLine(54), panelPositionLine(1, 5), sitesLine(1), sitesLine(7)])
+      .toEqual(["What keeps happening \u00b7 8", "All 54 quotes", "Pattern \u00b7 1 of 5", "1 site", "7 sites"]);
+    // ruling 5: no visible string says "span"
+    expect((Object.values(WORKSPACE_STRINGS) as string[]).filter((v) => /\bspan\b/i.test(v))).toEqual([]);
+    expect(polaritySplit([{ polarity: "working" }, { polarity: "not working" }, { polarity: "not working" }, { polarity: null }]))
+      .toEqual([{ polarity: "not working", n: 2 }, { polarity: "working", n: 1 }]);
+  });
+
+  it("SP-674: the panel — position, strength, polarity word, the two numbers, the quote with its mark, the note, every supporting quote", () => {
+    const quotes = [
+      { signalId: "s9", quote: LONG, brand: "spectrum", sourceUrl: CA, eventDate: "2026-09-30" },
+      { signalId: "s8", quote: "Report\n\nJessicaSaginaw, MI\n\nThe robot never lets me through.", brand: "brand_not_recorded", sourceUrl: CA, eventDate: null },
+    ];
+    const pat = p({ strength: "confirmed rule", polarity: "not working", supporting: 2, sites: 1, representative: rep(LONG), representativeSpan: "the AI computer answers, and it lies to you" });
+    const { getByTestId, container } = render(<BriefPanel pattern={pat} index={2} total={5} quotes={quotes} brands={["Spectrum"]} onClose={() => {}} />);
+    const panel = getByTestId("brief-panel");
+    expect(panel.tagName).toBe("ASIDE");
+    expect(panel.getAttribute("aria-label")).toBe("Pattern evidence");
+    // a region beside the page, never a dialog: nothing is trapped and nothing is covered
+    expect(panel.getAttribute("role")).toBeNull();
+    expect(panel.getAttribute("aria-modal")).toBeNull();
+    expect(getByTestId("brief-panel-position").textContent).toBe("Pattern \u00b7 2 of 5");
+    expect(getByTestId("brief-panel-strength").textContent).toBe("Confirmed rule");
+    expect(getByTestId("brief-panel-polarity").textContent).toBe("not working");
+    expect(getByTestId("brief-panel-title").textContent).toBe("The app logs you out and asks for a sign-in each time");
+    expect(getByTestId("brief-panel-supporting").textContent).toBe("2");
+    expect(getByTestId("brief-panel-sites").textContent).toBe("1");
+    expect(panel.textContent).toContain(WORKSPACE_STRINGS.panelQuoteLabel);
+    expect(getByTestId("pattern-quote-span").textContent).toBe("the AI computer answers, and it lies to you");
+    expect(getByTestId("brief-panel-note").textContent).toBe(WORKSPACE_STRINGS.panelNote);
+    // opening it puts focus on its heading
+    expect(document.activeElement).toBe(getByTestId("brief-panel-title"));
+    // every supporting quote, behind one opener, through QuoteList: masked, brand · site · date
+    expect(container.querySelector('[data-testid="brief-panel-quotes"]')).toBeNull();
+    const opener = getByTestId("brief-panel-all-quotes");
+    expect(opener.textContent).toContain("All 2 quotes");
+    expect(opener.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(opener);
+    expect(opener.getAttribute("aria-expanded")).toBe("true");
+    const list = getByTestId("brief-panel-quotes");
+    expect(list.querySelectorAll('[data-testid="quote"]').length).toBe(2);
+    expect(list.textContent).not.toContain("Jessica");
+    expect([...list.querySelectorAll(".fr-ws-quote-meta")].map((n) => n.textContent))
+      .toEqual(["spectrum \u00b7 ConsumerAffairs \u00b7 September 30, 2026", "Brand not recorded \u00b7 ConsumerAffairs \u00b7 date not shown"]);
+  });
+
+  it("SP-674: the panel's close button is named, and a pattern with no marked words shows no note about marked words", () => {
+    let closed = 0;
+    const { getByTestId, container } = render(<BriefPanel pattern={p({ representativeSpan: null })} index={1} total={1} quotes={[]} brands={[]} onClose={() => { closed += 1; }} />);
+    expect(getByTestId("brief-panel-close").getAttribute("aria-label")).toBe("Close");
+    fireEvent.click(getByTestId("brief-panel-close"));
+    expect(closed).toBe(1);
+    expect(container.querySelector('[data-testid="brief-panel-note"]')).toBeNull();
+    expect(container.querySelector('[data-testid="brief-panel-all-quotes"]')).toBeNull();
+    expect(getByTestId("brief-panel").getAttribute("data-fr-inflow")).toBeNull();
+    const inflow = render(<BriefPanel pattern={p({ id: "q" })} index={1} total={1} quotes={[]} brands={[]} inflow onClose={() => {}} />);
+    expect(inflow.container.querySelector('[data-testid="brief-panel"]')!.getAttribute("data-fr-inflow")).toBe("true");
   });
 });
