@@ -60,7 +60,7 @@ export default function ExportButton({
   // GATE D — read the `error` each hook now exposes (Gates B/C), including useFirstReadCapture's
   // AGGREGATE `readError`. These feed the REFUSAL below; loading is NOT bounded (a hang must keep
   // export disabled, never flip to a false success).
-  const { score, loading: scoreLoading, error: scoreError } = useMojoScore(companyId);
+  const { score, loading: scoreLoading, error: scoreError } = useMojoScore(companyId, "outside"); // SP-682 ruling 1: the export carries the card's number — the OUTSIDE score
   const { data: findingsData, isLoading: findingsLoading, error: findingsError } = useStandingFindings(companyId);
   const { preferredRun, loading: baselineLoading, error: baselineError } = usePublicBaseline(companyId);
   const { maps, loading: mapsLoading, error: mapsError } = useIndustryReferenceMaps();

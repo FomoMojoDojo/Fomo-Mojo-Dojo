@@ -32,9 +32,11 @@ export type DecisionPathAdapterInput = {
     name?: string | null;
     website?: string | null;
     evidence_note?: string | null;
-    mojo_score?: number | null;
     potential_score?: number | null;
   } | null;
+  /** SP-478 (SP-682 ruling 2): the LIVE Mojo Score — the home's computation — passed in by the view.
+   *  This adapter does not read the cached companies.mojo_score. null while the score is loading. */
+  liveMojoScore?: number | null;
   topActions: ClientActionSummary[];
   allActions: ClientActionSummary[];
   ownership: ClientOwnershipSummary;
@@ -1578,7 +1580,7 @@ export function toDecisionPathViewModel(
         ? "The goal here is to choose one move and let the others wait."
         : "The goal here is to keep momentum visible and adjust before drift sets in.";
 
-  const mojoScore = clampScore(Number(input.activeCompany?.mojo_score ?? 0));
+  const mojoScore = clampScore(Number(input.liveMojoScore ?? 0));
   const potentialScore = clampScore(
     Number(input.activeCompany?.potential_score ?? mojoScore),
   );

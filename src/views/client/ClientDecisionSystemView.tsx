@@ -305,6 +305,7 @@ export default function ClientDecisionSystemView() {
 
   const {
     activeCompany,
+    liveMojoScore,
     hasCompany,
     topActions,
     allActions,
@@ -342,6 +343,7 @@ export default function ClientDecisionSystemView() {
     () =>
       toDecisionPathViewModel({
         activeCompany,
+        liveMojoScore,
         topActions,
         allActions,
         ownership,
@@ -360,6 +362,7 @@ export default function ClientDecisionSystemView() {
       }),
     [
       activeCompany,
+      liveMojoScore,
       topActions,
       allActions,
       ownership,

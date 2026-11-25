@@ -66,8 +66,10 @@ else
   ok "(p1) all $TOTAL read(s) of odi_needs accounted for ($ACCOUNTED)"
 fi
 EXCL=$(grep -rn '\.neq("status", "proposed")' --include="*.ts" --include="*.tsx" src supabase 2>/dev/null | grep -c .)
-[ "$EXCL" -ge 22 ] || bad "(p1) only $EXCL SP-467 exclusions in the tree, expected at least 22 — one was removed"
-[ "$EXCL" -ge 22 ] && ok "(p1) $EXCL reader sites carry the exclusion"
+# 21 since SP-478 (2026-11-25): snapshotMojoScore's own exclusion moved into the one input rule
+# (scoreInputSet), which (p1b) below asserts by name.
+[ "$EXCL" -ge 21 ] || bad "(p1) only $EXCL SP-467 exclusions in the tree, expected at least 21 — one was removed"
+[ "$EXCL" -ge 21 ] && ok "(p1) $EXCL reader sites carry the exclusion"
 
 # (p1c) THE VIEW. `needs_in_market` is odi_needs joined to its market links, and it is what the LIVE
 # score reads (useOdiNeeds -> useLiveMojoScore). The first SP-467 census grepped `from("odi_needs")`
@@ -86,17 +88,21 @@ grep -q 'in("status", \["active", "proposed"\])' src/hooks/useBriefNeeds.ts \
   || bad "(p1) the Brief no longer reads 'proposed' — then nothing shows a proposed need at all"
 grep -q 'in("status", \["active", "proposed"\])' src/hooks/useBriefNeeds.ts && ok "(p1) and the Brief reads both statuses"
 
-echo "— (p1b) the score harness mirrors snapshotMojoScore's own needs select"
-# (p2) below scores through scripts/mojo-score-live.ts. That harness is only evidence if it issues the
-# SAME needs select the production snapshot does — if it drifted, (p2) would pass while the real score
-# moved. So both filters are asserted on both sides, by name.
-for pair in "journey_key:journey_key is not null" "proposed:status <> 'proposed'"; do
-  want="${pair#*:}"
-  grep -q "$(printf '%s' "$want")" scripts/mojo-score-live.ts     || bad "(p1b) scripts/mojo-score-live.ts does not filter \"$want\" — (p2) would be testing a different query"
+echo "— (p1b) the score harness, the snapshot and the live hooks all read through the ONE input rule"
+# (p2) below scores through scripts/mojo-score-live.ts. That harness is only evidence if it applies the
+# SAME rule the production snapshot does — if it drifted, (p2) would pass while the real score moved.
+# SP-478 (2026-11-25): the rule is no longer restated per reader. It is ONE function, scoreInputSet
+# (src/lib/mojoScore/types.ts), and its need predicate carries both filters this check used to grep
+# for on each side. So the check is now: the rule still says both things, and every reader of the
+# score's inputs still goes through it. These readers name their table through the rule's constant,
+# which the (p1) census above cannot see as a literal — this is where they are accounted for.
+grep -q 'n.journey_key !== null' src/lib/mojoScore/types.ts   || bad "(p1b) the input rule no longer excludes company-held needs (journey_key null)"
+grep -q 'n.status !== "proposed"' src/lib/mojoScore/types.ts  || bad "(p1b) the input rule no longer excludes 'proposed' — the Mojo Score can move on an unaccepted need"
+for f in scripts/mojo-score-live.ts supabase/functions/_shared/snapshotMojoScore.ts \
+         src/views/client/workspace/useLiveMojoScore.ts src/views/client/workspace/useLiveMojoScores.ts; do
+  grep -q 'scoreInputSet' "$f" || bad "(p1b) $f does not read the score's inputs through scoreInputSet — it has a rule of its own"
 done
-grep -q 'journey_key", "is", null' supabase/functions/_shared/snapshotMojoScore.ts   || bad "(p1b) snapshotMojoScore no longer filters journey_key — the harness and production have diverged"
-grep -q '.neq("status", "proposed")' supabase/functions/_shared/snapshotMojoScore.ts   || bad "(p1b) snapshotMojoScore no longer excludes 'proposed' — the Mojo Score can move on an unaccepted need"
-[ "$FAIL" = 0 ] && ok "(p1b) harness and production apply the same two filters"
+[ "$FAIL" = 0 ] && ok "(p1b) one rule, with both filters, applied by the harness, the snapshot and both live hooks"
 
 echo "— (p2) a planted proposed need: absent from the score's inputs, present in the Brief's"
 OWNER=$(q1 "select id from auth.users limit 1")

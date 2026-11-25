@@ -109,3 +109,60 @@ export type MojoScoreResult = {
   methodology_version: string;
   computed_at: string;
 };
+
+// ── THE SCORE'S INPUT RULE — ONE DEFINITION (SP-478 / SP-682 ruling 3, 2026-11-25) ────────────────
+//
+// Which rows the Mojo Score counts. The browser's live computation (useLiveMojoScore) and the
+// server's snapshot (snapshotMojoScore) used to state this rule separately, and they had drifted:
+// the server counted retracted needs and inactive routes and the browser did not. The ruling is the
+// browser's rule, and BOTH now apply the three predicates below — the guard
+// (mojo-score-authority-guard, check a6) fails if either stops.
+//
+//   a claim counts   unless it is struck                         (minimized claims keep counting)
+//   a route counts   when its relevance_state is 'active'
+//   a need counts    when it sits in a market (journey_key set) and is neither retracted nor
+//                    proposed; a need linked to two markets counts ONCE
+//
+// A row that does not CARRY a column (the property is absent, not null) came from a read that
+// already applied the rule for it, so it counts. That is what lets a narrow select — or the route
+// rows the browser builds from opportunities when the routes read fails — pass through unchanged.
+//
+// This file is the home for the rule because it is already the home of the score's input shapes and
+// is already loaded by the edge runtime; it imports nothing.
+
+/** Where each input is read from. Needs come through the needs_in_market view (M-2). */
+export const SCORE_INPUT_SOURCES = { claims: "claims", routes: "routes", needs: "needs_in_market" } as const;
+/** The columns a read must select for the rule to be applied to its rows. */
+export const SCORE_CLAIM_COLUMNS =
+  "id, state, claim_type, topic, outside_support_count, organization_support_count, customer_support_count, updated_at, status";
+export const SCORE_ROUTE_COLUMNS =
+  "id, category, level, parent_id, claim_id, steps_json, evidence_json, why_this_matters_json, rejected_alternatives, what_would_have_to_be_true, linked_need_ids, updated_at, relevance_state";
+export const SCORE_NEED_COLUMNS =
+  "id, desired_outcome, importance, satisfaction, opportunity_score, service_state, updated_at, status, journey_key";
+
+export function claimCounts(c: { status?: string | null }): boolean {
+  return c.status !== "struck";
+}
+export function routeCounts(r: { relevance_state?: string | null }): boolean {
+  return r.relevance_state === undefined || r.relevance_state === "active";
+}
+export function needCounts(n: { status?: string | null; journey_key?: string | null }): boolean {
+  return n.journey_key !== null && n.status !== "retracted" && n.status !== "proposed";
+}
+
+/** The rows the score counts, out of the rows a read returned. Order is kept; a need seen twice
+ *  (one row per market link) is kept once, at its first position. */
+export function scoreInputSet<
+  C extends { status?: string | null },
+  R extends { relevance_state?: string | null },
+  N extends { id: string; status?: string | null; journey_key?: string | null },
+>(rows: { claims: readonly C[]; routes: readonly R[]; needs: readonly N[] }): { claims: C[]; routes: R[]; needs: N[] } {
+  const seen = new Set<string>();
+  const needs: N[] = [];
+  for (const n of rows.needs) {
+    if (!needCounts(n) || seen.has(n.id)) continue;
+    seen.add(n.id);
+    needs.push(n);
+  }
+  return { claims: rows.claims.filter(claimCounts), routes: rows.routes.filter(routeCounts), needs };
+}

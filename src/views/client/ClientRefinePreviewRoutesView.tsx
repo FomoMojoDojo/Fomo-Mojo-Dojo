@@ -62,8 +62,8 @@ import { useRouteProposalHandlers } from "@/hooks/useRouteProposalHandlers";
 import type { EngagementPhase } from "@/lib/engagementPhase";
 import { useDesiredOutcomes } from "@/lib/desiredOutcomes";
 import type { DesiredOutcomeRow } from "@/lib/desiredOutcomes";
-import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
-import { excludeStruck, scoreComputedAt } from "@/views/client/workspace/useLiveMojoScore";
+import { excludeStruck, useLiveMojoScore } from "@/views/client/workspace/useLiveMojoScore";
+import { switcherScoreLabel, useLiveMojoScores } from "@/views/client/workspace/useLiveMojoScores";
 import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { SignalBasisChip } from "@/components/design-system/SignalBasisChip";
@@ -158,6 +158,8 @@ export default function ClientRefinePreviewRoutesView() {
   const { item: strategy } = useStrategyCascade(activeCompany?.id);
   const [activeStage, setActiveStage] = useState<SignalStage>("org");
   const [showHeaderSwitcher, setShowHeaderSwitcher] = useState(false);
+  // SP-478: "score N" in the switcher is the LIVE score — read for the whole list once it is opened.
+  const liveScores = useLiveMojoScores(companies, showHeaderSwitcher);
   const headerSwitcherRef = useRef<HTMLDivElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -298,7 +300,7 @@ export default function ClientRefinePreviewRoutesView() {
                         >
                           <span className="crpv-co-option-name">{c.name}</span>
                           <span className="crpv-co-option-meta cap">
-                            {[c.quarter, c.archetype, c.mojo_score != null ? `score ${Math.round(c.mojo_score)}` : null].filter(Boolean).join(" · ")}
+                            {[c.quarter, c.archetype, switcherScoreLabel(liveScores, c.id)].filter(Boolean).join(" · ")}
                           </span>
                         </button>
                       </li>
@@ -1079,50 +1081,10 @@ export function RoutesOrgPanel({
     return map;
   }, [routes]);
 
-  // Live-compute MojoScore from in-memory data (fallback when no DB row exists yet)
-  const liveMojoScore = useMemo(() => {
-    if (!hasHierarchy || !activeCompany?.id) return null;
-    return computeMojoScore({
-      companyId: activeCompany.id,
-      // STRIKE LAW (Gate A, 2026-09-14): the same rule as useLiveMojoScore / snapshotMojoScore — struck out, minimized in.
-      claims: excludeStruck(Array.from(claimsMap.values())).map((c) => ({
-        id: c.id,
-        state: c.state,
-        claim_type: c.claim_type,
-        topic: c.topic,
-        outside_support_count: c.outside_support_count,
-        organization_support_count: c.organization_support_count,
-        customer_support_count: c.customer_support_count,
-        updated_at: c.updated_at,
-      })),
-      routes: routes.map((r) => ({
-        id: r.id,
-        category: r.category,
-        level: r.level ?? null,
-        parent_id: r.parent_id ?? null,
-        steps_json: (Array.isArray(r.steps_json) ? r.steps_json : null) as Array<{ id: string; title: string; status: string }> | null,
-        evidence_json: (Array.isArray(r.evidence_json) ? r.evidence_json : null) as Array<{ id: string; title: string; status: string }> | null,
-        why_this_matters_json: Array.isArray(r.why_this_matters_json) ? r.why_this_matters_json as string[] : null,
-        rejected_alternatives: Array.isArray(r.rejected_alternatives) ? r.rejected_alternatives : null,
-        what_would_have_to_be_true: Array.isArray(r.what_would_have_to_be_true) ? r.what_would_have_to_be_true : null,
-        linked_need_ids: Array.isArray(r.linked_need_ids) ? r.linked_need_ids : null,
-        updated_at: r.updated_at ?? null,
-      })),
-      needs: (needs ?? []).map((n) => ({
-        id: n.id,
-        desired_outcome: n.desired_outcome,
-        importance: n.importance,
-        satisfaction: n.satisfaction,
-        opportunity_score: n.opportunity_score,
-        service_state: n.service_state,
-        updated_at: n.updated_at ?? null,
-      })),
-      // The score's clock, through the one door — the same dev-only override useLiveMojoScore reads.
-      // This view computes the strip inline rather than through that hook, so without this line the
-      // two surfaces that render the SAME three numbers would disagree the moment either is pinned.
-      computedAt: scoreComputedAt(),
-    });
-  }, [hasHierarchy, activeCompany?.id, claimsMap, routes, needs]);
+  // The LIVE Mojo Score, through the ONE hook (SP-478). This view used to carry its own copy of the
+  // hook's body; a second copy is a second place for the input rule to drift. Same inputs, same
+  // clock door, and still nothing until the route hierarchy exists.
+  const liveMojoScore = useLiveMojoScore(hasHierarchy ? activeCompany?.id : undefined, claimsMap, routes, needs);
 
   const displayMojoScore = liveMojoScore;
 

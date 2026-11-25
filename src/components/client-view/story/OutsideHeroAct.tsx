@@ -54,7 +54,7 @@ export default function OutsideHeroAct({ preferredRun }: { preferredRun?: unknow
   // so TWO <ActData> boundaries are correct (a findings failure + a live score is honest, and
   // vice versa) — NOT the mixed-state hazard the one-boundary rule guards against. Each hook
   // now exposes `error`; useReadState adds the 10s deadline per section.
-  const { score, loading: scoreLoading, error: scoreError } = useMojoScore(companyId);
+  const { score, loading: scoreLoading, error: scoreError } = useMojoScore(companyId, "outside"); // SP-682 ruling 1: this card always reads the OUTSIDE score
   const { data, isLoading: findingsLoading, error: findingsError } = useStandingFindings(companyId);
   const findingsState = useReadState<typeof data>(findingsLoading, findingsError, data, companyId);
   const scoreState = useReadState<typeof score>(scoreLoading, scoreError, score, companyId);

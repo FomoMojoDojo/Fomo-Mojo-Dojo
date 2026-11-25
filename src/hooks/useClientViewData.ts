@@ -6,6 +6,7 @@ import { useManagedOutcomes } from "@/hooks/useManagedOutcomes";
 import { useStrategicProblems } from "@/hooks/useStrategicProblems";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useClientMapInteractionState } from "@/hooks/useClientMapInteractionState";
+import { useCompanyLiveMojoScore } from "@/views/client/workspace/useLiveMojoScore";
 import {
   type ClientActionSummary,
   type ClientActionConfidenceTag,
@@ -38,6 +39,11 @@ export function useClientViewData(options: UseClientViewDataOptions = {}) {
   const { activeCompany, refetch: refetchCompany } = useCompany();
   const companyId = activeCompany?.id;
   const [rerunningAnalysis, setRerunningAnalysis] = useState(false);
+  // SP-478 (SP-682 ruling 2): the client decision view shows the LIVE Mojo Score — the number the home
+  // shows — not the cached companies.mojo_score, which is the score as of the last server snapshot.
+  // null until the three reads behind it have returned.
+  const liveMojo = useCompanyLiveMojoScore(companyId);
+  const liveMojoScore = liveMojo.score ? liveMojo.score.total_score : null;
 
   const {
     items: opportunities,
@@ -117,9 +123,9 @@ export function useClientViewData(options: UseClientViewDataOptions = {}) {
         actions: allActions,
         ownership,
         constraint: primaryConstraint,
-        mojoScore: activeCompany?.mojo_score,
+        mojoScore: liveMojoScore,
       }),
-    [activeCompany?.mojo_score, allActions, ownership, primaryConstraint],
+    [liveMojoScore, allActions, ownership, primaryConstraint],
   );
   const nextMove = useMemo(() => {
     if (interaction.mapStatus === "signal") return computedNextMove;
@@ -133,12 +139,12 @@ export function useClientViewData(options: UseClientViewDataOptions = {}) {
     () =>
       summarizeWhatThisMeans({
         companyName: activeCompany?.name,
-        mojoScore: activeCompany?.mojo_score,
+        mojoScore: liveMojoScore,
         ownership,
         constraint: primaryConstraint,
         actions: allActions,
       }),
-    [activeCompany?.mojo_score, activeCompany?.name, allActions, ownership, primaryConstraint],
+    [liveMojoScore, activeCompany?.name, allActions, ownership, primaryConstraint],
   );
   const evidence = useMemo(
     () => summarizeEvidenceSources(activeCompany?.evidence_status),
@@ -195,6 +201,7 @@ export function useClientViewData(options: UseClientViewDataOptions = {}) {
 
   return {
     activeCompany,
+    liveMojoScore,
     hasCompany: Boolean(companyId),
     allActions,
     topActions,

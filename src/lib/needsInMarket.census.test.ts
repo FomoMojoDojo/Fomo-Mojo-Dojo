@@ -33,7 +33,8 @@ const REMAINING: Record<string, number> = {
   "supabase/functions/_shared/jobMapRegeneration.ts": 1,
   "supabase/functions/_shared/opportunitySynthesis.ts": 2,
   "supabase/functions/_shared/researchSynthesisWrite.ts": 1,
-  "supabase/functions/_shared/snapshotMojoScore.ts": 1,
+  // SP-478 (2026-11-25): snapshotMojoScore came OFF this list — it reads needs_in_market now, through the
+  // score's one input rule (scoreInputSet), the same view the browser's live score reads.
   "supabase/functions/backfill-canonical-statements/index.ts": 1,
   "supabase/functions/evaluate-opportunity-alignment/index.ts": 1,
   "supabase/functions/local-alignment/index.ts": 1,

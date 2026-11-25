@@ -168,7 +168,7 @@ export default function ClientRefinePreviewView() {
   const { loading: routesLoading, items: routes } = useRoutes(activeCompany?.id);
   const { needs, marketDefinition } = useOdiNeeds(activeCompany?.id);
   const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
-  const { history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
+  const { history: mojoScoreHistory } = useMojoScore(activeCompany?.id, "mojo"); // SP-682 ruling 4: the sparkline draws Mojo Score rows only
 
   // Floor phase to what evidence actually supports — display-only, no DB write. The derivation
   // now lives in ONE hook (useFlooredEngagementPhase) shared with the workspace shell's header.

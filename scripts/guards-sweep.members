@@ -1,4 +1,4 @@
-# THE SWEEP'S EXPECTED MEMBERS (operator ruling R2, 2026-11-18, amended SP-415/SP-426/SP-429, SP-441/SP-442 2026-11-19 and SP-460/SP-465/SP-467 2026-11-20: 78 members).
+# THE SWEEP'S EXPECTED MEMBERS (operator ruling R2, 2026-11-18, amended SP-415/SP-426/SP-429, SP-441/SP-442 2026-11-19 and SP-460/SP-465/SP-467 2026-11-20: 78 members; SP-682 2026-11-25 added mojo-score-authority-guard: 79 members).
 # One name per line; '#' lines and blank lines are ignored. scripts/guards-sweep.sh refuses to report a
 # result when the members it finds or runs differ from this list — a guard added, removed or excluded
 # moves this file in the same commit, or the sweep fails. The list is compared as a SORTED SET, so the
@@ -44,6 +44,7 @@ interview-segments-guard.sh
 interview-text-leak-guard.sh
 large-file-guard.sh
 member-read-guard.sh
+mojo-score-authority-guard.sh
 need-evidence-guard.sh
 need-markets-guard.sh
 need-source-path-guard.sh

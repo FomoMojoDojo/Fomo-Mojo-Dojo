@@ -3,6 +3,17 @@
 // Reads the latest row(s) from mojo_scores for a company.
 // Returns a parsed MojoScoreResult (current) plus history for sparklines.
 // Falls back to null when no rows exist — callers handle live-compute fallback.
+//
+// SP-478 / SP-682 rulings 1 and 4 (2026-11-25) — THE CALLER SAYS WHICH SCORE. mojo_scores holds
+// rows of TWO different calculations: the Mojo Score (methodology v…) and the outside score
+// (methodology outside-…). This hook used to take the newest rows of any kind, so a surface showed
+// whichever calculation happened to be written last — Charter's story card read the outside score
+// (12) and Edgewood's the Mojo Score (28), and the home's sparkline drew both on one line. There is
+// no default: a reader that does not name its score does not compile.
+//   "outside"  the outside score — the client story's card and its export
+//   "mojo"     the Mojo Score's stored history — the home's sparkline
+// The Mojo Score's CURRENT value is never read from here: its authority is the live computation
+// (useLiveMojoScore).
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -82,7 +93,13 @@ function parseEngagementState(explanation: unknown): EngagementState {
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
-export function useMojoScore(companyId?: string): UseMojoScoreResult {
+/** Which calculation's rows a reader wants. */
+export type StoredScoreKind = "mojo" | "outside";
+/** The methodology prefix that marks an outside-score row — computeOutsideScore's own constant,
+ *  restated here as a literal because this hook must not import the scorer. Pinned by a test. */
+export const OUTSIDE_SCORE_METHODOLOGY_PREFIX = "outside-";
+
+export function useMojoScore(companyId: string | undefined, kind: StoredScoreKind): UseMojoScoreResult {
   const [loading, setLoading] = useState(false);
   const [score, setScore] = useState<MojoScoreResult | null>(null);
   const [history, setHistory] = useState<MojoScoreHistoryPoint[]>([]);
@@ -105,12 +122,16 @@ export function useMojoScore(companyId?: string): UseMojoScoreResult {
     setError(null);
 
     (async () => {
-      const { data, error: qErr } = await supabase
+      const base = supabase
         .from("mojo_scores")
         .select(
           "id, company_id, computed_at, total_score, component_scores, explanation, methodology_version",
         )
-        .eq("company_id", companyId)
+        .eq("company_id", companyId);
+      const ofKind = kind === "outside"
+        ? base.like("methodology_version", `${OUTSIDE_SCORE_METHODOLOGY_PREFIX}%`)
+        : base.not("methodology_version", "like", `${OUTSIDE_SCORE_METHODOLOGY_PREFIX}%`);
+      const { data, error: qErr } = await ofKind
         .order("computed_at", { ascending: false })
         .limit(20);
 
@@ -168,7 +189,7 @@ export function useMojoScore(companyId?: string): UseMojoScoreResult {
     return () => {
       cancelled = true;
     };
-  }, [companyId]);
+  }, [companyId, kind]);
 
   return { loading, score, history, error };
 }

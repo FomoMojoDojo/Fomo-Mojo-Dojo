@@ -72,6 +72,7 @@ import { inferStrategicCenter } from "@/lib/strategicCenter";
 import { deriveStrategicTensions } from "@/lib/tensionDerivation";
 import { liveReadiness } from "@/lib/mojoScore/liveReadiness";
 import { useLiveMojoScore } from "@/views/client/workspace/useLiveMojoScore";
+import { switcherScoreLabel, useLiveMojoScores } from "@/views/client/workspace/useLiveMojoScores";
 import { useEvidencePresence } from "@/hooks/useEvidencePresence";
 import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
 import type { ClaimState } from "@/lib/claimState";
@@ -123,6 +124,8 @@ function CompanySwitcher({
   suffix?: string;
 }) {
   const [open, setOpen] = useState(false);
+  // SP-478: "score N" in the switcher is the LIVE score — read for the whole list once it is opened.
+  const liveScores = useLiveMojoScores(companies, open);
   const [query, setQuery] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -201,7 +204,7 @@ function CompanySwitcher({
                       {[
                         c.quarter,
                         c.archetype,
-                        c.mojo_score != null ? `score ${Math.round(c.mojo_score)}` : null,
+                        switcherScoreLabel(liveScores, c.id),
                       ].filter(Boolean).join(" · ")}
                     </span>
                   </button>

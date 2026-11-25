@@ -4,6 +4,7 @@ import { stageLabel } from "@/lib/phaseDisplay";
 import type { Company } from "@/hooks/useCompany";
 import type { ClaimState } from "@/lib/claimState";
 import { toSentence } from "./shared";
+import { switcherScoreLabel, useLiveMojoScores } from "@/views/client/workspace/useLiveMojoScores";
 
 export function HeaderCompanySwitcher({
   showHeaderSwitcher, setShowHeaderSwitcher, headerSwitcherRef, activeCompany, companies, setActiveCompanyId, ENGAGEMENT_DAY, dominantClaimState, phase,
@@ -23,6 +24,8 @@ export function HeaderCompanySwitcher({
   dominantClaimState: ClaimState | null;
   phase: string;
 }) {
+  // SP-478: "score N" is the LIVE score — read for the whole list once the switcher is opened.
+  const liveScores = useLiveMojoScores(companies, showHeaderSwitcher);
   return (
                   <div className="crpv-co-switcher" ref={headerSwitcherRef}>
                     <button
@@ -52,7 +55,7 @@ export function HeaderCompanySwitcher({
                               >
                                 <span className="crpv-co-option-name">{c.name}</span>
                                 <span className="crpv-co-option-meta cap">
-                                  {[c.quarter, c.archetype, c.mojo_score != null ? `score ${Math.round(c.mojo_score)}` : null].filter(Boolean).join(" · ")}
+                                  {[c.quarter, c.archetype, switcherScoreLabel(liveScores, c.id)].filter(Boolean).join(" · ")}
                                 </span>
                               </button>
                             </li>
