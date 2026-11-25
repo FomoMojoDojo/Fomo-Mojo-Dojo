@@ -1,7 +1,7 @@
 // WORKSPACE SHELL (comp port 1, 2026-09-11 — S:19-199 in fr tokens). The one frame for
 // /preview/client-refine/workspace/*: `.first-read` root, the First Read Header (MojoMap / identity),
-// the operator glyph fixed bottom-left (state only, never persisted), a bottom-CENTRE cluster
-// (prev · map · next, S:89-122), the launcher overlay, and the keyed page wrapper that replays
+// the operator glyph fixed bottom-left (state only, never persisted), the fixed bottom STRIP with the
+// bottom-CENTRE cluster in it (prev · map · next, S:89-122; SP-679), the launcher overlay, and the keyed page wrapper that replays
 // fr-fade-up with a stage direction.
 //
 // Header third slot (ruling 3): the per-company phase, derived exactly as the home derives it
@@ -138,7 +138,10 @@ export default function WorkspaceShell() {
             </div>
           </div>
 
-          {/* Bottom-centre cluster (S:89-122): prev · map · next; arrows hide while the map is open. */}
+          {/* The bottom strip (SP-679): a fixed, opaque bar the width of the window, with the cluster
+              centred in it — prev · map · next (S:89-122); arrows hide while the map is open. The page
+              frames end above it, so no content ever sits under the three squares. */}
+          <nav className="fr-ws-strip" aria-label={WORKSPACE_STRINGS.navigation} data-testid="workspace-strip">
           <div className="fr-ws-cluster" data-testid="workspace-cluster" data-open={launcherOpen ? "true" : undefined}>
             {!launcherOpen ? <Arrow dir="prev" target={prev} onGo={goArrow} /> : null}
             <button
@@ -159,6 +162,7 @@ export default function WorkspaceShell() {
             </button>
             {!launcherOpen ? <Arrow dir="next" target={next} onGo={goArrow} /> : null}
           </div>
+          </nav>
 
           {launcherOpen ? (
             <WorkspaceLauncher

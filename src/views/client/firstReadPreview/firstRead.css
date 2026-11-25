@@ -1974,13 +1974,31 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
    tokens above; no new token (ruling 6: sub-10px mono → the 10px floor; the 4.5rem hero → the
    statement scale; 4px accent rules on existing colours). Blocks: shell + cluster (S:70-122),
    launcher (S:125-196, C:161-258), and the three page frames fr-ws-read / fr-ws-working /
-   fr-ws-hero (S:201-280, P:110-157). Every frame reserves the cluster zone at the bottom
-   (ruling 5: 20px + 48px + 24px = 92px) so no content can sit under the cluster.
+   fr-ws-hero (S:201-280, P:110-157). Every frame reserves the strip's height plus 24px at the
+   bottom, so its last line always clears the strip.
    ===================================================================== */
 
-/* Ruling 5 (as accepted): normal document scroll; every frame ends with the 92px inset (cluster zone
-   20px + 48px, + 24px) so nothing sits under the cluster at the page end; the cluster surfaces are
-   translucent for the scroll-through. */
+/* THE BOTTOM STRIP (SP-679, 2026-11-25; replaces ruling 5's floating cluster). Normal document scroll.
+   The cluster sits in a fixed, OPAQUE bar across the bottom of the window, so page content ends above
+   it and nothing is ever under the three squares — at the end of the page or anywhere else.
+
+   --fr-ws-strip-h IS THE ONLY PLACE THE STRIP'S HEIGHT LIVES, as --fr-shell-h is for the header. The
+   three frames, the Brief panel and the scroll padding all read it. It is declared on the document
+   root, scoped to "a workspace page is mounted", because the scroll padding has to sit on the page's
+   scroller and that is the root.
+
+   SCROLL PADDING: when Tab moves focus to a control, the browser scrolls it "into view", and the area
+   under a fixed bar counts as in view. The padding tells it the strip and the sticky header are not.
+   The header's number cannot be read here — --fr-shell-h is declared on .first-read, below the root.
+   And it is not the right number for this anyway: --fr-shell-h is the header WITHOUT the operator's
+   "Scan all surfaces" control (54px), and with that control the header measures 70px. The padding is
+   the header at its tallest, so a focused control clears it in both states. workspaceStrip.test.ts
+   fails if this ever falls below --fr-shell-h. */
+html:has(.fr-workspace-page) {
+  --fr-ws-strip-h: 76px;
+  scroll-padding-top: 70px;
+  scroll-padding-bottom: var(--fr-ws-strip-h);
+}
 .fr-workspace-page .fr-ws-shell { padding-bottom: 0; }
 .fr-workspace-page .fr-workspace-stage { padding-bottom: 0; }
 .fr-workspace-identity { text-transform: uppercase; }
@@ -1995,13 +2013,34 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
   color: hsl(var(--fr-steel));
 }
 
-/* ---- the cluster (S:89-122): bottom-centre, three 48px squares, translucent paper ---- */
-.fr-ws-cluster {
+/* ---- the strip, and the cluster in it (S:89-122): bottom-centre, three 48px squares ----
+   The shape is the First Read's own bottom bar (.fr-shell-nav): fixed to the bottom edge, full width,
+   a top hairline. 76px with the hairline: 13 + 48 + 14 under it.
+   THE GROUND FOLLOWS THE PAGE and is a shade deeper than it, as a tint laid over the page's own solid
+   color so the result is opaque:
+     paper pages (Working, Hero)  the control's hover tint, line at 50%, over paper; the header's hairline
+     slate pages (Read)           the quote block's tint, ink at 25%, over slate; the band's hairline
+   The sheet tells the two apart by the frame the page mounted — :has(.fr-ws-read). */
+.fr-ws-strip {
   position: fixed;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 40;
+  box-sizing: border-box;
+  height: var(--fr-ws-strip-h);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 14px;
+  border-top: 1px solid hsl(var(--fr-line));
+  background: linear-gradient(hsl(var(--fr-line) / 0.5), hsl(var(--fr-line) / 0.5)), hsl(var(--fr-paper));
+}
+.fr-workspace-page:has(.fr-ws-read) .fr-ws-strip {
+  border-top-color: hsl(var(--fr-paper) / 0.15);
+  background: linear-gradient(hsl(var(--fr-ink) / 0.25), hsl(var(--fr-ink) / 0.25)), hsl(var(--fr-slate));
+}
+.fr-ws-cluster {
   display: flex;
   align-items: flex-end;
   gap: 8px;
@@ -2019,20 +2058,32 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
   border-radius: 0;
   color: hsl(var(--fr-ink));
   cursor: pointer;
-  backdrop-filter: blur(6px);
   transition: background-color 160ms ease, color 160ms ease;
 }
-.fr-ws-arrow { background: hsl(var(--fr-paper) / 0.65); box-shadow: 0 4px 12px hsl(var(--fr-ink) / 0.08); }
-.fr-ws-map { background: hsl(var(--fr-paper) / 0.8); box-shadow: 0 8px 20px hsl(var(--fr-ink) / 0.12); }
-.fr-ws-arrow:hover:not([disabled]),
-.fr-ws-map:hover { background: hsl(var(--fr-paper)); }
+/* The squares were translucent, blurred and shadowed so content could be read through them. Nothing
+   scrolls behind them now, so each has a plain surface that reads against the strip.
+   On the paper strip: arrows are paper; the map square is the filled control (ink ground, paper glyph —
+   .fr-ws-filter[data-active]). On the slate strip: tints of paper over the strip's opaque ground. */
+.fr-ws-arrow { background: hsl(var(--fr-paper)); }
+.fr-ws-map { border-color: hsl(var(--fr-ink)); background: hsl(var(--fr-ink)); color: hsl(var(--fr-paper)); }
+.fr-ws-arrow:hover:not([disabled]) { background: hsl(var(--fr-line) / 0.5); }
+.fr-ws-map:hover { background: hsl(var(--fr-ink) / 0.85); }
+.fr-workspace-page:has(.fr-ws-read) .fr-ws-arrow { background: hsl(var(--fr-paper) / 0.35); }
+.fr-workspace-page:has(.fr-ws-read) .fr-ws-map { border-color: hsl(var(--fr-line) / 0.6); background: hsl(var(--fr-paper) / 0.8); color: hsl(var(--fr-ink)); }
+.fr-workspace-page:has(.fr-ws-read) .fr-ws-arrow:hover:not([disabled]),
+.fr-workspace-page:has(.fr-ws-read) .fr-ws-map:hover { background: hsl(var(--fr-paper)); }
 .fr-ws-arrow[disabled] { color: hsl(var(--fr-faint)); cursor: default; }
-/* Hover label above the arrow (S:97-99) at the 10px mono floor; the title attribute is the fallback. */
+/* Hover label above the arrow (S:97-99) at the 10px mono floor; the title attribute is the fallback.
+   SP-679: it stands above the strip, over page content, so it carries a ground of its own — the
+   outlined control's (.fr-ws-control: paper, the line hairline, ink text), which reads on both strips. */
 .fr-ws-arrow-label {
   position: absolute;
-  top: -28px;
+  top: -40px;
   left: 50%;
   transform: translateX(-50%);
+  padding: 4px 8px;
+  border: 1px solid hsl(var(--fr-line));
+  background: hsl(var(--fr-paper));
   white-space: nowrap;
   font-size: 10px;
   letter-spacing: 0.14em;
@@ -2326,7 +2377,7 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 @keyframes fr-fade-up-fwd { from { opacity: 0; transform: translate(18px, 10px); } to { opacity: 1; transform: none; } }
 @keyframes fr-fade-up-back { from { opacity: 0; transform: translate(-18px, 10px); } to { opacity: 1; transform: none; } }
 
-/* ---- page frames — each ends with the reserved cluster zone (92px) ---- */
+/* ---- page frames — each ends with the strip's height plus 24px of air ---- */
 /* READ (S:238-280): slate, full-bleed under the header, statement scale, ReadBands on Labeled. */
 .fr-ws-read {
   margin: -48px calc(50% - 50vw) 0;
@@ -2334,8 +2385,8 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
   background: hsl(var(--fr-slate));
   color: hsl(var(--fr-paper));
 }
-.fr-ws-read-inner { width: 100%; max-width: 104rem; margin: 0 auto; padding: 64px 20px 92px; }
-@media (min-width: 768px) { .fr-ws-read-inner { padding: 96px 48px 92px; } }
+.fr-ws-read-inner { width: 100%; max-width: 104rem; margin: 0 auto; padding: 64px 20px calc(var(--fr-ws-strip-h) + 24px); }
+@media (min-width: 768px) { .fr-ws-read-inner { padding: 96px 48px calc(var(--fr-ws-strip-h) + 24px); } }
 @media (min-width: 1024px) { .fr-ws-read-inner { padding-left: 64px; padding-right: 64px; } }
 .fr-ws-read .fr-eyebrow { color: hsl(var(--fr-lime)); letter-spacing: 0.34em; }
 .fr-ws-statement {
@@ -2379,7 +2430,7 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-read .fr-absent { color: hsl(var(--fr-paper) / 0.75); border-color: hsl(var(--fr-paper) / 0.3); }
 
 /* WORKING (P:110-157): paper, header grid + Working-set box, anchor rail | main. */
-.fr-ws-working { padding: 0 0 92px; }
+.fr-ws-working { padding: 0 0 calc(var(--fr-ws-strip-h) + 24px); }
 .fr-ws-working-head {
   display: grid;
   gap: 2rem;
@@ -2401,7 +2452,7 @@ button.fr-home-cta { background: none; border: 0; border-bottom: 1px solid hsl(v
 .fr-ws-working-main { min-width: 0; }
 
 /* HERO (S:201-235): paper, hero head with actions slot, hairline, main. */
-.fr-ws-hero { padding: 0 0 92px; }
+.fr-ws-hero { padding: 0 0 calc(var(--fr-ws-strip-h) + 24px); }
 .fr-ws-hero-head {
   display: flex;
   flex-direction: column;
@@ -3120,7 +3171,7 @@ span.fr-mark-target .fr-mark-box { display: flex; }
    out of the row, so the page narrows and nothing is ever covered. */
 .fr-ws-brief { display: flex; align-items: flex-start; }
 .fr-ws-brief-main { flex: 1 1 0; min-width: 0; max-width: 1180px; }
-.fr-ws-brief-section, .fr-ws-hot { scroll-margin-top: calc(var(--fr-shell-h) + 16px); }
+.fr-ws-brief-section, .fr-ws-hot { scroll-margin-top: 16px; }
 .fr-ws-brief-section:focus, .fr-ws-hot:focus { outline: none; }
 
 /* Header: the draft mark and the note on the left, the four numbers on the right. The numbers reuse
@@ -3280,8 +3331,8 @@ a.fr-ws-brief-chart-text:hover { text-decoration: underline; }
 .fr-ws-brief-ending .fr-ws-brief-question { font-size: 13px; line-height: 1.5; }
 
 /* The evidence panel (BR1b). Beside the page from 1024px — 400px wide, 500px from 1280px — sticky
-   under the shell header and ending above the 92px the page reserves for the bottom cluster, so it
-   never meets the cluster. Below 1024px it sits in the flow, under the row it belongs to. */
+   under the shell header and ending exactly where the bottom strip begins (SP-679 ruling 10): no gap,
+   no overlap. Below 1024px it sits in the flow, under the row it belongs to. */
 .fr-ws-brief-panel {
   box-sizing: border-box; display: flex; flex-direction: column; gap: 20px; padding: 28px 24px;
   background: hsl(var(--fr-ink) / 0.45); border: 1px solid hsl(var(--fr-paper) / 0.2); color: hsl(var(--fr-paper));
@@ -3290,7 +3341,7 @@ a.fr-ws-brief-chart-text:hover { text-decoration: underline; }
 @media (min-width: 1024px) {
   .fr-ws-brief-panel:not([data-fr-inflow]) {
     flex: 0 0 400px; width: 400px; margin-left: 2.5rem; margin-right: -64px; padding: 32px 36px;
-    position: sticky; top: var(--fr-shell-h); height: calc(100vh - var(--fr-shell-h) - 92px); overflow-y: auto;
+    position: sticky; top: var(--fr-shell-h); height: calc(100vh - var(--fr-shell-h) - var(--fr-ws-strip-h)); overflow-y: auto;
     border-width: 0 0 0 1px;
   }
 }

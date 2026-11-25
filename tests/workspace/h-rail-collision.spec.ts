@@ -1,6 +1,8 @@
-// (h) Accepted ruling: on every workspace route, scrolled to the end, no text-bearing element
-// intersects the cluster's box (every frame ends with the 92px inset), and the cluster surfaces are
-// translucent (computed background alpha < 1) so content scrolling through beneath stays readable.
+// (h) On every workspace route, scrolled to the end, no text-bearing element intersects the bottom
+// strip — every frame ends with the strip's height plus 24px. SP-679 (2026-11-25) replaced the ruling
+// this spec first encoded (a floating cluster, translucent so content could be read through it): the
+// cluster now sits in a strip whose ground is OPAQUE, so at any other scroll position content passes
+// behind the strip and is not seen under the three squares.
 import { expect, test } from "playwright/test";
 import { WS_PAGES, openWorkspace } from "./helpers";
 
@@ -25,17 +27,30 @@ function alphaOf(bg: string): number {
 }
 
 for (const seg of WS_PAGES) {
-  test(`scrolled to end, no text under the cluster on /${seg || "(index)"}; cluster is translucent`, async ({ page }) => {
+  test(`scrolled to end, no text under the strip on /${seg || "(index)"}; the strip is opaque`, async ({ page }) => {
     await openWorkspace(page, seg);
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await page.waitForTimeout(300);
-    const c = await page.getByTestId("workspace-cluster").boundingBox();
+    const c = await page.getByTestId("workspace-strip").boundingBox();
     expect(c).not.toBeNull();
-    const cluster: Box = { x: c!.x, y: c!.y, w: c!.width, h: c!.height };
-    const hits = (await textBoxes(page)).filter((b) => intersects(b, cluster));
+    const strip: Box = { x: c!.x, y: c!.y, w: c!.width, h: c!.height };
+    const boxes = await textBoxes(page);
+    expect(boxes.length).toBeGreaterThan(0);
+    const hits = boxes.filter((b) => intersects(b, strip));
     expect(hits, `scrolled to end: ${JSON.stringify(hits)}`).toEqual([]);
-    const alphas = await page.locator("[data-testid='workspace-cluster'] button").evaluateAll((els) => els.map((e) => getComputedStyle(e).backgroundColor));
-    expect(alphas.length).toBeGreaterThan(0);
-    for (const bg of alphas) expect(alphaOf(bg), bg).toBeLessThan(1);
+    // the last line of the page ends 24px or more above the strip. Rounded to the pixel: a page's
+    // height is often a fraction of a pixel while a scroll position is whole, so the frame's exact
+    // 24px can measure 23.8 at the end of the scroll.
+    expect(Math.round(strip.y - Math.max(...boxes.map((b) => b.y + b.h)))).toBeGreaterThanOrEqual(24);
+    // the strip's ground is a solid color under its tint: nothing shows through it
+    const ground = await page.getByTestId("workspace-strip").evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(alphaOf(ground), ground).toBe(1);
+    // and each square is the topmost thing where it stands
+    const onTop = await page.locator("[data-testid='workspace-cluster'] button").evaluateAll((els) => els.map((e) => {
+      const r = e.getBoundingClientRect();
+      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return !!top && (top === e || e.contains(top));
+    }));
+    expect(onTop).toEqual([true, true, true]);
   });
 }
