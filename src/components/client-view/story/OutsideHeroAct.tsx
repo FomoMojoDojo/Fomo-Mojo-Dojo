@@ -1,6 +1,8 @@
 import { useCompany } from "@/hooks/useCompany";
 import { admitForSurface } from "@/lib/registerGuard";
 import { useMojoScore } from "@/hooks/useMojoScore";
+import { useOutsideScoreState } from "@/hooks/useOutsideScoreState";
+import { outsideScoreEmptyNote } from "@/views/client/firstReadPreview/signedNotes";
 import { useStandingFindings, type Finding } from "@/hooks/useStandingFindings";
 import { useReadState } from "@/hooks/useAsyncRead";
 import { ActData } from "@/components/client-view/story/ActData";
@@ -24,15 +26,21 @@ export const KIND_LABEL: Record<Finding["kind"], string> = {
   observation: "What we noticed",
   watch_out: "A watch-out",
 };
-// Score caveats: MUST be score-agnostic (true at any value).
+// Score caveat: MUST be true at any value, and of the score this card reads.
+// SP-688 (2026-11-25): the second caveat ("It moves only on evidence — every lens added moves it
+// honestly.") is REMOVED and nothing stands in its place. The card reads the outside score — the
+// Mojo Score at the outside phase (SP-686 ruling 2) — which is read from public signals only, so
+// adding another lens does not move it. What the card says about movement is decided with SP-687.
 const SCORE_CAVEAT_1 = "This is an early likelihood read, not a settled answer.";
-const SCORE_CAVEAT_2 = "It moves only on evidence — every lens added moves it honestly.";
 // Empty states.
 // Exported: Gate 5 export leave-behind reuses the same signed honest-empty line
 // for The Mirror's bet slot (single source — no parallel literal in exportHtml).
 export const HERO_EMPTY = "The outside read hasn't surfaced a lead finding for this company yet.";
-const SCORE_EMPTY = "No score has been computed yet.";
-const SCORE_EMPTY_SUB = "It appears once the first analysis runs.";
+// SP-686 rulings 4 and 5 (2026-11-25): the score card's empty state is one of the First Read's two
+// signed notes, by key (outsideScoreEmptyNote): "Not enough public signal to score yet." when the
+// scorer ran and found the company not eligible, "No score snapshot yet." in every other case. The
+// old pair ("No score has been computed yet." / "It appears once the first analysis runs.") is gone:
+// its second line promised a score to companies the scorer had already turned down.
 // ──────────────────────────────────────────────────────────────────────────────
 
 // Light formatting only: capitalize the first letter and ensure terminal
@@ -57,7 +65,11 @@ export default function OutsideHeroAct({ preferredRun }: { preferredRun?: unknow
   const { score, loading: scoreLoading, error: scoreError } = useMojoScore(companyId, "outside"); // SP-682 ruling 1: this card always reads the OUTSIDE score
   const { data, isLoading: findingsLoading, error: findingsError } = useStandingFindings(companyId);
   const findingsState = useReadState<typeof data>(findingsLoading, findingsError, data, companyId);
-  const scoreState = useReadState<typeof score>(scoreLoading, scoreError, score, companyId);
+  // WHY there is no score, from the scorer's own record — readable by the company's own members.
+  // Until that read has returned the card stays in its loading state: picking a note early would
+  // show "No score snapshot yet." for a moment to a company that was in fact found not eligible.
+  const outside = useOutsideScoreState(companyId);
+  const scoreState = useReadState<typeof score>(scoreLoading || (!score && !scoreError && !outside.settled && !outside.error), scoreError, score, companyId);
 
   return (
     <section className="cvs-act" aria-label="Outside · Act 1 — Hero and Mojo Score">
@@ -127,7 +139,6 @@ export default function OutsideHeroAct({ preferredRun }: { preferredRun?: unknow
 
                   <div className="cvs-score-sentences">
                     <p className="cvs-score-line">{SCORE_CAVEAT_1}</p>
-                    <p className="cvs-score-line is-muted">{SCORE_CAVEAT_2}</p>
                   </div>
 
                   <div className="cvs-score-divider" />
@@ -137,9 +148,8 @@ export default function OutsideHeroAct({ preferredRun }: { preferredRun?: unknow
                   </div>
                 </>
               ) : (
-                <div className="cvs-score-empty">
-                  <p style={{ margin: 0 }}>{SCORE_EMPTY}</p>
-                  <p className="cvs-score-empty-sub">{SCORE_EMPTY_SUB}</p>
+                <div className="cvs-score-empty" data-testid="score-card-empty" data-outside-score-state={outside.state ?? "none"}>
+                  <p style={{ margin: 0 }}>{outsideScoreEmptyNote(outside.state)}</p>
                 </div>
               );
             }}

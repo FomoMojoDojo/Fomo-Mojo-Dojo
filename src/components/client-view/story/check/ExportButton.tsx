@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCompany } from "@/hooks/useCompany";
 import { useMojoScore } from "@/hooks/useMojoScore";
+import { useOutsideScoreState } from "@/hooks/useOutsideScoreState";
 import { useStandingFindings } from "@/hooks/useStandingFindings";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useIndustryReferenceMaps } from "@/hooks/useIndustryReferenceMaps";
@@ -61,6 +62,7 @@ export default function ExportButton({
   // AGGREGATE `readError`. These feed the REFUSAL below; loading is NOT bounded (a hang must keep
   // export disabled, never flip to a false success).
   const { score, loading: scoreLoading, error: scoreError } = useMojoScore(companyId, "outside"); // SP-682 ruling 1: the export carries the card's number — the OUTSIDE score
+  const outsideScore = useOutsideScoreState(companyId); // why there is no score, when there is none (SP-686 ruling 4)
   const { data: findingsData, isLoading: findingsLoading, error: findingsError } = useStandingFindings(companyId);
   const { preferredRun, loading: baselineLoading, error: baselineError } = usePublicBaseline(companyId);
   const { maps, loading: mapsLoading, error: mapsError } = useIndustryReferenceMaps();
@@ -101,7 +103,8 @@ export default function ExportButton({
   const failedSections: string[] = ([
     ["Stated problem", statedProblemError],
     ["Standard job map", mapsError],
-    ["Mojo Score", scoreError],
+    // the score, and — when there is none — the scorer's record that says why (SP-686 ruling 4)
+    ["Mojo Score", scoreError ?? (score ? null : outsideScore.error)],
     ["Outside findings", findingsError],
     ["Outside signals", baselineError],
     ["The Check", captureError],
@@ -110,7 +113,7 @@ export default function ExportButton({
   ] as Array<[string, string | null]>).filter(([, e]) => e).map(([label]) => label);
 
   const dataReady =
-    !captureLoading && scoreSettled && !findingsLoading && !baselineLoading && !mapsLoading &&
+    !captureLoading && scoreSettled && (Boolean(score) || outsideScore.settled) && !findingsLoading && !baselineLoading && !mapsLoading &&
     !statedProblemLoading && !openQuestionsLoading && !perceptionLoading && session !== null &&
     failedSections.length === 0;
 
@@ -163,7 +166,7 @@ export default function ExportButton({
       standard: map
         ? { label: map.industry_label, taxonomyVersion: map.taxonomy_version, steps: map.steps }
         : null,
-      mirror: { score: score?.total_score ?? null, bet, findings: mirrorFindings },
+      mirror: { score: score?.total_score ?? null, scoreState: outsideScore.state, bet, findings: mirrorFindings },
       // V2-5b — mirror the Message band exactly: register lock → framework/analytic guard
       // → containment dedupe, single-sourced so the leave-behind can't diverge.
       perception: dedupeByContainment(

@@ -19,11 +19,13 @@ const h = vi.hoisted(() => ({
   openQuestions: { rows: [] as unknown[], questions: [] as string[], loading: false, error: null as string | null },
   setAside: { identities: new Set() },
   perception: { claims: [] as unknown[], loading: false, error: null as string | null },
+  outside: { state: null as "scored" | "ineligible" | null, settled: true, loading: false, error: null as string | null },
   html: null as string | null,
 }));
 
 vi.mock("@/hooks/useCompany", () => ({ useCompany: () => h.company }));
 vi.mock("@/hooks/useMojoScore", () => ({ useMojoScore: () => h.score }));
+vi.mock("@/hooks/useOutsideScoreState", () => ({ useOutsideScoreState: () => h.outside }));
 vi.mock("@/hooks/useStandingFindings", async (o) => ({ ...(await o() as object), useStandingFindings: () => h.findings }));
 vi.mock("@/hooks/usePublicBaseline", () => ({ usePublicBaseline: () => h.baseline }));
 vi.mock("@/hooks/useIndustryReferenceMaps", () => ({ useIndustryReferenceMaps: () => h.maps }));
@@ -52,6 +54,7 @@ beforeEach(() => {
   h.statedProblem = { data: null, loading: false, error: null };
   h.openQuestions = { rows: [], questions: [], loading: false, error: null };
   h.perception = { claims: [], loading: false, error: null };
+  h.outside = { state: null, settled: true, loading: false, error: null };
   h.html = null;
 });
 afterEach(() => vi.clearAllMocks());
@@ -72,7 +75,7 @@ const reasonText = () => screen.queryByRole("alert")?.textContent ?? "";
 const SECTIONS: Array<{ name: string; set: () => void; label: string; leak: string }> = [
   { name: "perception", set: () => { h.perception.error = "boom"; }, label: "How the outside describes you", leak: "We haven't found this company described in its own words." },
   { name: "capture", set: () => { h.capture.readError = "boom"; }, label: "The Check", leak: "Everything you've told us turned up somewhere in what we've read." },
-  { name: "score", set: () => { h.score.error = "boom"; }, label: "Mojo Score", leak: "No score has been computed yet." },
+  { name: "score", set: () => { h.score.error = "boom"; }, label: "Mojo Score", leak: "No score snapshot yet." },
   { name: "findings", set: () => { h.findings.error = "boom"; }, label: "Outside findings", leak: "Nothing else stood out from the outside read." },
   { name: "baseline", set: () => { h.baseline.error = "boom"; }, label: "Outside signals", leak: "" },
   { name: "maps", set: () => { h.maps.error = "boom"; }, label: "Standard job map", leak: "No industry-standard map matched this company's industry." },
@@ -129,5 +132,76 @@ describe("GATE D — export refuses on any read error", () => {
     await act(async () => { fireEvent.click(btn); });
     expect(h.html).not.toBeNull();
     expect(h.html).toContain("The outside read hasn't surfaced a lead finding for this company yet."); // honest-empty content intact
+  });
+
+  // ── SP-686 rulings 4 and 5, SP-688 (2026-11-25): the export says what the card says ────────────
+  const scoreBlock = () => (h.html ?? "").match(/<div class="score">.*?<\/div>/s)?.[0] ?? "";
+  const RETIRED = ["No score has been computed yet.", "It appears once the first analysis runs.", "every lens added moves it"];
+  // The test environment has no URL.createObjectURL, so a real export raises an unhandled error after
+  // the document is built (the two older exporting cases above do). These cases only read the built
+  // document, so they give the download a harmless stand-in for the length of one click and take it
+  // away again — they add no unhandled error of their own.
+  const exportNow = async (btn: HTMLButtonElement) => {
+    const u = URL as unknown as { createObjectURL?: unknown; revokeObjectURL?: unknown };
+    const had = { c: u.createObjectURL, r: u.revokeObjectURL };
+    u.createObjectURL = () => "blob:test"; u.revokeObjectURL = () => {};
+    try { await act(async () => { fireEvent.click(btn); }); }
+    finally { u.createObjectURL = had.c; u.revokeObjectURL = had.r; }
+  };
+
+  it("with a score: the label and the number, and none of the retired copy", async () => {
+    h.score = { score: { total_score: 12 } as never, loading: false, error: null };
+    h.outside = { state: "scored", settled: true, loading: false, error: null };
+    const btn = await renderSettled();
+    await exportNow(btn);
+    expect(scoreBlock()).toContain("Mojo Score");
+    expect(scoreBlock()).toContain("12<span class=\"score-cap\"> / 100</span>");
+    for (const gone of RETIRED) expect(h.html).not.toContain(gone);
+    expect(h.html).not.toContain("No score snapshot yet.");
+    expect(h.html).not.toContain("Not enough public signal to score yet.");
+  });
+
+  it("no score, found NOT ELIGIBLE: the First Read's \"Not enough public signal to score yet.\"", async () => {
+    h.outside = { state: "ineligible", settled: true, loading: false, error: null };
+    const btn = await renderSettled();
+    await exportNow(btn);
+    expect(scoreBlock()).toContain("Not enough public signal to score yet.");
+    expect(scoreBlock()).not.toContain("No score snapshot yet.");
+    for (const gone of RETIRED) expect(h.html).not.toContain(gone);
+  });
+
+  it("no score, every other case: the First Read's \"No score snapshot yet.\"", async () => {
+    h.outside = { state: null, settled: true, loading: false, error: null };
+    const btn = await renderSettled();
+    await exportNow(btn);
+    expect(scoreBlock()).toContain("No score snapshot yet.");
+    expect(scoreBlock()).not.toContain("Not enough public signal to score yet.");
+    for (const gone of RETIRED) expect(h.html).not.toContain(gone);
+  });
+
+  it("no score and the reason NOT YET READ → no document: the export never guesses which note", async () => {
+    h.outside = { state: null, settled: false, loading: true, error: null };
+    const btn = await renderSettled();
+    expect(btn.disabled).toBe(true);
+    await exportNow(btn);
+    expect(h.html).toBeNull();
+  });
+
+  it("no score and the reason's read FAILED → refused, and the reason names the Mojo Score section", async () => {
+    h.outside = { state: null, settled: false, loading: false, error: "boom" };
+    const btn = await renderSettled();
+    await exportNow(btn);
+    expect(h.html).toBeNull();
+    expect(btn.disabled).toBe(true);
+    expect(reasonText()).toContain("Mojo Score");
+  });
+
+  it("a score is present → a failed or unread reason does not hold the export back: it is not needed", async () => {
+    h.score = { score: { total_score: 21 } as never, loading: false, error: null };
+    h.outside = { state: null, settled: false, loading: false, error: "boom" };
+    const btn = await renderSettled();
+    expect(btn.disabled).toBe(false);
+    await exportNow(btn);
+    expect(scoreBlock()).toContain("21<span");
   });
 });

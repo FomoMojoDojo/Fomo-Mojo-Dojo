@@ -9,6 +9,7 @@ import { MarkTarget } from "@/lib/firstReadMarks/MarksContext";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { NOT_ENOUGH_SIGNAL_NOTE } from "./signedNotes";
+import { NO_SCORE_NOTE } from "./signedNotes";
 import {
   Absent,
   ActHeader,
@@ -191,8 +192,8 @@ const STATUS_VS_GAP_COHERENCE_NOTE = "The open-question about your status (see t
 const WHY_CONFLICT_LABEL = "WHY THIS SEEMS TO CONFLICT"; // signed
 const NO_SIGNALS_NOTE = "No outside signals collected yet."; // signed
 // NO_MARKETS_NOTE removed with the Declared-markets section (public-only ruling, 2026-08-20).
-const NO_SCORE_NOTE = "No score snapshot yet."; // signed (Phase A ruling)
-// NOT_ENOUGH_SIGNAL_NOTE lives in ./signedNotes (shared with the no-evidence suppressions, 2026-09-16).
+// NO_SCORE_NOTE and NOT_ENOUGH_SIGNAL_NOTE live in ./signedNotes (shared with the no-evidence
+// suppressions, 2026-09-16, and with the client story's score card, SP-686, 2026-11-25).
 // Signed anchor line (outside-v1.0.0 ruling) — renders under the reveal support.
 const ANCHOR_LINE =
   "Most strategy efforts don't succeed — the research base rate is under 20 in 100. This read starts there and moves only on what the public record shows. The bands above are reached with evidence, not optimism.";

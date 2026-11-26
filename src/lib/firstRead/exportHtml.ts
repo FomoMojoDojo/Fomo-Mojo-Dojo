@@ -15,6 +15,7 @@ import type { Proposal } from "@/hooks/useFirstReadProposal";
 import { admitProposalBlock, REFUSED_BLOCK, PLAN_HEADING } from "@/components/client-view/story/check/ProposalAct";
 import { checkItemAnnotation, CHECK_KIND_LABEL, TALLY_SEGMENTS, NOT_IMPORTANT_NOTE } from "@/lib/firstRead/checkItemView";
 import { KIND_LABEL, HERO_EMPTY } from "@/components/client-view/story/OutsideHeroAct";
+import { outsideScoreEmptyNote } from "@/views/client/firstReadPreview/signedNotes";
 import { GAP_EMPTY } from "@/components/client-view/story/GapAct";
 import { setAsideGroupHeading } from "@/lib/firstRead/gapShrink";
 import { STANDARD_ATTRIBUTION_LINE } from "@/lib/firstRead/standardCopy";
@@ -43,6 +44,10 @@ export interface FirstReadExportData {
   standard: { label: string; taxonomyVersion: string | null; steps: ExportStandardStep[] } | null;
   mirror: {
     score: number | null;
+    /** SP-686 ruling 4: the outside scorer's own verdict, which picks the empty note when there is
+     *  no score — "ineligible" → "Not enough public signal to score yet."; anything else →
+     *  "No score snapshot yet.". Optional so a caller that has a score need not pass it. */
+    scoreState?: "scored" | "ineligible" | null;
     bet: ExportMirrorFinding | null;
     findings: ExportMirrorFinding[];
   };
@@ -71,7 +76,8 @@ const T = {
   standardEmpty: "No industry-standard map matched this company's industry.",
   findingsEmpty: "Nothing else stood out from the outside read.",
   scoreLabel: "Mojo Score",
-  scoreEmpty: "No score has been computed yet.",
+  // SP-686 rulings 4 and 5: the score's empty line is no longer a string of this file. It is one of
+  // the First Read's two signed notes, by key (outsideScoreEmptyNote) — the same line the card shows.
   checkEmpty: "No items were put to the client.",
   proposalEmpty: "No proposal was generated for this session.",
   sayEmpty: "No problem is stated on this company's own public site.", // V2-2 — PENDING SIGNATURE
@@ -175,7 +181,7 @@ function sectionMirror(d: FirstReadExportData): string {
   const scoreHtml =
     score !== null
       ? `<div class="score"><p class="score-label">${esc(T.scoreLabel)}</p><p class="score-num">${esc(Math.round(score))}<span class="score-cap"> / 100</span></p></div>`
-      : `<div class="score"><p class="score-label">${esc(T.scoreLabel)}</p><p class="empty">${esc(T.scoreEmpty)}</p></div>`;
+      : `<div class="score"><p class="score-label">${esc(T.scoreLabel)}</p><p class="empty">${esc(outsideScoreEmptyNote(d.mirror.scoreState ?? null))}</p></div>`;
   const betHtml = bet
     ? `<div class="bet"><p class="kind">${esc(bet.label)}</p><p class="bet-text">${esc(bet.text)}</p></div>`
     : `<p class="empty">${esc(HERO_EMPTY)}</p>`;
